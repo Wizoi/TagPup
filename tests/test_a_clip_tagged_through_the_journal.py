@@ -1,17 +1,18 @@
 """A clip's tags and caption saved through the journal (DECISIONS 2026-11-05, M7): field_values.write patches a clip's
-XMP in place (in_place.patch_clip) and never has ExifTool write it, and only while field_values.CLIP_PATCH_IN_PLACE is on
-(off by default, until the owner's trial on 20 copies).
+XMP in place (in_place.patch_clip) and never has ExifTool write it (on since the owner's trial on 20 copies, DECISIONS
+2026-11-07).
 
 What the owner lives through: a clip's card opens the photo panel and its tags are saved, or a selection of a day holding
-photos and clips is tagged. With writing clips off, every write of a clip is refused with the sentence; on, a keyword or
-caption save is patched into its XMP, and a turn, a Date Taken and a rename stay refused. A clip the patch cannot place
+photos and clips is tagged. A keyword or title save is patched into its XMP, and a turn, a Date Taken and a rename stay refused. A clip the patch cannot place
 (a tail, two XMP boxes) is refused, ExifTool never asked to rewrite it; one whose share fails part-way through its read
-says it could not be read, never that it cannot be patched; one whose keywords are held in QuickTime too keeps its last.
+says it could not be read, never that it cannot be patched. A clip whose QuickTime Subject is a Microsoft Xtra value that
+is not text (14 live .mp4 clips, counted 2026-11-07) is indexed with no tags, and a tag save writes only the tags saved;
+a row the reader of before made of one, holding the value as a tag, is re-derived to none (#2662).
 
 Real clips made by the machine's ffmpeg (tests/test_a_clip_patched_in_place.FfmpegClips) and the real ExifTool, whose
-write command (field_values._command) fails the test if asked. No ExifTool writes a clip's QuickTime Subject (14 live
-.mp4 clips hold one, counted 2026-11-05), so the read answering it is ExifTool's with that tag added. Skipped, saying so,
-without ffmpeg or ExifTool. Fictional names only.
+write command (field_values._command) fails the test if asked. No ExifTool writes a clip's QuickTime Subject, so the
+test lays one as Windows does (with_a_quicktime_subject_that_is_not_text). Skipped, saying so, without ffmpeg or
+ExifTool. Fictional names only.
 """
 import contextlib
 import json
@@ -27,19 +28,15 @@ import test_a_clip_patched_in_place as patched  # noqa: E402
 import web_client  # noqa: E402
 from view_library import ViewLibrary, make_jpeg  # noqa: E402
 
-from tagpup.core import fields, paths, processes  # noqa: E402
+from tagpup.core import fields, paths, processes, vocabulary  # noqa: E402
 from tagpup.core.result import Refused  # noqa: E402
 from tagpup.files import containers, field_values, images, in_place, metadata, segment_edits  # noqa: E402
-from tagpup.services import file_only  # noqa: E402
+from tagpup.services import file_only, refresh_rows  # noqa: E402
 from tagpup.store import photos  # noqa: E402
 
 EXIFTOOL = patched.EXIFTOOL
 TOOLS = patched.TOOLS
 keywords = patched.keywords
-
-
-def writing_clips(on=True):
-    return mock.patch.object(field_values, "CLIP_PATCH_IN_PLACE", on)
 
 
 @unittest.skipIf(EXIFTOOL is None or TOOLS.problem, "ExifTool or ffmpeg is not installed on this machine")
@@ -72,23 +69,15 @@ class AClipWrittenByTheOneWriter(patched.FfmpegClips):
         self.assertEqual(sentence, str(refused.exception))
         self.assertEqual(([], before), (self.saved, self.bytes_of(path)), "nothing saved, nothing written")
 
-    def test_with_writing_clips_off_every_write_of_a_clip_is_refused_and_exiftool_never_writes_it(self):
-        path = self.clip("clip.mov")
-        for values in (keywords(["Trips/Coast"]), fields.title_fields("Jetty at dusk"),
-                       fields.date_taken_fields("2020:01:01 12:00:00"), {fields.ORIENTATION: ["6"]}):
+    def test_a_journaled_tag_save_is_patched_into_its_xmp_and_nothing_else_is_written(self):
+        path = self.clip("first.mp4")
+        self.assert_refused(images.CLIP_NOT_EDITED, path, keywords(["Trips/Coast"]), journaled=False)
+        for values in (fields.date_taken_fields("2020:01:01 12:00:00"), {fields.ORIENTATION: ["6"]},
+                       {**keywords(["Trips/Coast"]), **fields.date_taken_fields("2020:01:01 12:00:00")}):
             with self.subTest(sorted(values)[0]):
                 self.assert_refused(images.CLIP_NOT_EDITED, path, values)
-
-    def test_with_writing_clips_on_a_journaled_tag_save_is_patched_into_its_xmp_and_nothing_else_is_written(self):
-        path = self.clip("first.mp4")
-        with writing_clips():
-            self.assert_refused(images.CLIP_NOT_EDITED, path, keywords(["Trips/Coast"]), journaled=False)
-            for values in (fields.date_taken_fields("2020:01:01 12:00:00"), {fields.ORIENTATION: ["6"]},
-                           {**keywords(["Trips/Coast"]), **fields.date_taken_fields("2020:01:01 12:00:00")}):
-                with self.subTest(sorted(values)[0]):
-                    self.assert_refused(images.CLIP_NOT_EDITED, path, values)
-            values = {**keywords(["Trips/Coast"]), **fields.title_fields("Jetty at dusk")}
-            self.assertEqual(segment_edits.clip_stale_of(values), self.write(path, values))
+        values = {**keywords(["Trips/Coast"]), **fields.title_fields("Jetty at dusk")}
+        self.assertEqual(segment_edits.clip_stale_of(values), self.write(path, values))
         self.assertEqual(1, len(self.saved), "one patch, its record saved before its bytes")
         self.read_back(path, ("Trips/Coast",))
 
@@ -96,49 +85,34 @@ class AClipWrittenByTheOneWriter(patched.FfmpegClips):
         path = self.clip("last.mp4")
         with open(path, "ab") as handle:
             handle.write(patched.xmp_box(patched.OLD) + patched.xmp_box(patched.OLD))
-        with writing_clips():
-            self.assert_refused(images.CLIP_NOT_PATCHED, path, keywords(["Trips/Coast"]))
+        self.assert_refused(images.CLIP_NOT_PATCHED, path, keywords(["Trips/Coast"]))
 
     def test_a_clip_whose_share_fails_part_way_through_its_read_could_not_be_read_and_is_not_refused_as_unpatchable(self):
         path = self.clip("first.mp4")
         before = self.bytes_of(path)
         gone = OSError(64, "The specified network name is no longer available")
-        with writing_clips(), mock.patch.object(containers, "_read_video", side_effect=gone), \
+        with mock.patch.object(containers, "_read_video", side_effect=gone), \
                 self.assertRaises(field_values.Unreadable) as raised:
             self.write(path, keywords(["Trips/Coast"]))
         self.assertIn("could not be read", str(raised.exception))
         self.assertNotIn(images.CLIP_NOT_PATCHED, str(raised.exception))
         self.assertEqual(([], before), (self.saved, self.bytes_of(path)))
 
-    def test_the_last_keyword_of_a_clip_holding_its_keywords_in_quicktime_too_is_not_taken_off(self):
-        path = self.clip("first.mp4")
-        answer = self.et.get_tags
 
-        def with_quicktime(files, tags, **options):
-            rows = answer(files, tags=tags, **options)
-            for row in rows:
-                if fields.CLIP_KEYWORDS in tags:
-                    row[fields.CLIP_KEYWORDS] = "Trips/Coast"
-            return rows
-
-        with writing_clips(), mock.patch.object(self.et, "get_tags", side_effect=with_quicktime):
-            self.write(path, keywords(["Trips/Coast"]))
-            self.saved = []
-            self.assert_refused(segment_edits.KEPT_IN_QUICKTIME, path, keywords([]))
-            self.write(path, keywords(["Trips/Harbour"]))
-        self.read_back(path, ("Trips/Harbour",))
+#: A QuickTime Subject that is not text: 32 bytes, as each of the 14 live clips holds one (a Microsoft Xtra entry of a type
+#: that is not text, ExifTool's family-1 group 'Microsoft'; counted read-only 2026-11-07). The live ones are answered as
+#: hex, this one (a VT_VARIANT vector of bytes) as numbers: either is text ExifTool made of bytes, never a keyword.
+NOT_TEXT = bytes(range(0xa0, 0xc0))
 
 
-def with_quicktime_subject(path, words):
-    """Give the .mp4 at `path` (ffmpeg's: its moov the last box) a QuickTime Subject holding `words`, as the 14 live clips
-    hold theirs: a Microsoft Xtra atom in the moov's udta, ExifTool's family-1 group 'Microsoft', one value each (counted
-    read-only 2026-11-05). ExifTool does not write it, so the test lays it as Windows does (ExifTool's Microsoft.pm,
-    ProcessXtra: entry size, name length, name, a 4-byte count, then each value's size, type 8 and its UTF-16LE text)."""
-    values = b""
-    for word in words:
-        text = (word + "\0").encode("utf-16-le")
-        values += struct.pack(">IH", 6 + len(text), 8) + text
-    entry = struct.pack(">I", len(b"Subject")) + b"Subject" + struct.pack(">I", len(words)) + values
+def with_a_quicktime_subject_that_is_not_text(path):
+    """Give the .mp4 at `path` (ffmpeg's: its moov the last box) a QuickTime Subject holding NOT_TEXT: a Microsoft Xtra
+    atom in the moov's udta, laid as Windows does (ExifTool's Microsoft.pm, ProcessXtra and ReadXtraValue: entry size,
+    name length, name, a 4-byte count, then the value's size, its type -- 65, a VT_VARIANT -- and the variant: a vector
+    of unsigned bytes). ExifTool does not write it. What ExifTool answers of it, as the scan reads it."""
+    variant = struct.pack("<HHI", 0x1011, 0, len(NOT_TEXT)) + NOT_TEXT
+    values = struct.pack(">IH", 6 + len(variant), 65) + variant
+    entry = struct.pack(">I", len(b"Subject")) + b"Subject" + struct.pack(">I", 1) + values
     entry = struct.pack(">I", 4 + len(entry)) + entry
     xtra = struct.pack(">I", 8 + len(entry)) + b"Xtra" + entry
     udta = struct.pack(">I", 8 + len(xtra)) + b"udta" + xtra
@@ -153,22 +127,33 @@ def with_quicktime_subject(path, words):
     assert kind == b"moov", "ffmpeg's .mp4 ends with its moov"
     with open(path, "wb") as handle:
         handle.write(data[:at] + struct.pack(">I", size + len(udta)) + data[at + 4:] + udta)
+    held = metadata.MetadataExtractor(EXIFTOOL).batch_read([path])[0]["raw_metadata"].get("QuickTime:Subject")
+    assert held, "ExifTool answers the clip's QuickTime Subject"
+    return held
+
+
+#: How the index read a keyword before the owner ruled a clip's QuickTime Subject out (2026-11-07, #2662): the rows of
+#: the 14 live clips were made so.
+READ_BEFORE = (("XMP:Subject", "QuickTime:Subject", "Subject"), ("IPTC:Keywords", "Keywords"))
+
+
+def read_as_before():
+    return mock.patch.object(vocabulary, "KEYWORD_COPIES", READ_BEFORE)
 
 
 @unittest.skipIf(EXIFTOOL is None or TOOLS.problem, "ExifTool or ffmpeg is not installed on this machine")
 class ALibraryHoldingAClip(unittest.TestCase):
     """A library holding a photo and a real ffmpeg clip, each row recorded by the indexer's own read
-    (metadata.MetadataExtractor.batch_read), saved through the pages (Flask's test client, a home of its own) with writing
-    clips on. No test of its own: the scenarios of a clip in a library are its subclasses (here, test_a_clip_tag_undone,
+    (metadata.MetadataExtractor.batch_read), saved through the pages (Flask's test client, a home of its own). No test of its own: the scenarios of a clip in a library are its subclasses (here, test_a_clip_tag_undone,
     test_a_clip_patch_cut_short)."""
 
     def setUp(self):
         self.app, self.home = web_client.app_for(self, "tagpup")
         self.client = self.app.test_client()
         self.vl = ViewLibrary(self, "library", home=self.home)
-        for patcher in (mock.patch("tagpup.web.state.exiftool", return_value=EXIFTOOL), writing_clips()):
-            patcher.start()
-            self.addCleanup(patcher.stop)
+        patcher = mock.patch("tagpup.web.state.exiftool", return_value=EXIFTOOL)
+        patcher.start()
+        self.addCleanup(patcher.stop)
         self.vl.tree("Trips/Coast", "Trips/Harbour", "Trips/Pier")
         self.folder = os.path.join(self.vl.pictures, "Harbour")
         os.makedirs(self.folder, exist_ok=True)
@@ -209,27 +194,72 @@ class ALibraryHoldingAClip(unittest.TestCase):
 
 class AClipInTheLibrary(ALibraryHoldingAClip):
 
-    def test_a_tag_added_to_a_clip_whose_tags_are_in_its_quicktime_subject_keeps_them(self):
-        with_quicktime_subject(self.clip_path, ["Trips/Coast", "Trips/Pier"])
+    def test_a_clip_whose_quicktime_subject_is_not_text_is_indexed_with_no_tags_and_saved_with_only_the_tags_saved(self):
+        with_a_quicktime_subject_that_is_not_text(self.clip_path)
         clip, = self.index(self.clip_path)
-        self.assertEqual(["Trips/Coast", "Trips/Pier"], self.tags_of(clip), "the index reads its QuickTime Subject")
-        reply = self.post("photos/bulk-tags", {"paths": [self.clip_path], "add_tags": ["Trips/Harbour"]})
+        self.assertEqual([], self.tags_of(clip), "the index reads no keyword of it")
+        reply = self.post("photo/save-metadata", {"path": self.clip_path, "tags": ["Trips/Pier"]})
         self.assertEqual(200, reply.status_code, reply.get_json())
-        both = ["Trips/Coast", "Trips/Pier", "Trips/Harbour"]
-        self.assertEqual((both, both), self.read_now(self.clip_path), "its XMP holds the old tags and the new")
-        self.assertEqual(both, self.tags_of(clip), "and so does its row")
-
-    def test_a_tag_taken_off_a_clip_that_holds_it_in_its_quicktime_subject_stays_off(self):
-        with_quicktime_subject(self.clip_path, ["Trips/Coast", "Trips/Pier"])
-        clip, = self.index(self.clip_path)
-        reply = self.post("photos/bulk-tags", {"paths": [self.clip_path], "remove_tags": ["Trips/Coast"]})
-        self.assertEqual(200, reply.status_code, reply.get_json())
-        self.assertEqual((["Trips/Pier"], ["Trips/Pier"]), self.read_now(self.clip_path),
-                         "the index reads its XMP, not the QuickTime copy TagPup does not write")
+        self.assertEqual((["Trips/Pier"], ["Trips/Pier"]), self.read_now(self.clip_path), "its XMP holds the tag saved alone")
         self.assertEqual(["Trips/Pier"], self.tags_of(clip))
         reply = self.post("photos/bulk-tags", {"paths": [self.clip_path], "remove_tags": ["Trips/Pier"]})
-        self.assertIn(segment_edits.KEPT_IN_QUICKTIME, reply.get_json()["error"])
-        self.assertEqual((["Trips/Pier"], ["Trips/Pier"]), self.read_now(self.clip_path), "the last is kept")
+        self.assertEqual(200, reply.status_code, reply.get_json())
+        self.assertEqual(([], []), self.read_now(self.clip_path), "its last tag comes off, and nothing is read back")
+        self.assertEqual([], self.tags_of(clip))
+        self.assertEqual(["done", "done"], self.change_states(clip))
+
+    def test_a_tag_save_of_a_clip_whose_description_shows_as_its_title_writes_its_tags_and_title_alone(self):
+        # A photo's save clears the Description it showed as its title (tagging._caption_moved); a clip's caption is not
+        # written (fields.CLIP_WRITES), so its save asks none and is not refused at its write for it (#2663).
+        described = patched.packet(()).replace(
+            b"<dc:subject><rdf:Bag></rdf:Bag></dc:subject>",
+            b"<dc:description><rdf:Alt><rdf:li xml:lang='x-default'>Jetty at dusk</rdf:li></rdf:Alt></dc:description>")
+        with open(self.clip_path, "ab") as handle:
+            handle.write(patched.xmp_box(described))
+        clip, = self.index(self.clip_path)
+        reply = self.post("photo/save-metadata", {"path": self.clip_path, "tags": ["Trips/Pier"], "title": "Jetty at dusk"})
+        self.assertEqual(200, reply.status_code, reply.get_json())
+        self.assertEqual((["Trips/Pier"], ["Trips/Pier"]), self.read_now(self.clip_path))
+        record = metadata.MetadataExtractor(EXIFTOOL).batch_read([self.clip_path])[0]["raw_metadata"]
+        self.assertEqual(("Jetty at dusk", "Jetty at dusk"), (record.get("XMP:Title"), record.get("XMP:Description")),
+                         "the title saved, the Description left as it was")
+        self.assertEqual(["done"], self.change_states(clip))
+
+    def test_a_row_the_reader_of_before_made_of_such_a_clip_is_re_derived_with_no_tags_and_its_file_left(self):
+        held = with_a_quicktime_subject_that_is_not_text(self.clip_path)
+        with read_as_before():
+            clip, = self.index(self.clip_path)
+        self.assertEqual([held], self.tags_of(clip), "as the 14 live rows hold it")
+        before = self.read_bytes(self.clip_path)
+        self.assertEqual(1, refresh_rows.rederive(self.vl.library).details["counts"]["tags"], "the dry run counts it")
+        done = refresh_rows.rederive(self.vl.library, apply=True)
+        self.assertEqual((True, 1), (done.ok, done.changed), done.message())
+        self.assertEqual([], self.tags_of(clip))
+        self.assertEqual(self.tags_of(clip), self.read_now(self.clip_path)[0], "the row agrees with a scan now")
+        self.assertEqual(before, self.read_bytes(self.clip_path), "no file is read or written")
+        self.assertEqual(0, refresh_rows.rederive(self.vl.library).changed, "run again, it changes nothing")
+
+    def records(self, ids):
+        """{filename: writes} of the records the page is given: a folder's scan (Refresh's: the server keeps the last
+        one), and the panel's of each of `ids`."""
+        scan = self.client.get("/library/api/folder/scan", query_string={"path": self.folder, "force": "true"})
+        self.assertEqual(200, scan.status_code, scan.data)
+        listed = scan.get_json()
+        listed = listed if isinstance(listed, list) else listed["photos"]
+        found = {"scan " + record["filename"]: record["writes"] for record in listed}
+        for photo_id in ids:
+            reply = self.client.get("/library/api/library/photo", query_string={"id": photo_id})
+            self.assertEqual(200, reply.status_code, reply.data)
+            record = reply.get_json()["photo"]
+            found["panel " + record["filename"]] = record["writes"]
+        return found
+
+    def test_the_page_is_told_what_a_save_may_change_of_a_clip_and_of_a_photo(self):
+        # The panel offers a clip its tags and title alone; a photo all four (field_values.writes).
+        ids = self.index(self.photo_path, self.clip_path)
+        photo, clip = ["tags", "title", "date", "rotate"], ["tags", "title"]
+        self.assertEqual({"scan pier.jpg": photo, "scan jetty.mp4": clip, "panel pier.jpg": photo, "panel jetty.mp4": clip},
+                         self.records(ids))
 
     def test_a_tag_save_from_the_photo_panel_writes_the_clips_xmp_and_journals_it_done(self):
         clip, = self.index(self.clip_path)
@@ -279,7 +309,7 @@ class AClipInTheLibrary(ALibraryHoldingAClip):
         self.assertEqual(before, self.read_bytes(self.clip_path), "the clip is as it was")
         self.assertEqual([], self.tags_of(clip))
 
-    def test_a_write_of_a_folder_the_library_does_not_hold_refuses_a_clip_with_writing_clips_on(self):
+    def test_a_write_of_a_folder_the_library_does_not_hold_refuses_a_clip(self):
         before = self.read_bytes(self.clip_path)
 
         def plan_one(path, held):

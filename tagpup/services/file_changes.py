@@ -87,7 +87,7 @@ from tagpup.core import fields, paths
 from tagpup.core.result import Conflict, Refused, Result
 # Looked up at call time, as exiftool_session.ExifToolSession, so a test standing in for
 # ExifTool there reaches this too.
-from tagpup.files import exiftool_session, field_values, images, in_place, lock_owners, metadata, names, segment_edits, shares
+from tagpup.files import exiftool_session, field_values, images, in_place, lock_owners, metadata, names, shares
 from tagpup.services import baking, batches, face_batch, rotation
 from tagpup.services import roots as roots_service
 from tagpup.store import db, derived, file_journal, photos, schema
@@ -296,9 +296,9 @@ AWAY_WHY = "its folder could not be reached just now (a network share that did n
 
 def leave_out_clips(result, photo_paths, unreadable="fail", read=None):
     """The paths of `photo_paths` that are not clips (images.is_clip), in order, and the clips a journaled write of
-    `read`, the fields it reads of each file, may patch: only while writing clips is on (field_values.CLIP_PATCH_IN_PLACE)
-    and only a keyword or caption save (every field read in fields.CLIP_READ; DECISIONS 2026-11-05, M7). Any other clip
-    is not written (images.CLIP_NOT_EDITED): it is the write's error, with that sentence -- or, `unreadable="skip"` (a
+    `read`, the fields it reads of each file, may patch: one reading only the fields of what a clip's write may change
+    (field_values.writes: its tags and title; DECISIONS 2026-11-05, M7) and those its tags are
+    read from (fields.TAG_SOURCE_FIELDS). Any other clip is not written (images.CLIP_NOT_EDITED): it is the write's error, with that sentence -- or, `unreadable="skip"` (a
     write over every photo of a camera or a folder that leaves out what it cannot write), skipped with it -- read for
     nothing, planned and journaled for nothing, and never the error that stops a write at its first
     (`stop_at_first_error`): the photos named beside it are written. A Save carrying a Date Taken reads it, so it is
@@ -306,15 +306,19 @@ def leave_out_clips(result, photo_paths, unreadable="fail", read=None):
     which gives `read`; file_only.write_fields, which does not: a clip of a folder the library does not hold has no
     journal to settle a patch a crash cut short) and a Smart Rename (tagpup.services.photos.smart_rename) before it keeps
     a name; a save of a clip is refused before its rename."""
-    patched = (read is not None and field_values.CLIP_PATCH_IN_PLACE
-               and set(read) <= fields.CLIP_READ)
     photos = []
     for path in photo_paths:
-        if images.is_clip(path) and not patched:
+        if images.is_clip(path) and not _clip_admitted(path, read):
             (result.skip if unreadable == "skip" else result.fail)(path, images.CLIP_NOT_EDITED)
         else:
             photos.append(path)
     return photos
+
+
+def _clip_admitted(path, read):
+    """May a journaled write reading `read` patch the clip at `path` (leave_out_clips)?"""
+    named = fields.fields_of(field_values.writes(path))
+    return bool(named) and read is not None and set(read) <= named | frozenset(fields.TAG_SOURCE_FIELDS)
 
 
 #: What a forward write's file found holding its after since the plan comes to (_held_or_conflict's `held_out`): out of
@@ -518,14 +522,6 @@ def _write_fields(et, library, operation, exiftool_path, photo_paths, read, plan
             continue
         after = {field: fields.field_values(value) for field, value in plan.after.items()}
         before = {field: now.get(field, []) for field in after}
-        if (images.is_clip(path) and field_values.takes_off_every_keyword(after)
-                and fields.field_values(now.get(fields.CLIP_KEYWORDS))):
-            # A clip left with no keyword in its XMP while its QuickTime Subject (read, never written) holds one: its tags
-            # would be read from there again (the last tag taken off one of the 14 live clips holding them only there). The
-            # writer's refusal, said here from what was read, as the writer says it when the plan did not read QuickTime:
-            # its XMP being empty already, the plan would call it held and the tag-tree edit say nothing of why.
-            result.fail(path, segment_edits.KEPT_IN_QUICKTIME)
-            continue
         if _holds_already(path, before, after) and not (alongside is not None and alongside.wants(path)):
             written[path] = plan.detail
             followed.append((path, now))
@@ -869,13 +865,11 @@ def _carry(et, library, row, origin, target, finished, on_failure, wrote=None, n
     row.patched = False
     _reached("file writing")
     saving = _saving(library, row)
-    # An undo takes a clip back to what it held: its QuickTime keywords were checked against what it undoes (_undoable).
-    elsewhere = () if finished == "undone" else None
-    failed = _written(et, row, target, saving, elsewhere)
+    failed = _written(et, row, target, saving)
     if exiftool_session.scratch_in_the_way(failed):
         left = _removed_scratch(row.path, stamp, interrupted)
         if left is None:
-            failed = _written(et, row, target, saving, elsewhere)      # once: a second failure is the write's own
+            failed = _written(et, row, target, saving)      # once: a second failure is the write's own
         elif left == SCRATCH_UNDER_WAY:
             failed = exiftool_session.written_lately(failed)
     if isinstance(failed, field_values.PictureChanged):
@@ -903,10 +897,10 @@ def _carry(et, library, row, origin, target, finished, on_failure, wrote=None, n
     return finished, None
 
 
-def _written(et, row, target, saving=None, keywords_elsewhere=None):
+def _written(et, row, target, saving=None):
     """None when field_values.write wrote `target` into the file of `row`, the fields it left as they were in
     `row.stale`; else what it raised. A new file whose picture changed is written once more, logged and counted
-    (field_values.written_once_more; `pictures_refused`). `keywords_elsewhere`, a clip's, as write takes it."""
+    (field_values.written_once_more; `pictures_refused`)."""
     def again():
         logger.warning("%s: its write changed the picture's bytes; the new file was discarded, and it is written once more",
                        row.named())
@@ -914,8 +908,7 @@ def _written(et, row, target, saving=None, keywords_elsewhere=None):
     row.stale = ()
     try:
         row.stale = tuple(field_values.written_once_more(et, row.path, target, again, saving=saving,
-                                                         scratch_written=lambda: _reached(SCRATCH_WRITTEN),
-                                                         keywords_elsewhere=keywords_elsewhere))
+                                                         scratch_written=lambda: _reached(SCRATCH_WRITTEN)))
     except Exception as e:
         return e
     return None
@@ -1716,10 +1709,9 @@ def _undoable(library, change_id, exiftool_path, check):
     file it left done; or (None, why it cannot be undone at all, None). `check(conn,
     change_id)` is the one account of whether it may be undone now
     (tagpup.services.journal.why_not: a newer change of the same files among it), asked on
-    a read-only connection, once, before anything is written. A clip the writer would refuse to put back (writing clips
-    off: field_values.clip_refused) refuses the whole undo, so the change stays applied, never half undone nor a conflict
-    (#2546). Never its last keyword kept in QuickTime: an undo writes what the clip's XMP held before (_carry passes
-    keywords_elsewhere=()), its keywords read from QuickTime again if that was none."""
+    a read-only connection, once, before anything is written. A clip the writer would refuse to put back (a field outside
+    field_values.writes: field_values.clip_refused) refuses the whole undo, so the change stays applied, never half undone
+    nor a conflict (#2546)."""
     change = file_journal.change(library.path, change_id)
     if change is None:
         return None, "there is no change %d" % change_id, None
@@ -1758,7 +1750,7 @@ def _undoable(library, change_id, exiftool_path, check):
                 refused.append((row, "could not be read: %s" % now))
             elif not fields.reads_same(now, row.after):
                 refused.append((row, "no longer holds what the change left"))
-            elif images.is_clip(row.path) and (why := field_values.clip_refused(row.before)):
+            elif images.is_clip(row.path) and (why := field_values.clip_refused(row.path, row.before)):
                 # The writer would refuse it: the undo is refused whole, the change left applied, to be undone later.
                 return None, "%s: %s" % (row.named(), why), None
             else:

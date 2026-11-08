@@ -81,7 +81,7 @@ class AClipPatchCutShort(tagged.ALibraryHoldingAClip):
         row, = file_journal.files_of(self.vl.library.path, change)
         copy = os.path.join(self.home.root, "uncut.mp4")
         shutil.copyfile(os.path.join(self.home.root, "original.mp4"), copy)
-        in_place.patch_clip(copy, lambda old: segment_edits.new_packet(old, row.after, keywords_elsewhere=()),
+        in_place.patch_clip(copy, lambda old: segment_edits.new_packet(old, row.after),
                             lambda record, before: None)
         return self.read_bytes(copy)
 

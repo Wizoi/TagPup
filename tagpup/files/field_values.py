@@ -39,7 +39,7 @@ read back, before the file is done (tagpup.services.file_changes._verified), and
 
 **A clip** (DECISIONS 2026-11-05, M7). A clip's file is never ExifTool's to write: a journaled keyword or caption save of
 one (fields.CLIP_FIELDS) patches its XMP alone (tagpup.files.in_place.patch_clip, its packet segment_edits.new_packet's),
-and only while CLIP_PATCH_IN_PLACE is on; every other write of a clip is refused before a byte (a Refused, its sentence
+on since the owner's trial on 20 copies (DECISIONS 2026-11-07, item 4); every other write of a clip is refused before a byte (a Refused, its sentence
 the owner's), and so is one the patch cannot place (images.CLIP_NOT_PATCHED).
 """
 import logging
@@ -79,10 +79,6 @@ WRITE_OPTIONS = ("-m",)
 #: Whether a journaled write of a JPEG patches it in place when its fields fit (in_place.patch_jpeg); False, every write
 #: is ExifTool's rewrite, as before the patch was built.
 PATCH_IN_PLACE = True
-
-#: Whether a journaled keyword or caption save of a clip patches its XMP in place (in_place.patch_clip; DECISIONS
-#: 2026-11-05, M7). Off, every write of a clip is refused (images.CLIP_NOT_EDITED), until the owner's trial on 20 copies.
-CLIP_PATCH_IN_PLACE = False
 
 #: Whether a patch's segments are TagPup's own writer's (segment_edits.new_header) rather than ExifTool's write into a copy
 #: of the header (_exiftool_header). Off until the owner turns it on (docs/PLAN_OWN_METADATA.md, verification bar 6).
@@ -241,7 +237,7 @@ def read_one(et, photo_path, wanted):
     return held
 
 
-def write(et, photo_path, values, saving=None, scratch_written=None, own_writer=None, keywords_elsewhere=None):
+def write(et, photo_path, values, saving=None, scratch_written=None, own_writer=None):
     """Write `values` ({field: value}) into a photo, in one ExifTool command, clearing a
     field whose value is empty, telling ExifTool an objection it calls minor does not stop it (WRITE_OPTIONS: a photo
     with two rdf:about attributes in its XMP takes a write; DECISIONS 2026-10-27). Raises
@@ -273,10 +269,9 @@ def write(et, photo_path, values, saving=None, scratch_written=None, own_writer=
     `own_writer` chooses a patch's writer for this write alone, True the own, False ExifTool's; None, OWN_WRITER. Only
     the shadow comparison of the two (tagpup.services.metadata_check) chooses: it writes each side on a copy.
 
-    A clip (images.is_clip) is never ExifTool's to write: _clip_written patches its XMP or refuses it, given its
-    `keywords_elsewhere` (None: read from the clip)."""
+    A clip (images.is_clip) is never ExifTool's to write: _clip_written patches its XMP or refuses it."""
     if images.is_clip(photo_path):
-        return _clip_written(et, photo_path, values, saving, keywords_elsewhere)
+        return _clip_written(photo_path, values, saving)
     own = [field for field in values if str(field).startswith(bake.NAMESPACE + ":")]
     if own and getattr(et, "config_file", None) != bake.config_path():
         raise ValueError("%s is written only by a session that knows TagPup's namespace (field_values.session); this one "
@@ -328,38 +323,39 @@ def write(et, photo_path, values, saving=None, scratch_written=None, own_writer=
     return ()
 
 
-def clip_refused(values):
-    """images.CLIP_NOT_EDITED when a write of `values` to a clip is refused before the clip is looked at -- writing clips
-    off, or a field outside fields.CLIP_FIELDS -- else None: the one rule, asked by _clip_written and, before anything is
-    written, by an undo's rehearsal (tagpup.services.file_changes._undoable), so the change it refuses stays applied."""
-    if not CLIP_PATCH_IN_PLACE or not set(values) <= fields.CLIP_FIELDS:
+def writes(path):
+    """What a journaled write may change of the file at `path`, by name: a photo's tags, title, Date Taken and turn
+    (fields.PHOTO_WRITES); a clip's tags and title (fields.CLIP_WRITES). The one
+    statement of it: a page's record carries it (tagpup.services.photos.page_record), and the writer (clip_refused) and
+    the journal (tagpup.services.file_changes.leave_out_clips) refuse what it leaves out. Whether a clip's folder is held
+    is not said here: a clip of a folder the library does not hold is refused at its write (file_only), never in a record
+    the folder cache keeps across an Add to the library. Nothing is read of the file."""
+    if not images.is_clip(path):
+        return fields.PHOTO_WRITES
+    return fields.CLIP_WRITES
+
+
+def clip_refused(path, values):
+    """images.CLIP_NOT_EDITED when a write of `values` to the clip at `path` is refused before the clip is looked at --
+    a field outside those writes(path) names (fields.fields_of) -- else None: the
+    one rule, asked by _clip_written and, before anything is written, by an undo's rehearsal
+    (tagpup.services.file_changes._undoable), so the change it refuses stays applied."""
+    named = fields.fields_of(writes(path))
+    if not set(values) <= named:
         return images.CLIP_NOT_EDITED
     return None
 
 
-def takes_off_every_keyword(values):
-    """Does a write of `values` leave a clip's XMP holding no keyword (segment_edits.KEPT_IN_QUICKTIME's case)?"""
-    return "XMP:Subject" in values and not fields.field_values(values["XMP:Subject"])
-
-
-def _clip_written(et, photo_path, values, saving, keywords_elsewhere=None):
+def _clip_written(photo_path, values, saving):
     """write() of a clip: the fields it left as they were (segment_edits.clip_stale_of) once its XMP holds `values`, by a
     patch of its XMP in place (in_place.patch_clip), saved by `saving` before a byte is written. Raises Refused, nothing
-    written, while CLIP_PATCH_IN_PLACE is off, for a write that is not the journal's (no `saving`: nothing could settle a
+    written, for a write that is not the journal's (no `saving`: nothing could settle a
     patch a crash cut short), or one naming a field outside fields.CLIP_FIELDS (images.CLIP_NOT_EDITED); for a clip the
-    patch cannot place (images.CLIP_NOT_PATCHED); a clip open in another program, or the last keyword of one holding its
-    keywords in QuickTime too (in_place's and segment_edits' sentences). Raises Unreadable when it could not be read
-    before a byte was written (NotAnswered: its share did not answer); a write that failed after its record was saved
-    raises as it failed, the file settled by its bytes. ExifTool only reads: the clip's QuickTime keywords, before the
-    patch opens the file alone, when the save takes the last keyword off its XMP and the caller has not said them
-    (`keywords_elsewhere`: an undo's, () when what it undoes held every one of them in XMP too)."""
-    if saving is None or clip_refused(values):
+    patch cannot place (images.CLIP_NOT_PATCHED); a clip open in another program (in_place's sentence). Raises Unreadable
+    when it could not be read before a byte was written (NotAnswered: its share did not answer); a write that failed
+    after its record was saved raises as it failed, the file settled by its bytes. ExifTool is not asked."""
+    if saving is None or clip_refused(photo_path, values):
         raise Refused(images.CLIP_NOT_EDITED)
-    elsewhere = keywords_elsewhere or ()
-    if keywords_elsewhere is None and takes_off_every_keyword(values):
-        # The keywords a clip holds where TagPup does not write them (fields.CLIP_KEYWORDS), read before the last
-        # keyword is taken off its XMP (segment_edits.new_packet's `keywords_elsewhere`).
-        elsewhere = read_one(et, photo_path, [fields.CLIP_KEYWORDS])[fields.CLIP_KEYWORDS]
     saved = []
 
     def saved_first(record, before):
@@ -368,7 +364,7 @@ def _clip_written(et, photo_path, values, saving, keywords_elsewhere=None):
 
     try:
         stale = in_place.patch_clip(
-            photo_path, lambda old: segment_edits.new_packet(old, values, keywords_elsewhere=elsewhere), saved_first)
+            photo_path, lambda old: segment_edits.new_packet(old, values), saved_first)
     except in_place.Away:
         raise NotAnswered("its folder did not answer the patch of its fields in %d s; it is settled by its bytes "
                           "the next time" % in_place.SECONDS) from None

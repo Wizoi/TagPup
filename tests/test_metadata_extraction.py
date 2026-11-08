@@ -67,9 +67,10 @@ class TestCleanMetadataValue(unittest.TestCase):
 
 
 class TestExtractTags(unittest.TestCase):
-    def test_reads_both_namespaced_and_bare_keys(self):
+    def test_reads_a_keyword_by_its_groups_name_never_a_bare_name_another_group_answered(self):
+        # A clip's bare Subject is its QuickTime Subject when it holds no XMP:Subject (#2662).
         self.assertEqual(extract_tags({"XMP:Subject": ["Alpha"]}), ["Alpha"])
-        self.assertEqual(extract_tags({"Subject": ["Beta"]}), ["Beta"])
+        self.assertEqual(extract_tags({"QuickTime:Subject": "a0 a1", "Subject": "a0 a1"}), [])
         self.assertEqual(extract_tags({"IPTC:Keywords": ["Gamma"]}), ["Gamma"])
 
     def test_accepts_a_bare_string_as_well_as_a_list(self):

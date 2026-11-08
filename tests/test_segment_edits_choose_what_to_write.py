@@ -313,8 +313,8 @@ class AKeywordOrCaptionSave(unittest.TestCase):
 class AClipsSave(unittest.TestCase):
     """The packet of a clip's XMP box made new by a keyword or title save; the clip's file is in_place.patch_clip's."""
 
-    def made(self, old, values, keywords_elsewhere=()):
-        found = segment_edits.new_packet(old, values, keywords_elsewhere=keywords_elsewhere)
+    def made(self, old, values):
+        found = segment_edits.new_packet(old, values)
         self.assertIsInstance(found, tuple, found)
         return found
 
@@ -348,22 +348,13 @@ class AClipsSave(unittest.TestCase):
         new, stale = self.made(self.made(None, keywords(["Pier"]))[0], keywords([]))
         self.assertEqual((("IPTC:Keywords", "EXIF:XPKeywords"), {}), (stale, xmp_packet.read(new)))
 
-    def test_the_last_keyword_taken_off_a_clip_whose_keywords_are_in_quicktime_is_refused_with_a_sentence(self):
-        for old in (None, shapes.PREMIERE):
-            with self.subTest(packet=old is not None):
-                refused = segment_edits.new_packet(old, keywords([]), keywords_elsewhere=["Pier"])
-                self.assertIsInstance(refused, containers.Refusal)
-                self.assertIn("QuickTime", refused.reason)
-                self.made(old, keywords(["Pier"]), keywords_elsewhere=["Pier", "Dunes"])
-                self.made(old, title("The pier at noon"), keywords_elsewhere=["Pier"])
-
     def test_a_packet_the_editor_refuses_is_no_patch_and_a_field_not_a_clips_is_refused(self):
         with self.assertLogs("tagpup.files.segment_edits", "INFO") as said:
-            self.assertIsNone(segment_edits.new_packet(b"<x:xmpmeta>", keywords(["Pier"]), keywords_elsewhere=()))
+            self.assertIsNone(segment_edits.new_packet(b"<x:xmpmeta>", keywords(["Pier"])))
         self.assertIn("not well-formed", said.output[0])
         for field in (fields.ORIENTATION, *fields.date_taken_fields("2019-06-15T10:30:00"), *caption("")):
             with self.subTest(field), self.assertRaises(ValueError):
-                segment_edits.new_packet(None, {**keywords(["Pier"]), field: ["1"]}, keywords_elsewhere=())
+                segment_edits.new_packet(None, {**keywords(["Pier"]), field: ["1"]})
         self.assertEqual(set(keywords([])) | set(title("")), set(fields.CLIP_FIELDS))
 
 

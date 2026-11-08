@@ -74,16 +74,18 @@ def _title_written(now, wanted):
     return wanted
 
 
-def _caption_moved(now):
+def _caption_moved(path, now):
     """The caption fields a save clears, {field: ""}: on a photo holding no title of its own, whose page shows its
     Description as the title, every caption field holding that very text, whatever title is saved -- the same text
     (the promotion), another, or none. The text shown as the title moves out of the caption in one rule: a save of the
     same moves it into the title and leaves no copy behind, a changed title replaces it, a cleared one clears it, and
     no save leaves it to come back as the title (DECISIONS 2026-11-06, THE TITLE AND THE CAPTION ARE TWO VALUES;
     #2583). A photo with a title of its own keeps its Description, and a caption field holding other text is never
-    written. `now` holds BASE_READ and the caption fields."""
+    written. A clip's caption is not written (fields.CLIP_WRITES): it answers none, so a clip's save reads what it was
+    admitted with (file_changes.leave_out_clips) and is never refused at its write for a field it did not ask (#2663).
+    `now` holds BASE_READ and the caption fields."""
     shown = _held_title(now)
-    if not shown or vocabulary.holds_title(now):
+    if not shown or vocabulary.holds_title(now) or images.is_clip(path):
         return {}
     return {field: "" for field in fields.caption_fields("") if _holds_text(now, field, shown)}
 
@@ -254,9 +256,10 @@ def save_photo(library, photo_path, title, tags, date_taken, exiftool_path, rena
     photo_path = paths.stored(photo_path)
     # A clip this save may not write is refused with its own sentence before anything is compared (#2584); one it may
     # write is compared by its title as the page shows it, its QuickTime Title among the fields read (BASE_READ).
-    # The read is the write's (write_fields asks again with all of it); a file of a folder the library does not hold
-    # names none, as file_only.write_fields asks.
-    clip_read = None if files_only else list(fields.keyword_fields([], [])) + list(wanted)
+    # The read is the write's (write_fields asks again with all of it, _caption_moved clearing no caption of a clip): the
+    # fields it writes and the ones its tags come from. A file of a folder the library does not hold names none, as
+    # file_only asks.
+    clip_read = None if files_only else _save_read(fields.keyword_fields([], []), wanted)
     if not file_changes.leave_out_clips(Result(), [photo_path], read=clip_read):
         result.refuse(images.CLIP_NOT_EDITED)
         return result
@@ -285,15 +288,15 @@ def save_photo(library, photo_path, title, tags, date_taken, exiftool_path, rena
         flat, hierarchical = fields.expand_tag_fields(tags)
         after = dict(fields.keyword_fields(flat, hierarchical))
         after.update(_title_written(now, wanted))
-        after.update(_caption_moved(now))
+        after.update(_caption_moved(photo_path, now))
         plan = lambda _path, _held: file_changes.Plan(after=after)   # noqa: E731
         if files_only:
             written = file_only.write_fields(exiftool_path, [photo_path], list(after), plan, et=et,
                                              held={paths.key(photo_path): now})
         else:
             # Read back whole and recorded so, stamped, as the file is marked done: the save's row, once.
-            written = file_changes.write_fields(library, "save photo", exiftool_path, [photo_path], list(after),
-                                                plan, summary={"photos": 1}, et=et,
+            written = file_changes.write_fields(library, "save photo", exiftool_path, [photo_path],
+                                                _save_read(after), plan, summary={"photos": 1}, et=et,
                                                 held={paths.key(photo_path): now}, whole=True)
         if not written.ok:
             result.errors.extend(written.errors)
@@ -587,6 +590,12 @@ KEYWORD_READ = tuple(dict.fromkeys(fields.TAG_SOURCE_FIELDS + tuple(fields.keywo
 #: it writes: the fields its tags come from and every keyword field (KEYWORD_READ), and
 #: the name Smart Rename kept, by which a new caption renames it.
 SAVE_READ = KEYWORD_READ + (names.PRESERVED_NAME,)
+
+
+def _save_read(*written):
+    """What a save of a held photo says it reads (file_changes.write_fields' `read`): the fields of each of `written` and
+    every field its tags come from (fields.TAG_SOURCE_FIELDS)."""
+    return list(dict.fromkeys([field for each in written for field in each] + list(fields.TAG_SOURCE_FIELDS)))
 
 
 def _keywords_plan(tags):
