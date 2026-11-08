@@ -28,7 +28,9 @@ per file. dpkg's per-item states, and its recovery at start, are the model here:
    has still to write alone, as its error (unsettled), or the settle would find it changed and the cut-off edit be lost
    on it as a conflict. The server settles on a thread of its own, so the first open returns at once
    (settle_once's `on_a_thread`; DECISIONS 2026-11-07): the changes are taken and their photos refused before it
-   returns, and the thread waits its turn as a batch does. A file a patch was writing in place is settled by its bytes first, against the
+   returns, and the thread settles each as a batch, whatever its count (listed, cancelled, stopped by a hand-over); one
+   it cannot finish (cancelled, a line that is full, an error) is put off for the next start, its photos still refused
+   (_put_aside). A file a patch was writing in place is settled by its bytes first, against the
    record the patch saved before its first byte (_by_bytes): a patch this process cut short is put back and written
    again, one another program wrote over is a conflict, one that cannot be read stays `writing` with its record. Files the crash left `planned` are written too, so
    the edit the person asked for is finished. A change another live process is writing
@@ -1442,11 +1444,17 @@ def _settle_taken(library, change, exiftool_path):
     """Finish `change`, taken (_take). True when it is finished; else it is logged and released for the next settle,
     never marked done."""
     try:
-        if not _finish(library, change, exiftool_path):
-            file_journal.release(library.path, change.id)
-            return False
+        return _finished(library, change, exiftool_path)
     except Exception:
         logger.exception("%s: change %d, left half done, could not be finished now", library.path, change.id)
+        file_journal.release(library.path, change.id)
+        return False
+
+
+def _finished(library, change, exiftool_path):
+    """_finish `change`, taken: True when it is finished, said in a line; False when it is left, released for the next
+    settle. An error is the caller's (_settle_taken; the settle thread's _settle_in_turn puts the change off)."""
+    if not _finish(library, change, exiftool_path):
         file_journal.release(library.path, change.id)
         return False
     logger.info("%s: change %d (%s), left half done, is finished", library.path, change.id, change.operation)
@@ -1483,7 +1491,7 @@ class _NoTurn(Exception):
 @contextlib.contextmanager
 def _settle_turn(library, change, count):
     """The stop a settle of `count` files of `change` honours between its chunks (_finish): the batch this thread carries
-    out already (a write's settle), or, for more than batches.CHUNK files, a batch of its own, listed and cancelled as
+    out already (a write's settle, or the settle thread's own: _settle_in_turn), or, for more than batches.CHUNK files, a batch of its own, listed and cancelled as
     any (batches.listing, batches.cancel; a hand-over's batches.stop_all). Never waited for: the lock is held, and the
     batch ahead needs it (_NoTurn). None, no batch, for a short settle."""
     if batches.current() is not None:
@@ -1655,36 +1663,45 @@ def _settle_on_a_thread(library, exiftool_path):
 
 
 def _settle_in_turn(library, taken, exiftool_path):
-    """The settle thread's work: each change `taken` settled (_settle_taken), one of more than batches.CHUNK files as a
-    batch that takes its turn BEFORE the lock (batch_exclusively's order): listed with its change from the moment it waits
-    (batches.listing), cancelled as any. A batch of another library's settle, or the owner's own, runs ahead of it.
+    """The settle thread's work: each change `taken` settled (_finished) as a batch, whatever its count, that takes its
+    turn BEFORE the lock (batch_exclusively's order): listed with its change from the moment it waits (batches.listing),
+    cancelled as any, asked to stop and waited for by an update's drain (batches.stop_all, batches.sentences). A batch of
+    another library's settle, or the owner's own, runs ahead of it.
 
-    Cancelled (or a hand-over) while it waits: put off for the next start (_put_off), its photos still refused, as a settle
-    stopped at a chunk is. Any other failure is logged and the change released for the next settle, never marked done;
-    its photos are writable again, and the next write's settle takes it up first."""
+    Cancelled (or a hand-over) while it waits, refused a place in line (Conflict: MOST_WAITING wait already), or failed
+    (ExifTool, the disk, the journal; logged): put off for the next start (_put_aside), its photos still refused, as a
+    settle stopped at a chunk is. This process's next write does not take it up."""
     for change in taken:
         mine = (library.key, change.id)
         try:
-            with contextlib.ExitStack() as turn:
-                count = len(_pending(library, change)[1])
-                if count > batches.CHUNK:
-                    turn.enter_context(batches.claim(library, change.operation, count, change_id=change.id))
+            with batches.claim(library, change.operation, sum(map(len, _pending(library, change))), change_id=change.id):
                 with exclusively():
-                    _settle_taken(library, change, exiftool_path)
+                    _finished(library, change, exiftool_path)
         except Refused:
-            with exclusively():
-                _put_off.add(mine)
-            file_journal.release(library.path, change.id)
+            _put_aside(library, change)
             logger.info("%s: change %d: its settle was stopped as asked before it began; it is settled the next time "
                         "the library is opened", library.path, change.id)
         except Exception:
-            logger.exception("%s: change %d, left half done, could not be settled now", library.path, change.id)
-            file_journal.release(library.path, change.id)
+            logger.exception("%s: change %d, left half done, could not be settled now; it is settled the next time the "
+                             "library is opened", library.path, change.id)
+            _put_aside(library, change)
         finally:
             with exclusively():
                 if mine not in _put_off:
                     for key in [key for key, whose in _unsettled.items() if whose == mine]:
                         del _unsettled[key]
+
+
+def _put_aside(library, change):
+    """`change`, which the settle thread could not finish, put off for the next start (_put_off) and released for the
+    next process: the files it has still to write refused to every write of this process until then (_unsettled; an
+    error part-way had _settle_files free them), so none is written ahead of it."""
+    mine = (library.key, change.id)
+    with exclusively():
+        _put_off.add(mine)
+        for row in _pending(library, change)[1]:
+            _unsettled[paths.key(row.path)] = mine
+    file_journal.release(library.path, change.id)
 
 
 # ---- Undo --------------------------------------------------------------------------------

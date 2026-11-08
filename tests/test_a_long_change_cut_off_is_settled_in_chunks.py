@@ -33,7 +33,8 @@ from tagpup.core.library import Library  # noqa: E402
 from tagpup.core import processes  # noqa: E402
 from tagpup.files import names  # noqa: E402
 from tagpup.services import batches, file_changes, tagging  # noqa: E402
-from tagpup.store import schema  # noqa: E402
+from tagpup.store import file_journal, schema  # noqa: E402
+from tagpup.web import lifecycle  # noqa: E402
 
 GONE = "%s:4000000:1" % socket.gethostname()      # a process of this machine that has ended
 PHOTOS = 12
@@ -420,15 +421,90 @@ class OnAThreadInTheServer(CutOff):
         order = [name for index, name in enumerate(self.writers) if index == 0 or self.writers[index - 1] != name]
         self.assertEqual(2, len(order), self.writers)
 
-    def test_an_error_on_the_thread_is_logged_and_leaves_the_change_unsettled_for_the_next_settle(self):
-        with mock.patch.object(file_changes, "_settle_files", side_effect=RuntimeError("the disk said no")), \
-                self.assertLogs(file_changes.logger, "ERROR") as said:
+    def on_the_thread(self):
+        """open_in_the_server, its settle thread seen to start and waited for: the thread."""
+        ran = []
+        settle_in_turn = file_changes._settle_in_turn
+
+        def seen(*args):
+            ran.append(threading.current_thread())
+            settle_in_turn(*args)
+        with mock.patch.object(file_changes, "_settle_in_turn", side_effect=seen):
             self.open_in_the_server()
             self.join_settles()
-        self.assertTrue(any("could not be finished now" in line for line in said.output), said.output)
+        self.assertEqual(1, len(ran), "no settle ran on a thread of its own")
+        self.assertTrue(ran[0].name.startswith("SettleThread"), ran[0].name)
+        self.assertFalse(ran[0].is_alive())
+        return ran[0]
+
+    def assert_put_off_with_its_photos_refused(self, states):
         self.assertEqual([("planned", None)], self.rows("SELECT status, owner FROM changes WHERE id = ?", (self.change,)))
-        self.assertEqual(["done"] * 2 + ["writing"] + ["planned"] * 9, self.states(self.change))
-        self.assertEqual({}, file_changes._unsettled)
+        self.assertEqual(states, self.states(self.change))
+        # Its photos are refused until the next start, and this process's next write does not take it up.
+        refused = self.save(self.photos[11])
+        self.assertFalse(refused.ok)
+        self.assertIn(file_changes.UNSETTLED, str(refused.errors))
+        self.assertEqual(["Beach"], keywords_of(self.photos[11]))
+        self.assertEqual(0, file_changes.settle(self.library, EXIFTOOL))
+        # The next start finishes it.
+        self.stamps.update({path: os.stat(path).st_mtime_ns for path, state in zip(self.photos, states) if state == "done"})
+        self.next_start()
+        self.writers.clear()
+        self.open_in_the_server()
+        self.join_settles()
+        self.assert_settled()
+
+    def test_an_error_on_the_thread_part_way_puts_the_change_off_with_its_photos_still_refused(self):
+        # ExifTool fails reading the first chunk back: two files settled, the rest never reached.
+        with mock.patch.object(file_changes, "_read_back", side_effect=RuntimeError("the disk said no")), \
+                self.assertLogs(file_changes.logger, "ERROR") as said:
+            self.on_the_thread()
+        self.assertTrue(any("could not be settled now" in line for line in said.output), said.output)
+        self.assert_put_off_with_its_photos_refused(["done"] * 4 + ["planned"] * 8)
+
+    def test_a_line_that_is_full_puts_the_change_off_with_its_photos_still_refused(self):
+        with mock.patch.object(batches, "MOST_WAITING", -1), self.assertLogs(file_changes.logger, "ERROR") as said:
+            self.on_the_thread()
+        self.assertTrue(any("could not be settled now" in line for line in said.output), said.output)
+        self.assertEqual([], self.writers)
+        self.assert_put_off_with_its_photos_refused(["done"] * 2 + ["writing"] + ["planned"] * 9)
+
+    def test_a_short_change_is_a_batch_that_an_update_waits_for_and_can_stop(self):
+        seen = []
+
+        def step(name):
+            if name == "file written" and threading.current_thread() in settle_threads() and not seen:
+                seen.append(([work.kind for work in lifecycle.under_way({})],
+                             [(row["here"], row["id"], row["photos"]) for row in batches.listing(self.library)]))
+        self.step = step
+        # Ten files to settle, one chunk: not more than batches.CHUNK.
+        with mock.patch.object(batches, "CHUNK", 10):
+            self.on_the_thread()
+        self.assertEqual([([lifecycle.BATCH], [(True, self.change, 10)])], seen)
+        self.assert_settled()
+
+    def test_two_changes_taken_at_once_are_both_this_process_s_on_activity(self):
+        # A second long change of other photos cut off the same way, the first still running (its owner alive) meanwhile.
+        more = [self.make("more %02d.jpg" % n) for n in range(6)]
+        self.execute("UPDATE changes SET owner = ? WHERE id = ?", (file_journal.owner(), self.change))
+        with mock.patch.object(file_changes, "_reached", side_effect=crash_at("file written", 2)):
+            with self.assertRaises(Crash):
+                self.add(more)
+        second = self.last_change()
+        self.assertNotEqual(self.change, second)
+        self.execute("UPDATE changes SET owner = ? WHERE id IN (?, ?)", (GONE, self.change, second))
+        listed = []
+
+        def step(name):
+            if name == "file recorded" and threading.current_thread() in settle_threads() and not listed:
+                listed.extend((row["id"], row["here"]) for row in batches.listing(self.library))
+        self.step = step
+        self.open_in_the_server()
+        self.join_settles()
+        # The one settling is listed, cancellable here; the one after it is not another process's batch.
+        self.assertEqual([(self.change, True)], listed)
+        self.assert_settled()
+        self.assertEqual("applied", self.status(second))
 
     def test_killed_part_way_on_the_thread_the_next_start_finishes_it_writing_no_file_twice(self):
         def step(name):
