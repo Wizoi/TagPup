@@ -12,7 +12,9 @@ $Recycle.Bin held no entry for it, where the same file by its local path held on
 says it beforehand, for the page to tell the owner before it deletes, and the reply after. Nor does a Bin keep a file
 larger than its capacity (its per-volume MaxCapacity), or any file when it is set to NukeOnDelete: asked without a
 question (FOF_NOCONFIRMATION), Windows deletes such a file for good and reports success. So a file on a drive with a Bin
-is first judged against that Bin (`its_bin_refuses`), and one it would not keep is refused, untouched.
+is first weighed against what that Bin keeps (`keeps_up_to`): one it would not keep is deleted for good only when the
+owner was told so and confirmed it (`delete_file`'s `for_good`; DECISIONS 2026-11-08), else refused untouched (NotKept),
+and the reply says it was deleted for good, never that it went to the Bin.
 
 **Nothing is deleted for good** (#694, the owner's decision, 2026-10-04). A photo or clip in a place with no Recycle Bin goes
 THROUGH THIS PC (`delete_file`, the one way every delete of one takes: Organize's and the bulk Delete's): it is copied under
@@ -417,33 +419,27 @@ def _mb(byte_count):
     return "{:,} MB".format(-(-int(byte_count) // (1 << 20)))
 
 
-def _will_not_keep(mount, capacity, nuke, largest, kept):
-    """The sentence when the Bin of `mount` (its `capacity` in bytes, set to `nuke` or not) would not keep a file of `largest`
-    bytes -- `kept` names it ("a copy", "it") -- but delete it for good; else None. The one rule of what a Bin keeps, asked of
-    this PC's Bin for the copies (room_for_copies) and of a file's own drive's Bin (its_bin_refuses)."""
-    if nuke:
-        return ("This PC's Recycle Bin on %s deletes files at once (it is set not to keep them), so %s would not be kept. "
-                "Nothing was deleted." % (mount, kept))
-    if largest > capacity:
-        return ("A file of %s is larger than this PC's Recycle Bin on %s (%s), which could not keep it. Nothing was deleted."
-                % (_mb(largest), mount, _mb(capacity)))
-    return None
-
-
-def its_bin_refuses(file_path):
-    """The sentence when the Recycle Bin of the drive `file_path` is on (where its links lead) would not keep it -- a file larger
-    than that Bin, or a Bin set to delete at once (_will_not_keep) -- or when it cannot be told; else None. Asked before a file
-    is sent straight to its own Bin (delete_file): Windows, asked without a question, deletes such a file for good and says it
-    recycled it. A photo never met it (46 MB at most); a clip of up to MOST_CLIP_BYTES on a local drive can."""
-    source = paths.stored(file_path)
+def keeps_up_to(path):
+    """The largest file, in bytes, the Recycle Bin of the volume `path` is on (where its links lead) keeps: its capacity
+    (_bin_settings), 0 when it is set to delete at once. Raises OSError when Windows cannot say."""
     try:
-        size = os.path.getsize(source)
-        mount = _mount_point(_real(source))
-        capacity, nuke = _bin_settings(mount)
-    except (OSError, AttributeError, ValueError) as e:
-        return ("Could not tell whether the Recycle Bin of its drive can keep it (%s). Nothing was deleted."
-                % (getattr(e, "strerror", None) or e))
-    return _will_not_keep(mount, capacity, nuke, size, "it")
+        capacity, nuke = _bin_settings(_mount_point(_real(paths.stored(path))))
+    except (AttributeError, ValueError) as e:
+        raise OSError(str(e)) from None
+    return 0 if nuke else capacity
+
+
+class NotKept(OSError):
+    """A file the Recycle Bin of its drive would not keep (keeps_up_to), asked to be deleted without `for_good`: nothing
+    was touched. The page names it and asks; confirmed, it is deleted for good."""
+
+
+def not_kept(file_path, kept):
+    """The sentence of NotKept for `file_path`, whose drive's Bin keeps files of up to `kept` bytes."""
+    name = os.path.basename(paths.stored(file_path))
+    why = ("the Recycle Bin of its drive is set to delete files at once" if kept <= 0
+           else "it is larger than the Recycle Bin of its drive keeps (%s)" % _mb(kept))
+    return "%s would be deleted for good, not moved to the Recycle Bin: %s. Nothing was deleted." % (name, why)
 
 
 def room_for_copies(byte_count, largest, root=None, fresh=False):
@@ -457,9 +453,12 @@ def room_for_copies(byte_count, largest, root=None, fresh=False):
         used = _bin_used(mount, fresh)
     except (OSError, AttributeError, ValueError) as e:
         return "Could not tell how much this PC's Recycle Bin can keep (%s). Nothing was deleted." % (getattr(e, "strerror", None) or e)
-    will_not = _will_not_keep(mount, capacity, nuke, largest, "a copy")
-    if will_not:
-        return will_not
+    if nuke:
+        return ("This PC's Recycle Bin on %s deletes files at once (it is set not to keep them), so a copy would not be kept. "
+                "Nothing was deleted." % mount)
+    if largest > capacity:
+        return ("A file of %s is larger than this PC's Recycle Bin on %s (%s), which could not keep it. Nothing was deleted."
+                % (_mb(largest), mount, _mb(capacity)))
     if used + byte_count > capacity * (1 - BIN_MARGIN):
         return ("This PC's Recycle Bin on %s cannot keep the copies: it holds %s of %s, and the copies are %s. Windows would make room "
                 "by deleting its oldest items for good. Empty the Recycle Bin, or delete fewer photos. Nothing was deleted."
@@ -588,23 +587,32 @@ def recycle_through_this_pc(file_path, root=None):
     return target
 
 
-def delete_file(file_path):
+def delete_file(file_path, for_good=False):
     """Delete a photo or clip FILE the one way every delete of one takes (#694): to its own Recycle Bin, or -- where its place has none
     -- through this PC (recycle_through_this_pc). {"through_this_pc": bool, "reason": why its place has no Bin or None, "copy":
-    where the copy was put, or None}. Raises ValueError (problem) or OSError with a sentence; the original is then still there.
-    A file its own Bin would not keep (its_bin_refuses) is refused before anything is touched."""
+    where the copy was put, or None, "for_good": bool}. Raises ValueError (problem) or OSError with a sentence; the original is
+    then still there. A file its own drive's Bin would not keep (keeps_up_to) is deleted for good only with `for_good` (the owner
+    was told and confirmed); without it, NotKept, nothing touched."""
     reason = no_bin_reason(file_path)
     if reason:
-        return {"through_this_pc": True, "reason": reason, "copy": recycle_through_this_pc(file_path)}
+        return {"through_this_pc": True, "reason": reason, "copy": recycle_through_this_pc(file_path), "for_good": False}
     why = problem(file_path)
     if why:
         raise ValueError(why)
-    refused = its_bin_refuses(file_path)
-    if refused:
-        raise OSError(refused)
+    source = paths.stored(file_path)
+    try:
+        size, kept = os.path.getsize(source), keeps_up_to(source)
+    except OSError as e:
+        raise OSError("Could not tell whether the Recycle Bin of its drive can keep it (%s). Nothing was deleted."
+                      % (e.strerror or e)) from None
+    if size > kept:
+        if not for_good:
+            raise NotKept(not_kept(source, kept))
+        os.remove(source)
+        return {"through_this_pc": False, "reason": None, "copy": None, "for_good": True}
     if not send_to_recycle_bin(file_path):
         raise OSError("Failed to move file to Recycle Bin")
-    return {"through_this_pc": False, "reason": None, "copy": None}
+    return {"through_this_pc": False, "reason": None, "copy": None, "for_good": False}
 
 
 def goes_to_bin(file_path):

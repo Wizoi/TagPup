@@ -927,9 +927,11 @@ def photo_delete():
     if not _a_file(photo_path):
         return responses.error(400, "Invalid file path")
     try:
-        result = photo_actions.delete(library, photo_path)
+        result = photo_actions.delete(library, photo_path, body.get("for_good") is True)
         if result.refused:
-            return responses.refused(result)
+            # A file its drive's Recycle Bin would not keep: named, for the page to ask, then send `for_good`.
+            not_kept = result.details.get("not_kept")
+            return responses.refused(result, for_good=not_kept) if not_kept else responses.refused(result)
         if not result.ok:
             return responses.error(500, result.message())
         for held, _record in folders.of(library).entries_for(photo_path):
@@ -942,14 +944,17 @@ def photo_delete():
     name = picker_name(os.path.basename(library.path))
     reason = result.details.get("no_bin_reason")
     copy = result.details.get("copy")
+    for_good = bool(result.details.get("for_good"))
     where = ("It was %s, which has no Recycle Bin: a copy went to this PC's Recycle Bin and the original was deleted. Restored, the "
              "copy goes to %s, not back to where it was." % (reason, os.path.dirname(copy or "") or "the Downloads folder")
-             if through else "Moved to the Recycle Bin.")
-    reply = {"success": True, "through_this_pc": through, "no_bin_reason": reason, "restores_to": copy, **_where(result)}
+             if through else "Deleted for good, as you confirmed: the Recycle Bin of its drive would not keep it."
+             if for_good else "Moved to the Recycle Bin.")
+    reply = {"success": True, "through_this_pc": through, "no_bin_reason": reason, "restores_to": copy, "for_good": for_good,
+             **_where(result)}
     if result.details.get(file_only.FILE_ONLY):
         # A photo of a folder the library does not hold: the file only.
         reply["message"] = "%s Nothing in %s changed: it does not hold this folder." % (where, name)
-    elif through:
+    elif through or for_good:
         reply["message"] = where
     return jsonify(reply)
 

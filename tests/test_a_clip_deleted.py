@@ -2,9 +2,10 @@
 goes to the Recycle Bin -- from a share, through this PC: copied under the Downloads mirror, the copy checked and recycled,
 then the original deleted -- and leaves the library with everything it had: its row, its vector and frames, its poster. A
 larger clip is refused with its size, its bytes counted in no copy, and the photos beside it are deleted as always.
-On a local drive a file goes to its own drive's Recycle Bin, and one larger than that Bin, or on a drive whose Bin keeps
-nothing, is refused before anything is touched: Windows, asked without a question, would delete it for good and say it
-had recycled it.
+On a local drive a file goes to its own drive's Recycle Bin. One larger than that Bin keeps, or on a drive whose Bin keeps
+nothing, would be deleted for good (Windows, asked without a question, deletes it and says it recycled it): the question
+names it, and it is deleted for good only when the owner confirmed that; a start that did not is refused, nothing touched
+(DECISIONS 2026-11-08).
 
 What the owner lives through: a day in the library view holds photos and clips together, on a share (no Recycle Bin of its
 own); a Delete of the day asks first how much will be copied through this PC (the delete-check), then deletes them. A clip's
@@ -234,40 +235,68 @@ class AClipOnAShare(APhotoAndAClip):
 
 
 class AFileOnALocalDrive(APhotoAndAClip):
-    """The folder is on a local drive with a Recycle Bin of its own: each file goes straight to that Bin."""
+    """The folder is on a local drive with a Recycle Bin of its own: each file goes straight to that Bin, or, where that Bin
+    would not keep it, for good once the owner confirmed it."""
 
     def reason(self, path):
         return None
 
-    def assert_refused(self, said, path, photo_id, why):
-        self.assertIn(why, said)
-        self.assertIn("Nothing was deleted", said)
+    def assert_kept(self, path, photo_id):
         self.assertTrue(os.path.exists(path), "%s is where it was" % os.path.basename(path))
         self.assertEqual([(photo_id,)], self.vl.rows("SELECT id FROM photos WHERE id = ?", photo_id), "its row stays")
 
-    def test_a_file_larger_than_its_drives_recycle_bin_is_refused_before_anything_is_touched(self):
+    def test_a_clip_larger_than_its_drives_bin_is_deleted_from_its_panel_only_once_confirmed_and_said_to_be_for_good(self):
         with mock.patch.dict(os.environ, {"TAGPUP_RECYCLE_BIN": "0,0,0"}):     # a Bin of 0 MB: every file is larger
-            for path, photo_id in ((self.clip_path, self.clip), (self.photo_path, self.photo)):
-                reply = self.post("photo/delete", {"path": path})
-                self.assertNotEqual(200, reply.status_code, reply.get_json())
-                self.assert_refused(reply.get_json()["error"], path, photo_id, "larger than this PC's Recycle Bin")
-            _asked, done = self.delete_all(self.photo, self.clip)
+            reply = self.post("photo/delete", {"path": self.clip_path})
+            self.assertNotEqual(200, reply.status_code, reply.get_json())
+            self.assertEqual(["jetty.mov"], reply.get_json()["for_good"], "the reply names it, for the page to ask")
+            self.assertIn("would be deleted for good", reply.get_json()["error"])
+            self.assert_kept(self.clip_path, self.clip)
+            reply = self.post("photo/delete", {"path": self.clip_path, "for_good": True})
+        self.assertEqual(200, reply.status_code, reply.get_json())
+        self.assertTrue(reply.get_json()["for_good"])
+        self.assertIn("Deleted for good", reply.get_json()["message"])
+        self.assertNotIn("Moved to the Recycle Bin", reply.get_json()["message"])
+        self.assert_gone(self.clip_path, self.clip)
+        self.assertEqual([], self.binned(), "nothing was sent to a Bin that would not keep it")
+
+    def test_a_bulk_delete_names_the_files_it_would_delete_for_good_and_deletes_them_only_when_confirmed(self):
+        ids = [self.photo, self.clip]
+        with mock.patch.dict(os.environ, {"TAGPUP_RECYCLE_BIN": "0,0,0"}):
+            asked = self.asked(*ids)
+            self.assertEqual({"count": 2, "names": ["jetty.mov", "pier.jpg"]}, asked["for_good"])
+            unconfirmed = self.post("library/bulk-edit", {"op": "delete", "selection": {"ids": ids},
+                                                          "params": {"token": asked["token"]}})
+            self.assertEqual(409, unconfirmed.status_code, "a start that did not confirm is not what was asked")
+            self.assert_kept(self.clip_path, self.clip)
+            self.assert_kept(self.photo_path, self.photo)
+            reply = self.post("library/bulk-edit", {"op": "delete", "selection": {"ids": ids},
+                                                    "params": {"token": asked["token"], "for_good": True}})
+        done = reply.get_json()
+        self.assertEqual((2, 0, 2), (done["changed"], done["error_count"], done["for_good"]), done["errors"])
+        self.assert_gone(self.clip_path, self.clip)
+        self.assert_gone(self.photo_path, self.photo)
+        self.assertEqual([], self.binned())
+
+    def test_a_stale_question_that_warned_of_nothing_deletes_nothing_for_good(self):
+        asked = self.asked(self.photo, self.clip)                          # the Bin keeps them when the question is asked
+        self.assertEqual(0, asked["for_good"]["count"])
+        with mock.patch.dict(os.environ, {"TAGPUP_RECYCLE_BIN": "0,0,1"}):  # and is set to delete at once by the start
+            reply = self.post("library/bulk-edit", {"op": "delete", "selection": {"ids": [self.photo, self.clip]},
+                                                    "params": {"token": asked["token"]}})
+        done = reply.get_json()
         self.assertEqual((0, 2), (done["changed"], done["error_count"]), done["errors"])
         for error in done["errors"]:
-            self.assertIn("larger than this PC's Recycle Bin", error["why"])
-        self.assertEqual([], self.binned(), "nothing was sent to the Bin")
-        self.assertEqual(self.clip_bytes, digest(self.clip_path))
-
-    def test_a_file_on_a_drive_whose_recycle_bin_keeps_nothing_is_refused(self):
-        with mock.patch.dict(os.environ, {"TAGPUP_RECYCLE_BIN": "1000,0,1"}):  # set to delete files at once
-            reply = self.post("photo/delete", {"path": self.clip_path})
-        self.assertNotEqual(200, reply.status_code, reply.get_json())
-        self.assert_refused(reply.get_json()["error"], self.clip_path, self.clip, "deletes files at once")
-        self.assertEqual([], self.binned(), "nothing was sent to the Bin")
+            self.assertIn("set to delete files at once", error["why"])
+        self.assert_kept(self.clip_path, self.clip)
+        self.assert_kept(self.photo_path, self.photo)
+        self.assertEqual([], self.binned())
 
     def test_a_file_its_drives_bin_can_keep_goes_straight_there(self):
+        self.assertEqual({"count": 0, "names": []}, self.asked(self.clip)["for_good"])
         reply = self.post("photo/delete", {"path": self.clip_path})
         self.assertEqual(200, reply.status_code, reply.get_json())
+        self.assertFalse(reply.get_json()["for_good"])
         self.assert_gone(self.clip_path, self.clip)
         self.assertEqual(["jetty.mov"], self.binned(), "the clip itself, not a copy, went to the Bin")
 

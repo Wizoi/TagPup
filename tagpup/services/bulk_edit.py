@@ -65,12 +65,14 @@ OPERATIONS = {TAGS: "bulk tags", PEOPLE: "bulk people", DELETE: "bulk delete"}
 @dataclass
 class Edit:
     """What is done to each photo. `add` and `remove` are tags as they are written (a person's already filed as a tag),
-    `persons` the tags of `add` that are people; a delete's `token` (of the photos its question named)."""
+    `persons` the tags of `add` that are people; a delete's `token` (of the photos its question named) and `for_good` (its
+    question warned that some would be deleted for good, and the owner confirmed it: selection.token_of)."""
     op: str
     add: list = field(default_factory=list)
     remove: list = field(default_factory=list)
     persons: list = field(default_factory=list)
     token: str = ""
+    for_good: bool = False
 
 
 # ---- Reading one -----------------------------------------------------------------------------
@@ -106,7 +108,7 @@ def prepare(library, op, params):
         token = params.get("token")
         if not isinstance(token, str) or not token:
             raise Refused("A delete names the photos its question was about (token, from delete-check): ask again.")
-        return Edit(DELETE, token=token)
+        return Edit(DELETE, token=token, for_good=params.get("for_good") is True)
     add, remove = _list_of(params, "add"), _list_of(params, "remove")
     if op == TAGS:
         # The rules read the tag as typed ("A//B" has an empty level); what is written is its one spelling.
@@ -177,6 +179,8 @@ class Outcome:
     errors: list = field(default_factory=list)
     #: Why the whole write was refused (a share holding a recorded-damaged photo did not answer, the roots changed), or None.
     refused: str = None
+    #: Of `changed`, the files deleted for good, confirmed (a delete's Edit.for_good): the page says so, never "Recycle Bin".
+    for_good: int = 0
     #: The write's own sentence when it stopped before its end -- asked to (Cancel, an update) or ExifTool stopped answering
     #: (file_changes: details "stopped" or "cancelled") -- else None; the page says it in place of an error a photo.
     stopped: str = None
@@ -184,7 +188,7 @@ class Outcome:
     def reply(self):
         """The numbers and the first MOST_ERRORS errors, for the page."""
         return {"changed": self.changed, "unchanged": self.unchanged, "skipped_missing": self.skipped_missing,
-                "error_count": len(self.errors), "stopped": self.stopped,
+                "error_count": len(self.errors), "stopped": self.stopped, "for_good": self.for_good,
                 "errors": [{"id": photo_id, "name": str(name)[:MOST_TEXT], "why": str(why)[:MOST_TEXT]}
                            for photo_id, name, why in self.errors[:MOST_ERRORS]]}
 
@@ -248,7 +252,7 @@ def refuse_if_changed(edit, photo_ids, token_of):
     """A delete is started only on exactly the photos its question named: Conflict (CHANGED), nothing begun, when `photo_ids`
     (the selection resolved at the start) is not the set whose token the question carried. `token_of` is
     tagpup.services.selection.token_of, the one hash of both."""
-    if edit.op == DELETE and token_of(photo_ids) != edit.token:
+    if edit.op == DELETE and token_of(photo_ids, edit.for_good) != edit.token:
         raise Conflict(CHANGED)
 
 
@@ -291,9 +295,10 @@ def _delete(library, edit, present, out):
             if photo_id in refused:
                 out.errors.append((photo_id, name, refused[photo_id][:MOST_TEXT]))
                 continue
-            result = photo_actions.delete(library, path)
+            result = photo_actions.delete(library, path, edit.for_good)
             if result.ok and result.changed:
                 out.changed += 1
+                out.for_good += 1 if result.details.get("for_good") else 0
             else:
                 why = result.refused or result.message() or "it could not be deleted"
                 out.errors.append((photo_id, name, str(why)[:MOST_TEXT]))
