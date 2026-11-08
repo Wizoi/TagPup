@@ -11,8 +11,9 @@ tag and no value of a file (the photos are of real people, many of them minors):
 (VENDORS) and the order of the segments by kind.
 
 An EXIF block is walked as the EXIF block editor walks it (`containers.exif_tiff`: a block it cannot follow is counted
-so, not read some other way) and its Orientation read as the editor reads it (`exif_block.read`: a SHORT or a LONG; a
-block the editor refuses is counted so). A MakerNote's offsets are told apart by `containers.maker_note`, which the
+so, not read some other way) and its Orientation counted in either type the libraries hold it in (SHORT, or LONG as 2 of
+photo_index's 1,064 sampled are), as the editor reads it; the census imports no editor (only segment_edits does,
+tests/test_the_block_editors_have_one_caller.py). A MakerNote's offsets are told apart by `containers.maker_note`, which the
 editor reads them by too (its classes, in its docstring); the Exif IFD's OffsetSchema (0xEA1D) is only counted against
 a Canon footer.
 """
@@ -29,7 +30,7 @@ import xml.etree.ElementTree as ElementTree
 from contextlib import closing
 
 from tagpup.core.result import Refused
-from tagpup.files import containers, exif_block, images, shares
+from tagpup.files import containers, images, shares
 from tagpup.services import roots as roots_service
 from tagpup.store import db, inspection
 
@@ -163,9 +164,10 @@ def _exif(tiff, counts, makers):
     order, named = layout.order, layout.named
     ifd1 = {entry[0] for entry in named["ifd1"].entries} if "ifd1" in named else set()
     counts["IFD1 thumbnail"] += {0x0201, 0x0202} <= ifd1
-    held = exif_block.read(containers.EXIF_HEAD + tiff)
-    counts["EXIF Orientation " + ("not read (the editor refuses the block)" if isinstance(held, containers.Refusal)
-                                  else str(held.get("Orientation", "absent")))] += 1
+    turned = next((entry for entry in named["ifd0"].entries if entry[0] == 0x0112), None)
+    shape = {3: "H", 4: "I"}.get(turned[1]) if turned and turned[2] == 1 else None
+    counts["EXIF Orientation " + (str(struct.unpack(order + shape, turned[3][:struct.calcsize(shape)])[0]) if shape
+                                  else "absent" if turned is None else "of another type")] += 1
     exif_ifd = {entry[0]: entry for entry in named["exif"].entries} if "exif" in named else {}
     note = exif_ifd.get(0x927C)
     vendor = _vendor(tiff, named["ifd0"])
