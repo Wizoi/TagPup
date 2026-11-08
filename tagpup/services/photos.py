@@ -172,8 +172,8 @@ def scan_folder(library, folder, exiftool_path):
 def read_folder(library, folder, exiftool_path):
     """Every photo and clip under `folder` read from its file, whatever the index holds, as page
     records keyed by paths.key, listed as scan_folder lists them: the folder after Smart Rename, which the page shows
-    as the folder. A rename leaves a clip as it is (images.CLIP_NOT_EDITED, file_changes.leave_out_clips), and it stays
-    on the page: its record is read here with the photos', whatever moved the library since the folder was opened
+    as the folder. A clip a rename left as it was (one of a folder the library does not hold, images.CLIP_NOT_EDITED)
+    stays on the page: its record is read here with the photos', whatever moved the library since the folder was opened
     (#2564). `mtime` and `size` come from the reader."""
     folder = paths.stored(folder)
     files = images.photos_under(folder)
@@ -405,6 +405,7 @@ def preserve_names(library, photo_paths, exiftool_path, split=None):
     its new name.
     """
     def plan_one(path, held):
+        # A clip's is patched into its XMP, as its tags are (fields.CLIP_WRITES, "name"; field_values.write).
         if held.get(names.PRESERVED_NAME):
             return file_changes.skip("keeps the name it had before it was first renamed")
         return file_changes.Plan(after={names.PRESERVED_NAME: os.path.basename(path)})
@@ -415,10 +416,25 @@ def preserve_names(library, photo_paths, exiftool_path, split=None):
         wanted = {paths.key(path) for path in photo_paths}
         held, loose = [[path for path in side if paths.key(path) in wanted] for side in split]
     journaled = file_changes.write_fields(
-        library, "smart rename: original names", exiftool_path, held, [names.PRESERVED_NAME], plan_one,
+        library, "smart rename: original names", exiftool_path, held, list(_PRESERVE_READ), plan_one,
         summary={"photos": len(held)}, unreadable="skip") if held else None
-    files = file_only.write_fields(exiftool_path, loose, [names.PRESERVED_NAME], plan_one) if loose else None
+    files = file_only.write_fields(exiftool_path, loose, list(_PRESERVE_READ), plan_one) if loose else None
     return file_only.combined(journaled, files)
+
+
+#: What preserve_names reads and writes of each file: the name it had before its first rename.
+_PRESERVE_READ = (names.PRESERVED_NAME,)
+
+
+def _renamable(result, photo_paths, held, loose):
+    """The paths of `photo_paths` a Smart Rename may rename, in order: every photo, and a clip of a folder the library
+    holds (`held`), whose name preserve_names keeps by the journaled patch of its XMP (file_changes.leave_out_clips
+    admits a write reading _PRESERVE_READ). A clip of a folder it does not hold (`loose`) is left out, its error in
+    `result` (images.CLIP_NOT_EDITED: file_only writes no clip, with no journal to settle a patch a crash cut short), and
+    keeps its name, as a photo whose name could not be kept is not renamed."""
+    kept = {paths.key(p) for p in file_changes.leave_out_clips(result, held, read=_PRESERVE_READ)}
+    kept |= {paths.key(p) for p in file_changes.leave_out_clips(result, loose)}
+    return [p for p in photo_paths if paths.key(p) in kept]
 
 
 @roots_service.canonical_args("photo_paths")
@@ -479,14 +495,14 @@ def smart_rename_one(library, photo_path, grouping, rename_format, exiftool_path
     A file that already holds the new name is not moved aside, as a folder's rename moves it (the photos of that
     rename are renumbered together, this one alone): refused, and nothing written. Refused too for a grouping that may
     not be used, a folder not there or on a share that does not answer (shares.folder_refusal, SHARE_AWAY), and a photo
-    no longer there, and a clip (file_changes.leave_out_clips, its sentence). The name already right
+    no longer there, and a clip of a folder the library does not hold (_renamable, its sentence). The name already right
     is no change (`renamed` empty). details: smart_rename's, and `new_path`."""
     result = Result(attempted=1)
     problem = validation.problem("grouping", grouping)
     if problem:
         result.refuse(problem)
         return result
-    if not file_changes.leave_out_clips(result, [photo_path]):
+    if not _renamable(result, [photo_path], *libraries.split(library, [photo_path])):
         result.refuse(images.CLIP_NOT_EDITED)   # the one photo asked for: the request is refused, nothing is done
         return result
     folder = os.path.dirname(photo_path)
@@ -530,9 +546,9 @@ def _rename_numbered(library, result, photo_paths, grouping, rename_format, exif
     file outside them holding a new name is moved aside (names.aside_for); without it, the rename is refused."""
     held, loose = libraries.split(library, photo_paths)
     held_keys = {paths.key(p) for p in held}
-    # A clip is not renamed (file_changes.leave_out_clips): its error, its number left unused as a photo's no longer on
-    # disk is. Asked here, not left to the names kept: that write skips a file it cannot write, which would be renamed.
-    present = [p for p in file_changes.leave_out_clips(result, photo_paths) if shares.there(p)]
+    # A clip of a folder the library does not hold is not renamed (_renamable): its error, its number left unused as a
+    # photo's no longer on disk is. Asked here, not left to the names kept: their failure would stop every rename.
+    present = [p for p in _renamable(result, photo_paths, held, loose) if shares.there(p)]
     captions = names.read_for_renaming(exiftool_path, present)
     renames = {}
     for old_path in photo_paths:

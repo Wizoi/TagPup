@@ -174,7 +174,7 @@
                             <!-- In a library view only: back to the grid as it was left (web/tagpup/view-left.js, #780). Escape and the browser's Back do the same. -->
                             <button type="button" id="btn-photo-back" class="btn btn-secondary btn-sm hidden" title="Back to the view as you left it (Escape)">&larr; Back to the view</button>
                             <h3>Original Image <span id="photo-position" class="photo-position hidden" title="Where this photo is in the list"></span></h3>
-                            <!-- data-writes names the field of a record's `writes` a control changes (web/tagpup/stale.js); a rename and a delete sit with the turn. -->
+                            <!-- data-writes names the field of a record's `writes` a control changes (web/tagpup/stale.js); a delete sits with the turn. -->
                             <div class="image-rotation-controls" data-writes="rotate">
                                 <button id="btn-rotate-left" class="btn btn-secondary btn-sm" title="Rotate 90° Left">🔄 Rotate Left</button>
                                 <button id="btn-rotate-right" class="btn btn-secondary btn-sm" title="Rotate 90° Right">🔄 Rotate Right</button>
@@ -204,7 +204,7 @@
                                     <span class="detail-label">File Path</span>
                                     <span class="detail-value clickable" id="detail-path"></span>
                                     <!-- Smart Rename of this photo alone: the grouping its name holds, to edit; its number is kept (web/tagpup/rename-one.js). -->
-                                    <div class="title-edit-container" data-writes="rotate">
+                                    <div class="title-edit-container" data-writes="name">
                                         <input type="text" id="input-smart-rename-one" placeholder="Grouping" title="The grouping of this photo's name: change it and press Smart Rename. The photo keeps its number.">
                                         <button type="button" id="btn-smart-rename-one" class="btn btn-secondary btn-sm" title="Rename this photo by the grouping beside it, keeping its number">Smart Rename</button>
                                     </div>

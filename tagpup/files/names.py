@@ -4,15 +4,15 @@ import logging
 import os
 import time
 
-from tagpup.core import paths, vocabulary
+from tagpup.core import fields, paths, vocabulary
 # Looked up at call time, as exiftool_session.ExifToolSession, so a test standing in for
 # ExifTool there reaches this too.
 from tagpup.files import exiftool_session, lock_owners
 
 logger = logging.getLogger(__name__)
 
-#: Where a photo keeps the name it had before Smart Rename first renamed it.
-PRESERVED_NAME = "XMP-xmpMM:PreservedFileName"
+#: Where a photo keeps the name it had before Smart Rename first renamed it (fields.PRESERVED_NAME).
+PRESERVED_NAME = fields.PRESERVED_NAME
 
 #: What Smart Rename reads from each photo: the name it had before it was first renamed,
 #: and every field its title is read from (vocabulary.CAPTION_FIELDS: the title, else the description).
