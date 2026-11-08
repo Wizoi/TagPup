@@ -1,10 +1,9 @@
 """A clip's tags and caption saved through the journal (DECISIONS 2026-11-05, M7): field_values.write patches a clip's
-XMP in place (in_place.patch_clip) and never has ExifTool write it, and only while field_values.CLIP_PATCH_IN_PLACE is on
-(on since the owner's trial on 20 copies, DECISIONS 2026-11-07; the owner's off switch).
+XMP in place (in_place.patch_clip) and never has ExifTool write it (on since the owner's trial on 20 copies, DECISIONS
+2026-11-07).
 
 What the owner lives through: a clip's card opens the photo panel and its tags are saved, or a selection of a day holding
-photos and clips is tagged. With writing clips off, every write of a clip is refused with the sentence; on, a keyword or
-caption save is patched into its XMP, and a turn, a Date Taken and a rename stay refused. A clip the patch cannot place
+photos and clips is tagged. A keyword or title save is patched into its XMP, and a turn, a Date Taken and a rename stay refused. A clip the patch cannot place
 (a tail, two XMP boxes) is refused, ExifTool never asked to rewrite it; one whose share fails part-way through its read
 says it could not be read, never that it cannot be patched. A clip whose QuickTime Subject is a Microsoft Xtra value that
 is not text (14 live .mp4 clips, counted 2026-11-07) is indexed with no tags, and a tag save writes only the tags saved;
@@ -40,10 +39,6 @@ TOOLS = patched.TOOLS
 keywords = patched.keywords
 
 
-def writing_clips(on=True):
-    return mock.patch.object(field_values, "CLIP_PATCH_IN_PLACE", on)
-
-
 @unittest.skipIf(EXIFTOOL is None or TOOLS.problem, "ExifTool or ffmpeg is not installed on this machine")
 class AClipWrittenByTheOneWriter(patched.FfmpegClips):
     """field_values.write of a real clip, the journal's `saving` a stand-in that keeps the record."""
@@ -74,24 +69,15 @@ class AClipWrittenByTheOneWriter(patched.FfmpegClips):
         self.assertEqual(sentence, str(refused.exception))
         self.assertEqual(([], before), (self.saved, self.bytes_of(path)), "nothing saved, nothing written")
 
-    def test_with_writing_clips_off_every_write_of_a_clip_is_refused_and_exiftool_never_writes_it(self):
-        path = self.clip("clip.mov")
-        with writing_clips(False):
-            for values in (keywords(["Trips/Coast"]), fields.title_fields("Jetty at dusk"),
-                           fields.date_taken_fields("2020:01:01 12:00:00"), {fields.ORIENTATION: ["6"]}):
-                with self.subTest(sorted(values)[0]):
-                    self.assert_refused(images.CLIP_NOT_EDITED, path, values)
-
-    def test_with_writing_clips_on_a_journaled_tag_save_is_patched_into_its_xmp_and_nothing_else_is_written(self):
+    def test_a_journaled_tag_save_is_patched_into_its_xmp_and_nothing_else_is_written(self):
         path = self.clip("first.mp4")
-        with writing_clips():
-            self.assert_refused(images.CLIP_NOT_EDITED, path, keywords(["Trips/Coast"]), journaled=False)
-            for values in (fields.date_taken_fields("2020:01:01 12:00:00"), {fields.ORIENTATION: ["6"]},
-                           {**keywords(["Trips/Coast"]), **fields.date_taken_fields("2020:01:01 12:00:00")}):
-                with self.subTest(sorted(values)[0]):
-                    self.assert_refused(images.CLIP_NOT_EDITED, path, values)
-            values = {**keywords(["Trips/Coast"]), **fields.title_fields("Jetty at dusk")}
-            self.assertEqual(segment_edits.clip_stale_of(values), self.write(path, values))
+        self.assert_refused(images.CLIP_NOT_EDITED, path, keywords(["Trips/Coast"]), journaled=False)
+        for values in (fields.date_taken_fields("2020:01:01 12:00:00"), {fields.ORIENTATION: ["6"]},
+                       {**keywords(["Trips/Coast"]), **fields.date_taken_fields("2020:01:01 12:00:00")}):
+            with self.subTest(sorted(values)[0]):
+                self.assert_refused(images.CLIP_NOT_EDITED, path, values)
+        values = {**keywords(["Trips/Coast"]), **fields.title_fields("Jetty at dusk")}
+        self.assertEqual(segment_edits.clip_stale_of(values), self.write(path, values))
         self.assertEqual(1, len(self.saved), "one patch, its record saved before its bytes")
         self.read_back(path, ("Trips/Coast",))
 
@@ -99,14 +85,13 @@ class AClipWrittenByTheOneWriter(patched.FfmpegClips):
         path = self.clip("last.mp4")
         with open(path, "ab") as handle:
             handle.write(patched.xmp_box(patched.OLD) + patched.xmp_box(patched.OLD))
-        with writing_clips():
-            self.assert_refused(images.CLIP_NOT_PATCHED, path, keywords(["Trips/Coast"]))
+        self.assert_refused(images.CLIP_NOT_PATCHED, path, keywords(["Trips/Coast"]))
 
     def test_a_clip_whose_share_fails_part_way_through_its_read_could_not_be_read_and_is_not_refused_as_unpatchable(self):
         path = self.clip("first.mp4")
         before = self.bytes_of(path)
         gone = OSError(64, "The specified network name is no longer available")
-        with writing_clips(), mock.patch.object(containers, "_read_video", side_effect=gone), \
+        with mock.patch.object(containers, "_read_video", side_effect=gone), \
                 self.assertRaises(field_values.Unreadable) as raised:
             self.write(path, keywords(["Trips/Coast"]))
         self.assertIn("could not be read", str(raised.exception))
@@ -159,17 +144,16 @@ def read_as_before():
 @unittest.skipIf(EXIFTOOL is None or TOOLS.problem, "ExifTool or ffmpeg is not installed on this machine")
 class ALibraryHoldingAClip(unittest.TestCase):
     """A library holding a photo and a real ffmpeg clip, each row recorded by the indexer's own read
-    (metadata.MetadataExtractor.batch_read), saved through the pages (Flask's test client, a home of its own) with writing
-    clips on. No test of its own: the scenarios of a clip in a library are its subclasses (here, test_a_clip_tag_undone,
+    (metadata.MetadataExtractor.batch_read), saved through the pages (Flask's test client, a home of its own). No test of its own: the scenarios of a clip in a library are its subclasses (here, test_a_clip_tag_undone,
     test_a_clip_patch_cut_short)."""
 
     def setUp(self):
         self.app, self.home = web_client.app_for(self, "tagpup")
         self.client = self.app.test_client()
         self.vl = ViewLibrary(self, "library", home=self.home)
-        for patcher in (mock.patch("tagpup.web.state.exiftool", return_value=EXIFTOOL), writing_clips()):
-            patcher.start()
-            self.addCleanup(patcher.stop)
+        patcher = mock.patch("tagpup.web.state.exiftool", return_value=EXIFTOOL)
+        patcher.start()
+        self.addCleanup(patcher.stop)
         self.vl.tree("Trips/Coast", "Trips/Harbour", "Trips/Pier")
         self.folder = os.path.join(self.vl.pictures, "Harbour")
         os.makedirs(self.folder, exist_ok=True)
@@ -271,15 +255,11 @@ class AClipInTheLibrary(ALibraryHoldingAClip):
         return found
 
     def test_the_page_is_told_what_a_save_may_change_of_a_clip_and_of_a_photo(self):
-        # The panel offers a clip its tags and title alone; a photo all four (field_values.writes). Writing clips off,
-        # the clip says nothing may change, as every write of it is then refused.
+        # The panel offers a clip its tags and title alone; a photo all four (field_values.writes).
         ids = self.index(self.photo_path, self.clip_path)
         photo, clip = ["tags", "title", "date", "rotate"], ["tags", "title"]
         self.assertEqual({"scan pier.jpg": photo, "scan jetty.mp4": clip, "panel pier.jpg": photo, "panel jetty.mp4": clip},
                          self.records(ids))
-        with writing_clips(False):
-            self.assertEqual({"scan pier.jpg": photo, "scan jetty.mp4": [], "panel pier.jpg": photo, "panel jetty.mp4": []},
-                             self.records(ids))
 
     def test_a_tag_save_from_the_photo_panel_writes_the_clips_xmp_and_journals_it_done(self):
         clip, = self.index(self.clip_path)
@@ -329,7 +309,7 @@ class AClipInTheLibrary(ALibraryHoldingAClip):
         self.assertEqual(before, self.read_bytes(self.clip_path), "the clip is as it was")
         self.assertEqual([], self.tags_of(clip))
 
-    def test_a_write_of_a_folder_the_library_does_not_hold_refuses_a_clip_with_writing_clips_on(self):
+    def test_a_write_of_a_folder_the_library_does_not_hold_refuses_a_clip(self):
         before = self.read_bytes(self.clip_path)
 
         def plan_one(path, held):

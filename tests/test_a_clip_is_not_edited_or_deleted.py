@@ -1,8 +1,8 @@
 """A clip in the library has only its tags and title written by TagPup, and is never deleted (F12): a turn, a Save
 carrying a Date Taken, a Smart Rename and a delete that name a clip leave its file byte for byte as it was, journal
 nothing for it, and say so in a plain sentence (tagpup.files.images.CLIP_NOT_EDITED, CLIP_NOT_DELETED); the photos named
-beside it are written or deleted as always. A tag or caption save is patched into its XMP (field_values.CLIP_PATCH_IN_PLACE,
-on since DECISIONS 2026-11-07; the selections that tag photos and clips together: tests/test_a_clip_tagged_through_the_journal.py).
+beside it are written or deleted as always. A tag or title save is patched into its XMP (field_values.writes,
+since DECISIONS 2026-11-07; the selections that tag photos and clips together: tests/test_a_clip_tagged_through_the_journal.py).
 
 What the owner lives through: the library view lists clips beside photos (V1), so a selection of a day holds both, and a
 click on a clip's card opens the photo panel. ExifTool's write of a clip is a rewrite of the whole file -- gigabytes, over

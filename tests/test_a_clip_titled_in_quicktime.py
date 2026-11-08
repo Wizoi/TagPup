@@ -2,14 +2,14 @@
 never rewritten (DECISIONS 2026-11-07, THE OWNER'S ANSWERS ON THE VIDEO BUILD ORDER, item 3; #2594).
 
 What the owner lives through: 2,017 photo_index clips carry a title only in their QuickTime Title (counted read-only
-2026-11-07; one more holds it in XMP:Title too, the same text; none in kr-track or renton_parkrun). With writing clips on,
-a clip's card opens the photo panel showing that title, the owner adds a tag and saves: the save is not refused as
+2026-11-07; one more holds it in XMP:Title too, the same text; none in kr-track or renton_parkrun).
+A clip's card opens the photo panel showing that title, the owner adds a tag and saves: the save is not refused as
 changed on disk, the title stays in the QuickTime Title alone (no XMP copy of it is made), and the row says what a scan
 reads. A title typed over it goes into XMP:Title and is the title from then on, the QuickTime Title left as it was; a
 title cleared clears XMP:Title, and the QuickTime Title is the title again, by the rule.
 
 A real one-second clip made by the machine's ffmpeg with a title (its QuickTime Title, as the live clips hold theirs),
-indexed by the indexer's own read, saved through the pages with writing clips on (tests/test_a_clip_tagged_through_the_
+indexed by the indexer's own read, saved through the pages (tests/test_a_clip_tagged_through_the_
 journal.ALibraryHoldingAClip: Flask's test client, a home of its own). Skipped, saying so, without ffmpeg or ExifTool.
 Fictional names only.
 """

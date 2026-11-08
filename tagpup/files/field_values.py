@@ -39,7 +39,7 @@ read back, before the file is done (tagpup.services.file_changes._verified), and
 
 **A clip** (DECISIONS 2026-11-05, M7). A clip's file is never ExifTool's to write: a journaled keyword or caption save of
 one (fields.CLIP_FIELDS) patches its XMP alone (tagpup.files.in_place.patch_clip, its packet segment_edits.new_packet's),
-and only while CLIP_PATCH_IN_PLACE is on; every other write of a clip is refused before a byte (a Refused, its sentence
+on since the owner's trial on 20 copies (DECISIONS 2026-11-07, item 4); every other write of a clip is refused before a byte (a Refused, its sentence
 the owner's), and so is one the patch cannot place (images.CLIP_NOT_PATCHED).
 """
 import logging
@@ -79,11 +79,6 @@ WRITE_OPTIONS = ("-m",)
 #: Whether a journaled write of a JPEG patches it in place when its fields fit (in_place.patch_jpeg); False, every write
 #: is ExifTool's rewrite, as before the patch was built.
 PATCH_IN_PLACE = True
-
-#: Whether a journaled keyword or caption save of a clip patches its XMP in place (in_place.patch_clip; DECISIONS
-#: 2026-11-05, M7), on since the owner's trial on 20 copies came out clean (DECISIONS 2026-11-07, item 4). The owner's off
-#: switch: off, every write of a clip is refused (images.CLIP_NOT_EDITED).
-CLIP_PATCH_IN_PLACE = True
 
 #: Whether a patch's segments are TagPup's own writer's (segment_edits.new_header) rather than ExifTool's write into a copy
 #: of the header (_exiftool_header). Off until the owner turns it on (docs/PLAN_OWN_METADATA.md, verification bar 6).
@@ -330,23 +325,23 @@ def write(et, photo_path, values, saving=None, scratch_written=None, own_writer=
 
 def writes(path):
     """What a journaled write may change of the file at `path`, by name: a photo's tags, title, Date Taken and turn
-    (fields.PHOTO_WRITES); a clip's tags and title (fields.CLIP_WRITES) while writing clips is on, else nothing. The one
+    (fields.PHOTO_WRITES); a clip's tags and title (fields.CLIP_WRITES). The one
     statement of it: a page's record carries it (tagpup.services.photos.page_record), and the writer (clip_refused) and
     the journal (tagpup.services.file_changes.leave_out_clips) refuse what it leaves out. Whether a clip's folder is held
     is not said here: a clip of a folder the library does not hold is refused at its write (file_only), never in a record
     the folder cache keeps across an Add to the library. Nothing is read of the file."""
     if not images.is_clip(path):
         return fields.PHOTO_WRITES
-    return fields.CLIP_WRITES if CLIP_PATCH_IN_PLACE else ()
+    return fields.CLIP_WRITES
 
 
 def clip_refused(path, values):
     """images.CLIP_NOT_EDITED when a write of `values` to the clip at `path` is refused before the clip is looked at --
-    a field outside those writes(path) names (fields.fields_of), all of them while writing clips is off -- else None: the
+    a field outside those writes(path) names (fields.fields_of) -- else None: the
     one rule, asked by _clip_written and, before anything is written, by an undo's rehearsal
     (tagpup.services.file_changes._undoable), so the change it refuses stays applied."""
     named = fields.fields_of(writes(path))
-    if not named or not set(values) <= named:
+    if not set(values) <= named:
         return images.CLIP_NOT_EDITED
     return None
 
@@ -354,7 +349,7 @@ def clip_refused(path, values):
 def _clip_written(photo_path, values, saving):
     """write() of a clip: the fields it left as they were (segment_edits.clip_stale_of) once its XMP holds `values`, by a
     patch of its XMP in place (in_place.patch_clip), saved by `saving` before a byte is written. Raises Refused, nothing
-    written, while CLIP_PATCH_IN_PLACE is off, for a write that is not the journal's (no `saving`: nothing could settle a
+    written, for a write that is not the journal's (no `saving`: nothing could settle a
     patch a crash cut short), or one naming a field outside fields.CLIP_FIELDS (images.CLIP_NOT_EDITED); for a clip the
     patch cannot place (images.CLIP_NOT_PATCHED); a clip open in another program (in_place's sentence). Raises Unreadable
     when it could not be read before a byte was written (NotAnswered: its share did not answer); a write that failed

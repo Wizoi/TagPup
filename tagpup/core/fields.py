@@ -220,7 +220,7 @@ XMP_ONLY = {
 #: (tagpup.files.field_values.writes, which a page's record carries as `writes`).
 PHOTO_WRITES = ("tags", "title", "date", "rotate")
 
-#: What a journaled write may change of a clip, while writing clips is on (DECISIONS 2026-11-05, M7): its tags and title.
+#: What a journaled write may change of a clip (DECISIONS 2026-11-05, M7; on since DECISIONS 2026-11-07): its tags and title.
 #: A page writes no caption of it (DECISIONS 2026-11-06); a Date Taken, a turn and a rename of a clip are ExifTool's
 #: rewrite of the whole file, refused before they are planned.
 CLIP_WRITES = ("tags", "title")

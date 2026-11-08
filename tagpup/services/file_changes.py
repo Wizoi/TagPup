@@ -297,7 +297,7 @@ AWAY_WHY = "its folder could not be reached just now (a network share that did n
 def leave_out_clips(result, photo_paths, unreadable="fail", read=None):
     """The paths of `photo_paths` that are not clips (images.is_clip), in order, and the clips a journaled write of
     `read`, the fields it reads of each file, may patch: one reading only the fields of what a clip's write may change
-    (field_values.writes: its tags and title, while writing clips is on; DECISIONS 2026-11-05, M7) and those its tags are
+    (field_values.writes: its tags and title; DECISIONS 2026-11-05, M7) and those its tags are
     read from (fields.TAG_SOURCE_FIELDS). Any other clip is not written (images.CLIP_NOT_EDITED): it is the write's error, with that sentence -- or, `unreadable="skip"` (a
     write over every photo of a camera or a folder that leaves out what it cannot write), skipped with it -- read for
     nothing, planned and journaled for nothing, and never the error that stops a write at its first
@@ -1709,10 +1709,9 @@ def _undoable(library, change_id, exiftool_path, check):
     file it left done; or (None, why it cannot be undone at all, None). `check(conn,
     change_id)` is the one account of whether it may be undone now
     (tagpup.services.journal.why_not: a newer change of the same files among it), asked on
-    a read-only connection, once, before anything is written. A clip the writer would refuse to put back (writing clips
-    off: field_values.clip_refused) refuses the whole undo, so the change stays applied, never half undone nor a conflict
-    (#2546). Never its last keyword kept in QuickTime: an undo writes what the clip's XMP held before, its keywords read
-    from QuickTime again if that was none (#2554)."""
+    a read-only connection, once, before anything is written. A clip the writer would refuse to put back (a field outside
+    field_values.writes: field_values.clip_refused) refuses the whole undo, so the change stays applied, never half undone
+    nor a conflict (#2546)."""
     change = file_journal.change(library.path, change_id)
     if change is None:
         return None, "there is no change %d" % change_id, None
