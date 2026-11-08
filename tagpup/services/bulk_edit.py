@@ -235,7 +235,8 @@ def _cannot_keep(present, sizes):
             bins[folder] = recycle_bin.no_bin_reason(path)
         if bins[folder]:
             size = sizes.get(paths.key(path))
-            if size is None:
+            # A clip over recycle_bin.MOST_CLIP_BYTES makes no copy: it is deleted for good where it is, or refused.
+            if size is None or recycle_bin.too_large_to_copy(path, size):
                 continue
             through.append((photo_id, size))
             largest = max(largest, size)
@@ -279,9 +280,10 @@ def _delete(library, edit, present, out):
     row kept (sync reports it); one refused, or not moved (any step of going through this PC that failed), is an error, the
     original and its row kept. Before the chunk copies anything through this PC, it asks whether this PC can keep the chunk's
     copies (recycle_bin.can_copy_here: the Bin fills during a long job, #703); if not, those photos are errors with the
-    sentence and nothing of them is touched; the others go on. A clip goes as a photo does, up to recycle_bin.MOST_CLIP_BYTES
-    (a larger one is its error, its size counted in no copy); a clip is a chunk of its own: the lock is let go of before
-    and after each clip, as after each chunk of photos, and a stop asked is taken there."""
+    sentence and nothing of them is touched; the others go on. A clip goes as a photo does, up to recycle_bin.MOST_CLIP_BYTES;
+    a larger one is deleted for good when it was among the files confirmed (edit.for_good_ids), its size counted in no copy; a
+    clip is a chunk of its own: the lock is let go of before and after each clip, as after each chunk of photos, and a stop
+    asked is taken there."""
     with file_changes.exclusively():
         # Where each file is, and its size, by one bounded stat of each (file_changes.file_stamps): one on a share that did
         # not answer is its error, one gone missing.
@@ -292,12 +294,6 @@ def _delete(library, edit, present, out):
         out.errors.extend((photo_id, os.path.basename(path)[:MOST_TEXT], file_changes.AWAY_WHY)
                           for photo_id, path in present if states[paths.key(path)] == file_changes.AWAY)
         out.skipped_missing += sum(1 for _id, path in present if states[paths.key(path)] == file_changes.GONE)
-        # A clip over recycle_bin.MOST_CLIP_BYTES is not deleted: its error, before this PC is asked for room for copies.
-        large = {photo_id: recycle_bin.too_large(path, sizes.get(paths.key(path), 0))
-                 for photo_id, path in there if images.is_clip(path)}
-        out.errors.extend((photo_id, os.path.basename(path)[:MOST_TEXT], large[photo_id][:MOST_TEXT])
-                          for photo_id, path in there if large.get(photo_id))
-        there = [(photo_id, path) for photo_id, path in there if not large.get(photo_id)]
         refused = _cannot_keep(there, sizes)
         batch = batches.current()
         for n, (photo_id, path) in enumerate(there):

@@ -40,19 +40,37 @@ def described(conn, folder_ids):
     return found
 
 
+#: A clip over the limit given (tagpup.files.recycle_bin.too_large_to_copy's rule, in SQL): deleted for good once confirmed,
+#: never copied nor sent to a Bin.
+_CLIP_OVER = "(p.kind = ? AND p.size > ?)"
+
+
 def larger_than(conn, folder_ids, size, most_clip_bytes, most_named, ids=None, source=None, excluded=()):
     """([the ids of the photos and clips of the selection in `folder_ids` larger than `size` bytes -- photos.size, as the
     index last read them --], the stored paths of the first `most_named` of them by path): the files a Bin that keeps files
     of up to `size` would not keep (tagpup.services.selection.deleted_for_good; a `size` of 0, a Bin set to delete at once,
-    keeps none, an empty file not either: recycle_bin.would_keep's rule). A clip over `most_clip_bytes` is not
-    deleted: not among them. Two reads over the folders given, which are the few whose largest file is over `size`."""
+    keeps none, an empty file not either: recycle_bin.would_keep's rule). A clip over `most_clip_bytes` is clips_over's,
+    not among them. Two reads over the folders given, which are the few whose largest file is over `size`."""
+    return _files(conn, folder_ids, "(? <= 0 OR p.size > ?) AND NOT " + _CLIP_OVER,
+                  (size, size, library_view.VIDEO, most_clip_bytes), most_named, ids, source, excluded)
+
+
+def clips_over(conn, folder_ids, most_clip_bytes, most_named, ids=None, source=None, excluded=()):
+    """([the ids of the clips of the selection in `folder_ids` over `most_clip_bytes` -- photos.size, as the index last read
+    them --], the stored paths of the first `most_named` of them by path): the clips a Delete deletes for good once confirmed,
+    on any drive (tagpup.files.recycle_bin.too_large_to_copy). Two reads over the folders given, which are the few holding one
+    (bytes_by_folder)."""
+    return _files(conn, folder_ids, _CLIP_OVER, (library_view.VIDEO, most_clip_bytes), most_named, ids, source, excluded)
+
+
+def _files(conn, folder_ids, condition, condition_args, most_named, ids, source, excluded):
     selected, params = library_view.selected_sql(conn, ids, source, excluded)
     if selected is None or not folder_ids:
         return [], []
     marks = ",".join("?" * len(folder_ids))
     where = (" FROM photo_folder pf JOIN photos p ON p.id = pf.photo_id WHERE pf.folder_id IN (%s) AND pf.photo_id IN (%s)"
-             " AND (? <= 0 OR p.size > ?) AND (p.kind <> ? OR p.size <= ?)" % (marks, selected))
-    args = tuple(folder_ids) + tuple(params) + (size, size, library_view.VIDEO, most_clip_bytes)
+             " AND %s" % (marks, selected, condition))
+    args = tuple(folder_ids) + tuple(params) + tuple(condition_args)
     found = [row[0] for row in conn.execute("SELECT DISTINCT p.id" + where, args)]
     named = [row[0] for row in conn.execute("SELECT DISTINCT p.path" + where + " ORDER BY p.path LIMIT ?", args + (most_named,))]
     return found, named
@@ -60,13 +78,16 @@ def larger_than(conn, folder_ids, size, most_clip_bytes, most_named, ids=None, s
 
 def bytes_by_folder(conn, most_clip_bytes, ids=None, source=None, excluded=()):
     """{folder id: (the bytes -- photos.size, as the index last read them -- of the photos and clips of the selection it holds,
-    the largest of them)}: what copies of them would take on this PC (a delete from a place with no Recycle Bin goes through this
-    PC's, #694, #703). One grouped read. A clip over `most_clip_bytes` (tagpup.files.recycle_bin.MOST_CLIP_BYTES) is not
-    deleted, so not copied: its size is not counted."""
+    the largest of them, how many clips over `most_clip_bytes` it holds)}: what copies of them would take on this PC (a delete
+    from a place with no Recycle Bin goes through this PC's, #694, #703). One grouped read. A clip over `most_clip_bytes`
+    (tagpup.files.recycle_bin.too_large_to_copy) is deleted for good, not copied: counted apart, its size in neither of the
+    first two."""
     selected, params = library_view.selected_sql(conn, ids, source, excluded)
     if selected is None:
         return {}
-    return {folder_id: (total, largest) for folder_id, total, largest in conn.execute(
-        "SELECT pf.folder_id, COALESCE(SUM(p.size), 0), COALESCE(MAX(p.size), 0) FROM photo_folder pf JOIN photos p"
-        " ON p.id = pf.photo_id WHERE pf.photo_id IN (%s) AND (p.kind <> ? OR p.size <= ?) GROUP BY pf.folder_id"
-        % selected, tuple(params) + (library_view.VIDEO, most_clip_bytes))}
+    over = (library_view.VIDEO, most_clip_bytes)
+    return {folder_id: (total, largest, clips) for folder_id, total, largest, clips in conn.execute(
+        "SELECT pf.folder_id, COALESCE(SUM(CASE WHEN {0} THEN 0 ELSE p.size END), 0),"
+        " COALESCE(MAX(CASE WHEN {0} THEN 0 ELSE p.size END), 0), COALESCE(SUM({0}), 0) FROM photo_folder pf JOIN photos p"
+        " ON p.id = pf.photo_id WHERE pf.photo_id IN ({1}) GROUP BY pf.folder_id".format(_CLIP_OVER, selected),
+        over * 3 + tuple(params))}

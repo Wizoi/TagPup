@@ -951,7 +951,7 @@ def photo_delete():
     for_good = bool(result.details.get("for_good"))
     where = ("It was %s, which has no Recycle Bin: a copy went to this PC's Recycle Bin and the original was deleted. Restored, the "
              "copy goes to %s, not back to where it was." % (reason, os.path.dirname(copy or "") or "the Downloads folder")
-             if through else "Deleted for good, as you confirmed: the Recycle Bin of its drive would not keep it."
+             if through else "Deleted for good, as you confirmed: %s." % result.details.get("why_for_good")
              if for_good else "Moved to the Recycle Bin.")
     reply = {"success": True, "through_this_pc": through, "no_bin_reason": reason, "restores_to": copy, "for_good": for_good,
              **_where(result)}

@@ -1,7 +1,9 @@
 """A clip is deleted as a photo is (F12; DECISIONS 2026-11-08, A5, cut B): a clip of up to recycle_bin.MOST_CLIP_BYTES
 goes to the Recycle Bin -- from a share, through this PC: copied under the Downloads mirror, the copy checked and recycled,
 then the original deleted -- and leaves the library with everything it had: its row, its vector and frames, its poster. A
-larger clip is refused with its size, its bytes counted in no copy, and the photos beside it are deleted as always.
+larger clip is deleted for good, on any drive, only once the owner confirmed a warning naming it (DECISIONS 2026-11-02 item
+7, cut C): no copy is made of it, nothing of it reaches a Bin, its bytes are counted in no copy, and the photos and smaller
+clips beside it go to the Bin as always.
 On a local drive a file goes to its own drive's Recycle Bin. One larger than that Bin keeps, or on a drive whose Bin keeps
 nothing, would be deleted for good (Windows, asked without a question, deletes it and says it recycled it): the question
 names it, and it is deleted for good only when the owner confirmed that; a start that did not is refused, nothing touched
@@ -157,7 +159,7 @@ class AClipOnAShare(APhotoAndAClip):
         self.assertEqual(1, looked.count("pier.jpg"), looked)
         self.assertEqual(1, looked.count("jetty.mov"), looked)
         self.assertEqual(1, looked.count(("size", "pier.jpg")), "the photo's size, once, for its copy: %s" % looked)
-        # The clip is weighed by the delete's question of the file (photos.delete, recycle_bin.problem) and again for its copy.
+        # The clip is weighed by its delete (recycle_bin.delete_file: is it over MOST_CLIP_BYTES?) and again for its copy.
         self.assertEqual(2, looked.count(("size", "jetty.mov")), "the clip weighed, then its copy's size: %s" % looked)
 
     def test_a_clip_deleted_from_its_panel_takes_its_vector_frames_and_poster_with_it(self):
@@ -175,22 +177,6 @@ class AClipOnAShare(APhotoAndAClip):
                          "no frame outlives the clip")
         self.assertEqual(0, self.posters(self.clip), "its poster went with it")
         self.assertTrue(os.path.exists(self.photo_path), "the photo beside it is left")
-
-    def test_a_clip_over_the_limit_is_refused_with_its_size_and_the_photo_beside_it_is_deleted(self):
-        size, photo_size = os.path.getsize(self.clip_path), os.path.getsize(self.photo_path)
-        with mock.patch.object(recycle_bin, "MOST_CLIP_BYTES", size - 1):
-            reply = self.post("photo/delete", {"path": self.clip_path})
-            self.assertEqual(400, reply.status_code, reply.get_json())
-            self.assertIn("larger than", reply.get_json()["error"])
-            self.assert_clip_untouched()
-            asked, done = self.delete_all(self.photo, self.clip)
-        self.assertEqual(photo_size, asked["copy_bytes"], "the question counts the photo's copy, never the clip's")
-        self.assertEqual((1, 1), (done["changed"], done["error_count"]), done["errors"])
-        [error] = done["errors"]
-        self.assertEqual(self.clip, error["id"])
-        self.assertIn("larger than", error["why"])
-        self.assert_gone(self.photo_path, self.photo)
-        self.assert_clip_untouched()
 
     def test_a_clip_whose_original_will_not_go_after_its_copy_is_binned_is_said_to_be_there_twice_as_a_file(self):
         real = os.remove
@@ -235,6 +221,135 @@ class AClipOnAShare(APhotoAndAClip):
         self.assertTrue(preceded, "a clip follows another file")
         for n in preceded:
             self.assertEqual("turn", kinds[n - 1], "the lock is let go of before %s, after the file ahead of it" % self.events[n][1])
+
+
+class AClipOverTheLimit(APhotoAndAClip):
+    """The clip, on the share, is over recycle_bin.MOST_CLIP_BYTES (the limit set to its size less a byte, as a 9 GB clip is
+    over the real one): it is named in the delete's warning and deleted for good only once confirmed -- removed where it is,
+    never copied through this PC, nothing of it sent to a Bin -- and the photos and smaller clips beside it go as always."""
+
+    def setUp(self):
+        super().setUp()
+        patcher = mock.patch.object(recycle_bin, "MOST_CLIP_BYTES", os.path.getsize(self.clip_path) - 1)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        copier = mock.patch.object(recycle_bin.shutil, "copy2", side_effect=shutil.copy2)
+        self.copied = copier.start()
+        self.addCleanup(copier.stop)
+
+    def copies_of_the_clip(self):
+        return [call for call in self.copied.call_args_list if paths.key(call.args[0]) == paths.key(self.clip_path)]
+
+    def test_the_question_names_it_to_go_for_good_and_counts_no_copy_of_it(self):
+        asked = self.asked(self.photo, self.clip)
+        self.assertEqual({"count": 1, "names": ["jetty.mov"]}, asked["for_good"])
+        self.assertEqual(os.path.getsize(self.photo_path), asked["copy_bytes"], "the photo's copy alone: the clip makes none")
+        self.assertEqual(1, asked["through_this_pc"], "the photo goes through this PC; the clip does not")
+        self.assertEqual(2, asked["total"])
+        self.assert_clip_untouched()
+
+    def test_unconfirmed_it_deletes_nothing_and_says_why(self):
+        reply = self.post("photo/delete", {"path": self.clip_path})
+        self.assertEqual(400, reply.status_code, reply.get_json())
+        self.assertEqual(["jetty.mov"], reply.get_json()["not_kept"], "named, for the page's warning")
+        said = reply.get_json()["error"]
+        self.assertIn("would be deleted for good", said)
+        self.assertIn("a video of", said, "the sentence says why: its size")
+        self.assertIn("Nothing was deleted", said)
+        asked = self.asked(self.photo, self.clip)
+        unconfirmed = self.post("library/bulk-edit", {"op": "delete", "selection": {"ids": [self.photo, self.clip]},
+                                                      "params": {"token": asked["token"]}})
+        self.assertEqual(409, unconfirmed.status_code, "a start that did not confirm is not what was asked")
+        self.assertTrue(os.path.exists(self.photo_path), "nothing of the day was deleted")
+        self.assert_clip_untouched()
+        self.assertEqual([], self.copies_of_the_clip(), "no copy of it was begun")
+
+    def test_confirmed_from_its_panel_it_is_deleted_for_good_with_no_copy_and_said_so(self):
+        db.write_with_connection(self.vl.path, lambda conn: embeddings.put_by_id(
+            conn, self.clip, MODEL, 1.0, 1, VECTOR, None, frames=FRAMES))
+        reply = self.post("photo/delete", {"path": self.clip_path, "for_good": True})
+        self.assertEqual(200, reply.status_code, reply.get_json())
+        said = reply.get_json()
+        self.assertTrue(said["for_good"])
+        self.assertFalse(said["through_this_pc"], "it did not go through this PC")
+        self.assertTrue(said["message"].startswith("Deleted for good, as you confirmed"), said["message"])
+        self.assertNotIn("Recycle Bin of its drive", said["message"], "not its Bin's doing: its size's")
+        self.assert_gone(self.clip_path, self.clip)
+        self.assertEqual([(0,)], self.vl.rows("SELECT COUNT(*) FROM embedding_frames WHERE photo_id = ?", self.clip))
+        self.assertEqual([], self.copied.call_args_list, "no copy was made")
+        self.assertEqual([], self.binned(), "nothing went to a Bin")
+        self.assertTrue(os.path.exists(self.photo_path), "the photo beside it is left")
+
+    def test_a_day_of_a_photo_a_small_clip_and_a_big_one_sends_two_to_the_bin_and_the_big_one_for_good(self):
+        # The big one: the clip with more after it, indexed as itself; the clip is now within the limit, the big one over it.
+        big_path = os.path.join(self.folder, "breakwater.mov")
+        with open(self.clip_path, "rb") as clip, open(big_path, "wb") as big:
+            big.write(clip.read() + b"\0" * 4096)
+        big = self.vl.photo("Harbour", "breakwater.mov", at=big_path)
+        recycle_bin.MOST_CLIP_BYTES = os.path.getsize(self.clip_path)          # undone by setUp's patcher
+        ids = [self.photo, self.clip, big]
+        asked = self.asked(*ids)
+        self.assertEqual({"count": 1, "names": ["breakwater.mov"]}, asked["for_good"])
+        self.assertEqual(os.path.getsize(self.photo_path) + os.path.getsize(self.clip_path), asked["copy_bytes"])
+        self.assertEqual(2, asked["through_this_pc"])
+        reply = self.post("library/bulk-edit", {"op": "delete", "selection": {"ids": ids},
+                                                "params": {"token": asked["token"], "for_good": True}})
+        done = reply.get_json()
+        self.assertEqual(200, reply.status_code, done)
+        self.assertEqual((3, 0, 1), (done["changed"], done["error_count"], done["for_good"]), done["errors"])
+        self.assertEqual({"pier.jpg", "jetty.mov"}, set(self.binned()), "the photo and the small clip, through this PC")
+        self.assertEqual([], [call for call in self.copied.call_args_list if paths.key(call.args[0]) == paths.key(big_path)],
+                         "the big one copied never")
+        for path, photo_id in ((self.photo_path, self.photo), (self.clip_path, self.clip), (big_path, big)):
+            self.assert_gone(path, photo_id)
+
+    def test_a_question_that_did_not_name_it_never_deletes_it_for_good(self):
+        recycle_bin.MOST_CLIP_BYTES = os.path.getsize(self.clip_path)       # within the limit when asked
+        asked = self.asked(self.photo, self.clip)
+        self.assertEqual(0, asked["for_good"]["count"])
+        recycle_bin.MOST_CLIP_BYTES = os.path.getsize(self.clip_path) - 1   # over it by the start
+        ids = [self.photo, self.clip]
+        # A start confirming for good what the question did not name: the token covers the set, refused whole.
+        reply = self.post("library/bulk-edit", {"op": "delete", "selection": {"ids": ids},
+                                                "params": {"token": asked["token"], "for_good": True}})
+        self.assertEqual(409, reply.status_code, reply.get_json())
+        self.assertTrue(os.path.exists(self.photo_path), "nothing was deleted")
+        self.assert_clip_untouched()
+        # The start as the question was answered: the photo goes, the clip is refused at its own delete, untouched.
+        reply = self.post("library/bulk-edit", {"op": "delete", "selection": {"ids": ids}, "params": {"token": asked["token"]}})
+        done = reply.get_json()
+        self.assertEqual(200, reply.status_code, done)
+        self.assertEqual((1, 1, 0), (done["changed"], done["error_count"], done["for_good"]), done["errors"])
+        self.assertIn("would be deleted for good", done["errors"][0]["why"])
+        self.assert_gone(self.photo_path, self.photo)
+        self.assert_clip_untouched()
+        self.assertEqual([], self.copies_of_the_clip())
+
+    def test_a_for_good_said_of_a_clip_within_the_limit_still_goes_to_the_bin_through_this_pc(self):
+        recycle_bin.MOST_CLIP_BYTES = os.path.getsize(self.clip_path)
+        reply = self.post("photo/delete", {"path": self.clip_path, "for_good": True})
+        self.assertEqual(200, reply.status_code, reply.get_json())
+        self.assertFalse(reply.get_json()["for_good"])
+        self.assertTrue(reply.get_json()["through_this_pc"])
+        self.assertEqual(["jetty.mov"], self.binned(), "its copy went to the Bin: a page cannot make a delete permanent")
+
+    def test_a_clip_held_open_elsewhere_is_left_with_its_row_and_a_plain_sentence(self):
+        real = os.remove
+
+        def remove(path):
+            if paths.key(path) == paths.key(self.clip_path):
+                self.during = self.client.get("/library/api/video-file", query_string={"id": self.clip},
+                                              headers={"Range": "bytes=0-99"})
+                raise PermissionError(32, "The process cannot access the file because it is being used by another process")
+            real(path)
+
+        with mock.patch.object(recycle_bin.os, "remove", side_effect=remove):
+            reply = self.post("photo/delete", {"path": self.clip_path, "for_good": True})
+        self.assertEqual(409, self.during.status_code, "the server's player refused it while its delete was under way")
+        self.assertNotEqual(200, reply.status_code)
+        self.assertIn("it is still where it was", reply.get_json()["error"])
+        self.assert_clip_untouched()
+        self.assertFalse(recycle_bin.being_deleted(self.clip_path), "failed: released")
 
 
 class AClipBeingDeleted(APhotoAndAClip):
