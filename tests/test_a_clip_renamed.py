@@ -6,8 +6,8 @@ itself moves no byte.
 
 What the owner lives through: 557 photo_index folders hold clips and photos together (counted 2026-11-08), so a day's
 selection renamed holds both, and the photos and clips are numbered together in the order taken, and undone from History
-as the photos are. A clip the patch cannot place (two XMP boxes here; a clip over 4 GB holding no XMP) is a plain refusal
-before anything is renamed, as a photo whose name cannot be kept is. A rename stopped after the names were kept, run
+as the photos are. A clip the patch cannot place (two XMP boxes here; a clip over 4 GB holding no XMP) keeps its
+name and its bytes, its number unused, with a plain sentence; the photos beside it are renamed. A rename stopped after the names were kept, run
 again, renames with the name each had. A second library holding the folder, its row still at the clip's first name,
 finds the clip again by its PreservedFileName (relink_photos). A clip of a folder the library does not hold (Just look)
 is not written and keeps its name; the photo beside it is renamed.
@@ -105,16 +105,23 @@ class AClipRenamed(tagged.ALibraryHoldingAClip):
         self.assertEqual(paths.key(titled), paths.key(self.path_of(clip)))
         self.assertEqual("jetty.mp4", self.kept_name(titled), "the first name is kept through every rename")
 
-    def test_a_clip_the_patch_cannot_place_is_refused_and_nothing_is_renamed(self):
+    def test_a_clip_the_patch_cannot_place_keeps_its_name_and_the_photo_beside_it_is_renamed(self):
         with open(self.clip_path, "ab") as handle:
             handle.write(patched.xmp_box(patched.OLD) + patched.xmp_box(patched.OLD))
-        self.index(self.photo_path, self.clip_path)
-        before = self.listed()
+        _photo, clip = self.index(self.photo_path, self.clip_path)
         clip_bytes = self.read_bytes(self.clip_path)
         reply = self.renamed([self.photo_path, self.clip_path])
         self.assertNotEqual(200, reply.status_code)
         self.assertIn(images.CLIP_NOT_PATCHED, reply.get_json()["error"])
-        self.assertEqual(before, self.listed(), "neither is renamed: a clip renamed without its first name is lost to it")
+        listed = self.listed()
+        self.assertIn("jetty.mp4", listed, "the clip keeps its name: renamed without its first name it is lost to it")
+        self.assertNotIn("pier.jpg", listed, "the photo beside it is renamed, its number taken")
+        self.assertTrue(any(name.startswith("Harbour Day - 1") and name.endswith(".jpg") for name in listed), listed)
+        self.assertEqual(clip_bytes, self.read_bytes(self.clip_path))
+        self.assertEqual(paths.key(self.clip_path), paths.key(self.path_of(clip)))
+        lone = self.post("photo/smart-rename", {"path": self.clip_path, "grouping": "Harbour"})
+        self.assertNotEqual(200, lone.status_code)
+        self.assertIn(images.CLIP_NOT_PATCHED, lone.get_json()["error"])
         self.assertEqual(clip_bytes, self.read_bytes(self.clip_path))
 
     def test_a_rename_stopped_after_the_names_were_kept_renames_with_them_when_run_again(self):

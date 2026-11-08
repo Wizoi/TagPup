@@ -294,6 +294,10 @@ PRESENT, GONE, AWAY = "present", "gone", "away"
 AWAY_WHY = "its folder could not be reached just now (a network share that did not answer), so nothing was written to it"
 
 
+#: The details key of a write's files its writer refused before a byte was written (write_fields).
+WRITER_REFUSED = "writer_refused"
+
+
 def leave_out_clips(result, photo_paths, unreadable="fail", read=None):
     """The paths of `photo_paths` that are not clips (images.is_clip), in order, and the clips a journaled write of
     `read`, the fields it reads of each file, may patch: one reading only the fields of what a clip's write may change
@@ -598,6 +602,10 @@ def _write_fields(et, library, operation, exiftool_path, photo_paths, read, plan
             if row.read_only:
                 # Told apart, and an error all the same: a run that stops at its first error stops here too.
                 result.details.setdefault("read_only", []).append(path)
+            if isinstance(why, Refused):
+                # Told apart: its writer refused it before a byte was written (a clip not patchable, open in another
+                # program), which Smart Rename leaves out rather than stops at (services.photos._refused_clips).
+                result.details.setdefault(WRITER_REFUSED, []).append(path)
             if stop_at_first_error and not isinstance(why, Refused):
                 # A clip the writer refused (open in another program, not patchable, its last QuickTime keyword) is its
                 # own error, as a clip leave_out_clips refuses is: the photos after it are written.

@@ -437,6 +437,13 @@ def _renamable(result, photo_paths, held, loose):
     return [p for p in photo_paths if paths.key(p) in kept]
 
 
+def _refused_clips(kept):
+    """The keys of the clips preserve_names' Result `kept` failed because their writer refused them before a byte was
+    written (field_values._clip_written raises Refused; file_changes.WRITER_REFUSED): left out of a Smart Rename, not
+    the error that stops it."""
+    return {paths.key(path) for path in kept.details.get(file_changes.WRITER_REFUSED, ()) if images.is_clip(path)}
+
+
 @roots_service.canonical_args("photo_paths")
 @file_changes.exclusively()
 def smart_rename(library, photo_paths, grouping, rename_format, exiftool_path):
@@ -452,7 +459,8 @@ def smart_rename(library, photo_paths, grouping, rename_format, exiftool_path):
     stranded 78 rows holding 234 faces. The change can be undone. A photo no longer on
     disk keeps its number, unused. First each photo keeps the name it had before its
     first rename (preserve_names), a change of its own; one whose name could not be
-    kept is an error, and nothing is renamed.
+    kept is an error, and nothing is renamed -- but a clip its writer refused (not patchable, open in another program)
+    is left out, its error, its number unused, and the others are renamed (_refused_clips).
 
     details: `updated_paths`, old -> new for every photo, those already so named
     included; `renamed`, those whose name changed; `moved_aside`, the files moved out
@@ -565,12 +573,20 @@ def _rename_numbered(library, result, photo_paths, grouping, rename_format, exif
     if kept.refused:
         result.refuse(kept.refused)
         return result
-    if kept.errors:
+    # A clip whose writer refused it (its boxes not patchable, open in another program) keeps its name, its number left
+    # unused, as a clip of a folder not held does: its error, and the others are renamed (no bytes of it written).
+    left_out = _refused_clips(kept)
+    for what, why in kept.errors:
+        if paths.key(what) in left_out:
+            result.fail(what, why)
+    errors = [(what, why) for what, why in kept.errors if paths.key(what) not in left_out]
+    if errors:
         # Nothing is renamed, as when this write raised: a photo renamed without the
         # name it had is found again only by its identity.
-        for what, why in kept.errors:
+        for what, why in errors:
             result.fail(what, "the name it had before its first rename could not be kept: %s" % why)
         return result
+    renames = {old: new for old, new in renames.items() if paths.key(old) not in left_out}
 
     # Two parts: the photos of held folders, then the others. Photos stay in their own folder
     # and a folder is held or not, so the names of the parts never meet.
