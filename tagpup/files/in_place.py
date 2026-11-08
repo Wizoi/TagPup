@@ -195,22 +195,9 @@ def put_back(path, record, before):
 
 def _alone(path):
     """The file at `path` open to read and write (binary), on Windows with no sharing: no other program may open it
-    while this is open, and one that has it open already makes this fail (a sharing violation, winerror 32)."""
-    if os.name != "nt":
-        return open(path, "r+b")
-    import ctypes
-    import msvcrt
-    from ctypes import wintypes
-
-    create = ctypes.WinDLL("kernel32", use_last_error=True).CreateFileW
-    create.restype = wintypes.HANDLE
-    create.argtypes = (wintypes.LPCWSTR, wintypes.DWORD, wintypes.DWORD, wintypes.LPVOID, wintypes.DWORD,
-                       wintypes.DWORD, wintypes.HANDLE)
-    read_write, no_sharing, existing, normal = 0xC0000000, 0, 3, 0x80
-    handle = create(path, read_write, no_sharing, None, existing, normal, None)
-    if handle in (None, wintypes.HANDLE(-1).value):
-        raise ctypes.WinError(ctypes.get_last_error())
-    return os.fdopen(msvcrt.open_osfhandle(handle, os.O_RDWR | os.O_BINARY), "r+b")
+    while this is open, and one that has it open already makes this fail (a sharing violation, winerror 32), a piece
+    of a video being read (shares.read_span) too."""
+    return lock_owners.opened(path, lock_owners.NO_SHARING, write=True)
 
 
 def _write(handle, changes):

@@ -10,7 +10,9 @@ RmRegisterResources, RmGetList, RmEndSession.
 
 `holders(path)` is that list, `describe(holders)` a short sentence for the owner, and
 `explain(error, path)` an error with that sentence added, when -- and only when -- the error
-is the kind a held file makes. It is called after a failure, never on the way to a success, and
+is the kind a held file makes. `opened(path, sharing)` is the one open of a file that says what
+others may do while it is open (CreateFileW): nothing (a patch in place), or anything, a
+rename and a delete too (a piece of a video read while it plays). It is called after a failure, never on the way to a success, and
 it is bounded: a lookup that is not answered within `timeout` seconds (a share that stopped
 answering) is given up on, its thread left to end when Windows lets it, and is [] -- no
 holder known, which is a fact about the lookup, not about the file. It never raises and
@@ -92,6 +94,11 @@ HELD = (5,) + SHARING
 #: What an error says in words (ExifTool's, which has no number) when a held file is the likely cause.
 HELD_WORDS = re.compile(r"permission denied|access is denied|used by another process|sharing violation|"
                         r"error renaming temporary file|locked by another", re.IGNORECASE)
+
+#: What others may do to a file while `opened` has it open: nothing (they cannot open it, and one that has it open
+#: already makes the open fail, winerror 32), or read, write, rename and delete it (Python's open() shares read and write
+#: but never delete, so a reader's handle refuses a rename of the file for as long as it is open).
+NO_SHARING, ALL_SHARING = 0, 7
 
 ERROR_MORE_DATA = 234
 _SESSION_KEY = 33
@@ -241,6 +248,28 @@ def holders(path, timeout=TIMEOUT):
         box["counted"] = True
         _stuck += 1
     return []
+
+
+def opened(path, sharing, write=False):
+    """The file at `path` open in binary, to read (to read and write when `write`), letting others share it as `sharing`
+    says (NO_SHARING, ALL_SHARING). Raises the OSError of the open (FileNotFoundError, a sharing violation's winerror 32).
+    Off Windows there is no sharing to ask for: open()."""
+    mode = "r+b" if write else "rb"
+    if os.name != "nt":
+        return open(path, mode)
+    import msvcrt
+
+    create = ctypes.WinDLL("kernel32", use_last_error=True).CreateFileW
+    create.restype = wintypes.HANDLE
+    create.argtypes = (wintypes.LPCWSTR, wintypes.DWORD, wintypes.DWORD, wintypes.LPVOID, wintypes.DWORD,
+                       wintypes.DWORD, wintypes.HANDLE)
+    generic_read, generic_write, existing, normal = 0x80000000, 0x40000000, 3, 0x80
+    access = generic_read | (generic_write if write else 0)
+    handle = create(path, access, sharing, None, existing, normal, None)
+    if handle in (None, wintypes.HANDLE(-1).value):
+        raise ctypes.WinError(ctypes.get_last_error())
+    flags = (os.O_RDWR if write else os.O_RDONLY) | os.O_BINARY
+    return os.fdopen(msvcrt.open_osfhandle(handle, flags), mode)
 
 
 def _called(holder):

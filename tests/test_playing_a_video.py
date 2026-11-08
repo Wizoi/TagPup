@@ -21,7 +21,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import web_client  # noqa: E402
 from view_library import ViewLibrary  # noqa: E402
 
-from tagpup.files import shares  # noqa: E402
+from tagpup.files import in_place, lock_owners, shares  # noqa: E402
 from tagpup.services import photos as photo_actions  # noqa: E402
 
 #: The bytes of the fixture's video: no two neighbouring pieces alike, so a piece from the wrong place is seen.
@@ -149,6 +149,28 @@ class WhileItPlays(Videos):
             handle.write(CONTENT[::-1] + b"longer")
         self.assertEqual(CONTENT[:READ], b"".join(pieces), "the piece read before, and nothing of the new file")
 
+    def test_a_rename_while_a_piece_is_read_renames_and_the_piece_is_answered(self):
+        """TagPup's own rename or replace of a clip lands while a piece of it is read (a clip's rename and delete, A5):
+        the read shares delete, so the rename is not refused (WinError 32) for the length of the read; a save of it then
+        still finds it open elsewhere (in_place._alone shares nothing)."""
+        renamed = os.path.join(os.path.dirname(self.path), "surf renamed.mp4")
+        real_fstat, seen = os.fstat, {}
+
+        def renamed_mid_read(descriptor):
+            if not seen:
+                with self.assertRaises(OSError) as alone:
+                    in_place._alone(self.path)
+                seen["save"] = getattr(alone.exception, "winerror", None)
+                os.replace(self.path, renamed)
+                seen["renamed"] = True
+            return real_fstat(descriptor)
+
+        with mock.patch.object(os, "fstat", side_effect=renamed_mid_read):
+            reply = self.ask(asked="bytes=0-%d" % (READ - 1))
+        self.assertEqual({"save": 32, "renamed": True}, seen)
+        self.assertEqual((206, CONTENT[:READ]), (reply.status_code, reply.data))
+        self.assertTrue(os.path.exists(renamed))
+
 
 class AShareThatStopsAnswering(Videos):
     def setUp(self):
@@ -159,7 +181,7 @@ class AShareThatStopsAnswering(Videos):
         self.addCleanup(self.release.set)
         self.fails = OSError(None, "The specified network name is no longer available", None, 64)
         opened = []
-        real = open
+        real = lock_owners.opened   # the one open of a piece's read (shares._read_span)
 
         def blocking(path, *args, **kwargs):
             opened.append(path)
@@ -169,7 +191,7 @@ class AShareThatStopsAnswering(Videos):
             return real(path, *args, **kwargs)
 
         for patcher in (mock.patch.object(shares, "on_a_network_drive", lambda path: True),
-                        mock.patch.object(shares, "open", blocking, create=True),
+                        mock.patch.object(lock_owners, "opened", blocking),
                         mock.patch.object(shares, "READ_WAIT", 0.3)):
             patcher.start()
             self.addCleanup(patcher.stop)

@@ -30,7 +30,7 @@ import time
 
 from tagpup.core import dates, paths
 from tagpup.core.result import SHARE_AWAY, Result, Unavailable
-from tagpup.files import recycle_bin
+from tagpup.files import lock_owners, recycle_bin
 
 logger = logging.getLogger(__name__)
 
@@ -387,9 +387,10 @@ class FileChanged(OSError):
 def _read_span(path, start, length, stamp, on_a_share=False):
     """read_span's read, asked of the disk now; UNANSWERED for a file "not found" on a network share that does not
     answer (a server gone while the open waited, WinError 53: _share_answers, as stamp_of and listing learn it, so the
-    end of a look that waited does not take the share as back)."""
+    end of a look that waited does not take the share as back). Opened sharing delete as well as read and write, so
+    TagPup's own rename or replace of the file is not refused for the length of the read."""
     try:
-        handle = open(path, "rb")
+        handle = lock_owners.opened(path, lock_owners.ALL_SHARING)
     except (FileNotFoundError, NotADirectoryError):
         if on_a_share and not _share_answers(path):
             return UNANSWERED
@@ -406,8 +407,8 @@ def read_span(path, start, length, stamp):
     """`length` bytes of the file at `path` from `start` (fewer at its end), read only while the file is the one stamped
     `stamp` (mtime, size, as reachable_stamp gave it; the open handle's own stamp is compared, so a file replaced between
     the look and the read is not read): what a video is played by, a piece at a time. The file is opened, read and closed
-    in this one call, never held between two: Python opens a file without letting it be renamed or deleted, and a handle
-    held while a video plays would refuse TagPup's own rename or write of it (WinError 32).
+    in this one call, never held between two: a handle held while a video plays would refuse a save in place of it
+    (in_place._alone shares nothing); the read's own open lets the file be renamed or replaced (lock_owners.opened).
 
     Raises FileChanged, the OSError of the open or the read, and Unavailable (SHARE_AWAY_SENTENCE) for a file on a network
     share that did not give it within READ_WAIT, or is taken as away; the share is then away (bounded), so the next
