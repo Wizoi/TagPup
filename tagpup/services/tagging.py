@@ -409,8 +409,9 @@ def leave_out_missing(photo_paths):
     """(`photo_paths` but those whose file is gone, [(path, why)] of those left out) (file_changes.file_states). A bulk write
     skips them and writes the rest: the library still holds the row of a missing photo and a view shows it
     (phase 9c), so a selection can name one. A file that cannot be read, or on a share that does not answer, is NOT
-    missing: the write meets it (file_changes.write_fields makes a photo on a share asleep its error at once), and stops at
-    it as for any read or write error of a present file."""
+    missing: the write meets it (file_changes.write_fields makes a photo on a share asleep its error: at once in a capped
+    write, after one more look once the share's window is over in an uncapped one), and stops at it as for any read or
+    write error of a present file."""
     states = file_changes.file_states(photo_paths)
     return ([path for path, state in states if state != file_changes.GONE],
             [(path, MISSING_WHY) for path, state in states if state == file_changes.GONE])

@@ -487,8 +487,10 @@ def _write_fields(et, library, operation, exiftool_path, photo_paths, read, plan
     stored = leave_out_clips(result, [paths.stored(p) for p in photo_paths], unreadable, read)
     batch = batches.current()
     if fresh is None:
-        # A photo on a share that does not answer is its error at once: read, it would cost ExifTool's whole deadline
-        # (five minutes) and hold the lock and the request that long (#1492). What the caller read just now answered.
+        # A photo on a share that does not answer is its error, at once in a capped write: read, it would cost ExifTool's
+        # whole deadline (five minutes) and hold the lock and the request that long (#1492). An uncapped (`patient`) write
+        # looks once more after the share's window, up to shares.AWAY_SECONDS (_looked_at_again). What the caller read just
+        # now answered.
         away = {paths.key(path) for path, state in file_states(stored) if state == AWAY}
         if away and patient:
             away = _looked_at_again(stored, away, batch)
