@@ -355,7 +355,8 @@ class AClipsSave(unittest.TestCase):
         for field in (fields.ORIENTATION, *fields.date_taken_fields("2019-06-15T10:30:00"), *caption("")):
             with self.subTest(field), self.assertRaises(ValueError):
                 segment_edits.new_packet(None, {**keywords(["Pier"]), field: ["1"]})
-        self.assertEqual(set(keywords([])) | set(title("")) | {fields.CLIP_TITLE}, set(fields.CLIP_FIELDS))
+        self.assertEqual(set(keywords([])) | set(title("")) | {fields.CLIP_TITLE, names.PRESERVED_NAME},
+                         set(fields.CLIP_FIELDS), "its name it had kept too, before its first rename (A5)")
 
 
 class ADateOrARotation(unittest.TestCase):
