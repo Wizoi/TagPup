@@ -136,10 +136,9 @@ class AClipTitledInQuickTime(ALibraryHoldingAClip):
         before = self.cleared_and_undone()
         self.assertEqual(before, self.read_bytes(self.clip_path), "the clip is as it was before the clear")
 
-    def test_a_cleared_title_of_a_clip_with_no_xmp_is_undone_and_only_the_xmp_box_the_clear_appended_stays(self):
+    def test_a_cleared_title_of_a_clip_with_no_xmp_writes_no_xmp_and_is_undone_to_the_same_bytes(self):
         before = self.cleared_and_undone()
-        after = self.read_bytes(self.clip_path)
-        self.assertEqual(before, after[:len(before)], "every byte it held is as it was; the appended XMP box stays")
+        self.assertEqual(before, self.read_bytes(self.clip_path), "a clear alone writes the 4 title bytes, no XMP box")
 
     def test_a_movs_title_in_its_item_list_is_cleared_and_undone(self):
         self.clip_path = os.path.join(self.folder, "slipway.mov")
