@@ -5,9 +5,13 @@
  * a video and photos, the same video shown again (it plays on), a record with no `media` (a photo), and the video's
  * error event: a format the browser cannot play, a file gone, a share away, and an error of a video already left.
  * Switching library is another page (web/common/library.js): nothing of the video outlives it. A video offers the
- * edits its record's `writes` names (its title, people and keywords): Rotate, Date Taken, rename and delete are inert
- * with a sentence naming them, a photo stepped to after it has every control back, and a missing one has none
- * (stale.js applyPhotoStale). Fictional names only.
+ * edits its record's `writes` names (its title, people, keywords and name): Rotate and Date Taken are inert with a
+ * sentence naming them, a photo stepped to after it has every control back, and a missing one has none (stale.js
+ * applyPhotoStale). Its delete is live, as a photo's (DECISIONS 2026-11-08, A5, cut B): a clip playing is stopped before
+ * the delete is sent, so the server holds no range of its file open, and shown again when the delete fails. A clip its
+ * drive's Recycle Bin would not keep is answered with its name and nothing deleted: the page warns, naming it, and sends
+ * `for_good` only on OK; on Cancel nothing is deleted and the clip plays again (DECISIONS 2026-11-08, 'FOR GOOD'). Fictional
+ * names only.
  */
 import { test, describe, afterEach } from "node:test";
 import assert from "node:assert/strict";
@@ -148,15 +152,15 @@ describe("a video's title and keywords are edited, nothing else of it", () => {
   const note = (ctx) => el(ctx, "photo-missing-note");
   const held = (ctx, id) => Boolean(el(ctx, id).closest("[inert]"));
   const LIVE = ["input-photo-title", "btn-save-title", "btn-edit-people", "input-add-person", "btn-add-person",
-    "btn-edit-tags", "input-add-tag", "btn-add-tag", "input-smart-rename-one"];
-  const HELD = ["btn-edit-date-taken", "btn-rotate-left", "btn-rotate-right", "btn-delete-photo"];
+    "btn-edit-tags", "input-add-tag", "btn-add-tag", "input-smart-rename-one", "btn-delete-photo"];
+  const HELD = ["btn-edit-date-taken", "btn-rotate-left", "btn-rotate-right"];
 
   function assertClip(ctx, what) {
     for (const id of LIVE) assert.equal(held(ctx, id), false, `${what}: ${id} is live`);
     for (const id of HELD) assert.equal(held(ctx, id), true, `${what}: ${id} is inert`);
     assert.ok(inert(ctx).every((node) => node.getAttribute("aria-disabled") === "true"), `${what}: and says so`);
     assert.equal(note(ctx).classList.contains("hidden"), false, `${what}: the sentence is shown`);
-    assert.equal(note(ctx).textContent, "This is a video: its date and turn are not edited here, and it is not deleted here.",
+    assert.equal(note(ctx).textContent, "This is a video: its date and turn are not edited here.",
       `${what}: it names only what is not edited`);
   }
 
@@ -167,7 +171,7 @@ describe("a video's title and keywords are edited, nothing else of it", () => {
     assert.equal(note(ctx).classList.contains("hidden"), true, `${what}: no sentence`);
   }
 
-  test("a clip opened: its title and keywords live, its date, turn, rename and delete inert, and the sentence names those", async (t) => {
+  test("a clip opened: its title, keywords, name and delete live, its date and turn inert, and the sentence names those", async (t) => {
     const ctx = await viewWithAVideo(t);
     await open(ctx, VIDEO);
     assertClip(ctx, "the clip");
@@ -193,8 +197,147 @@ describe("a video's title and keywords are edited, nothing else of it", () => {
     await open(ctx, VIDEO);
     assert.ok(writers(ctx).length >= 6);
     assert.equal(inert(ctx).length, writers(ctx).length);
+    assert.equal(held(ctx, "btn-delete-photo"), true, "its delete too: there is no file to delete");
     assert.match(note(ctx).textContent, /not on disk/);
     assert.doesNotMatch(note(ctx).textContent, /video/);
+  });
+
+  test("a clip playing is stopped before its delete is sent, and plays again when the delete fails", async (t) => {
+    const ctx = await viewWithAVideo(t);
+    const answer = [];
+    ctx.server.first("/api/photo/delete", () => new Promise((resolve) => answer.push(resolve)));
+    ctx.window.confirm = () => true;
+    const alerts = [];
+    ctx.window.alert = (said) => alerts.push(said);
+    await open(ctx, VIDEO);
+    assertPlaying(ctx, VIDEO, "opened");
+    click(ctx.window, el(ctx, "btn-delete-photo"));
+    await ctx.settle(40);
+    assert.equal(answer.length, 1, "the delete was sent");
+    assertStopped(ctx, "while the delete is out");
+    const FAILED = "A copy is in this PC's Recycle Bin, but the original could not be deleted";
+    answer[0]({ success: false, error: FAILED });
+    await ctx.settle(80);
+    assert.equal(alerts.length, 1, "the failure is said");
+    assert.deepEqual(ctx.consoleErrors.map(String), ["Error: " + FAILED], "and logged, as a photo's failed delete is");
+    ctx.consoleErrors.length = 0;
+    assertPlaying(ctx, VIDEO, "the delete failed: the clip is still there and shown again");
+  });
+
+  const deletes = (ctx) => ctx.server.calls.filter((c) => c.url.includes("/api/photo/delete"));
+
+  test("its Delete is inert from the click to the reply: a second click sends no second delete", async (t) => {
+    const ctx = await viewWithAVideo(t);
+    const answer = [];
+    ctx.server.first("/api/photo/delete", () => new Promise((resolve) => answer.push(resolve)));
+    ctx.window.confirm = () => true;
+    ctx.window.alert = () => {};
+    await open(ctx, VIDEO);
+    click(ctx.window, el(ctx, "btn-delete-photo"));
+    await ctx.settle(40);
+    assert.ok(el(ctx, "btn-delete-photo").hasAttribute("inert"), "inert while the delete is out");
+    click(ctx.window, el(ctx, "btn-delete-photo"));
+    await ctx.settle(40);
+    assert.equal(deletes(ctx).length, 1, "one delete, one copy into its .partial");
+    answer[0]({ success: false, error: "The file is in use" });
+    await ctx.settle(80);
+    ctx.consoleErrors.length = 0;
+    assert.ok(!el(ctx, "btn-delete-photo").hasAttribute("inert"), "answered: offered again");
+  });
+
+  const NOT_KEPT = "Beach_Day_Long_Take.mp4";
+  const REFUSED = "The Recycle Bin of its drive would not keep this file: it is deleted for good only once you confirm it.";
+
+  /**
+   * The delete's replies in turn, as the server sends them: the first a 400 naming the file its drive's Bin would not keep
+   * (tagpup_routes.photo_delete, `not_kept: [name]`), the second the confirmed delete's. Each route answers once and goes.
+   */
+  function answersInTurn(ctx, replies) {
+    for (const [body, status] of [...replies].reverse()) {
+      const route = { match: "/api/photo/delete", status, headers: {} };
+      route.body = () => { ctx.server.routes.splice(ctx.server.routes.indexOf(route), 1); return body; };
+      ctx.server.routes.unshift(route);
+    }
+  }
+
+  function asked(ctx, answers) {
+    const questions = [];
+    ctx.window.confirm = (question) => { questions.push(question); return answers[questions.length - 1]; };
+    return questions;
+  }
+
+  test("a clip its drive's Bin would not keep: the warning names it, and OK alone sends the delete for good", async (t) => {
+    const ctx = await viewWithAVideo(t);
+    answersInTurn(ctx, [
+      [{ success: false, error: REFUSED, not_kept: [NOT_KEPT] }, 400],
+      [{ success: true, for_good: true, through_this_pc: false,
+        message: "Deleted for good, as you confirmed: the Recycle Bin of its drive would not keep it." }, 200],
+    ]);
+    const questions = asked(ctx, [true, true]);
+    ctx.window.alert = (said) => assert.fail(`nothing failed, yet the page said: ${said}`);
+    await open(ctx, VIDEO);
+    click(ctx.window, el(ctx, "btn-delete-photo"));
+    await ctx.settle(120);
+    assert.equal(questions.length, 2, "the delete was asked, then the warning");
+    assert.match(questions[1], /deleted for good, not moved to the Recycle Bin/);
+    assert.ok(questions[1].includes(NOT_KEPT), "the warning names the file");
+    assert.match(questions[1], /Cancel deletes nothing/);
+    const sent = deletes(ctx).map((c) => c.body);
+    assert.equal(sent.length, 2);
+    assert.equal(sent[0].for_good, undefined, "the first delete does not say for good: nobody had confirmed it");
+    assert.equal(sent[1].for_good, true, "the second does, once OK was pressed");
+    assert.equal(sent[1].path, sent[0].path);
+    assert.equal(ctx.state.library.activeId, VIDEO + 1, "deleted: the next photo opens");
+    assert.ok(!ctx.state.library.ids.includes(VIDEO) || ctx.cardById(VIDEO) === null, "the clip has left the view");
+    assert.equal(status(ctx), "Deleted for good, as you confirmed: the Recycle Bin of its drive would not keep it.",
+      "the status line says what the server did, never Ready");
+  });
+
+  test("a clip opened again while its delete is out is asked of the server, which refuses it; the delete failed, it plays", async (t) => {
+    // Only the server knows which file it is deleting (a range read of it as its original is removed makes the remove fail).
+    const ctx = await viewWithAVideo(t);
+    const answer = [];
+    ctx.server.first("/api/photo/delete", () => new Promise((resolve) => answer.push(resolve)));
+    ctx.window.confirm = () => true;
+    ctx.window.alert = () => {};
+    await open(ctx, VIDEO);
+    click(ctx.window, el(ctx, "btn-delete-photo"));
+    await ctx.settle(40);
+    assert.equal(answer.length, 1, "the delete was sent");
+    assertStopped(ctx, "stopped before the delete");
+    press(ctx, "ArrowRight");
+    await ctx.settle(80);
+    press(ctx, "ArrowLeft");
+    await ctx.settle(80);
+    assert.equal(ctx.state.library.activeId, VIDEO, "the clip is the one shown again");
+    assertPlaying(ctx, VIDEO, "opened again: asked of the server");
+    ctx.server.first("/api/video-file", { success: false, error: "This video is being deleted." }, { status: 409 });
+    Object.defineProperty(video(ctx), "error", { value: { code: 4 }, configurable: true });
+    video(ctx).dispatchEvent(new ctx.window.Event("error"));
+    await ctx.settle(40);
+    assert.equal(status(ctx), "This video is being deleted.", "the server's sentence, never 'not there' or the format");
+    const asked = ctx.played.src;
+    answer[0]({ success: false, error: "The file is in use" });
+    await ctx.settle(80);
+    ctx.consoleErrors.length = 0;
+    assertPlaying(ctx, VIDEO, "the delete failed");
+    assert.ok(ctx.played.src > asked, "the clip that was refused is asked for again, not left failed");
+  });
+
+  test("Cancel at the warning deletes nothing: one delete sent, nothing said deleted, the clip plays again", async (t) => {
+    const ctx = await viewWithAVideo(t);
+    answersInTurn(ctx, [[{ success: false, error: REFUSED, not_kept: [NOT_KEPT] }, 400]]);
+    const questions = asked(ctx, [true, false]);
+    ctx.window.alert = (said) => assert.fail(`a Cancel is not a failure, yet the page said: ${said}`);
+    await open(ctx, VIDEO);
+    click(ctx.window, el(ctx, "btn-delete-photo"));
+    await ctx.settle(120);
+    assert.equal(questions.length, 2, "the delete was asked, then the warning");
+    assert.equal(deletes(ctx).length, 1, "no second delete: the server was never told for good");
+    assert.equal(status(ctx), "Nothing was deleted.");
+    assert.equal(ctx.state.library.activeId, VIDEO, "the clip is still the one shown");
+    assertPlaying(ctx, VIDEO, "cancelled: the clip plays again");
+    assert.ok(!el(ctx, "btn-delete-photo").hasAttribute("inert"), "and its Delete is offered again");
   });
 });
 

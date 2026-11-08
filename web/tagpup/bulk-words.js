@@ -32,19 +32,20 @@ export function describeTags({ op, add = [], remove = [] }) {
 }
 
 /** "Delete 3,412 photos", "Added Trips/Coast to 1 photo": the words of `desc` for `count` photos, `form` 'verb' or 'past'. */
-function phrase(desc, form, count) {
-    return [desc[form], desc.what, desc.prep, photosOf(count)].filter(Boolean).join(' ') + (desc.after || '');
+function phrase(desc, form, count, after = '') {
+    return [desc[form], desc.what, desc.prep, photosOf(count)].filter(Boolean).join(' ') + after;
 }
 
 /**
  * What a Delete of the selection is, in words (#674): `where` is the server's answer of where the files would go
- * (/api/library/selection/delete-check: `through_this_pc`, the photos in places with no Recycle Bin), `count` the photos.
+ * (/api/library/selection/delete-check: `through_this_pc`, the photos in places with no Recycle Bin), `count` the photos. How many
+ * went for good is the reply's (doneWords), never the question's: a file the warning named may have failed to go.
  */
 export function describeDelete(where, count) {
     const through = Math.min((where && where.through_this_pc) || 0, count);
-    const after = !through ? ' to the Recycle Bin'
+    const binned = !through ? ' to the Recycle Bin'
         : through >= count ? " through this PC's Recycle Bin" : ", those from places with no Recycle Bin through this PC's";
-    return { op: 'delete', verb: 'Delete', past: 'Deleted', what: '', prep: '', after, throughThisPc: through };
+    return { op: 'delete', verb: 'Delete', past: 'Deleted', what: '', prep: '', binned, throughThisPc: through };
 }
 
 /** `2,345 MB`: bytes as the question says them, rounded up. */
@@ -85,6 +86,22 @@ export function deleteQuestion(where, count) {
         + `The other ${rest.toLocaleString()} ${rest === 1 ? 'goes' : 'go'} to the Recycle Bin.${rows}${job}`;
 }
 
+/**
+ * The warning before files are deleted for good (DECISIONS 2026-11-08): `names` the file names the server gave (the delete-check's
+ * `for_good.names`, as many as it names: selection.MOST_FOR_GOOD_NAMED; or the one file of the panel's delete), `count` how many
+ * in all, the rest counted. The owner's OK is the only way the server deletes one for good; Cancel deletes nothing.
+ */
+export function forGoodQuestion(names, count) {
+    const shown = names || [];
+    const total = Math.max(count || 0, shown.length);
+    const more = total - shown.length;
+    const one = total === 1;
+    const list = shown.map(name => `  ${name}`).join('\n') + (more > 0 ? `\n  and ${more.toLocaleString()} more` : '');
+    return `${one ? 'This file' : 'These files'} would be deleted for good, not moved to the Recycle Bin: the Recycle Bin of `
+        + `${one ? 'its' : 'their'} drive would not keep ${one ? 'it' : 'them'} (too large, or set to delete files at once).`
+        + `\n\n${list}\n\nOK deletes ${one ? 'it' : 'them'} for good; Cancel deletes nothing.`;
+}
+
 /** The question before a bulk edit: it names the write and the count, what it touches, how long, and how to undo it. */
 export function confirmSentence(desc, count) {
     const head = `${desc.verb} ${desc.what} ${desc.prep} ${photosOf(count)}?`;
@@ -92,7 +109,14 @@ export function confirmSentence(desc, count) {
         + 'History lists it as one change and can undo it.';
 }
 
-/** What an edit that is done says first: "Added Trips/Coast to 3 photos", "Deleted 2 photos to the Recycle Bin". */
-export function doneWords(desc, count) {
-    return phrase(desc, 'past', count);
+/**
+ * What an edit that is done says first: "Added Trips/Coast to 3 photos", "Deleted 2 photos to the Recycle Bin". `count` and, of a
+ * Delete, `forGood` are the server's reply (`changed`, `for_good`: the files really removed for good), what was done, not asked.
+ */
+export function doneWords(desc, count, forGood = 0) {
+    if (desc.op !== 'delete') return phrase(desc, 'past', count);
+    const gone = Math.min(forGood || 0, count);
+    // A file deleted for good is never said to have gone to a Recycle Bin.
+    const after = !gone ? desc.binned : gone >= count ? ' for good' : `${desc.binned}, ${gone.toLocaleString()} of them for good`;
+    return phrase(desc, 'past', count, after);
 }

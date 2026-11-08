@@ -5,7 +5,7 @@
  */
 import { test, describe, afterEach } from "node:test";
 import assert from "node:assert/strict";
-import { closeAllApps, click, openFolder, photoRecord } from "./harness.mjs";
+import { closeAllApps, click, openFolder, photoRecord, CLIP_WRITES } from "./harness.mjs";
 import { loadViewPage, pageErrors, speedUp, recordOf } from "./view-page.mjs";
 
 afterEach(() => {
@@ -321,6 +321,149 @@ describe("#674: Delete of a view's selection", () => {
     assert.ok(el(ctx, "panel-content").classList.contains("hidden"));
     assert.ok(!el(ctx, "folder-view-content").classList.contains("hidden"));
     assert.equal(ctx.photosAsked.filter((id) => id === 5).length, 1, "the deleted photo is not asked for again");
+  });
+
+  // Files on a drive whose Recycle Bin would not keep them (DECISIONS 2026-11-08, 'FOR GOOD'): the delete-check counts them and
+  // names the first five (selection.where_deleted); the page warns, naming them, and starts with for_good only on OK.
+  const FOR_GOOD = (count, names) => ({ ...BIN, token: "t-three-for-good", for_good: { count, names } });
+
+  test("some its drive's Bin would not keep: a second question names them, and OK alone starts the delete for good", async (t) => {
+    const ctx = await view(t, 40, { where: FOR_GOOD(1, ["Harbour_Swim_Long.mp4"]) });
+    ctx.bulk.edit = { op: "delete", total: 3, changed: 3, for_good: 1 };
+    for (const id of [2, 5, 9]) pick(ctx, id);
+    await remove(ctx);
+    assert.equal(ctx.questions.length, 2, "the delete was asked, then the warning");
+    assert.match(ctx.questions[0], /^Delete 3 photos\?/);
+    assert.match(ctx.questions[1], /^This file would be deleted for good, not moved to the Recycle Bin/);
+    assert.ok(ctx.questions[1].includes("  Harbour_Swim_Long.mp4"), "the warning names the file");
+    assert.match(ctx.questions[1], /Cancel deletes nothing\.$/);
+    const [start] = calls(ctx, "/api/library/bulk-edit");
+    assert.deepEqual(plain(start.body.params), { token: "t-three-for-good", for_good: true },
+      "the token of the question that warned, and the owner's OK");
+    assert.match(stripSentence(ctx), /^Deleted 3 photos to the Recycle Bin, 1 of them for good;/);
+  });
+
+  test("the file the warning named was not removed (its delete failed): the strip says none went for good, from the reply", async (t) => {
+    const ctx = await view(t, 40, { where: FOR_GOOD(1, ["Harbour_Swim_Long.mp4"]) });
+    ctx.bulk.edit = { op: "delete", total: 3, changed: 2, for_good: 0, error_count: 1,
+      errors: [{ id: 5, name: "Harbour_Swim_Long.mp4", why: "The file is in use" }] };
+    for (const id of [2, 5, 9]) pick(ctx, id);
+    await remove(ctx);
+    assert.deepEqual(plain(calls(ctx, "/api/library/bulk-edit")[0].body.params), { token: "t-three-for-good", for_good: true });
+    assert.match(stripSentence(ctx), /^Deleted 2 photos to the Recycle Bin;/, "a write says what it changed, not what it asked");
+    assert.doesNotMatch(stripSentence(ctx), /for good/);
+  });
+
+  test("Cancel at the warning starts nothing; seven named five and counted the rest", async (t) => {
+    const names = ["Clip_A.mp4", "Clip_B.mp4", "Clip_C.mp4", "Clip_D.mp4", "Clip_E.mp4"];
+    const ctx = await view(t, 40, { where: FOR_GOOD(7, names) });
+    for (const id of [2, 5, 9]) pick(ctx, id);
+    ctx.answer = (text) => !/deleted for good/.test(text);
+    await remove(ctx);
+    assert.equal(ctx.questions.length, 2);
+    assert.match(ctx.questions[1], /^These files would be deleted for good/);
+    for (const name of names) assert.ok(ctx.questions[1].includes(`  ${name}`), `${name} is named`);
+    assert.match(ctx.questions[1], /\n  and 2 more\n/);
+    assert.equal(calls(ctx, "/api/library/bulk-edit").length, 0, "nothing started: nothing deleted, to the Bin or for good");
+  });
+
+  test("the warning names every file the server named, and counts the rest: how many to name is the server's alone", async (t) => {
+    const names = ["Clip_A.mp4", "Clip_B.mp4", "Clip_C.mp4", "Clip_D.mp4", "Clip_E.mp4", "Clip_F.mp4"];
+    const ctx = await view(t, 40, { where: FOR_GOOD(8, names) });
+    for (const id of [2, 5, 9]) pick(ctx, id);
+    ctx.answer = (text) => !/deleted for good/.test(text);
+    await remove(ctx);
+    for (const name of names) assert.ok(ctx.questions[1].includes(`  ${name}`), `${name} is named`);
+    assert.match(ctx.questions[1], /\n  and 2 more\n/);
+  });
+
+  test("none for good: one question, and the start does not say for good", async (t) => {
+    const ctx = await view(t, 40, { where: FOR_GOOD(0, []) });
+    for (const id of [2, 5, 9]) pick(ctx, id);
+    await remove(ctx);
+    assert.equal(ctx.questions.length, 1);
+    assert.deepEqual(plain(calls(ctx, "/api/library/bulk-edit")[0].body.params), { token: "t-three-for-good" });
+  });
+
+  // A clip open in the panel among the photos deleted: the server reads it a range at a time while it plays, and a range read as its
+  // file is deleted leaves the file there ('the file is there twice'); deleted, a player kept on would play from what it held, then fail.
+  const CLIP = 5;
+  async function viewWithClipOpen(t, ids) {
+    const ctx = await view(t, 40, {
+      onIds: () => ({ source: {}, total: ids().length, ids: ids(), videos: [CLIP], complete: true }),
+      cardExtra: (id) => ({ media: id === CLIP ? "video" : "photo" }),
+      onPhoto: (id) => ({ photo: recordOf(id, id === CLIP ? { media: "video", mtime: 1600000123.5, writes: CLIP_WRITES } : {}) }),
+      before: (window) => {
+        window.HTMLMediaElement.prototype.pause = () => {};
+        window.HTMLMediaElement.prototype.load = () => {};
+      },
+    });
+    ctx.bulk.edit = { op: "delete", total: 2, changed: 2 };
+    for (const id of [2, CLIP]) pick(ctx, id);
+    ctx.module("photo.js").openLibraryPhoto(CLIP);
+    await ctx.settle(100);
+    assert.match(src(ctx), /\/api\/video-file\?id=5&/, "the clip plays in the panel");
+    return ctx;
+  }
+  const src = (ctx) => el(ctx, "main-video").getAttribute("src") || "";
+
+  test("a clip playing in the panel is stopped before the delete starts, and stays stopped when it was deleted", async (t) => {
+    let ids = range(40);
+    const ctx = await viewWithClipOpen(t, () => ids);
+    ctx.hold.bulkEdit = true;
+    await remove(ctx);
+    assert.equal(calls(ctx, "/api/library/bulk-edit").length, 1, "the delete is out");
+    assert.equal(src(ctx), "", "and the clip let go of before it: the server holds no range of its file");
+    ids = ids.filter((id) => ![2, CLIP].includes(id));
+    await ctx.release("bulkEdit");
+    await ctx.until(() => ctx.state.activePhotoPath === null);
+    await ctx.settle(80);
+    assert.equal(src(ctx), "", "deleted: nothing plays it again");
+    assert.ok(el(ctx, "panel-content").classList.contains("hidden"), "the panel closed onto the grid");
+  });
+
+  // Which files a delete is working on is the server's to know: a Select all names a source, which holds every id outside it too.
+  test("while a Select all's delete is out, a clip opened again is asked of the server; refused, its sentence is said", async (t) => {
+    let ids = range(40);
+    const ctx = await viewWithClipOpen(t, () => ids);
+    el(ctx, "btn-select-all-thumbnails").click();
+    ctx.hold.bulkEdit = true;
+    await remove(ctx);
+    assert.ok(plain(calls(ctx, "/api/library/bulk-edit")[0].body.selection).source, "the delete of a Select all is out");
+    assert.equal(src(ctx), "", "the clip was stopped before it");
+    ctx.module("photo.js").openLibraryPhoto(7);      // another photo, then the clip again, as a click on its card does
+    await ctx.settle(80);
+    ctx.module("photo.js").openLibraryPhoto(CLIP);
+    await ctx.settle(80);
+    assert.equal(ctx.state.library.activeId, CLIP, "the clip is the one shown");
+    assert.match(src(ctx), /\/api\/video-file\?id=5&/, "and asked of the server: the page does not guess what is being deleted");
+    ctx.server.first("/api/video-file", { success: false, error: "This video is being deleted." }, { status: 409 });
+    Object.defineProperty(el(ctx, "main-video"), "error", { value: { code: 4 }, configurable: true });
+    el(ctx, "main-video").dispatchEvent(new ctx.window.Event("error"));
+    await ctx.settle(40);
+    assert.equal(el(ctx, "status-text").textContent, "This video is being deleted.", "the server's sentence, not 'not there'");
+    ids = ids.filter((id) => ![2, CLIP].includes(id));
+    await ctx.release("bulkEdit");
+    await ctx.until(() => ctx.state.activePhotoPath === null);
+    await ctx.settle(80);
+    assert.equal(src(ctx), "", "deleted: nothing plays it");
+  });
+
+  test("the delete refused (the selection changed), or the clip left by an error of its own: it plays again", async (t) => {
+    const refused = await viewWithClipOpen(t, () => range(40));
+    refused.server.first("/api/library/bulk-edit", { success: false, error: "The selection changed since you were asked: ask again." }, { status: 409 });
+    await remove(refused);
+    assert.equal(calls(refused, "/api/library/bulk-edit").length, 1);
+    assert.match(src(refused), /\/api\/video-file\?id=5&/, "refused: nothing deleted, the clip plays again");
+
+    let ids = range(40);
+    const kept = await viewWithClipOpen(t, () => ids);
+    kept.bulk.edit = { op: "delete", total: 2, changed: 1, error_count: 1, errors: [{ id: CLIP, name: "Pier_Jump.mp4", why: "The file is in use" }] };
+    ids = ids.filter((id) => id !== 2);     // the photo went; the clip, its error said, stayed
+    await remove(kept);
+    await kept.until(() => src(kept) !== "");
+    assert.equal(kept.state.library.activeId, CLIP, "the clip stayed: still the one shown");
+    assert.match(src(kept), /\/api\/video-file\?id=5&/, "and plays again once the view's order is read");
   });
 });
 

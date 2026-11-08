@@ -49,6 +49,7 @@ SCENARIO = frozenset({
     "test_a_tag_tree_edit_of_a_tag_a_clip_holds",
     "test_a_clip_patch_cut_short",
     "test_a_clip_renamed",
+    "test_a_clip_deleted",
     "test_an_adobe_clip_packet_edited_and_read_back",
     "test_time_shift",
     "test_a_crash_part_way_is_settled_at_the_next_start",

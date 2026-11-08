@@ -256,11 +256,6 @@ CLIP_NOT_EDITED = ("TagPup changes only a video's tags, title and name, and only
 CLIP_NOT_PATCHED = ("TagPup cannot save into this video's file yet (its boxes are laid out in a way TagPup does not "
                     "patch): nothing was written.")
 
-#: Why a clip is not deleted: a clip on a share goes through this PC's Recycle Bin as a copy of the whole file
-#: (DECISIONS 2026-11-02, item 7, a later merge). The one sentence of the refusal (tagpup.files.recycle_bin.problem).
-CLIP_NOT_DELETED = "Videos cannot be deleted from TagPup yet: this video's file was left where it is."
-
-
 def is_media(path):
     """Does `path` name a file the index keeps, a photo or a clip (kind_of)? What the walks below find."""
     return kind_of(path) is not None

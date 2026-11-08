@@ -7,7 +7,6 @@ for the few that are wanted. Never a list of paths of the photos: a Select all o
 photo_index (counted 2026-10-04), not 68,000 paths. Reads only.
 """
 from tagpup.store import library_view
-from tagpup.store import photos as store_photos
 from tagpup.store import roots as store_roots
 
 #: Folder ids read in one statement.
@@ -41,15 +40,33 @@ def described(conn, folder_ids):
     return found
 
 
-def bytes_by_folder(conn, ids=None, source=None, excluded=()):
-    """{folder id: (the bytes -- photos.size, as the index last read them -- of the photos of the selection it holds, the largest
-    of them)}: what copies of them would take on this PC (a delete from a place with no Recycle Bin goes through this PC's, #694,
-    #703). One grouped read. A clip is not deleted, so not copied (store.photos.DELETED_KINDS; tagpup.files.recycle_bin.not_deleted):
-    its size is not counted."""
+def larger_than(conn, folder_ids, size, most_clip_bytes, most_named, ids=None, source=None, excluded=()):
+    """([the ids of the photos and clips of the selection in `folder_ids` larger than `size` bytes -- photos.size, as the
+    index last read them --], the stored paths of the first `most_named` of them by path): the files a Bin that keeps files
+    of up to `size` would not keep (tagpup.services.selection.deleted_for_good; a `size` of 0, a Bin set to delete at once,
+    keeps none, an empty file not either: recycle_bin.would_keep's rule). A clip over `most_clip_bytes` is not
+    deleted: not among them. Two reads over the folders given, which are the few whose largest file is over `size`."""
+    selected, params = library_view.selected_sql(conn, ids, source, excluded)
+    if selected is None or not folder_ids:
+        return [], []
+    marks = ",".join("?" * len(folder_ids))
+    where = (" FROM photo_folder pf JOIN photos p ON p.id = pf.photo_id WHERE pf.folder_id IN (%s) AND pf.photo_id IN (%s)"
+             " AND (? <= 0 OR p.size > ?) AND (p.kind <> ? OR p.size <= ?)" % (marks, selected))
+    args = tuple(folder_ids) + tuple(params) + (size, size, library_view.VIDEO, most_clip_bytes)
+    found = [row[0] for row in conn.execute("SELECT DISTINCT p.id" + where, args)]
+    named = [row[0] for row in conn.execute("SELECT DISTINCT p.path" + where + " ORDER BY p.path LIMIT ?", args + (most_named,))]
+    return found, named
+
+
+def bytes_by_folder(conn, most_clip_bytes, ids=None, source=None, excluded=()):
+    """{folder id: (the bytes -- photos.size, as the index last read them -- of the photos and clips of the selection it holds,
+    the largest of them)}: what copies of them would take on this PC (a delete from a place with no Recycle Bin goes through this
+    PC's, #694, #703). One grouped read. A clip over `most_clip_bytes` (tagpup.files.recycle_bin.MOST_CLIP_BYTES) is not
+    deleted, so not copied: its size is not counted."""
     selected, params = library_view.selected_sql(conn, ids, source, excluded)
     if selected is None:
         return {}
     return {folder_id: (total, largest) for folder_id, total, largest in conn.execute(
         "SELECT pf.folder_id, COALESCE(SUM(p.size), 0), COALESCE(MAX(p.size), 0) FROM photo_folder pf JOIN photos p"
-        " ON p.id = pf.photo_id WHERE pf.photo_id IN (%s) AND %s GROUP BY pf.folder_id"
-        % (selected, store_photos.sql_kind_in(store_photos.DELETED_KINDS, "p.kind")), params)}
+        " ON p.id = pf.photo_id WHERE pf.photo_id IN (%s) AND (p.kind <> ? OR p.size <= ?) GROUP BY pf.folder_id"
+        % selected, tuple(params) + (library_view.VIDEO, most_clip_bytes))}

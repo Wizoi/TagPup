@@ -341,12 +341,19 @@ def file_states(photo_paths):
     to be written", by one bounded stat of each (shares.stamp_of: a share is asked within a second, and one found away is
     answered at once for 30 seconds). GONE: the disk or share answered that it is not there. AWAY: on a share that did not
     answer, neither there nor gone. A file that cannot be read is PRESENT: the write meets it. write_fields leaves an AWAY
-    photo out as its error, and a bulk delete (tagpup.services.bulk_edit) asks it too."""
-    states = []
+    photo out as its error."""
+    return [(path, state) for path, state, _stamp in file_stamps(photo_paths)]
+
+
+def file_stamps(photo_paths):
+    """[(path, state, stamp)]: file_states, with the (mtime, size) the same stat found (None when it is not known: not
+    there, not readable, away). A bulk delete (tagpup.services.bulk_edit) reads each file's size from it."""
+    found = []
     for path in photo_paths:
         stamp = shares.stamp_of(path)
-        states.append((path, GONE if stamp is None else AWAY if stamp is shares.UNANSWERED else PRESENT))
-    return states
+        state = GONE if stamp is None else AWAY if stamp is shares.UNANSWERED else PRESENT
+        found.append((path, state, stamp if isinstance(stamp, tuple) else None))
+    return found
 
 
 def between_chunks(batch):

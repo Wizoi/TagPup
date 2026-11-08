@@ -1,32 +1,44 @@
-"""Sending a photo to the Windows Recycle Bin, where it can be restored from.
+"""Sending a photo or a clip to the Windows Recycle Bin, where it can be restored from.
 
-Only a photo FILE goes (problem): SHFileOperation with FOF_ALLOWUNDO takes a directory with
-everything in it as readily (2026-10-02, the Just-look review, #520).
+Only a photo or clip FILE goes (problem): SHFileOperation with FOF_ALLOWUNDO takes a directory with
+everything in it as readily (2026-10-02, the Just-look review, #520). A clip goes as a photo does, up to
+MOST_CLIP_BYTES; a larger one is refused (too_large).
 
 And only a file on a local fixed drive can be restored from the Bin. The Bin is per volume and
 there is none on a network share, a mapped network drive or a removable drive: SHFileOperation
 reports success for a file on one, and the file is gone for good. Checked 2026-10-02 on a UNC path
 to local storage (\\\\localhost\\C$\\...): it reported success, the file was gone, and the Bin's
 $Recycle.Bin held no entry for it, where the same file by its local path held one. So `goes_to_bin`
-says it beforehand, for the page to tell the owner before it deletes, and the reply after.
+says it beforehand, for the page to tell the owner before it deletes, and the reply after. Nor does a Bin keep a file
+larger than its capacity (its per-volume MaxCapacity), or any file when it is set to NukeOnDelete: asked without a
+question (FOF_NOCONFIRMATION), Windows deletes such a file for good and reports success. So a file on a drive with a Bin
+is first weighed against what that Bin keeps (`keeps_up_to`): one it would not keep is deleted for good only when the
+owner was told so and confirmed it (`delete_file`'s `for_good`; DECISIONS 2026-11-08), else refused untouched (NotKept),
+and the reply says it was deleted for good, never that it went to the Bin.
 
-**Nothing is deleted for good** (#694, the owner's decision, 2026-10-04). A photo in a place with no Recycle Bin goes THROUGH THIS
-PC (`delete_file`, the one way every delete of a photo takes: Organize's and the bulk Delete's): it is copied under
+**Nothing is deleted for good** (#694, the owner's decision, 2026-10-04). A photo or clip in a place with no Recycle Bin goes
+THROUGH THIS PC (`delete_file`, the one way every delete of one takes: Organize's and the bulk Delete's): it is copied under
 <Downloads>/TagPup deleted from shares/<server>/<share>/<path> (the Downloads known folder, wherever it was moved), the copy is
 checked against the original (size, then a SHA-256 of each), the COPY is sent to this PC's Recycle Bin, and only then is the
 original deleted at its place. Each step that fails leaves the original where it is: a copy that fails or differs is taken away; a
 Bin that refuses the copy, the copy taken away; an original that cannot be deleted after its copy is in the Bin is still there,
-and so the photo is there twice -- the error says so. Restored from the Bin, the copy goes back to the mirror folder under
+and so the file is there twice -- the error says so. Restored from the Bin, the copy goes back to the mirror folder under
 Downloads, not to the share. Before copying, the drive of that folder must have room for the copy and SPARE_BYTES more.
 
 And a copy is made only where it would be KEPT (the owner's review, #703-#706; `can_copy_here`): Windows makes room in a full
 Recycle Bin by purging its OLDEST items for good, so the Bin of the Downloads volume must hold what it holds, the copies, and
-BIN_MARGIN of its capacity (its per-volume MaxCapacity; a Bin set to NukeOnDelete keeps nothing and refuses all, and a photo larger
+BIN_MARGIN of its capacity (its per-volume MaxCapacity; a Bin set to NukeOnDelete keeps nothing and refuses all, and a file larger
 than the Bin is refused); the Bin's size is asked of Windows (SHQueryRecycleBinW: 11.8 s for 3,353 items here) once, then counted
 on by what this process sends (`note_binned`), and asked again after BIN_FRESH. A copy whose path would be MAX_PATH or more is
 refused up front (SHFileOperation takes none). A Downloads folder under OneDrive is refused: a copy would be synced to the cloud
 before it was recycled. A `.partial` a crash left for the same name is taken away on the way in.
+
+A file is UNDER DELETE (`being_deleted`) from the first look `delete_file` takes at it to its last step, however that ends: a
+copy through this PC can take minutes, and a read of the original as it is removed makes the remove fail, the copy in the Bin
+and the file there twice. The server's reader of a file a range at a time (/api/video-file, tagpup.services.photos.video)
+refuses one meanwhile; the page cannot know which files a delete holds (a bulk Delete of a Select all names a source).
 """
+import contextlib
 import ctypes
 import hashlib
 import os
@@ -61,27 +73,45 @@ def _long_path(path):
     return path
 
 
-def not_deleted(file_path):
-    """images.CLIP_NOT_DELETED when `file_path` names a clip (images.is_clip), else None: asked before anything is
-    stat'ed or copied, by problem() and by a bulk delete before it asks this PC for room for the copies
-    (tagpup.services.bulk_edit), so a clip's size is never counted in a copy that is never made."""
-    return images.CLIP_NOT_DELETED if images.is_clip(file_path) else None
+#: The largest clip TagPup deletes (DECISIONS 2026-11-08, A5, cut B): one up to 2 GiB goes through the Recycle Bin as a
+#: photo does -- from a share, a copy of the whole file through this PC, the share read twice to check it --, a larger one
+#: is refused (too_large). 2,168 of photo_index's 2,179 clips are within it, 11 over (counted 2026-11-08).
+MOST_CLIP_BYTES = 2 << 30
+
+#: Why a clip over MOST_CLIP_BYTES is not deleted, with its size and the limit.
+CLIP_TOO_LARGE = ("This video is %s, larger than the %s TagPup deletes through the Recycle Bin: it was not deleted, and "
+                  "its file was left where it is.")
+
+
+def too_large(file_path, size):
+    """CLIP_TOO_LARGE, said, when `file_path` names a clip (images.is_clip) of more than MOST_CLIP_BYTES at `size`
+    bytes; else None. Asked by problem() and by a bulk delete before it asks this PC for room for the copies
+    (tagpup.services.bulk_edit), so a clip that is not deleted is never counted in a copy that is never made."""
+    if not images.is_clip(file_path) or size <= MOST_CLIP_BYTES:
+        return None
+    return CLIP_TOO_LARGE % (_mb(size), _mb(MOST_CLIP_BYTES))
+
+
+def _judged(file_path):
+    """(why `file_path` is no photo or clip file, or None; its LONG name: A4413~1.JPG may be holiday.jpgold, #530)."""
+    given = str(file_path or "")
+    name = os.path.basename(given.rstrip("\\/")) or given
+    if not given or given[-1] in "\\/" or not os.path.isfile(paths.stored(given)):
+        return "%s is not a file; only a photo or video file is deleted" % name, None
+    long = _long_path(paths.stored(given))
+    if not os.path.isfile(long) or not images.is_media(long):
+        return "%s is not a photo or video; only a photo or video file is deleted" % os.path.basename(long), long
+    return None, long
 
 
 def problem(file_path):
-    """Why `file_path` may not be sent to the Recycle Bin, or None: a clip (not_deleted), no existing regular file
-    (a folder, a path with a trailing separator, one that is not there) or no photo by its
-    extension. The path is judged by its LONG name: A4413~1.JPG may be holiday.jpgold (#530)."""
-    given = str(file_path or "")
-    if not_deleted(given):
-        return not_deleted(given)
-    name = os.path.basename(given.rstrip("\\/")) or given
-    if not given or given[-1] in "\\/" or not os.path.isfile(paths.stored(given)):
-        return "%s is not a file; only a photo file is deleted" % name
-    long = _long_path(paths.stored(given))
-    if not os.path.isfile(long) or not images.is_photo(long):
-        return "%s is not a photo; only a photo file is deleted" % os.path.basename(long)
-    return None
+    """Why `file_path` may not be sent to the Recycle Bin, or None: no existing regular file (a folder, a path with a
+    trailing separator, one that is not there), no photo or clip by its extension (images.is_media), or a clip over
+    MOST_CLIP_BYTES (too_large: only a clip's size is asked). The path is judged by its LONG name (_judged)."""
+    why, long = _judged(file_path)
+    if why:
+        return why
+    return too_large(long, os.path.getsize(long)) if images.is_clip(long) else None
 
 
 def _without_prefix(path):
@@ -395,6 +425,65 @@ def _mb(byte_count):
     return "{:,} MB".format(-(-int(byte_count) // (1 << 20)))
 
 
+def keeps_up_to(path):
+    """The largest file, in bytes, the Recycle Bin of the volume `path` is on (where its links lead) keeps: its capacity
+    (_bin_settings), 0 when it is set to delete at once. Raises OSError when Windows cannot say."""
+    return _keeps(_bin_mount(path))
+
+
+def keeps_up_to_by_folder(folders):
+    """{folder of `folders`: keeps_up_to of it, or None when Windows cannot say}, each volume's Bin asked once: the delete
+    question's look at a selection's folders (a Select all of photo_index is about 2,600 folders on two drives). Asked afresh on
+    every call: a Bin set smaller between the question and the start is seen by the start."""
+    by_mount, found = {}, {}
+    for folder in folders:
+        try:
+            mount = _bin_mount(folder)
+            key = paths.key(mount)
+            if key not in by_mount:
+                by_mount[key] = _keeps(mount)
+            found[folder] = by_mount[key]
+        except OSError:
+            found[folder] = None
+    return found
+
+
+def _bin_mount(path):
+    """The volume whose Recycle Bin a file at `path` would go to (where its links lead). Raises OSError."""
+    try:
+        return _mount_point(_real(paths.stored(path)))
+    except (AttributeError, ValueError) as e:
+        raise OSError(str(e)) from None
+
+
+def _keeps(mount):
+    """keeps_up_to of the volume `mount`."""
+    try:
+        capacity, nuke = _bin_settings(mount)
+    except (AttributeError, ValueError) as e:
+        raise OSError(str(e)) from None
+    return 0 if nuke else capacity
+
+
+def would_keep(size, kept):
+    """Would a Bin that keeps files of up to `kept` bytes (keeps_up_to) keep a file of `size`: never one set to delete at once
+    (`kept` 0), an empty file not either. The one rule; store/selection_folders.larger_than is its SQL."""
+    return kept > 0 and size <= kept
+
+
+class NotKept(OSError):
+    """A file the Recycle Bin of its drive would not keep (keeps_up_to), asked to be deleted without `for_good`: nothing
+    was touched. The page names it and asks; confirmed, it is deleted for good."""
+
+
+def not_kept(file_path, kept):
+    """The sentence of NotKept for `file_path`, whose drive's Bin keeps files of up to `kept` bytes."""
+    name = os.path.basename(paths.stored(file_path))
+    why = ("the Recycle Bin of its drive is set to delete files at once" if kept <= 0
+           else "it is larger than the Recycle Bin of its drive keeps (%s)" % _mb(kept))
+    return "%s would be deleted for good, not moved to the Recycle Bin: %s. Nothing was deleted." % (name, why)
+
+
 def room_for_copies(byte_count, largest, root=None, fresh=False):
     """None when the Bin of the copies' volume will keep `byte_count` more of copies (the largest `largest`) and what it holds,
     with BIN_MARGIN of its capacity spare; else the sentence. `fresh`: ask Windows the Bin's size now (the question before a
@@ -410,7 +499,7 @@ def room_for_copies(byte_count, largest, root=None, fresh=False):
         return ("This PC's Recycle Bin on %s deletes files at once (it is set not to keep them), so a copy would not be kept. "
                 "Nothing was deleted." % mount)
     if largest > capacity:
-        return ("A photo of %s is larger than this PC's Recycle Bin on %s (%s), which could not keep it. Nothing was deleted."
+        return ("A file of %s is larger than this PC's Recycle Bin on %s (%s), which could not keep it. Nothing was deleted."
                 % (_mb(largest), mount, _mb(capacity)))
     if used + byte_count > capacity * (1 - BIN_MARGIN):
         return ("This PC's Recycle Bin on %s cannot keep the copies: it holds %s of %s, and the copies are %s. Windows would make room "
@@ -491,14 +580,17 @@ def _take_away(path):
 def recycle_through_this_pc(file_path, root=None):
     """Delete `file_path`, in a place with no Recycle Bin, through this PC (the module's docstring): copy, check, the copy to this
     PC's Recycle Bin, then the original. Returns where the copy was put (so where Windows restores it). Raises ValueError for a
-    path that is no photo file (problem) and OSError, with a sentence, for any step that failed: the original is then left where it
+    path that is no photo or clip file (problem) and OSError, with a sentence, for any step that failed: the original is then left where it
     is (and, when only its own delete failed, is there twice: the error says so)."""
-    why = problem(file_path)
+    why, long = _judged(file_path)
     if why:
         raise ValueError(why)
     source = paths.stored(file_path)
     root = root or mirror_root()
     size = os.path.getsize(source)
+    why = too_large(long, size)
+    if why:
+        raise ValueError(why)
     refused = can_copy_here(size, size, root)
     if refused:
         raise OSError(refused)
@@ -533,20 +625,69 @@ def recycle_through_this_pc(file_path, root=None):
         os.remove(source)
     except OSError as e:
         raise OSError("A copy is in this PC's Recycle Bin, but the original could not be deleted (%s): it is still where it was, so "
-                      "the photo is there twice." % (e.strerror or e)) from None
+                      "the file is there twice." % (e.strerror or e)) from None
     return target
 
 
-def delete_file(file_path):
-    """Delete a photo FILE the one way every delete of a photo takes (#694): to its own Recycle Bin, or -- where its place has none
+_under_delete_lock = threading.Lock()
+_under_delete = {}      # {paths.key of a file: how many deletes of it are under way (two pages may delete one file at once)}
+
+
+@contextlib.contextmanager
+def _deleting(file_path):
+    """`file_path` is under delete (being_deleted) for the length of the block, and released however the block ends."""
+    key = paths.key(file_path)
+    with _under_delete_lock:
+        _under_delete[key] = _under_delete.get(key, 0) + 1
+    try:
+        yield
+    finally:
+        with _under_delete_lock:
+            _under_delete[key] -= 1
+            if not _under_delete[key]:
+                del _under_delete[key]
+
+
+def being_deleted(file_path):
+    """Is a delete of `file_path` under way in this process (delete_file, from its first look to its last step)? Only the server
+    deletes a photo or clip, so this process is the one that knows."""
+    key = paths.key(file_path)
+    with _under_delete_lock:
+        return key in _under_delete
+
+
+def delete_file(file_path, for_good=False):
+    """Delete a photo or clip FILE the one way every delete of one takes (#694): to its own Recycle Bin, or -- where its place has none
     -- through this PC (recycle_through_this_pc). {"through_this_pc": bool, "reason": why its place has no Bin or None, "copy":
-    where the copy was put, or None}. Raises ValueError (problem) or OSError with a sentence; the original is then still there."""
+    where the copy was put, or None, "for_good": bool}. Raises ValueError (problem) or OSError with a sentence; the original is
+    then still there. A file its own drive's Bin would not keep (keeps_up_to) is deleted for good only with `for_good` (the owner
+    was told and confirmed); without it, NotKept, nothing touched. The file is under delete (being_deleted) until this returns
+    or raises: the panel's delete and each of a bulk Delete's alike."""
+    with _deleting(file_path):
+        return _delete_file(file_path, for_good)
+
+
+def _delete_file(file_path, for_good):
     reason = no_bin_reason(file_path)
     if reason:
-        return {"through_this_pc": True, "reason": reason, "copy": recycle_through_this_pc(file_path)}
+        return {"through_this_pc": True, "reason": reason, "copy": recycle_through_this_pc(file_path), "for_good": False}
+    why = problem(file_path)
+    if why:
+        raise ValueError(why)
+    source = paths.stored(file_path)
+    try:
+        size, kept = os.path.getsize(source), keeps_up_to(source)
+    except OSError as e:
+        raise OSError("Could not tell whether the Recycle Bin of its drive can keep it (%s). Nothing was deleted."
+                      % (e.strerror or e)) from None
+    if not would_keep(size, kept):
+        if not for_good:
+            raise NotKept(not_kept(source, kept))
+        os.remove(source)
+        return {"through_this_pc": False, "reason": None, "copy": None, "for_good": True}
     if not send_to_recycle_bin(file_path):
         raise OSError("Failed to move file to Recycle Bin")
-    return {"through_this_pc": False, "reason": None, "copy": None}
+    return {"through_this_pc": False, "reason": None, "copy": None, "for_good": False}
 
 
 def goes_to_bin(file_path):
@@ -556,7 +697,7 @@ def goes_to_bin(file_path):
 
 
 def send_to_recycle_bin(file_path):
-    """Move the photo file to the Recycle Bin; False when Windows would not. Raises ValueError,
+    """Move the photo or clip file to the Recycle Bin; False when Windows would not. Raises ValueError,
     moving nothing, for anything `problem` names. A file for which `no_bin_reason` names a reason is
     deleted permanently, and Windows says it succeeded."""
     from ctypes import wintypes

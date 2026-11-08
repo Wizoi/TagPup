@@ -9,6 +9,8 @@ export const state = {
     scannedFolder: '',
     folderPhotos: [],
     activePhotoPath: null,
+    // A delete of the panel's photo is out: its Delete is inert until the reply (stale.js holdDeletes).
+    deleting: false,
     // The selection: paths, in the order they were picked, which the bulk edits read; and
     // the same photos by pathKey, for O(1) membership. selected.js is the one writer of both.
     selectedThumbnails: [],

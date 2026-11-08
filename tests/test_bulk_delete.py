@@ -235,7 +235,8 @@ class Asking(Delete):
         self.assertEqual(64, len(token))
         lakes_bytes = sum(os.path.getsize(self.vl.path_of(photo_id)) for photo_id in self.lakes)
         self.assertEqual({"total": 8, "folders": 2, "through_this_pc": 5, "reasons": [{"reason": "on a network share", "photos": 5}],
-                          "copy_bytes": lakes_bytes, "restores_to": recycle_bin.mirror_root(), "too_long": 0, "no_room": None}, found)
+                          "copy_bytes": lakes_bytes, "restores_to": recycle_bin.mirror_root(), "too_long": 0, "no_room": None,
+                          "for_good": {"count": 0, "names": []}}, found)
         self.assertEqual(token, self.check({"ids": list(reversed(self.coast[:3] + self.lakes))})["token"],
                          "the token is of the photos, not of the order they were named in")
         found = self.check({"source": {"kind": "all"}, "excluded": self.lakes})
@@ -249,6 +250,13 @@ class Asking(Delete):
             self.check(ALL)
         self.assertEqual(sorted([paths.key(self.folder("2023 Lakes")), paths.key(self.folder("2024 Coast"))]),
                          sorted(paths.key(path) for path in asked))
+
+    def test_the_bin_of_a_drive_is_asked_once_for_all_its_folders(self):
+        # Two folders on this PC's one drive: its Bin's settings are read once for the question, not once a folder (a Select all
+        # of photo_index is about 2,600 folders on two drives).
+        with mock.patch.object(recycle_bin, "_bin_settings", wraps=recycle_bin._bin_settings) as settings:
+            self.assertEqual(35, self.check(ALL)["total"])
+        self.assertEqual(1, settings.call_count)
 
     def test_over_the_bulk_cap_this_pc_only_and_nonsense(self):
         with mock.patch.object(batches, "MAX_BATCH", 10):

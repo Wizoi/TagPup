@@ -5,7 +5,7 @@ import logging
 import os
 
 from tagpup.core import dates, fields, paths, photo_meta, renaming, validation, vocabulary
-from tagpup.core.result import NotFound, Refused, Result, Unavailable
+from tagpup.core.result import Conflict, NotFound, Refused, Result, Unavailable
 from tagpup.files import field_values, images, metadata, names, recycle_bin, shares
 from tagpup.services import file_changes, file_only, libraries, rotation, thumbnails
 from tagpup.services import roots as roots_service
@@ -283,12 +283,16 @@ VIDEO_READ = 1024 * 1024
 #: A video as /api/video-file answers it: its native path, and the stamp (size, mtime) its bytes are read against.
 Video = collections.namedtuple("Video", "path size mtime content_type")
 
+#: Why a video's bytes are not read while a delete of its file is under way (recycle_bin.being_deleted): a 409.
+BEING_DELETED = "This video is being deleted."
+
 
 def video(library, photo_id):
     """The Video of photo `photo_id` of `library`. Raises NotFound -- with its sentence -- for an id the library has no
     photo of, one that is a photo and not a video (photos.kind), and one whose file is not there; Unavailable when the
     file is on a share that is away or refuses to be read (shares.reachable_stamp: a 503, try again);
-    paths.RootsError for a video under a root this machine does not place."""
+    paths.RootsError for a video under a root this machine does not place; Conflict (BEING_DELETED) while a delete of its
+    file is under way (recycle_bin.being_deleted), from the panel's Delete or a bulk Delete, in any library holding it."""
     row = None
     if 0 < photo_id < 2 ** 63:   # an id SQLite cannot hold names no photo: a sentence, not an overflow
         conn = db.connect(db.readonly_uri(library.path), uri=True)
@@ -299,6 +303,8 @@ def video(library, photo_id):
     if row is None or row[1] != "video":
         raise NotFound("There is no video %d in this library." % photo_id)
     path = row[0]
+    if recycle_bin.being_deleted(path):
+        raise Conflict(BEING_DELETED)
     stamp = shares.reachable_stamp(path, "video")
     if stamp is None:
         raise NotFound("The file of video %d is not there." % photo_id)
@@ -308,10 +314,14 @@ def video(library, photo_id):
 def video_bytes(video, start, length):
     """The bytes of `video` from `start`, `length` of them, a VIDEO_READ at a time (shares.read_span, the file opened and
     closed for each): what an answer to a range streams. Ends early -- a short answer, which the browser asks again
-    from where it stopped -- when the file changed since `video` was looked at, cannot be read, or its share stopped
-    answering, with one line in the log; never raises once the answer has begun."""
+    from where it stopped -- when the file changed since `video` was looked at, cannot be read, its share stopped
+    answering, or a delete of it began (recycle_bin.being_deleted: the browser's next ask is refused), with one line in the
+    log; never raises once the answer has begun."""
     end = start + length
     while start < end:
+        if recycle_bin.being_deleted(video.path):
+            logger.info("A video's answer ended at byte %d of %d: its file is being deleted", start, video.size)
+            return
         try:
             piece = shares.read_span(video.path, start, min(VIDEO_READ, end - start), (video.mtime, video.size))
         except (OSError, Unavailable) as why:
@@ -741,9 +751,10 @@ def shift_date_taken(library, photo_paths, minutes, exiftool_path):
 
 
 @roots_service.canonical_args("photo_path")
-def delete(library, photo_path):
-    """Send a photo to the Recycle Bin, and forget it: its row, faces and cached
-    embedding. Clicking Delete (Organize's, and each photo of a library view's bulk Delete).
+def delete(library, photo_path, for_good=False):
+    """Send a photo or a clip to the Recycle Bin, and forget it: its row, faces, cached
+    embedding (a clip's frames with it) and thumbnail or poster. Clicking Delete (Organize's,
+    and each photo or clip of a library view's bulk Delete).
 
     The file goes first. A photo that could not be moved stays in the library, and its
     rows with it.
@@ -751,17 +762,19 @@ def delete(library, photo_path):
     A photo of a folder the library does not hold (Just look) is sent to the Recycle Bin
     and nothing else happens: it has no row to forget (tagpup.services.file_only).
 
-    Only an existing photo FILE is deleted, in a held folder or not: a folder, a .txt, a path
-    that is not there or ends in a separator is refused, and nothing is moved (#520). A file on
+    Only an existing photo or clip FILE is deleted, in a held folder or not: a folder, a .txt, a
+    path that is not there or ends in a separator is refused, and nothing is moved (#520); so is a
+    clip over recycle_bin.MOST_CLIP_BYTES, with its size (DECISIONS 2026-11-08, A5). A file on
     a network share, or a drive with no Recycle Bin, is never deleted for good (#694): it goes
     THROUGH THIS PC (tagpup.files.recycle_bin.delete_file) -- copied under the Downloads folder's
     "TagPup deleted from shares", the copy checked, the copy to this PC's Recycle Bin, then the
-    original -- and any step that fails leaves it, and its rows, where they are.
+    original -- and any step that fails leaves it, and its rows, where they are. A file its own drive's Bin would not
+    keep is deleted for good only with `for_good`, else refused untouched (file_only.send: details `not_kept`).
 
     details: `removed`, the rows removed from each table (None for such a photo);
     `file_only` and `with_rows`, 1 for the way it was done; `through_this_pc`, `no_bin_reason`
-    (why its place has no Bin, as a phrase) and `copy` (where its copy was put, and so where the
-    Bin restores it).
+    (why its place has no Bin, as a phrase), `copy` (where its copy was put, and so where the
+    Bin restores it) and `for_good` (it was deleted for good, confirmed).
     """
     result = Result(attempted=1)
     why = recycle_bin.problem(photo_path)
@@ -770,21 +783,17 @@ def delete(library, photo_path):
         return result
     _held, loose = libraries.split(library, [photo_path])
     if loose:
-        result = file_only.delete(photo_path)
+        result = file_only.delete(photo_path, for_good)
         result.details.update({file_only.FILE_ONLY: result.changed, file_only.WITH_ROWS: 0})
         return result
-    try:
-        went = recycle_bin.delete_file(photo_path)
-    except Exception as e:
-        result.fail(photo_path, e)
+    if file_only.send(photo_path, for_good, result) is None:
         return result
     result.changed = 1
     # The thumbnail goes with the photo: its id is read first, while the row is there to name it.
     ids = thumbnails.ids_of(library, [photo_path])
     result.details["removed"] = photos.forget_photo(library.path, photo_path)
     thumbnails.forget(library, ids)
-    result.details.update({file_only.FILE_ONLY: 0, file_only.WITH_ROWS: 1, "through_this_pc": went["through_this_pc"],
-                           "no_bin_reason": went["reason"], "copy": went["copy"]})
+    result.details.update({file_only.FILE_ONLY: 0, file_only.WITH_ROWS: 1})
     return result
 
 

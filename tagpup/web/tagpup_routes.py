@@ -770,7 +770,8 @@ def library_bulk_edit():
         edit = bulk_edit.prepare(library, body.get("op"), body.get("params", {}))
         resolved = selection_service.resolve(library, selection_service.read(library, body.get("selection")))
         # A delete deletes exactly the photos its question named, or nothing (#691).
-        bulk_edit.refuse_if_changed(edit, resolved.ids, selection_service.token_of)
+        bulk_edit.refuse_if_changed(edit, resolved.ids, selection_service.token_of,
+                                    lambda ids: selection_service.deleted_for_good(library, ids))
         out = bulk_edit.run(library, edit, resolved.ids, state.exiftool(library))
     except (Refused, NotFound, Conflict, paths.RootsError) as why:
         return _bulk_reply(why)
@@ -836,8 +837,9 @@ def video_file():
     tagpup.web.responses.ranged): 206 with at most VIDEO_SPAN bytes of a range (no range is the first), 416 for a range
     that cannot be answered. The URL carries the file's modified time (`v`), so the browser may keep the pieces a day,
     as a photo; Last-Modified is the file's. 404 for an id that is no video of the library or whose file is gone, 400 for a missing or non-numeric
-    one, 503 with Retry-After when the file cannot be reached just now (a share away). A stream that cannot go on (the
-    file changed, the share stopped answering) ends short, and the browser asks again. To this PC only (403)."""
+    one, 503 with Retry-After when the file cannot be reached just now (a share away), 409 "This video is being deleted."
+    while a delete of its file is under way (tagpup.files.recycle_bin.being_deleted). A stream that cannot go on (the
+    file changed, the share stopped answering, its delete began) ends short, and the browser asks again. To this PC only (403)."""
     if (refusal := _this_pc_only()) is not None:
         return refusal
     library = state.require()
@@ -846,6 +848,8 @@ def video_file():
         return refusal
     try:
         video = photo_actions.video(library, photo_id)
+    except Conflict as why:
+        return responses.error(409, str(why))
     except (NotFound, paths.RootsError, Unavailable) as why:
         return _view_error(why)
     except Exception as e:
@@ -927,9 +931,11 @@ def photo_delete():
     if not _a_file(photo_path):
         return responses.error(400, "Invalid file path")
     try:
-        result = photo_actions.delete(library, photo_path)
+        result = photo_actions.delete(library, photo_path, body.get("for_good") is True)
         if result.refused:
-            return responses.refused(result)
+            # A file its drive's Recycle Bin would not keep: named (`not_kept`), for the page to ask, then send `for_good`.
+            not_kept = result.details.get("not_kept")
+            return responses.refused(result, not_kept=not_kept) if not_kept else responses.refused(result)
         if not result.ok:
             return responses.error(500, result.message())
         for held, _record in folders.of(library).entries_for(photo_path):
@@ -942,14 +948,17 @@ def photo_delete():
     name = picker_name(os.path.basename(library.path))
     reason = result.details.get("no_bin_reason")
     copy = result.details.get("copy")
+    for_good = bool(result.details.get("for_good"))
     where = ("It was %s, which has no Recycle Bin: a copy went to this PC's Recycle Bin and the original was deleted. Restored, the "
              "copy goes to %s, not back to where it was." % (reason, os.path.dirname(copy or "") or "the Downloads folder")
-             if through else "Moved to the Recycle Bin.")
-    reply = {"success": True, "through_this_pc": through, "no_bin_reason": reason, "restores_to": copy, **_where(result)}
+             if through else "Deleted for good, as you confirmed: the Recycle Bin of its drive would not keep it."
+             if for_good else "Moved to the Recycle Bin.")
+    reply = {"success": True, "through_this_pc": through, "no_bin_reason": reason, "restores_to": copy, "for_good": for_good,
+             **_where(result)}
     if result.details.get(file_only.FILE_ONLY):
         # A photo of a folder the library does not hold: the file only.
         reply["message"] = "%s Nothing in %s changed: it does not hold this folder." % (where, name)
-    elif through:
+    elif through or for_good:
         reply["message"] = where
     return jsonify(reply)
 

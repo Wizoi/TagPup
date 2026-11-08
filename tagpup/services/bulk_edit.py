@@ -38,7 +38,7 @@ from dataclasses import dataclass, field
 
 from tagpup.core import paths, validation, vocabulary
 from tagpup.core.result import Conflict, Refused
-from tagpup.files import recycle_bin, shares
+from tagpup.files import images, recycle_bin
 from tagpup.services import batches, file_changes, selection, tagging
 from tagpup.services import people as people_service
 from tagpup.services import photos as photo_actions
@@ -65,12 +65,16 @@ OPERATIONS = {TAGS: "bulk tags", PEOPLE: "bulk people", DELETE: "bulk delete"}
 @dataclass
 class Edit:
     """What is done to each photo. `add` and `remove` are tags as they are written (a person's already filed as a tag),
-    `persons` the tags of `add` that are people; a delete's `token` (of the photos its question named)."""
+    `persons` the tags of `add` that are people; a delete's `token` (of the photos its question named), `for_good` (its
+    question warned that some would be deleted for good, and the owner confirmed it) and `for_good_ids` (those files, asked
+    again at the start, the token then of them: refuse_if_changed; no other file is deleted for good)."""
     op: str
     add: list = field(default_factory=list)
     remove: list = field(default_factory=list)
     persons: list = field(default_factory=list)
     token: str = ""
+    for_good: bool = False
+    for_good_ids: frozenset = frozenset()
 
 
 # ---- Reading one -----------------------------------------------------------------------------
@@ -106,7 +110,7 @@ def prepare(library, op, params):
         token = params.get("token")
         if not isinstance(token, str) or not token:
             raise Refused("A delete names the photos its question was about (token, from delete-check): ask again.")
-        return Edit(DELETE, token=token)
+        return Edit(DELETE, token=token, for_good=params.get("for_good") is True)
     add, remove = _list_of(params, "add"), _list_of(params, "remove")
     if op == TAGS:
         # The rules read the tag as typed ("A//B" has an empty level); what is written is its one spelling.
@@ -177,6 +181,8 @@ class Outcome:
     errors: list = field(default_factory=list)
     #: Why the whole write was refused (a share holding a recorded-damaged photo did not answer, the roots changed), or None.
     refused: str = None
+    #: Of `changed`, the files deleted for good, confirmed (a delete's Edit.for_good): the page says so, never "Recycle Bin".
+    for_good: int = 0
     #: The write's own sentence when it stopped before its end -- asked to (Cancel, an update) or ExifTool stopped answering
     #: (file_changes: details "stopped" or "cancelled") -- else None; the page says it in place of an error a photo.
     stopped: str = None
@@ -184,7 +190,7 @@ class Outcome:
     def reply(self):
         """The numbers and the first MOST_ERRORS errors, for the page."""
         return {"changed": self.changed, "unchanged": self.unchanged, "skipped_missing": self.skipped_missing,
-                "error_count": len(self.errors), "stopped": self.stopped,
+                "error_count": len(self.errors), "stopped": self.stopped, "for_good": self.for_good,
                 "errors": [{"id": photo_id, "name": str(name)[:MOST_TEXT], "why": str(why)[:MOST_TEXT]}
                            for photo_id, name, why in self.errors[:MOST_ERRORS]]}
 
@@ -218,18 +224,19 @@ def _write(library, edit, ids, exiftool_path):
     return out
 
 
-def _cannot_keep(present):
-    """{photo id: why} of the photos that go through this PC, when this PC cannot keep their copies; {} when it can."""
+def _cannot_keep(present, sizes):
+    """{photo id: why} of the photos that go through this PC, when this PC cannot keep their copies; {} when it can. `sizes`,
+    {paths.key(path): bytes}, is what file_changes.file_stamps found; a file whose size it did not find is judged by the
+    delete's own read of it."""
     bins, through, largest = {}, [], 0
     for photo_id, path in present:
         folder = paths.key(os.path.dirname(path))
         if folder not in bins:
             bins[folder] = recycle_bin.no_bin_reason(path)
         if bins[folder]:
-            stamp = shares.known_stamp(path)
-            if stamp is None:
+            size = sizes.get(paths.key(path))
+            if size is None:
                 continue
-            size = stamp[1]
             through.append((photo_id, size))
             largest = max(largest, size)
     if not through:
@@ -242,13 +249,27 @@ def _cannot_keep(present):
 CHANGED = ("The selection changed since you were asked (photos came into it or left it): nothing was deleted. Ask again: "
            "click Delete once more.")
 
+#: What it says when the photos are the same but not the files that would be deleted for good: a drive's Recycle Bin set
+#: otherwise, or a file's size changed, since the question.
+FOR_GOOD_CHANGED = ("The files that would be deleted for good are not the ones you were warned of (a drive's Recycle Bin "
+                    "setting or a file's size changed since you were asked): nothing was deleted. Ask again: click Delete "
+                    "once more.")
 
-def refuse_if_changed(edit, photo_ids, token_of):
+
+def refuse_if_changed(edit, photo_ids, token_of, deleted_for_good):
     """A delete is started only on exactly the photos its question named: Conflict (CHANGED), nothing begun, when `photo_ids`
-    (the selection resolved at the start) is not the set whose token the question carried. `token_of` is
-    tagpup.services.selection.token_of, the one hash of both."""
-    if edit.op == DELETE and token_of(photo_ids) != edit.token:
-        raise Conflict(CHANGED)
+    (the selection resolved at the start) is not the set whose token the question carried -- nor, when the start confirmed a
+    delete for good, the files `deleted_for_good(photo_ids)` says it would delete for good now (a Bin set smaller since), which
+    are then the edit's for_good_ids; the photos the same and those files not, Conflict (FOR_GOOD_CHANGED). `token_of` and
+    `deleted_for_good` are tagpup.services.selection's, the one hash of both and the one answer of which files a Bin would not
+    keep."""
+    if edit.op != DELETE:
+        return
+    confirmed = frozenset(deleted_for_good(photo_ids)) if edit.for_good else frozenset()
+    if token_of(photo_ids, confirmed) != edit.token:
+        same_photos = edit.token.startswith(token_of(photo_ids))
+        raise Conflict(FOR_GOOD_CHANGED if same_photos else CHANGED)
+    edit.for_good_ids = confirmed
 
 
 def _delete(library, edit, present, out):
@@ -258,22 +279,31 @@ def _delete(library, edit, present, out):
     row kept (sync reports it); one refused, or not moved (any step of going through this PC that failed), is an error, the
     original and its row kept. Before the chunk copies anything through this PC, it asks whether this PC can keep the chunk's
     copies (recycle_bin.can_copy_here: the Bin fills during a long job, #703); if not, those photos are errors with the
-    sentence and nothing of them is touched; the others go on."""
+    sentence and nothing of them is touched; the others go on. A clip goes as a photo does, up to recycle_bin.MOST_CLIP_BYTES
+    (a larger one is its error, its size counted in no copy); a clip is a chunk of its own: the lock is let go of before
+    and after each clip, as after each chunk of photos, and a stop asked is taken there."""
     with file_changes.exclusively():
-        # Where each file is (file_changes.file_states): one on a share that did not answer is its error, one gone missing.
-        states = dict((paths.key(path), state) for path, state in file_changes.file_states([path for _id, path in present]))
+        # Where each file is, and its size, by one bounded stat of each (file_changes.file_stamps): one on a share that did
+        # not answer is its error, one gone missing.
+        stamps = file_changes.file_stamps([path for _id, path in present])
+        states = {paths.key(path): state for path, state, _stamp in stamps}
+        sizes = {paths.key(path): stamp[1] for path, _state, stamp in stamps if stamp is not None}
         there = [(photo_id, path) for photo_id, path in present if states[paths.key(path)] == file_changes.PRESENT]
         out.errors.extend((photo_id, os.path.basename(path)[:MOST_TEXT], file_changes.AWAY_WHY)
                           for photo_id, path in present if states[paths.key(path)] == file_changes.AWAY)
         out.skipped_missing += sum(1 for _id, path in present if states[paths.key(path)] == file_changes.GONE)
-        # A clip is never deleted (recycle_bin.not_deleted): its error, before this PC is asked for room for copies.
-        out.errors.extend((photo_id, os.path.basename(path)[:MOST_TEXT], recycle_bin.not_deleted(path))
-                          for photo_id, path in there if recycle_bin.not_deleted(path))
-        there = [(photo_id, path) for photo_id, path in there if not recycle_bin.not_deleted(path)]
-        refused = _cannot_keep(there)
+        # A clip over recycle_bin.MOST_CLIP_BYTES is not deleted: its error, before this PC is asked for room for copies.
+        large = {photo_id: recycle_bin.too_large(path, sizes.get(paths.key(path), 0))
+                 for photo_id, path in there if images.is_clip(path)}
+        out.errors.extend((photo_id, os.path.basename(path)[:MOST_TEXT], large[photo_id][:MOST_TEXT])
+                          for photo_id, path in there if large.get(photo_id))
+        there = [(photo_id, path) for photo_id, path in there if not large.get(photo_id)]
+        refused = _cannot_keep(there, sizes)
         batch = batches.current()
         for n, (photo_id, path) in enumerate(there):
-            if n and n % batches.CHUNK == 0 and not file_changes.between_chunks(batch):
+            # A chunk of photos holds the lock; a clip is a chunk of itself (its copy through this PC can take minutes).
+            turn = n and (n % batches.CHUNK == 0 or images.is_clip(there[n - 1][1]) or images.is_clip(path))
+            if turn and not file_changes.between_chunks(batch):
                 out.errors.extend((left_id, os.path.basename(left)[:MOST_TEXT], "stopped as asked: not deleted")
                                   for left_id, left in there[n:])
                 break
@@ -281,9 +311,11 @@ def _delete(library, edit, present, out):
             if photo_id in refused:
                 out.errors.append((photo_id, name, refused[photo_id][:MOST_TEXT]))
                 continue
-            result = photo_actions.delete(library, path)
+            # Deleted for good only if it was among the files confirmed: one grown past its Bin since is refused.
+            result = photo_actions.delete(library, path, photo_id in edit.for_good_ids)
             if result.ok and result.changed:
                 out.changed += 1
+                out.for_good += 1 if result.details.get("for_good") else 0
             else:
                 why = result.refused or result.message() or "it could not be deleted"
                 out.errors.append((photo_id, name, str(why)[:MOST_TEXT]))

@@ -31,8 +31,9 @@ import {
 } from './edits.js';
 import { countSaid, renderFileList, scanFolder, showFolderView, updateListStats, updatePhotoPosition } from './folder.js';
 import { removeFromSelection } from './selected.js';
-import { applyPhotoStale } from './stale.js';
-import { showMedia } from './media.js';
+import { applyPhotoStale, holdDeletes } from './stale.js';
+import { forGoodQuestion } from './bulk-words.js';
+import { isVideo, showMedia, stopVideo } from './media.js';
 import { fetchLibraryRecord, forgetPhoto, libraryIdOfPath, refetchCards } from './library-source.js';
 import { backToView, notePhoto, rememberView } from './view-left.js';
 import { showSmartRenameParts } from './rename-one.js';
@@ -765,7 +766,7 @@ export function rotatePhoto(direction) {
 // Move active photo to Windows Recycle Bin and update state
 export function deleteActivePhoto() {
     const path = state.activePhotoPath;
-    if (!path) return;
+    if (!path || state.deleting) return;
 
     const index = state.folderPhotos.findIndex(p => p.path === path);
     if (index === -1) return;
@@ -795,17 +796,33 @@ export function deleteActivePhoto() {
 
     statusDot.className = 'status-indicator-dot busy';
     statusText.textContent = 'Deleting...';
-
-    api.json('/api/photo/delete', {
+    // A clip playing lets go of its file first: the server reads it a range at a time, and a range being read as the
+    // original is deleted would make Windows refuse the delete. Shown again if the delete fails while it is still open.
+    const video = isVideo(asked);
+    if (video) stopVideo();
+    holdDeletes(true);
+    let stayed = false;     // the delete was cancelled or failed: the clip, if still the one shown, plays again
+    const send = (forGood) => api.json('/api/photo/delete', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ path })
-    })
+        body: JSON.stringify(forGood ? { path, for_good: true } : { path })
+    });
+    // A file its drive's Recycle Bin would not keep: the server named it and deleted nothing; asked, and only on OK, for good.
+    const cancelled = { cancelled: true };
+    send(false)
+    .then(data => (!data.success && Array.isArray(data.not_kept)
+        ? (confirm(forGoodQuestion(data.not_kept, data.not_kept.length)) ? send(true) : cancelled) : data))
     .then(data => {
+        if (data === cancelled) {
+            statusDot.className = 'status-indicator-dot';
+            statusText.textContent = 'Nothing was deleted.';
+            stayed = true;
+            return;
+        }
         if (data.success && askedInView && state.library !== askedInView) {
             // Another view (or a folder) was opened while the delete was out: nothing of it is this photo's.
             statusDot.className = 'status-indicator-dot';
-            statusText.textContent = 'Ready';
+            statusText.textContent = data.message || 'Ready';
             return;
         }
         if (data.success && askedInView) {
@@ -821,7 +838,7 @@ export function deleteActivePhoto() {
             if (nextId === undefined) backToView();
             else openLibraryPhoto(nextId);
             statusDot.className = 'status-indicator-dot';
-            statusText.textContent = 'Ready';
+            statusText.textContent = data.message || 'Ready';
         } else if (data.success) {
             // Found again now, by its path: a folder opened meanwhile has no such card, and none of it goes.
             const at = state.folderPhotos.findIndex(p => samePath(p.path, path));
@@ -870,7 +887,13 @@ export function deleteActivePhoto() {
         console.error(err);
         statusDot.className = 'status-indicator-dot';
         statusText.textContent = 'Error';
+        stayed = true;
         alert("Error deleting photo: " + err.message);
+    })
+    .finally(() => {
+        // Answered: the photo shown now (the next one, or this one if it stayed) offers its Delete again.
+        holdDeletes(false, state.folderPhotos.find(p => samePath(p.path, state.activePhotoPath)) || null);
+        if (stayed && video && samePath(state.activePhotoPath, path)) showMedia(asked, '');
     });
 }
 

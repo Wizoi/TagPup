@@ -32,7 +32,7 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 NOT_A_PATH = frozenset({
     # flags, numbers, modes, text
     "acknowledged", "action", "after", "all", "apply", "base", "before", "bulk", "camera_model",
-    "date_taken", "direction", "dry_run", "force", "group", "grouping", "has_face", "hidden_from_autocomplete",
+    "date_taken", "direction", "dry_run", "for_good", "force", "group", "grouping", "has_face", "hidden_from_autocomplete",
     "include_hidden", "kind", "lease", "let_go", "level", "limit", "mode", "only_folder", "op", "order", "override",
     "page", "page_writes_tags", "quiet", "reason", "recursive", "retire", "run", "runs", "seconds", "section",
     "shift_minutes", "show_matched", "size", "stamp", "text", "threshold", "title", "undo", "upright", "v", "values",
