@@ -65,14 +65,16 @@ OPERATIONS = {TAGS: "bulk tags", PEOPLE: "bulk people", DELETE: "bulk delete"}
 @dataclass
 class Edit:
     """What is done to each photo. `add` and `remove` are tags as they are written (a person's already filed as a tag),
-    `persons` the tags of `add` that are people; a delete's `token` (of the photos its question named) and `for_good` (its
-    question warned that some would be deleted for good, and the owner confirmed it: selection.token_of)."""
+    `persons` the tags of `add` that are people; a delete's `token` (of the photos its question named), `for_good` (its
+    question warned that some would be deleted for good, and the owner confirmed it) and `for_good_ids` (those files, asked
+    again at the start, the token then of them: refuse_if_changed; no other file is deleted for good)."""
     op: str
     add: list = field(default_factory=list)
     remove: list = field(default_factory=list)
     persons: list = field(default_factory=list)
     token: str = ""
     for_good: bool = False
+    for_good_ids: frozenset = frozenset()
 
 
 # ---- Reading one -----------------------------------------------------------------------------
@@ -248,12 +250,18 @@ CHANGED = ("The selection changed since you were asked (photos came into it or l
            "click Delete once more.")
 
 
-def refuse_if_changed(edit, photo_ids, token_of):
+def refuse_if_changed(edit, photo_ids, token_of, deleted_for_good):
     """A delete is started only on exactly the photos its question named: Conflict (CHANGED), nothing begun, when `photo_ids`
-    (the selection resolved at the start) is not the set whose token the question carried. `token_of` is
-    tagpup.services.selection.token_of, the one hash of both."""
-    if edit.op == DELETE and token_of(photo_ids, edit.for_good) != edit.token:
+    (the selection resolved at the start) is not the set whose token the question carried -- nor, when the start confirmed a
+    delete for good, the files `deleted_for_good(photo_ids)` says it would delete for good now (a Bin set smaller since), which
+    are then the edit's for_good_ids. `token_of` and `deleted_for_good` are tagpup.services.selection's, the one hash of both
+    and the one answer of which files a Bin would not keep."""
+    if edit.op != DELETE:
+        return
+    confirmed = frozenset(deleted_for_good(photo_ids)) if edit.for_good else frozenset()
+    if token_of(photo_ids, confirmed) != edit.token:
         raise Conflict(CHANGED)
+    edit.for_good_ids = confirmed
 
 
 def _delete(library, edit, present, out):
@@ -295,7 +303,8 @@ def _delete(library, edit, present, out):
             if photo_id in refused:
                 out.errors.append((photo_id, name, refused[photo_id][:MOST_TEXT]))
                 continue
-            result = photo_actions.delete(library, path, edit.for_good)
+            # Deleted for good only if it was among the files confirmed: one grown past its Bin since is refused.
+            result = photo_actions.delete(library, path, photo_id in edit.for_good_ids)
             if result.ok and result.changed:
                 out.changed += 1
                 out.for_good += 1 if result.details.get("for_good") else 0

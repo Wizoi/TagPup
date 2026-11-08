@@ -41,20 +41,20 @@ def described(conn, folder_ids):
 
 
 def larger_than(conn, folder_ids, size, most_clip_bytes, most_named, ids=None, source=None, excluded=()):
-    """(how many photos and clips of the selection in `folder_ids` are larger than `size` bytes -- photos.size, as the index
-    last read them --, the stored paths of the first `most_named` of them by path): the files a Bin that keeps files of up
-    to `size` would not keep (tagpup.services.selection.where_deleted). A clip over `most_clip_bytes` is not deleted: not
-    counted. Two reads over the folders given, which are the few whose largest file is over `size`."""
+    """([the ids of the photos and clips of the selection in `folder_ids` larger than `size` bytes -- photos.size, as the
+    index last read them --], the stored paths of the first `most_named` of them by path): the files a Bin that keeps files
+    of up to `size` would not keep (tagpup.services.selection.deleted_for_good). A clip over `most_clip_bytes` is not
+    deleted: not among them. Two reads over the folders given, which are the few whose largest file is over `size`."""
     selected, params = library_view.selected_sql(conn, ids, source, excluded)
     if selected is None or not folder_ids:
-        return 0, []
+        return [], []
     marks = ",".join("?" * len(folder_ids))
     where = (" FROM photo_folder pf JOIN photos p ON p.id = pf.photo_id WHERE pf.folder_id IN (%s) AND pf.photo_id IN (%s)"
              " AND p.size > ? AND (p.kind <> ? OR p.size <= ?)" % (marks, selected))
     args = tuple(folder_ids) + tuple(params) + (size, library_view.VIDEO, most_clip_bytes)
-    count = conn.execute("SELECT COUNT(*)" + where, args).fetchone()[0]
-    named = [row[0] for row in conn.execute("SELECT p.path" + where + " ORDER BY p.path LIMIT ?", args + (most_named,))]
-    return count, named
+    found = [row[0] for row in conn.execute("SELECT DISTINCT p.id" + where, args)]
+    named = [row[0] for row in conn.execute("SELECT DISTINCT p.path" + where + " ORDER BY p.path LIMIT ?", args + (most_named,))]
+    return found, named
 
 
 def bytes_by_folder(conn, most_clip_bytes, ids=None, source=None, excluded=()):

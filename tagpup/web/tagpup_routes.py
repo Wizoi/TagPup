@@ -770,7 +770,8 @@ def library_bulk_edit():
         edit = bulk_edit.prepare(library, body.get("op"), body.get("params", {}))
         resolved = selection_service.resolve(library, selection_service.read(library, body.get("selection")))
         # A delete deletes exactly the photos its question named, or nothing (#691).
-        bulk_edit.refuse_if_changed(edit, resolved.ids, selection_service.token_of)
+        bulk_edit.refuse_if_changed(edit, resolved.ids, selection_service.token_of,
+                                    lambda ids: selection_service.deleted_for_good(library, ids))
         out = bulk_edit.run(library, edit, resolved.ids, state.exiftool(library))
     except (Refused, NotFound, Conflict, paths.RootsError) as why:
         return _bulk_reply(why)

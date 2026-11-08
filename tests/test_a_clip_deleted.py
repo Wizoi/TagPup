@@ -292,6 +292,64 @@ class AFileOnALocalDrive(APhotoAndAClip):
         self.assert_kept(self.photo_path, self.photo)
         self.assertEqual([], self.binned())
 
+    def between(self):
+        """A Bin, as the drive's settings say it, that keeps the photo but not the clip: the test's stand-in volume."""
+        photo, clip = os.path.getsize(self.photo_path), os.path.getsize(self.clip_path)
+        kept = (photo + clip) // 2
+        self.assertTrue(photo < kept < clip, (photo, kept, clip))
+        return mock.patch.object(recycle_bin, "_test_bin", return_value=(kept, 0, False))
+
+    def test_a_bin_set_smaller_between_the_question_and_ok_deletes_nothing(self):
+        # The question named the clip alone as deleted for good, and the owner confirmed it; by the start the drive's Bin was
+        # set to delete at once, so the photo would be deleted for good too, never named: the start is refused, whole.
+        ids = [self.photo, self.clip]
+        with self.between():
+            asked = self.asked(*ids)
+        self.assertEqual({"count": 1, "names": ["jetty.mov"]}, asked["for_good"])
+        with mock.patch.dict(os.environ, {"TAGPUP_RECYCLE_BIN": "0,0,1"}):
+            reply = self.post("library/bulk-edit", {"op": "delete", "selection": {"ids": ids},
+                                                    "params": {"token": asked["token"], "for_good": True}})
+        self.assertEqual(409, reply.status_code, reply.get_json())
+        self.assert_kept(self.clip_path, self.clip)
+        self.assert_kept(self.photo_path, self.photo)
+        self.assertEqual([], self.binned())
+
+    def test_a_file_grown_past_its_bin_since_the_question_is_not_deleted_for_good(self):
+        # The index still has the photo's old size, so the start's question agrees with the first; the photo itself grew
+        # past what the Bin keeps. Only the clip was named and confirmed: the photo is refused, untouched.
+        ids = [self.photo, self.clip]
+        with self.between():
+            asked = self.asked(*ids)
+            self.assertEqual({"count": 1, "names": ["jetty.mov"]}, asked["for_good"])
+            with open(self.photo_path, "ab") as grown:
+                grown.write(b"\0" * os.path.getsize(self.clip_path))
+            reply = self.post("library/bulk-edit", {"op": "delete", "selection": {"ids": ids},
+                                                    "params": {"token": asked["token"], "for_good": True}})
+        done = reply.get_json()
+        self.assertEqual(200, reply.status_code, done)
+        self.assertEqual((1, 1, 1), (done["changed"], done["error_count"], done["for_good"]), done["errors"])
+        self.assertEqual(self.photo, done["errors"][0]["id"])
+        self.assertIn("would be deleted for good", done["errors"][0]["why"])
+        self.assert_gone(self.clip_path, self.clip)
+        self.assert_kept(self.photo_path, self.photo)
+        self.assertEqual([], self.binned())
+
+    def test_a_delete_that_says_for_good_of_a_file_its_bin_keeps_sends_it_to_the_bin(self):
+        # A page cannot make a delete permanent by saying so: only a file its Bin would not keep is deleted for good.
+        reply = self.post("photo/delete", {"path": self.clip_path, "for_good": True})
+        self.assertEqual(200, reply.status_code, reply.get_json())
+        self.assertFalse(reply.get_json()["for_good"])
+        self.assertNotIn("Deleted for good", reply.get_json().get("message") or "")
+        self.assertEqual(["jetty.mov"], self.binned(), "the clip went to its Bin")
+        asked = self.asked(self.photo)
+        self.assertEqual(0, asked["for_good"]["count"])
+        reply = self.post("library/bulk-edit", {"op": "delete", "selection": {"ids": [self.photo]},
+                                                "params": {"token": asked["token"], "for_good": True}})
+        done = reply.get_json()
+        self.assertEqual(200, reply.status_code, done)
+        self.assertEqual((1, 0), (done["changed"], done["for_good"]), done["errors"])
+        self.assertEqual(["jetty.mov", "pier.jpg"], self.binned(), "the photo went to its Bin")
+
     def test_a_file_its_drives_bin_can_keep_goes_straight_there(self):
         self.assertEqual({"count": 0, "names": []}, self.asked(self.clip)["for_good"])
         reply = self.post("photo/delete", {"path": self.clip_path})

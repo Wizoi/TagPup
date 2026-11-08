@@ -133,12 +133,14 @@ def _kept(counted, name_of):
     return sorted(counted, key=lambda each: vocabulary.tag_sort_key(name_of(each))), left
 
 
-def token_of(photo_ids, for_good=False):
-    """The token of a set of photos: a hash of their ids, sorted (the order they were named in is no matter), and of whether
-    the question said some would be deleted for good. What a Delete's question was about, and what its start must still
-    resolve to (#691): a start that says `for_good` carries the token of a question that warned of it. 68,000 ids are about
-    20 ms."""
-    text = ",".join(str(each) for each in sorted(set(photo_ids))) + (";for good" if for_good else "")
+def token_of(photo_ids, for_good_ids=()):
+    """The token of a set of photos: a hash of their ids, sorted (the order they were named in is no matter), and of the ids
+    of those the question said would be deleted for good, every one of them (deleted_for_good), not only those it named. What
+    a Delete's question was about, and what its start must still resolve to (#691): a start confirmed for good carries the
+    token of a question that warned of exactly the files it would now delete for good. 68,000 ids are about 20 ms."""
+    text = ",".join(str(each) for each in sorted(set(photo_ids)))
+    if for_good_ids:
+        text += ";for good:" + ",".join(str(each) for each in sorted(set(for_good_ids)))
     return hashlib.sha256(text.encode("ascii")).hexdigest()
 
 
@@ -158,49 +160,80 @@ def where_deleted(library, selection):
     Windows now, #703, #706: nothing is to be asked then), "for_good": {"count", "names"} (the files on a drive whose Recycle
     Bin would not keep them -- larger than it keeps, or a Bin set to delete at once, recycle_bin.keeps_up_to -- which are
     deleted for good only when the start says `for_good`, its token then of that; the file names of the first
-    MOST_FOR_GOOD_NAMED)}; the reasons as recycle_bin says them ("on a network share").
+    MOST_FOR_GOOD_NAMED; the token covers every one of them)}; the reasons as recycle_bin says them ("on a network share").
     Asked once a folder, never once a photo (a Select all of photo_index is 2,672 folders, about 2 s); a UNC path and a mapped
     drive are told by their spelling and the drive's type, without reading the share. Refused, as `resolve` refuses it, over
     batches.MAX_BATCH."""
     resolved = resolve(library, selection)
     conn = library_view.opened(library)
     try:
-        counted = store_folders.counts(conn, resolved.ids, None, ())
-        sizes = store_folders.bytes_by_folder(conn, recycle_bin.MOST_CLIP_BYTES, resolved.ids, None, ())
-        named = store_folders.described(conn, counted)
+        counted, sizes, named = _weighed(conn, resolved.ids)
         reasons = collections.Counter()
         copy_bytes = largest = 0
-        binless, not_kept = set(), collections.defaultdict(list)    # {what a Bin keeps: [folder ids with a file over it]}
+        binless = set()
         for folder_id, (path, _name) in named.items():
             reason = recycle_bin.no_bin_reason(path)
-            total, biggest = sizes.get(folder_id) or (0, 0)
             if reason:
+                total, biggest = sizes.get(folder_id) or (0, 0)
                 reasons[reason] += counted[folder_id]
                 copy_bytes += total
                 largest = max(largest, biggest)
                 binless.add(folder_id)
-                continue
-            try:
-                kept = recycle_bin.keeps_up_to(path)
-            except OSError:
-                continue        # the delete of each file asks again, and refuses it, untouched, if it still cannot tell
-            if biggest > kept:
-                not_kept[kept].append(folder_id)
-        for_good, for_good_names = 0, []
-        for kept, folder_ids in not_kept.items():
-            count, stored = store_folders.larger_than(conn, folder_ids, kept, recycle_bin.MOST_CLIP_BYTES,
-                                                      MOST_FOR_GOOD_NAMED, resolved.ids, None, ())
-            for_good += count
-            for_good_names.extend(paths.row_name(each) for each in stored)
+        for_good, stored = _for_good(conn, resolved.ids, sizes, named, binless)
     finally:
         conn.close()
     through = sum(reasons.values())
     too_long = _too_long(library, resolved.ids, binless, named) if through else 0
-    return {"total": len(resolved.ids), "token": token_of(resolved.ids, for_good > 0), "folders": len(counted),
-            "through_this_pc": through, "for_good": {"count": for_good, "names": sorted(for_good_names)[:MOST_FOR_GOOD_NAMED]},
+    names = sorted(paths.row_name(each) for each in stored)[:MOST_FOR_GOOD_NAMED]
+    return {"total": len(resolved.ids), "token": token_of(resolved.ids, for_good), "folders": len(counted),
+            "through_this_pc": through, "for_good": {"count": len(for_good), "names": names},
             "reasons": [{"reason": reason, "photos": photos} for reason, photos in reasons.most_common()],
             "copy_bytes": copy_bytes, "restores_to": recycle_bin.mirror_root(), "too_long": too_long,
             "no_room": recycle_bin.can_copy_here(copy_bytes, largest, fresh=True) if through else None}
+
+
+def _weighed(conn, photo_ids):
+    """({folder id: photos of `photo_ids` in it}, {folder id: (their bytes, the largest)}, {folder id: (path, name)}): what
+    where_deleted and deleted_for_good ask of each folder."""
+    counted = store_folders.counts(conn, photo_ids, None, ())
+    sizes = store_folders.bytes_by_folder(conn, recycle_bin.MOST_CLIP_BYTES, photo_ids, None, ())
+    return counted, sizes, store_folders.described(conn, counted)
+
+
+def _for_good(conn, photo_ids, sizes, named, binless):
+    """({the ids of `photo_ids` on a drive whose Recycle Bin would not keep them -- larger than it keeps, or a Bin set to delete
+    at once, recycle_bin.keeps_up_to, by the index's sizes --}, the stored paths of the first MOST_FOR_GOOD_NAMED of each Bin's):
+    the files a Delete deletes for good once confirmed. A folder of `binless` goes through this PC instead; one whose Bin
+    Windows cannot tell of is left out (the delete of each of its files asks again, and refuses it untouched)."""
+    not_kept = collections.defaultdict(list)        # {what a Bin keeps: [folder ids with a file over it]}
+    for folder_id, (path, _name) in named.items():
+        if folder_id in binless:
+            continue
+        try:
+            kept = recycle_bin.keeps_up_to(path)
+        except OSError:
+            continue
+        if (sizes.get(folder_id) or (0, 0))[1] > kept:
+            not_kept[kept].append(folder_id)
+    found, stored = set(), []
+    for kept, folder_ids in not_kept.items():
+        ids, first = store_folders.larger_than(conn, folder_ids, kept, recycle_bin.MOST_CLIP_BYTES, MOST_FOR_GOOD_NAMED,
+                                               photo_ids, None, ())
+        found.update(ids)
+        stored.extend(first)
+    return found, stored
+
+
+def deleted_for_good(library, photo_ids):
+    """The ids of `photo_ids` a Delete would delete for good now (_for_good), asked again at its start: a start confirmed for
+    good goes on only when these are the files its question named (token_of), and deletes for good none but these."""
+    conn = library_view.opened(library)
+    try:
+        _counted, sizes, named = _weighed(conn, photo_ids)
+        binless = {folder_id for folder_id, (path, _name) in named.items() if recycle_bin.no_bin_reason(path)}
+        return _for_good(conn, photo_ids, sizes, named, binless)[0]
+    finally:
+        conn.close()
 
 
 def paths_of(library, photo_ids):
