@@ -32,7 +32,7 @@ import {
 import { countSaid, renderFileList, scanFolder, showFolderView, updateListStats, updatePhotoPosition } from './folder.js';
 import { removeFromSelection } from './selected.js';
 import { applyPhotoStale, holdDeletes } from './stale.js';
-import { forGoodQuestion } from './bulk-words.js';
+import { bigClip, forGoodQuestion } from './bulk-words.js';
 import { isVideo, showMedia, stopVideo } from './media.js';
 import { fetchLibraryRecord, forgetPhoto, libraryIdOfPath, refetchCards } from './library-source.js';
 import { backToView, notePhoto, rememberView } from './view-left.js';
@@ -785,7 +785,11 @@ export function deleteActivePhoto() {
     const known = state.folderMembership && state.folderMembership.permanent_delete
         ? (state.folderMembership.permanent_reason || 'on a drive without a Recycle Bin') : '';
     const reason = known || (isUnc(path) ? 'on a network share' : '');
-    const question = reason
+    // A clip over 2 GiB is deleted for good on any drive: said first, before the server names it (forGoodQuestion) to be confirmed.
+    const question = isVideo(asked) && bigClip(asked.size)
+        ? `"${filename}" is a video over 2 GiB: it is deleted for good, not moved to a Recycle Bin and not copied to this PC (too large for TagPup to copy to one). `
+            + 'You are asked once more, naming it, before anything is deleted.\n\nDelete it for good?'
+        : reason
         ? `This file is ${reason}, where there is no Recycle Bin: it is copied to this PC, the copy goes to this PC's Recycle Bin, `
             + `and then the file is deleted. Restored from the Recycle Bin, the copy goes to your Downloads folder, under `
             + `"TagPup deleted from shares", not back to where it was.\n\nAre you sure you want to delete "${filename}"?`

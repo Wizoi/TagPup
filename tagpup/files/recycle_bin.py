@@ -691,7 +691,10 @@ def _delete_file(file_path, for_good):
     source = paths.stored(file_path)
     if images.is_clip(long):
         # A clip over MOST_CLIP_BYTES is weighed before its place: on a share it would be a copy of gigabytes through this PC.
-        size = os.path.getsize(source)
+        try:
+            size = os.path.getsize(source)
+        except OSError as e:
+            raise OSError("Could not tell how large the video is (%s). Nothing was deleted." % (e.strerror or e)) from None
         if too_large_to_copy(long, size):
             if not for_good:
                 raise NotKept(clip_not_kept(source, size))

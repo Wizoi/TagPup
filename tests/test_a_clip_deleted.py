@@ -333,6 +333,24 @@ class AClipOverTheLimit(APhotoAndAClip):
         self.assertTrue(reply.get_json()["through_this_pc"])
         self.assertEqual(["jetty.mov"], self.binned(), "its copy went to the Bin: a page cannot make a delete permanent")
 
+    def test_a_clip_whose_size_cannot_be_read_is_left_with_its_row_and_a_plain_sentence(self):
+        real = os.path.getsize
+
+        def getsize(path):
+            if paths.key(path) == paths.key(self.clip_path):
+                raise OSError(53, "The network path was not found")
+            return real(path)
+
+        with mock.patch.object(recycle_bin.os.path, "getsize", side_effect=getsize):
+            reply = self.post("photo/delete", {"path": self.clip_path, "for_good": True})
+        self.assertNotEqual(200, reply.status_code)
+        error = reply.get_json()["error"]
+        self.assertIn("Could not tell how large the video is", error)
+        self.assertIn("Nothing was deleted", error)
+        self.assertNotIn("Errno", error, "a sentence, not the raw error")
+        self.assert_clip_untouched()
+        self.assertFalse(recycle_bin.being_deleted(self.clip_path), "failed: released")
+
     def test_a_clip_held_open_elsewhere_is_left_with_its_row_and_a_plain_sentence(self):
         real = os.remove
 

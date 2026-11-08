@@ -345,6 +345,21 @@ describe("#674: Delete of a view's selection", () => {
     assert.match(stripSentence(ctx), /^Deleted 3 photos to the Recycle Bin, 1 of them for good;/);
   });
 
+  test("a clip over 2 GiB: the first question already says it is deleted for good, not that it goes to a Recycle Bin or is copied", async (t) => {
+    const ctx = await view(t, 40, { where: { ...FOR_GOOD(1, ["Harbour_Swim_Long.mp4"]), through_this_pc: 1, copy_bytes: 4 * 1024 * 1024 } });
+    for (const id of [2, 5, 9]) pick(ctx, id);
+    await remove(ctx);
+    assert.match(ctx.questions[0], /1 of them is deleted for good, not moved to a Recycle Bin and not copied to this PC/);
+    assert.match(ctx.questions[0], /a video over 2 GiB/);
+    assert.match(ctx.questions[0], /you are asked next, by name/);
+    assert.doesNotMatch(ctx.questions[0], /The other 2 go to the Recycle Bin/, "the share's one is copied, the clip is neither");
+    const alone = await view(t, 40, { where: FOR_GOOD(1, ["Harbour_Swim_Long.mp4"]) });
+    alone.bulk.edit = { op: "delete", total: 1, changed: 1, for_good: 1 };
+    pick(alone, 2);
+    await remove(alone);
+    assert.match(alone.questions[0], /^Delete 3 photos\? 1 of them is deleted for good.* The other 2 go to the Recycle Bin, where they can be restored\./);
+  });
+
   test("the file the warning named was not removed (its delete failed): the strip says none went for good, from the reply", async (t) => {
     const ctx = await view(t, 40, { where: FOR_GOOD(1, ["Harbour_Swim_Long.mp4"]) });
     ctx.bulk.edit = { op: "delete", total: 3, changed: 2, for_good: 0, error_count: 1,
@@ -360,7 +375,7 @@ describe("#674: Delete of a view's selection", () => {
     const names = ["Clip_A.mp4", "Clip_B.mp4", "Clip_C.mp4", "Clip_D.mp4", "Clip_E.mp4"];
     const ctx = await view(t, 40, { where: FOR_GOOD(7, names) });
     for (const id of [2, 5, 9]) pick(ctx, id);
-    ctx.answer = (text) => !/deleted for good/.test(text);
+    ctx.answer = (text) => !/^Th(is file|ese files) would be deleted for good/.test(text);
     await remove(ctx);
     assert.equal(ctx.questions.length, 2);
     assert.match(ctx.questions[1], /^These files would be deleted for good/);
@@ -373,7 +388,7 @@ describe("#674: Delete of a view's selection", () => {
     const names = ["Clip_A.mp4", "Clip_B.mp4", "Clip_C.mp4", "Clip_D.mp4", "Clip_E.mp4", "Clip_F.mp4"];
     const ctx = await view(t, 40, { where: FOR_GOOD(8, names) });
     for (const id of [2, 5, 9]) pick(ctx, id);
-    ctx.answer = (text) => !/deleted for good/.test(text);
+    ctx.answer = (text) => !/^Th(is file|ese files) would be deleted for good/.test(text);
     await remove(ctx);
     for (const name of names) assert.ok(ctx.questions[1].includes(`  ${name}`), `${name} is named`);
     assert.match(ctx.questions[1], /\n  and 2 more\n/);

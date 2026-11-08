@@ -219,6 +219,23 @@ describe("the other file edits", () => {
     assert.equal(ctx.document.querySelectorAll(".photo-item-file").length, 1, "the photo stayed in the list");
   });
 
+  test("a clip over 2 GiB: the delete's first question says for good, on any drive, not the Recycle Bin or a copy to this PC", async (t) => {
+    const big = () => [photoRecord({ path: A, filename: "Harbour_Swim_Long.mp4", media: "video", size: 3 * 1024 * 1024 * 1024 }),
+      photoRecord({ path: B, filename: "IMG_0002.jpg" })];
+    const s = server().first("/api/folder/membership", () => ({ ...HELD, permanent_delete: false })).first("/api/folder/scan", big);
+    const local = await loadApp("tagpup", { t, url: "http://localhost:8090/kr-track/", server: s });
+    local.window.alert = () => {};
+    let asked = "";
+    local.window.confirm = (text) => { asked = text; return false; };
+    await openFolder(local, HELD_FOLDER);
+    click(local.window, local.document.querySelectorAll(".photo-item-file")[0]);
+    await flush(local.window, 6);
+    click(local.window, local.document.getElementById("btn-delete-photo"));
+    assert.match(asked, /"Harbour_Swim_Long.mp4" is a video over 2 GiB: it is deleted for good, not moved to a Recycle Bin and not copied to this PC/);
+    assert.doesNotMatch(asked, /move it to the Windows Recycle Bin|copied to this PC, the copy goes/);
+    assert.equal(s.calls.filter((c) => c.method === "POST" && c.url.includes("/api/photo/delete")).length, 0, "Cancel at the first question deletes nothing");
+  });
+
   test("a local photo's delete says the Recycle Bin; a drive the server names as having none goes through this PC", async (t) => {
     const s = server().first("/api/folder/membership", () => ({ ...HELD, permanent_delete: false }));
     const local = await loadApp("tagpup", { t, url: "http://localhost:8090/kr-track/", server: s });
