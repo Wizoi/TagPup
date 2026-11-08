@@ -47,7 +47,10 @@ and Windows read no title. An undo gives it back (`title`, its text) by the same
 of the item list holding exactly one UTF-8 `data` atom of that text (`freed_titles`, `holds_title`); a file rewritten
 meanwhile has none, and is the rewrite's. None, the rewrite's, for a clear of a clip holding two title items (1 live)
 or one outside the item list (directly in udta, QuickTime's older form), and a give-back to a clip holding a title item
-already. A title typed over is not written here: the QuickTime copy stays as it was.
+already. A clear is asked only of a clip whose QuickTime Title ExifTool read (tagpup.services.tagging._title_written),
+so a clear finding no title item is the rewrite's too: the title is in a form this does not walk (an 'mdta' keys meta,
+no live clip, 2026-11-08), refused before a byte of the XMP is written rather than read back still titled after it.
+A title typed over is not written here: the QuickTime copy stays as it was.
 
 A `Patch`'s last range may start at the file's end (an append) or run past it (a box that grows there): `size` is the
 file's size once written. Its ranges are in file order and do not overlap.
@@ -94,11 +97,6 @@ def patch(layout, packet, title=None, freed=()):
     return Patch(tuple(sorted(placed.ranges + titled)), placed.size, placed.how)
 
 
-def title_box(layout):
-    """The QuickTime title item a clear frees: containers.Video.title_item, the one statement of which box that is."""
-    return layout.title_item
-
-
 def freed_titles(layout):
     """The boxes an undo may give the clip's QuickTime title back to: each `free` box of its item list
     (containers.Video.item_list) of at most TITLE_MOST, while it holds no title item; () otherwise."""
@@ -117,12 +115,10 @@ def holds_title(content, text):
 
 
 def _title_ranges(layout, title, freed):
-    """The ranges that free the clip's title item (`title` "") or give `title` back to the one of `freed` holding it;
-    () for a clear of a clip holding none; None, the rewrite's, otherwise (the module)."""
+    """The ranges that free the clip's title item (`title` "", containers.Video.title_item) or give `title` back to the
+    one of `freed` holding it; None, the rewrite's, otherwise (the module)."""
     if not title:
-        if not layout.titles:
-            return ()
-        box = title_box(layout)
+        box = layout.title_item
         return None if box is None else ((box.offset + 4, b"free"),)
     found = [box for box, content in freed if holds_title(content, title)]
     if len(found) != 1:

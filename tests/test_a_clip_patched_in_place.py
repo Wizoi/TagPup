@@ -19,8 +19,8 @@ part-way or after its last byte is told OLD, TORN (put back to its old bytes and
 A clip's QuickTime title (DECISIONS 2026-11-08; AClipsQuickTimeTitle, by hand, and AClipSavedInPlace, a real one): a
 clear frees its one title item in moov/udta/meta/ilst (four type bytes, `free`), whatever else the patch writes, and an
 undo gives it back to the one free box of that item list holding exactly its text, the clip byte for byte as before; two
-title items, one directly in udta (ffmpeg's .mov), one in an 'mdta' meta, a free box holding another text, and a give
-back to a clip holding a title already, are the rewrite's. A clear cut short is settled by its four bytes.
+title items, one directly in udta (ffmpeg's .mov), none the walk finds (a title in an 'mdta' keys meta), a free box
+holding another text, and a give back to a clip holding a title already, are the rewrite's. A clear cut short is settled by its four bytes.
 """
 import io
 import json
@@ -364,9 +364,6 @@ class AClipsQuickTimeTitle(unittest.TestCase):
                     back = self.given_back(cleared)
                     self.assertEqual(data if packet is None else applied(data, clip_patch.patch(layout_of(data), packet)),
                                      back)
-        nothing = FTYP + MOOV + MDAT
-        self.assertEqual(clip_patch.Patch((), len(nothing), clip_patch.IN_PLACE),
-                         clip_patch.patch(layout_of(nothing), None, ""), "a clip with no title: nothing to write")
 
     def test_a_title_the_patch_does_not_understand_is_the_rewrites(self):
         cleared = {
@@ -374,6 +371,8 @@ class AClipsQuickTimeTitle(unittest.TestCase):
             "a title directly in udta (ffmpeg's .mov)": FTYP + box(b"wide") + MDAT + mov(box(b"\xa9nam", b"x")),
             "one in udta and one in the item list": FTYP + titled_moov(title_item(), meta(title_item())) + MDAT,
             "a title in an 'mdta' meta (no live clip)": FTYP + titled_moov(meta(title_item(), handler=b"mdta")) + MDAT,
+            "a title the walk does not find: an 'mdta' keys meta in moov, its item numbered (no live clip)":
+                FTYP + box(b"moov", MVHD + TRAK + meta(box(b"\0\0\0\1", data_atom(TITLE)), handler=b"mdta")) + MDAT,
         }
         for name, data in cleared.items():
             with self.subTest(name):
