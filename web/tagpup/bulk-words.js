@@ -42,9 +42,12 @@ function phrase(desc, form, count) {
  */
 export function describeDelete(where, count) {
     const through = Math.min((where && where.through_this_pc) || 0, count);
-    const after = !through ? ' to the Recycle Bin'
+    const forGood = Math.min((where && where.for_good && where.for_good.count) || 0, count);
+    const binned = !through ? ' to the Recycle Bin'
         : through >= count ? " through this PC's Recycle Bin" : ", those from places with no Recycle Bin through this PC's";
-    return { op: 'delete', verb: 'Delete', past: 'Deleted', what: '', prep: '', after, throughThisPc: through };
+    // A file deleted for good is never said to have gone to a Recycle Bin.
+    const after = !forGood ? binned : forGood >= count ? ' for good' : `${binned}, ${forGood.toLocaleString()} of them for good`;
+    return { op: 'delete', verb: 'Delete', past: 'Deleted', what: '', prep: '', after, throughThisPc: through, forGood };
 }
 
 /** `2,345 MB`: bytes as the question says them, rounded up. */
@@ -83,6 +86,25 @@ export function deleteQuestion(where, count) {
     const rest = count - through;
     return `${head} ${through.toLocaleString()} of them ${one ? 'is' : 'are'} where there is no Recycle Bin (${why}): ${copied} `
         + `The other ${rest.toLocaleString()} ${rest === 1 ? 'goes' : 'go'} to the Recycle Bin.${rows}${job}`;
+}
+
+/** How many file names the warning of a delete for good lists; the rest are counted. */
+const MOST_FOR_GOOD_NAMED = 5;
+
+/**
+ * The warning before files are deleted for good (DECISIONS 2026-11-08): `names` the file names the server gave (the delete-check's
+ * `for_good.names`, or the one file of the panel's delete), `count` how many in all. The owner's OK is the only way the server
+ * deletes one for good; Cancel deletes nothing.
+ */
+export function forGoodQuestion(names, count) {
+    const shown = (names || []).slice(0, MOST_FOR_GOOD_NAMED);
+    const total = Math.max(count || 0, shown.length);
+    const more = total - shown.length;
+    const one = total === 1;
+    const list = shown.map(name => `  ${name}`).join('\n') + (more > 0 ? `\n  and ${more.toLocaleString()} more` : '');
+    return `${one ? 'This file' : 'These files'} would be deleted for good, not moved to the Recycle Bin: the Recycle Bin of `
+        + `${one ? 'its' : 'their'} drive would not keep ${one ? 'it' : 'them'} (too large, or set to delete files at once).`
+        + `\n\n${list}\n\nOK deletes ${one ? 'it' : 'them'} for good; Cancel deletes nothing.`;
 }
 
 /** The question before a bulk edit: it names the write and the count, what it touches, how long, and how to undo it. */

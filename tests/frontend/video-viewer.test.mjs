@@ -221,6 +221,46 @@ describe("a video's title and keywords are edited, nothing else of it", () => {
     ctx.consoleErrors.length = 0;
     assertPlaying(ctx, VIDEO, "the delete failed: the clip is still there and shown again");
   });
+
+  const deletes = (ctx) => ctx.server.calls.filter((c) => c.url.includes("/api/photo/delete"));
+
+  test("its Delete is inert from the click to the reply: a second click sends no second delete", async (t) => {
+    const ctx = await viewWithAVideo(t);
+    const answer = [];
+    ctx.server.first("/api/photo/delete", () => new Promise((resolve) => answer.push(resolve)));
+    ctx.window.confirm = () => true;
+    ctx.window.alert = () => {};
+    await open(ctx, VIDEO);
+    click(ctx.window, el(ctx, "btn-delete-photo"));
+    await ctx.settle(40);
+    assert.ok(el(ctx, "btn-delete-photo").hasAttribute("inert"), "inert while the delete is out");
+    click(ctx.window, el(ctx, "btn-delete-photo"));
+    await ctx.settle(40);
+    assert.equal(deletes(ctx).length, 1, "one delete, one copy into its .partial");
+    answer[0]({ success: false, error: "The file is in use" });
+    await ctx.settle(80);
+    ctx.consoleErrors.length = 0;
+    assert.ok(!el(ctx, "btn-delete-photo").hasAttribute("inert"), "answered: offered again");
+  });
+
+});
+      ctx.server.first("/api/photo/delete", { success: true, for_good: true, message: "Deleted for good, as you confirmed." });
+      const questions = [];
+      ctx.window.confirm = (said) => { questions.push(said); return questions.length === 1 || ok; };
+      ctx.window.alert = () => {};
+      await open(ctx, VIDEO);
+      click(ctx.window, el(ctx, "btn-delete-photo"));
+      await ctx.settle(120);
+      assert.equal(questions.length, 2, "the delete was asked, then the warning");
+      assert.match(questions[1], /would be deleted for good, not moved to the Recycle Bin/);
+      assert.match(questions[1], /harbour-swim\.mov/, "the warning names the file");
+      const sent = deletes(ctx).map((c) => JSON.parse(c.body));
+      assert.equal(sent.length, ok ? 2 : 1);
+      assert.ok(!("for_good" in sent[0]), "the first delete never says for good");
+      if (ok) assert.equal(sent[1].for_good, true, "only the owner's OK sends it");
+      else assertPlaying(ctx, VIDEO, "Cancel: nothing deleted, the clip shown again");
+    });
+  }
 });
 
 describe("a video the browser cannot play says why", () => {

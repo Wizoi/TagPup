@@ -14,7 +14,7 @@ import { resolveTagOrPerson, updatePeopleDatalist, updateTagsDatalist } from './
 import { selectionCount, selectionRequest } from './selected.js';
 import { BUSY_SENTENCE, bulkBusy, runBulk } from './bulk-run.js';
 import { photosOf } from './common/batch-strip.js';
-import { confirmSentence, deleteQuestion, describeDelete, describeTags } from './bulk-words.js';
+import { confirmSentence, deleteQuestion, describeDelete, describeTags, forGoodQuestion } from './bulk-words.js';
 
 /** The selection, as a request, and how many photos it is; or null, the owner told why not (nothing is asked of the server). */
 function readSelection() {
@@ -150,8 +150,13 @@ export async function deleteSelection() {
             return false;
         }
         if (!confirm(deleteQuestion(where, count))) return false;
+        // Files whose drive's Recycle Bin would not keep them are named, and deleted for good only on OK; the token is of that
+        // answer, so a start that did not ask is refused by the server.
+        const forGood = (where.for_good && where.for_good.count) || 0;
+        if (forGood && !confirm(forGoodQuestion(where.for_good.names, forGood))) return false;
         const desc = describeDelete(where, count);
-        const started = await runBulk({ op: 'delete', selection: picked.selection, params: { token: where.token }, desc, picked: count });
+        const params = forGood ? { token: where.token, for_good: true } : { token: where.token };
+        const started = await runBulk({ op: 'delete', selection: picked.selection, params, desc, picked: count });
         return started.ok;
     } finally {
         state.bulk.asking = false;

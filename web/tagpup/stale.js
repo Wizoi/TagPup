@@ -60,6 +60,31 @@ function heldSentence(held) {
  * exactly the controls whose field its `writes` names, and a sentence naming the others. Called for every photo shown,
  * so the state of one photo is never carried to the next. No photo (none found) offers no edit.
  */
+/**
+ * A delete of the panel's photo is out (`on`) or answered: its Delete (`data-deletes`) is inert from the click to the reply, for
+ * a photo as for a clip, whose copy through this PC can take minutes; a second click would start a second copy into the same
+ * `.partial`. Answered (`on` false), the Delete is offered as applyPhotoStale offers it for `photo`, the record shown now.
+ */
+export function holdDeletes(on, photo) {
+    state.deleting = on;
+    for (const el of document.querySelectorAll('[data-deletes]')) inertUnless(el, !deletesHeld(photo));
+}
+
+/** Is the Delete of `photo` held: no photo, its file missing, or a delete of the panel's photo out. */
+function deletesHeld(photo) {
+    return !photo || Boolean(photo.missing) || state.deleting;
+}
+
+function inertUnless(el, offered) {
+    if (offered) {
+        el.removeAttribute('inert');
+        el.removeAttribute('aria-disabled');
+    } else {
+        el.setAttribute('inert', '');
+        el.setAttribute('aria-disabled', 'true');
+    }
+}
+
 export function applyPhotoStale(photo) {
     const missing = Boolean(photo && photo.missing);
     const writes = photo && !missing ? photo.writes : [];
@@ -75,13 +100,7 @@ export function applyPhotoStale(photo) {
     mainImage.classList.toggle('hidden', missing);
     const deletes = [...document.querySelectorAll('[data-deletes]')];
     for (const el of controls.concat(deletes)) {
-        if (el.hasAttribute('data-deletes') ? missing || !photo : held.has(el.dataset.writes)) {
-            el.setAttribute('inert', '');
-            el.setAttribute('aria-disabled', 'true');
-        } else {
-            el.removeAttribute('inert');
-            el.removeAttribute('aria-disabled');
-        }
+        inertUnless(el, !(el.hasAttribute('data-deletes') ? deletesHeld(photo) : held.has(el.dataset.writes)));
     }
     const lib = state.library;
     if (!lib || !photo || photo.id === undefined) return;
