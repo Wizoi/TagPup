@@ -120,7 +120,7 @@ class AClipRenamed(tagged.ALibraryHoldingAClip):
         self.assertEqual(clip_bytes, self.read_bytes(self.clip_path))
         self.assertEqual(paths.key(self.clip_path), paths.key(self.path_of(clip)))
         lone = self.post("photo/smart-rename", {"path": self.clip_path, "grouping": "Harbour"})
-        self.assertNotEqual(200, lone.status_code)
+        self.assertEqual(400, lone.status_code, "a refusal, as a Just-look clip's is, not a 500")
         self.assertIn(images.CLIP_NOT_PATCHED, lone.get_json()["error"])
         self.assertEqual(clip_bytes, self.read_bytes(self.clip_path))
 

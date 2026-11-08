@@ -437,6 +437,10 @@ def _renamable(result, photo_paths, held, loose):
     return [p for p in photo_paths if paths.key(p) in kept]
 
 
+#: The details key of the keys of the clips a rename left out because their writer refused them (_rename_numbered).
+LEFT_OUT = "left_out"
+
+
 def _refused_clips(kept):
     """The keys of the clips preserve_names' Result `kept` failed because their writer refused them before a byte was
     written (field_values._clip_written raises Refused; file_changes.WRITER_REFUSED): left out of a Smart Rename, not
@@ -503,7 +507,8 @@ def smart_rename_one(library, photo_path, grouping, rename_format, exiftool_path
     A file that already holds the new name is not moved aside, as a folder's rename moves it (the photos of that
     rename are renumbered together, this one alone): refused, and nothing written. Refused too for a grouping that may
     not be used, a folder not there or on a share that does not answer (shares.folder_refusal, SHARE_AWAY), and a photo
-    no longer there, and a clip of a folder the library does not hold (_renamable, its sentence). The name already right
+    no longer there, a clip of a folder the library does not hold (_renamable, its sentence) and a clip its writer
+    refuses (images.CLIP_NOT_PATCHED, in_place.OPEN_ELSEWHERE: the clip keeps its name). The name already right
     is no change (`renamed` empty). details: smart_rename's, and `new_path`."""
     result = Result(attempted=1)
     problem = validation.problem("grouping", grouping)
@@ -526,6 +531,13 @@ def smart_rename_one(library, photo_path, grouping, rename_format, exiftool_path
         return result
     _rename_numbered(library, result, [photo_path], grouping, rename_format, exiftool_path, {photo_path: number},
                      move_aside=False)
+    if result.details.pop(LEFT_OUT, None):
+        # The one clip asked for is left out because its writer refused it (CLIP_NOT_PATCHED, in_place.OPEN_ELSEWHERE):
+        # the request is refused, as a clip of a folder not held is, not an error of the server.
+        why = result.errors[0][1]
+        result.errors.clear()
+        result.refuse(why)
+        return result
     result.details["new_path"] = result.details.get("updated_paths", {}).get(photo_path, photo_path)
     return result
 
@@ -579,6 +591,8 @@ def _rename_numbered(library, result, photo_paths, grouping, rename_format, exif
     for what, why in kept.errors:
         if paths.key(what) in left_out:
             result.fail(what, why)
+    if left_out:
+        result.details[LEFT_OUT] = sorted(left_out)
     errors = [(what, why) for what, why in kept.errors if paths.key(what) not in left_out]
     if errors:
         # Nothing is renamed, as when this write raised: a photo renamed without the
