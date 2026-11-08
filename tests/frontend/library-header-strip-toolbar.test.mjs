@@ -5,7 +5,7 @@
  */
 import { test, describe, afterEach } from "node:test";
 import assert from "node:assert/strict";
-import { closeAllApps, click, openFolder, photoRecord } from "./harness.mjs";
+import { closeAllApps, click, openFolder, photoRecord, CLIP_WRITES } from "./harness.mjs";
 import { loadViewPage, pageErrors, speedUp, recordOf } from "./view-page.mjs";
 
 afterEach(() => {
@@ -361,6 +361,60 @@ describe("#674: Delete of a view's selection", () => {
     await remove(ctx);
     assert.equal(ctx.questions.length, 1);
     assert.deepEqual(plain(calls(ctx, "/api/library/bulk-edit")[0].body.params), { token: "t-three-for-good" });
+  });
+
+  // A clip open in the panel among the photos deleted: the server reads it a range at a time while it plays, and a range read as its
+  // file is deleted leaves the file there ('the file is there twice'); deleted, a player kept on would play from what it held, then fail.
+  const CLIP = 5;
+  async function viewWithClipOpen(t, ids) {
+    const ctx = await view(t, 40, {
+      onIds: () => ({ source: {}, total: ids().length, ids: ids(), videos: [CLIP], complete: true }),
+      cardExtra: (id) => ({ media: id === CLIP ? "video" : "photo" }),
+      onPhoto: (id) => ({ photo: recordOf(id, id === CLIP ? { media: "video", mtime: 1600000123.5, writes: CLIP_WRITES } : {}) }),
+      before: (window) => {
+        window.HTMLMediaElement.prototype.pause = () => {};
+        window.HTMLMediaElement.prototype.load = () => {};
+      },
+    });
+    ctx.bulk.edit = { op: "delete", total: 2, changed: 2 };
+    for (const id of [2, CLIP]) pick(ctx, id);
+    ctx.module("photo.js").openLibraryPhoto(CLIP);
+    await ctx.settle(100);
+    assert.match(src(ctx), /\/api\/video-file\?id=5&/, "the clip plays in the panel");
+    return ctx;
+  }
+  const src = (ctx) => el(ctx, "main-video").getAttribute("src") || "";
+
+  test("a clip playing in the panel is stopped before the delete starts, and stays stopped when it was deleted", async (t) => {
+    let ids = range(40);
+    const ctx = await viewWithClipOpen(t, () => ids);
+    ctx.hold.bulkEdit = true;
+    await remove(ctx);
+    assert.equal(calls(ctx, "/api/library/bulk-edit").length, 1, "the delete is out");
+    assert.equal(src(ctx), "", "and the clip let go of before it: the server holds no range of its file");
+    ids = ids.filter((id) => ![2, CLIP].includes(id));
+    await ctx.release("bulkEdit");
+    await ctx.until(() => ctx.state.activePhotoPath === null);
+    await ctx.settle(80);
+    assert.equal(src(ctx), "", "deleted: nothing plays it again");
+    assert.ok(el(ctx, "panel-content").classList.contains("hidden"), "the panel closed onto the grid");
+  });
+
+  test("the delete refused (the selection changed), or the clip left by an error of its own: it plays again", async (t) => {
+    const refused = await viewWithClipOpen(t, () => range(40));
+    refused.server.first("/api/library/bulk-edit", { success: false, error: "The selection changed since you were asked: ask again." }, { status: 409 });
+    await remove(refused);
+    assert.equal(calls(refused, "/api/library/bulk-edit").length, 1);
+    assert.match(src(refused), /\/api\/video-file\?id=5&/, "refused: nothing deleted, the clip plays again");
+
+    let ids = range(40);
+    const kept = await viewWithClipOpen(t, () => ids);
+    kept.bulk.edit = { op: "delete", total: 2, changed: 1, error_count: 1, errors: [{ id: CLIP, name: "Pier_Jump.mp4", why: "The file is in use" }] };
+    ids = ids.filter((id) => id !== 2);     // the photo went; the clip, its error said, stayed
+    await remove(kept);
+    await kept.until(() => src(kept) !== "");
+    assert.equal(kept.state.library.activeId, CLIP, "the clip stayed: still the one shown");
+    assert.match(src(kept), /\/api\/video-file\?id=5&/, "and plays again once the view's order is read");
   });
 });
 

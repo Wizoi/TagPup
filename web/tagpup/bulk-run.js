@@ -69,15 +69,13 @@ function refreshAfterWrites(op) {
     forgetFolderCaches();
     state.tally.key = '';          // what the photos carry has changed: the selection is counted again
     upper.navigatorCountsChanged({ now: true });
-    if (!state.library) return;
-    if (op === 'delete') {
-        upper.photosDeleted();
-        return;
-    }
+    if (!state.library) return undefined;
+    if (op === 'delete') return upper.photosDeleted();
     refreshHeldCards();
     const open = state.activePhotoPath ? state.folderPhotos.find(photo => samePath(photo.path, state.activePhotoPath)) : null;
     if (open && open.id !== undefined && !hasUnsavedEdits()) upper.reloadChangedPhoto(open);
     upper.updateSelectedThumbnailsCount();
+    return undefined;
 }
 
 /** Something that stopped the edit, or left its outcome unknown: said in the status line and in the strip. */
@@ -91,7 +89,8 @@ function failed(sentence) {
 /**
  * Write a bulk edit: `selection` is selected.js's body ({ids} or {source, excluded}), `op` and `params` the server's, `desc` the words
  * (bulk-words.js), `picked` how many photos the owner selected. Resolves { ok: true, total } when the server answered that it was done
- * (some photos may be counted as errors: the strip lists them), { ok: false, why } when not.
+ * (some photos may be counted as errors: the strip lists them), { ok: false, why } when not; each with `reread`, the view's order read
+ * again after a Delete that may have deleted some (library-view.js photosDeleted), or undefined.
  */
 export async function runBulk({ op, selection, params, desc, picked }) {
     const bulk = state.bulk;
@@ -113,8 +112,8 @@ export async function runBulk({ op, selection, params, desc, picked }) {
         const why = (body && body.error) || `TagPup answered ${res.status}`;
         failed(why);
         // A refusal before anything was written changes nothing; the error of a write that stopped part-way may have.
-        if (res.status >= 500) refreshAfterWrites(op);
-        return { ok: false, why };
+        const reread = res.status >= 500 ? refreshAfterWrites(op) : undefined;
+        return { ok: false, why, reread };
     }
     bulk.running = false;
     lockBulkControls();
@@ -128,6 +127,6 @@ export async function runBulk({ op, selection, params, desc, picked }) {
     const errors = body.error_count || 0;
     showEnded({ text: ended, problem: errors > 0, errors: stopped ? [] : body.errors, errorCount: stopped ? 0 : errors });
     setStatus(errors > 0 ? 'error' : 'ready', ended, { transient: false });
-    if (body.changed || body.unchanged || body.skipped_missing) refreshAfterWrites(op);
-    return { ok: true, total: body.total };
+    const reread = body.changed || body.unchanged || body.skipped_missing ? refreshAfterWrites(op) : undefined;
+    return { ok: true, total: body.total, reread };
 }

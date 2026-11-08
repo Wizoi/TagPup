@@ -11,10 +11,11 @@ import { state } from './state.js';
 import { bulkAddPeopleInput, bulkAddTagsInput } from './elements.js';
 import { setStatus } from './status.js';
 import { resolveTagOrPerson, updatePeopleDatalist, updateTagsDatalist } from './tags.js';
-import { selectionCount, selectionRequest } from './selected.js';
+import { isIdSelected, selectionCount, selectionRequest } from './selected.js';
 import { BUSY_SENTENCE, bulkBusy, runBulk } from './bulk-run.js';
 import { photosOf } from './common/batch-strip.js';
 import { confirmSentence, deleteQuestion, describeDelete, describeTags, forGoodQuestion } from './bulk-words.js';
+import { isVideo, showMedia, stopVideo } from './media.js';
 
 /** The selection, as a request, and how many photos it is; or null, the owner told why not (nothing is asked of the server). */
 function readSelection() {
@@ -106,6 +107,20 @@ export async function editByPill({ kind, name, remove, person = null }) {
     }
 }
 
+/** The clip the panel shows, when the selection about to be deleted holds it; else null. */
+function panelClipDeleted() {
+    const lib = state.library;
+    const open = lib && lib.activeId !== null ? state.folderPhotos.find(photo => photo.id === lib.activeId) : null;
+    return isVideo(open) && isIdSelected(open.id) ? open : null;
+}
+
+/** The clip stopped for a delete is the panel's still, once the view's order is read again: it was not deleted, and plays again. */
+function playAgainIfKept(clip) {
+    const lib = state.library;
+    if (!lib || lib.activeId !== clip.id) return;
+    showMedia(state.folderPhotos.find(photo => photo.id === clip.id) || clip, '');
+}
+
 /**
  * Delete the selection of a library view (#674): the photos' files go to the Recycle Bin -- or for good, on a share or a drive with
  * none -- and their rows leave the library, each as the folder view's Delete does it (the server's photos.delete), in one request
@@ -113,9 +128,11 @@ export async function editByPill({ kind, name, remove, person = null }) {
  * the server is asked where the files would go (POST /api/library/selection/delete-check, one answer a folder); then the question
  * names the server's count of the photos, how long it takes and whether any are deleted for good. What is sent is what was asked: the
  * selection as read, the answer's `token` -- the server refuses the request, nothing deleted, when the selection no longer resolves to
- * exactly those photos (#691) -- and the folders the question named as having no Recycle Bin (#694: nothing is deleted for good; those
- * go through this PC's, and the question says so and where they restore to). Rapid clicks ask once (`state.bulk.asking`). Resolves true
- * when the edit was written.
+ * exactly those photos (#691) -- and `for_good` only when a second question named the files whose drive's Recycle Bin would not keep
+ * them and the owner pressed OK (DECISIONS 2026-11-08; the token is of that answer). Files from folders with no Recycle Bin go through
+ * this PC's (#694), and the question says so and where they restore to. A clip the panel plays that is being deleted is stopped first
+ * (the server reads it a range at a time, and a range read as its file is deleted leaves the file there), and plays again if it
+ * stayed. Rapid clicks ask once (`state.bulk.asking`). Resolves true when the edit was written.
  */
 export async function deleteSelection() {
     if (state.bulk.asking) return false;
@@ -156,7 +173,11 @@ export async function deleteSelection() {
         if (forGood && !confirm(forGoodQuestion(where.for_good.names, forGood))) return false;
         const desc = describeDelete(where, count);
         const params = forGood ? { token: where.token, for_good: true } : { token: where.token };
+        const clip = panelClipDeleted();
+        if (clip) stopVideo();
         const started = await runBulk({ op: 'delete', selection: picked.selection, params, desc, picked: count });
+        // Not deleted (refused, or an error of its own): it plays again; deleted, the re-read has closed the panel.
+        if (clip) Promise.resolve(started.reread).then(() => playAgainIfKept(clip), () => playAgainIfKept(clip));
         return started.ok;
     } finally {
         state.bulk.asking = false;
