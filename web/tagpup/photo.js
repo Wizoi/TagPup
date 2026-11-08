@@ -716,19 +716,21 @@ export function rotatePhoto(direction) {
     const path = state.activePhotoPath;
     if (!path) return;
 
-    statusDot.className = 'status-indicator-dot busy';
-    statusText.textContent = 'Rotating...';
-
-    api.json('/api/photo/rotate', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ path, direction })
-    })
-    .then(data => {
-        if (data.success) {
+    // A rotate is a write of the photo: it waits its turn behind a save of it, which would otherwise name the stamp from
+    // before the turn and be refused as changed on disk (#2587); leaving the photo waits for it too.
+    return queueWriteOf(path, async () => {
+        statusDot.className = 'status-indicator-dot busy';
+        statusText.textContent = 'Rotating...';
+        try {
+            const data = await api.json('/api/photo/rotate', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ path, direction })
+            });
+            if (!data.success) throw new Error(data.error || 'Failed to rotate');
             // The photo's new mtime is its images' new URL, here and in the grid; the route answers the file's stamp
             // with every rotation it made, so the next save names it.
-            const photo = state.folderPhotos.find(p => p.path === path) || { path };
+            const photo = state.folderPhotos.find(p => samePath(p.path, path)) || { path };
             photo.mtime = data.mtime;
             photo.size = data.size;
             // A stamp the route could not look at in time (a share slow to answer) comes as null: the photo is read
@@ -751,16 +753,15 @@ export function rotatePhoto(direction) {
             statusDot.className = 'status-indicator-dot';
             statusText.textContent = data.file_only || data.pictures_refused
                 ? `Rotated.${whereWritten(data)}${pictureCheckSaid(data)}` : 'Ready';
-        } else {
-            throw new Error(data.error || 'Failed to rotate');
+            return true;
+        } catch (err) {
+            console.error(err);
+            statusDot.className = 'status-indicator-dot';
+            statusText.textContent = 'Error';
+            alert("Error rotating image: " + err.message);
+            return false;
         }
-    })
-    .catch(err => {
-        console.error(err);
-        statusDot.className = 'status-indicator-dot';
-        statusText.textContent = 'Error';
-        alert("Error rotating image: " + err.message);
-    });
+    }, `Rotate photo ${baseName(path)}`);
 }
 
 // Move active photo to Windows Recycle Bin and update state
