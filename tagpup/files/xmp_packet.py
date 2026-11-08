@@ -265,6 +265,8 @@ def _wanted(name, value):
     if PROPERTIES[name][2] == "Bag":
         if value is not None and not (isinstance(value, (list, tuple)) and all(isinstance(v, str) for v in value)):
             raise _Refused("%s takes a list of text." % name)
+        if "" in (value or ()):
+            raise _Refused("%s is given an empty item; a keyword is never empty." % name)
         value = list(dict.fromkeys(value or ()))
     elif isinstance(value, int) and not isinstance(value, bool):
         value = str(value)

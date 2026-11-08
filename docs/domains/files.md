@@ -242,7 +242,8 @@ refused. Each was edited in memory (a caption, a keyword added, an Orientation),
   elements, or an attribute and an element), a Bag or an Alt written as an attribute, two `rdf:about`
   values, a DTD, a comment, a CDATA section, a processing instruction or text beside an element (an edit that clears a
   property splices from the element before it), a byte order mark or UTF-16, a NUL, an Alt not one x-default item, bytes after the end PI, `end='r'`
-  (all 4,366 wrapped are `end='w'`). CRLF: none in the packets. A value XML cannot carry (NUL, another C0) is refused;
+  (all 4,366 wrapped are `end='w'`). CRLF: none in the packets. A value XML cannot carry (NUL, another C0) is refused,
+  and so is an empty keyword (a Bag item ''; nothing real writes one and ExifTool drops it);
   `&`, `<`, `>` are escaped and a CR written `&#xD;`. Over `LIMIT` (64 KB, read or made) is refused; that a JPEG's
   segment holds a few bytes less is its container's to check.
 - **Handled instances**: the empty caption `<rdf:li xml:lang='x-default'/>` (photo_index 264 of 1,000, renton_parkrun 1)

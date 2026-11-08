@@ -209,6 +209,9 @@ class AnExifToolPacketReadAndWritten(unittest.TestCase):
         self.assertEqual({}, xp.read(emptied))
         self.assertEqual(unowned(data), unowned(emptied))
         self.assertIsInstance(xp.edit(data, {"dc:subject": "Beach"}), containers.Refusal)
+        # An empty keyword is no keyword: refused, not written as <rdf:li></rdf:li> (ExifTool drops one).
+        for name in ("dc:subject", "lr:hierarchicalSubject"):
+            self.assertIsInstance(xp.edit(data, {name: ["Beach", ""]}), containers.Refusal)
 
     def test_text_is_escaped_and_what_xml_cannot_carry_is_refused(self):
         text = "Fish & chips <hot> " + CR + "\nby the pier"
