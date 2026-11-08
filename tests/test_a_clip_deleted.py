@@ -249,7 +249,8 @@ class AFileOnALocalDrive(APhotoAndAClip):
         with mock.patch.dict(os.environ, {"TAGPUP_RECYCLE_BIN": "0,0,0"}):     # a Bin of 0 MB: every file is larger
             reply = self.post("photo/delete", {"path": self.clip_path})
             self.assertNotEqual(200, reply.status_code, reply.get_json())
-            self.assertEqual(["jetty.mov"], reply.get_json()["for_good"], "the reply names it, for the page to ask")
+            self.assertEqual(["jetty.mov"], reply.get_json()["not_kept"], "the reply names it, for the page to ask")
+            self.assertNotIn("for_good", reply.get_json(), "for_good is the success's flag alone: one key, one shape")
             self.assertIn("would be deleted for good", reply.get_json()["error"])
             self.assert_kept(self.clip_path, self.clip)
             reply = self.post("photo/delete", {"path": self.clip_path, "for_good": True})
@@ -359,7 +360,7 @@ class AFileOnALocalDrive(APhotoAndAClip):
         with mock.patch.dict(os.environ, {"TAGPUP_RECYCLE_BIN": "1024,0,1"}):
             self.assertEqual({"count": 1, "names": ["rope.jpg"]}, self.asked(empty)["for_good"])
             reply = self.post("photo/delete", {"path": empty_path})
-            self.assertEqual(["rope.jpg"], reply.get_json()["for_good"], reply.get_json())
+            self.assertEqual(["rope.jpg"], reply.get_json()["not_kept"], reply.get_json())
             self.assert_kept(empty_path, empty)
         self.assertEqual([], self.binned(), "nothing was sent to a Bin that keeps nothing")
 

@@ -810,8 +810,8 @@ export function deleteActivePhoto() {
     // A file its drive's Recycle Bin would not keep: the server named it and deleted nothing; asked, and only on OK, for good.
     const cancelled = { cancelled: true };
     send(false)
-    .then(data => (!data.success && Array.isArray(data.for_good)
-        ? (confirm(forGoodQuestion(data.for_good, data.for_good.length)) ? send(true) : cancelled) : data))
+    .then(data => (!data.success && Array.isArray(data.not_kept)
+        ? (confirm(forGoodQuestion(data.not_kept, data.not_kept.length)) ? send(true) : cancelled) : data))
     .then(data => {
         if (data === cancelled) {
             statusDot.className = 'status-indicator-dot';

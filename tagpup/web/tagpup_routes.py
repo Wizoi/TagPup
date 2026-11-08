@@ -930,9 +930,9 @@ def photo_delete():
     try:
         result = photo_actions.delete(library, photo_path, body.get("for_good") is True)
         if result.refused:
-            # A file its drive's Recycle Bin would not keep: named, for the page to ask, then send `for_good`.
+            # A file its drive's Recycle Bin would not keep: named (`not_kept`), for the page to ask, then send `for_good`.
             not_kept = result.details.get("not_kept")
-            return responses.refused(result, for_good=not_kept) if not_kept else responses.refused(result)
+            return responses.refused(result, not_kept=not_kept) if not_kept else responses.refused(result)
         if not result.ok:
             return responses.error(500, result.message())
         for held, _record in folders.of(library).entries_for(photo_path):

@@ -250,7 +250,7 @@ describe("a video's title and keywords are edited, nothing else of it", () => {
 
   /**
    * The delete's replies in turn, as the server sends them: the first a 400 naming the file its drive's Bin would not keep
-   * (tagpup_routes.photo_delete, `for_good: [name]`), the second the confirmed delete's. Each route answers once and goes.
+   * (tagpup_routes.photo_delete, `not_kept: [name]`), the second the confirmed delete's. Each route answers once and goes.
    */
   function answersInTurn(ctx, replies) {
     for (const [body, status] of [...replies].reverse()) {
@@ -269,7 +269,7 @@ describe("a video's title and keywords are edited, nothing else of it", () => {
   test("a clip its drive's Bin would not keep: the warning names it, and OK alone sends the delete for good", async (t) => {
     const ctx = await viewWithAVideo(t);
     answersInTurn(ctx, [
-      [{ success: false, error: REFUSED, for_good: [NOT_KEPT] }, 400],
+      [{ success: false, error: REFUSED, not_kept: [NOT_KEPT] }, 400],
       [{ success: true, for_good: true, through_this_pc: false,
         message: "Deleted for good, as you confirmed: the Recycle Bin of its drive would not keep it." }, 200],
     ]);
@@ -319,7 +319,7 @@ describe("a video's title and keywords are edited, nothing else of it", () => {
 
   test("Cancel at the warning deletes nothing: one delete sent, nothing said deleted, the clip plays again", async (t) => {
     const ctx = await viewWithAVideo(t);
-    answersInTurn(ctx, [[{ success: false, error: REFUSED, for_good: [NOT_KEPT] }, 400]]);
+    answersInTurn(ctx, [[{ success: false, error: REFUSED, not_kept: [NOT_KEPT] }, 400]]);
     const questions = asked(ctx, [true, false]);
     ctx.window.alert = (said) => assert.fail(`a Cancel is not a failure, yet the page said: ${said}`);
     await open(ctx, VIDEO);
