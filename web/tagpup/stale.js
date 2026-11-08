@@ -13,8 +13,9 @@
 // Any other photo offers the edits its record's `writes` names (tagpup.files.field_values.writes, the one statement of
 // what a save may change): each control's `data-writes` names the field it changes, and a control whose field is not
 // named is inert, with a sentence naming what is not edited. A photo's record names all five; a clip's its tags, title
-// and name (fields.CLIP_WRITES), so its date and turn are inert, and so is its delete, which sits with the turn as a
-// change the server refuses of a clip (recycle_bin).
+// and name (fields.CLIP_WRITES), so its date and turn are inert. The delete (`data-deletes`) is no write of a field: a
+// clip is deleted as a photo is (recycle_bin, up to its MOST_CLIP_BYTES, a larger one refused with a sentence), and the
+// button is inert only while the file is missing.
 import { buildElement } from './common/dom.js';
 import { state } from './state.js';
 import { mainImage, photoMissingNote } from './elements.js';
@@ -51,8 +52,7 @@ function heldSentence(held) {
     const words = Object.keys(FIELD_WORDS).filter((field) => held.has(field)).map((field) => FIELD_WORDS[field]);
     if (!words.length) return '';
     const listed = words.length === 1 ? words[0] : `${words.slice(0, -1).join(', ')} and ${words[words.length - 1]}`;
-    const whole = held.has('rotate') ? ', and it is not deleted here' : '';
-    return `This is a video: its ${listed} ${words.length === 1 ? 'is' : 'are'} not edited here${whole}.`;
+    return `This is a video: its ${listed} ${words.length === 1 ? 'is' : 'are'} not edited here.`;
 }
 
 /**
@@ -73,8 +73,9 @@ export function applyPhotoStale(photo) {
     photoMissingNote.textContent = sentence;
     // No picture to show, and no broken-image icon in its place.
     mainImage.classList.toggle('hidden', missing);
-    for (const el of controls) {
-        if (held.has(el.dataset.writes)) {
+    const deletes = [...document.querySelectorAll('[data-deletes]')];
+    for (const el of controls.concat(deletes)) {
+        if (el.hasAttribute('data-deletes') ? missing || !photo : held.has(el.dataset.writes)) {
             el.setAttribute('inert', '');
             el.setAttribute('aria-disabled', 'true');
         } else {

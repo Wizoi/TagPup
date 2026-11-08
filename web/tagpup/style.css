@@ -521,6 +521,11 @@ body {
     align-items: center;
 }
 
+/* The two turn buttons, one group to be made inert for a clip (stale.js), laid out as the delete beside them. */
+.rotation-buttons {
+    display: contents;
+}
+
 /* "12 of 48" beside the Original Image heading: how far through the list you are. */
 .photo-position {
     margin-left: 8px;

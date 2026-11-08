@@ -32,7 +32,7 @@ import {
 import { countSaid, renderFileList, scanFolder, showFolderView, updateListStats, updatePhotoPosition } from './folder.js';
 import { removeFromSelection } from './selected.js';
 import { applyPhotoStale } from './stale.js';
-import { showMedia } from './media.js';
+import { isVideo, showMedia, stopVideo } from './media.js';
 import { fetchLibraryRecord, forgetPhoto, libraryIdOfPath, refetchCards } from './library-source.js';
 import { backToView, notePhoto, rememberView } from './view-left.js';
 import { showSmartRenameParts } from './rename-one.js';
@@ -795,6 +795,10 @@ export function deleteActivePhoto() {
 
     statusDot.className = 'status-indicator-dot busy';
     statusText.textContent = 'Deleting...';
+    // A clip playing lets go of its file first: the server reads it a range at a time, and a range being read as the
+    // original is deleted would make Windows refuse the delete. Shown again if the delete fails while it is still open.
+    const video = isVideo(asked);
+    if (video) stopVideo();
 
     api.json('/api/photo/delete', {
         method: 'POST',
@@ -870,6 +874,7 @@ export function deleteActivePhoto() {
         console.error(err);
         statusDot.className = 'status-indicator-dot';
         statusText.textContent = 'Error';
+        if (video && samePath(state.activePhotoPath, path)) showMedia(asked, '');
         alert("Error deleting photo: " + err.message);
     });
 }
