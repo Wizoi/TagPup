@@ -50,5 +50,5 @@ def bytes_by_folder(conn, most_clip_bytes, ids=None, source=None, excluded=()):
         return {}
     return {folder_id: (total, largest) for folder_id, total, largest in conn.execute(
         "SELECT pf.folder_id, COALESCE(SUM(p.size), 0), COALESCE(MAX(p.size), 0) FROM photo_folder pf JOIN photos p"
-        " ON p.id = pf.photo_id WHERE pf.photo_id IN (%s) AND (p.kind <> 'video' OR p.size <= ?) GROUP BY pf.folder_id"
-        % selected, tuple(params) + (most_clip_bytes,))}
+        " ON p.id = pf.photo_id WHERE pf.photo_id IN (%s) AND (p.kind <> ? OR p.size <= ?) GROUP BY pf.folder_id"
+        % selected, tuple(params) + (library_view.VIDEO, most_clip_bytes))}
