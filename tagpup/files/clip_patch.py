@@ -40,6 +40,15 @@ claims more than the file holds (it may still be being copied) or bytes that are
 lie past what a reader walks and an XMP box before them is in a file no two readers need agree on. 2 live clips have a
 tail, one of each, and neither holds XMP.
 
+A clip's QuickTime title (DECISIONS 2026-11-08): a save that leaves a clip with no XMP:Title frees its title item too
+(containers.Video.title_item, moov/udta/meta/ilst/\xa9nam: every QuickTime Title of the 2,018 photo_index clips holding
+one, counted 2026-11-08), its four type bytes made `free` (`title=""`); no size or offset moves, and ExifTool, ffprobe
+and Windows read no title. An undo gives it back (`title`, its text) by the same four bytes, only to the one `free` box
+of the item list holding exactly one UTF-8 `data` atom of that text (`freed_titles`, `holds_title`); a file rewritten
+meanwhile has none, and is the rewrite's. None, the rewrite's, for a clear of a clip holding two title items (1 live)
+or one outside the item list (directly in udta, QuickTime's older form), and a give-back to a clip holding a title item
+already. A title typed over is not written here: the QuickTime copy stays as it was.
+
 A `Patch`'s last range may start at the file's end (an append) or run past it (a box that grows there): `size` is the
 file's size once written. Its ranges are in file order and do not overlap.
 """
@@ -56,6 +65,10 @@ _MOST = 2 ** 32 - 1
 #: the old bytes is bounded by this and a few headers, far under the journal's cap (file_journal.PATCH_CAP, 1 MB).
 OLD_MOST = 1 << 16
 _PACKET_END = b"<?xpacket end="
+#: The most an undo reads of a free box of the item list to know whether it holds the title it gives back.
+TITLE_MOST = 1 << 16
+#: A title item's data atom, before its text: its type, UTF-8 (1), as every live title's is (2026-11-08).
+_UTF8 = b"\0\0\0\1"
 
 
 @dataclass(frozen=True)
@@ -67,11 +80,58 @@ class Patch:
     how: str
 
 
-def patch(layout, packet):
-    """The `Patch` that puts `packet` (bytes, the whole new XMP packet) into the clip laid out as `layout`
-    (containers.Video), or None when the clip needs the rewrite (the module says when)."""
+def patch(layout, packet, title=None, freed=()):
+    """The `Patch` that puts `packet` (bytes, the whole new XMP packet; None, the XMP as it is) into the clip laid out as
+    `layout` (containers.Video), and, with `title` given, frees its QuickTime title ("") or gives it back (its text) to
+    the one of the `freed` ((box, its bytes after its header), ...: freed_titles' boxes, read) that holds it; None when
+    the clip needs the rewrite (the module says when). A Patch with no ranges is nothing to write."""
     if not _understood(layout):
         return None
+    titled = () if title is None else _title_ranges(layout, title, freed)
+    placed = Patch((), layout.file_size, IN_PLACE) if packet is None else _xmp_patch(layout, packet)
+    if titled is None or placed is None:
+        return None
+    return Patch(tuple(sorted(placed.ranges + titled)), placed.size, placed.how)
+
+
+def title_box(layout):
+    """The QuickTime title item a clear frees: containers.Video.title_item, the one statement of which box that is."""
+    return layout.title_item
+
+
+def freed_titles(layout):
+    """The boxes an undo may give the clip's QuickTime title back to: each `free` box of its item list
+    (containers.Video.item_list) of at most TITLE_MOST, while it holds no title item; () otherwise."""
+    ilst = layout.item_list
+    if ilst is None or layout.titles:
+        return ()
+    return tuple(box for box in ilst.children if box.type == "free" and box.end - box.payload <= TITLE_MOST)
+
+
+def holds_title(content, text):
+    """Does `content`, a free box's bytes after its header, hold exactly one data atom of UTF-8 text `text`: the title
+    item a clear freed, as it left it?"""
+    value = text.encode("utf-8")
+    return (len(content) == 16 + len(value) and content[:4] == len(content).to_bytes(4, "big")
+            and content[4:8] == b"data" and content[8:12] == _UTF8 and content[16:] == value)
+
+
+def _title_ranges(layout, title, freed):
+    """The ranges that free the clip's title item (`title` "") or give `title` back to the one of `freed` holding it;
+    () for a clear of a clip holding none; None, the rewrite's, otherwise (the module)."""
+    if not title:
+        if not layout.titles:
+            return ()
+        box = title_box(layout)
+        return None if box is None else ((box.offset + 4, b"free"),)
+    found = [box for box, content in freed if holds_title(content, title)]
+    if len(found) != 1:
+        return None
+    return ((found[0].offset + 4, containers.TITLE_ITEM.encode("latin-1")),)
+
+
+def _xmp_patch(layout, packet):
+    """The Patch that puts `packet` into the clip's XMP (patch, without its title), or None."""
     if not layout.xmp:
         return _appended(layout, packet, ())
     box = xmp_box(layout)

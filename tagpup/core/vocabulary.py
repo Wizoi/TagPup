@@ -247,8 +247,9 @@ NOT_A_PERSON = frozenset(name.lower() for name in (*BUCKETS.values(), UNMATCHED)
 #: none (DECISIONS 2026-11-03, XMP IS THE COPY THE INDEX READS): a keyword or caption save may patch XMP alone and
 #: leave IPTC holding what it held before (tagpup.core.fields.XMP_ONLY). A title's copies (TITLE_COPIES) are
 #: XMP:Title and IPTC:ObjectName (tagpup.core.fields.title_fields), a caption's (DESCRIPTION_COPIES) the Description.
-#: A clip's title may be in its QuickTime Title (fields.CLIP_TITLE), which TagPup reads and never writes: read as XMP's
-#: copy when XMP holds none (a clip's title is its XMP:Title, else its QuickTime Title: DECISIONS 2026-11-07, item 3).
+#: A clip's title may be in its QuickTime Title (fields.CLIP_TITLE), which TagPup writes only to clear it with XMP's: read
+#: as XMP's copy when XMP holds none (a clip's title is its XMP:Title, else its QuickTime Title: DECISIONS 2026-11-07,
+#: item 3; 2026-11-08).
 #: ExifTool answers it beside XMP's, and the bare "Title" is whichever it answered last
 #: (tagpup.files.metadata.structured), so a copy is read by the first of its names that holds a value (_read_copy), the
 #: prefixed names first. A keyword is read by its group's name alone, XMP:Subject's or IPTC:Keywords': the bare

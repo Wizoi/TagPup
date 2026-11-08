@@ -1,12 +1,12 @@
-"""A clip's title is its XMP:Title, else its QuickTime Title, and a save writes XMP:Title only: the QuickTime Title is
-never rewritten (DECISIONS 2026-11-07, THE OWNER'S ANSWERS ON THE VIDEO BUILD ORDER, item 3; #2594).
+"""A clip's title is its XMP:Title, else its QuickTime Title; a save writes XMP:Title, and frees the QuickTime Title only
+when it leaves the clip with no XMP:Title (DECISIONS 2026-11-07, item 3; DECISIONS 2026-11-08; #2594, #2652, #2657).
 
 What the owner lives through: 2,017 photo_index clips carry a title only in their QuickTime Title (counted read-only
 2026-11-07; one more holds it in XMP:Title too, the same text; none in kr-track or renton_parkrun).
 A clip's card opens the photo panel showing that title, the owner adds a tag and saves: the save is not refused as
 changed on disk, the title stays in the QuickTime Title alone (no XMP copy of it is made), and the row says what a scan
 reads. A title typed over it goes into XMP:Title and is the title from then on, the QuickTime Title left as it was; a
-title cleared clears XMP:Title, and the QuickTime Title is the title again, by the rule.
+title cleared clears XMP:Title and frees the QuickTime Title, and the clip has no title anywhere.
 
 A real one-second clip made by the machine's ffmpeg with a title (its QuickTime Title, as the live clips hold theirs),
 indexed by the indexer's own read, saved through the pages (tests/test_a_clip_tagged_through_the_
@@ -77,7 +77,7 @@ class AClipTitledInQuickTime(ALibraryHoldingAClip):
         self.assertEqual(QUICKTIME_TITLE, self.opened()["title"])
         self.assert_row_says_what_a_scan_reads()
 
-    def test_a_title_typed_over_it_is_written_to_xmp_only_and_a_cleared_one_shows_the_quicktime_title_again(self):
+    def test_a_title_typed_over_it_is_written_to_xmp_only_and_a_cleared_one_is_gone_from_quicktime_too(self):
         record = self.opened()
         reply = self.save(record, "Slipway at first light", record["tags"])
         self.assertEqual(200, reply.status_code, reply.data)
@@ -93,8 +93,8 @@ class AClipTitledInQuickTime(ALibraryHoldingAClip):
         record = self.opened()
         reply = self.save(record, "", record["tags"])
         self.assertEqual(200, reply.status_code, reply.data)
-        self.assertEqual((QUICKTIME_TITLE, None), self.titles(), "a cleared title clears XMP:Title alone")
-        self.assertEqual(QUICKTIME_TITLE, self.opened()["title"], "and the QuickTime Title is the title again")
+        self.assertEqual((None, None), self.titles(), "a cleared title clears XMP:Title and the QuickTime Title")
+        self.assertEqual("", self.opened()["title"], "and the panel shows no title")
         self.assert_row_says_what_a_scan_reads()
 
 

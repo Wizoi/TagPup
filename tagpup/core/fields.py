@@ -127,10 +127,12 @@ def on_camera(raw_metadata, camera):
 #: folder scan would have found. A clip's too: its QuickTime Subject is never a keyword (vocabulary.KEYWORD_COPIES).
 TAG_SOURCE_FIELDS = ("IPTC:Keywords", "XMP:Subject", "XMP:HierarchicalSubject")
 
-#: Where a clip may hold a title TagPup reads and never writes: its QuickTime Title (2,017 photo_index clips hold their
-#: title there alone, one more there and in XMP:Title alike; no photo of the three libraries holds a QuickTime field;
-#: counted 2026-11-07). Read as XMP's copy when XMP holds none (vocabulary.TITLE_COPIES); a save writes XMP:Title only
-#: (title_fields), never this (DECISIONS 2026-11-07, THE OWNER'S ANSWERS ON THE VIDEO BUILD ORDER, item 3).
+#: Where a clip may hold a title besides XMP: its QuickTime Title (2,017 photo_index clips hold their title there alone,
+#: one more there and in XMP:Title alike; no photo of the three libraries holds a QuickTime field; counted 2026-11-07).
+#: Read as XMP's copy when XMP holds none (vocabulary.TITLE_COPIES). A save writes XMP:Title (title_fields), and this
+#: only to clear it, when the save leaves the clip with no XMP:Title, and its undo to give it back (a clip's title write,
+#: _CLIP_WRITE_FIELDS; tagpup.files.clip_patch frees its item; DECISIONS 2026-11-08). A title typed over leaves it as
+#: it was.
 CLIP_TITLE = "QuickTime:Title"
 
 
@@ -225,8 +227,9 @@ PHOTO_WRITES = ("tags", "title", "date", "rotate")
 #: rewrite of the whole file, refused before they are planned.
 CLIP_WRITES = ("tags", "title")
 
-#: The fields each of CLIP_WRITES names.
-_CLIP_WRITE_FIELDS = {"tags": frozenset(keyword_fields([], [])), "title": frozenset(title_fields(""))}
+#: The fields each of CLIP_WRITES names: a clip's title is its title fields and its QuickTime Title (CLIP_TITLE), which
+#: a photo's write never names (title_fields is what ExifTool writes into a JPEG).
+_CLIP_WRITE_FIELDS = {"tags": frozenset(keyword_fields([], [])), "title": frozenset(title_fields("")) | {CLIP_TITLE}}
 
 
 def fields_of(writes):
@@ -235,8 +238,9 @@ def fields_of(writes):
 
 
 #: The fields a journaled write of a clip may name: those of CLIP_WRITES. Only the XMP field of each group is written,
-#: into the clip's XMP packet (tagpup.files.segment_edits.new_packet); every other copy is left as it was, whatever the
-#: XMP value (segment_edits.clip_stale_of): a clip's EXIF and IPTC, if any, are not TagPup's to write.
+#: into the clip's XMP packet (tagpup.files.segment_edits.new_packet), and the QuickTime Title freed or given back
+#: (CLIP_TITLE); every other copy is left as it was, whatever the XMP value (segment_edits.clip_stale_of): a clip's
+#: EXIF and IPTC, if any, are not TagPup's to write.
 CLIP_FIELDS = fields_of(CLIP_WRITES)
 
 #: Where TagPup's own JPEG writer (tagpup.files.segment_edits) puts each field a journaled write names: (segment kind,
