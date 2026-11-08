@@ -2,9 +2,10 @@
 (scenario F12; DECISIONS, "VIDEO: THE OWNERS' PLANS AND THE OWNER'S ANSWERS", item 5, and 2026-11-06, migration 38).
 
 What the owner lives through: they add a folder of clips, or a folder where clips sit among photos, and index it with
-the CLI. Each clip gets a row of kind 'video', dated by the rule a clip's dates follow (tagpup.core.dates: Apple's
-CreationDate as given, else QuickTime's CreateDate, kept in UTC, as local time; a date of zeros is none, and the bare
-CreateDate, QuickTime's copy, is never read as a photo's), and a vector made of its frames after the photos, in the
+the CLI. Each clip gets a row of kind 'video', dated by the rule a clip's dates follow (tagpup.core.dates: its XMP
+date first, then Apple's CreationDate as given, else QuickTime's CreateDate, kept in UTC, as local time; a date of zeros
+is none, and the bare CreateDate, QuickTime's copy, is never read as a photo's: tests/test_library_views_scenarios.py,
+V1), and a vector made of its frames after the photos, in the
 same turn of the graphics card: frame 0's is its vector, frames 1 to 4 kept beside it (tagpup_cli.py's _index_clips).
 No face is looked for and nothing is written into its file. The next index and the owed scan
 (tagpup.store.photo_fingerprints.owed) owe it nothing, so sync never queues a clip's folder again. The photos beside
@@ -48,7 +49,7 @@ from test_an_index_reads_the_next_photos_ahead import StandIns, photo, recorded 
 
 import tagpup_cli  # noqa: E402
 from tagpup import config  # noqa: E402
-from tagpup.core import dates, paths, processes  # noqa: E402
+from tagpup.core import paths, processes  # noqa: E402
 from tagpup.core.library import Library  # noqa: E402
 from tagpup.files import images, video_frames  # noqa: E402
 from tagpup.ml import clip as clip_model  # noqa: E402
@@ -449,27 +450,6 @@ class AClipsVectorWhenItFails(unittest.TestCase):
         self.assertEqual([], self.read, "ffmpeg was asked about a folder of photos")
         self.assertEqual({"sail %d.jpg" % n: ("photo", True) for n in range(3)},
                          {name: (kind, held) for name, (kind, _taken, held) in rows(self.library).items()})
-
-
-class AClipsDateRule(unittest.TestCase):
-    """The rule beside the ones a real clip shows above: what a clip holding zeros falls back to, and a photo untouched."""
-
-    def test_a_clip_with_no_date_of_its_own_falls_back_to_the_photo_fields_under_their_group(self):
-        zeros = {"QuickTime:CreateDate": "0000:00:00 00:00:00", "CreateDate": "0000:00:00 00:00:00"}
-        self.assertIsNone(dates.date_taken(zeros), "QuickTime's bare copy of zeros was read as a photo's CreateDate")
-        self.assertIsNone(dates.year_taken(zeros))
-        tagged = dict(zeros, **{"XMP:CreateDate": "2019:05:04 10:00:00"})
-        self.assertEqual("2019:05:04 10:00:00", dates.date_taken(tagged))
-        self.assertEqual(2019, dates.year_taken(tagged))
-
-    def test_a_clips_utc_date_is_never_read_as_given(self):
-        clip_record = {"QuickTime:CreateDate": "2021:12:31 23:30:00", "CreateDate": "2021:12:31 23:30:00"}
-        self.assertEqual(local_of("2021:12:31 23:30:00"), dates.date_taken(clip_record))
-        self.assertEqual(int(local_of("2021:12:31 23:30:00")[:4]), dates.year_taken(clip_record))
-
-    def test_a_photos_dates_are_read_as_before(self):
-        self.assertEqual("2020:01:02 03:04:05", dates.date_taken({"CreateDate": "2020:01:02 03:04:05"}))
-        self.assertEqual("0000:00:00 00:00:00", dates.date_taken({"EXIF:DateTimeOriginal": "0000:00:00 00:00:00"}))
 
 
 if __name__ == "__main__":

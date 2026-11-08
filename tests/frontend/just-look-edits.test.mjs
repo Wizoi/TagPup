@@ -41,7 +41,7 @@ function server(scanned = photos) {
     .on("/api/folder/index-status", { status: "completed", percent: 100, message: "Ready" })
     .on("/api/folder/membership", (url) => (url.includes(encodeURIComponent(HELD_FOLDER)) ? HELD : NOT_HELD))
     .on("/api/photo-faces", { faces: [], total: 0, unmatched: 0 })
-    .on("/api/photo/save-metadata", (url) => ({ success: true, new_path: A, file_only: 1, with_rows: 0 }))
+    .on("/api/photo/save-metadata", (url) => ({ success: true, new_path: A, taken: "2018:03:04 09:08:07", file_only: 1, with_rows: 0 }))
     .on("/api/photos/bulk-tags", { success: true, written: {}, file_only: 2, with_rows: 0 })
     .on("/api/photo/rotate", { success: true, mtime: 1700000000, file_only: 1, with_rows: 0 })
     .on("/api/photo/delete", { success: true, file_only: 1, with_rows: 0,
@@ -302,6 +302,16 @@ describe("the other file edits", () => {
     const sent = ctx.posts("/api/photo/save-metadata");
     assert.equal(sent.length, 1, "the date was held back");
     assert.match(sent[0].body.date_taken, /^2018-03-04T09:08:07/);
+  });
+
+  test("the date taken saved is shown as the server's reply spells it, the page spelling none", async (t) => {
+    const ctx = await looking(t, server().first("/api/photo/save-metadata", { success: true, new_path: A, taken: "2001:02:03 04:05:06" }));
+    await ctx.open();
+    click(ctx.window, ctx.$("btn-edit-date-taken"));
+    ctx.$("input-date-taken").value = "2018-03-04T09:08:07";
+    click(ctx.window, ctx.$("btn-save-date-modal"));
+    await flush(ctx.window, 10);
+    assert.match(ctx.$("detail-date-taken").textContent, /4:05:06/, "the page shows the reply's date, not its own spelling of what it sent");
   });
 
   test("Smart Rename is sent for the selection", async (t) => {

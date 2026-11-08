@@ -12,8 +12,9 @@ export const CACHE_TTL_MS = 30 * 60 * 1000;
 // (2: `camera`, which Shift Date Taken's list of cameras is made of: a record without it is "Unknown Camera"; 3: a
 // folder's clips, with `media` and a recorded clip's `id` and `thumb`: an older entry lists none of them; 4: `writes`, the
 // edits a photo's panel offers (stale.js): a record without it offers none; 5: `writes` naming "name", a photo's and a
-// clip's Smart Rename button: an older record holds it inert).
-export const CACHE_VERSION = 5;
+// clip's Smart Rename button: an older record holds it inert; 6: a clip's `writes` naming "date", and its `taken` read
+// from its XMP date first: an older record holds a clip's date inert, or shows its QuickTime date).
+export const CACHE_VERSION = 6;
 
 export function saveToLocalStorageCache() {
     if (!state.scannedFolder) return;

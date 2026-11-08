@@ -25,11 +25,19 @@ DATE_TAKEN_FIELDS = (
 #: under its group, as a write names it.
 SHIFTED_FIELDS = tuple(field for field in DATE_TAKEN_FIELDS if ":" in field)
 
-#: The fields that say when a clip was taken, read before a photo's: CreationDate (Apple's Keys, local time with its
-#: zone) as given, else CreateDate, which QuickTime keeps in UTC, as local time. A clip holding either is read by these
-#: and then the photo fields under their group only: its bare CreateDate is the QuickTime copy, in UTC. A date of
-#: zeros ("0000:00:00 00:00:00", a camera that wrote none) is no date. Not moved by a time shift (SHIFTED_FIELDS).
+#: The fields that say when a clip was taken, read before a photo's, a clip being a record holding either:
+#: CreationDate (Apple's Keys, local time with its zone) as given, else CreateDate, which QuickTime keeps in UTC, as
+#: local time. A clip is read by its XMP dates first (CLIP_XMP_DATE_FIELDS), then these, and no photo field: its bare
+#: CreateDate is the QuickTime copy, in UTC, and none of the 58 zero-date photo_index clips holds an EXIF or XMP date
+#: (counted 2026-11-08). A date of zeros ("0000:00:00 00:00:00", a camera
+#: that wrote none) is no date. Never written.
 CLIP_DATE_FIELDS = ("QuickTime:CreationDate", "QuickTime:CreateDate")
+
+#: A clip's XMP dates, read before its QuickTime ones: the Date Taken a save writes into its XMP
+#: (tagpup.core.fields.date_taken_fields), and the one Adobe's tools wrapped it with (80 photo_index clips hold one,
+#: 39 a DateTimeOriginal and 41 a CreateDate; counted 2026-11-08). XMP is the copy the index reads, the QuickTime copy
+#: the fallback, as a clip's title and keywords are (DECISIONS 2026-11-08, A5 (D) REVISED).
+CLIP_XMP_DATE_FIELDS = ("XMP:DateTimeOriginal", "XMP:CreateDate")
 
 #: What a QuickTime date with no date in it starts with.
 _ZERO_DATE = "0000:00:00"
@@ -105,9 +113,12 @@ def _local_of_utc(value):
 
 def _dates_given(raw_metadata):
     """Each date the record holds, as read, the most specific first: the one rule date_taken and year_taken read by. A
-    clip's (CLIP_DATE_FIELDS) first, then the photo fields under their group; a photo's DATE_TAKEN_FIELDS."""
+    clip's XMP dates (CLIP_XMP_DATE_FIELDS), then its QuickTime ones (CLIP_DATE_FIELDS), no more; a photo's
+    DATE_TAKEN_FIELDS."""
     fields = DATE_TAKEN_FIELDS
     if any(field in (raw_metadata or {}) for field in CLIP_DATE_FIELDS):
+        written = (_clip_date(raw_metadata, field) for field in CLIP_XMP_DATE_FIELDS)
+        yield from (value for value in written if value)
         creation, create = (_clip_date(raw_metadata, field) for field in CLIP_DATE_FIELDS)
         if creation:
             yield creation
@@ -115,7 +126,7 @@ def _dates_given(raw_metadata):
             local = _local_of_utc(create)
             if local:
                 yield local
-        fields = SHIFTED_FIELDS
+        return
     for field in fields:
         value = _value(raw_metadata, field)
         if value:

@@ -1088,9 +1088,8 @@ def photo_save_metadata():
                    else [record for _held, record in folders.of(library).entries_for(photo_path)])
         for record in records:
             raw_meta = photo_actions.record_written(
-                library, record, new_path, tags, result.details["flat"], result.details["hierarchical"])
-            if date_taken:
-                fields.record_date_taken(raw_meta, date_taken)
+                library, record, new_path, tags, result.details["flat"], result.details["hierarchical"],
+                result.details["dates"])
             record["tags"] = vocabulary.extract_tags(raw_meta)
             record["captions"] = [title] if title else []
             record["title"] = title
@@ -1102,6 +1101,8 @@ def photo_save_metadata():
         return responses.error(500, str(e))
     reply = {"success": True, "new_path": new_path, **_where(result), **_stamp_reply(new_path),
              "base": result.details.get("base"), **_faces_unnamed(result), **_pictures_refused(result)}
+    if result.details["taken"]:
+        reply["taken"] = result.details["taken"]   # the date as the library spells it: the page shows this, spells nothing
     if result.details["index_warning"]:
         reply["index_warning"] = result.details["index_warning"]
     if result.details.get("rename_failed"):

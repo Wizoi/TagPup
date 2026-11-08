@@ -241,14 +241,15 @@ def is_clip(path):
     return kind_of(path) == "video"
 
 
-#: Why a clip's file is not written: a write of its Date Taken or turn is ExifTool's rewrite of the whole file --
-#: gigabytes, over a share -- and the date the library shows is read from the clip's own QuickTime dates, which it does
-#: not change (DECISIONS 2026-11-02, items 1 and 3); its tags, title and the name it had before its first rename are
-#: patched into its XMP only by a journaled write, in a folder the library holds (field_values.writes; DECISIONS
-#: 2026-11-05, M7, and 2026-11-08, A5), so a clip of another folder is not renamed either. The one sentence of the
-#: refusal (tagpup.services.file_changes.leave_out_clips, field_values.write).
-CLIP_NOT_EDITED = ("TagPup changes only a video's tags, title and name, and only in a folder the library holds; it "
-                   "does not change a video's Date Taken or turn: this video's file was left as it is.")
+#: Why a clip's file is not written: a turn is ExifTool's rewrite of the whole file -- gigabytes, over a share
+#: (DECISIONS 2026-11-02, items 1 and 3) -- and a time shift moves dates a clip's XMP does not hold; its tags, title,
+#: Date Taken and the name it had before its first rename are patched into its XMP only by a journaled write, in a
+#: folder the library holds (field_values.writes; DECISIONS 2026-11-05, M7, and 2026-11-08, A5 and A5 (D) REVISED), so a
+#: clip of another folder is not renamed or dated either. The one sentence of the refusal
+#: (tagpup.services.file_changes.leave_out_clips, field_values.write).
+CLIP_NOT_EDITED = ("TagPup changes only a video's tags, title, name and Date Taken, and only in a folder the library "
+                   "holds; it does not turn a video or shift its time with a camera: this video's file was left as it "
+                   "is.")
 
 #: Why a clip whose tags or title are saved is not written (field_values.write):
 #: its XMP cannot be patched where it is (a tail after its last box, two XMP boxes, no moov; in_place.patch_clip), and

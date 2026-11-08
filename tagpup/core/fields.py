@@ -8,7 +8,7 @@ a removed tag came back from it.
 import json
 import re
 
-from tagpup.core import photo_meta
+from tagpup.core import dates, photo_meta
 
 # Define target fields mapped to keys we want to return
 # ExifTool output keys can be namespaced or bare (without prefix).
@@ -30,7 +30,9 @@ METADATA_FIELDS = [
     "EXIF:DateTimeOriginal", "DateTimeOriginal",
     "XMP:DateTimeOriginal",
     "EXIF:CreateDate", "CreateDate",
-    # A clip's (tagpup.core.dates.CLIP_DATE_FIELDS): CreateDate above brings QuickTime:CreateDate.
+    # A clip's, its XMP dates first (tagpup.core.dates.CLIP_XMP_DATE_FIELDS: XMP:DateTimeOriginal above, and
+    # XMP:CreateDate, which CreateDate brings), then its QuickTime ones (CLIP_DATE_FIELDS: CreateDate brings
+    # QuickTime:CreateDate).
     "QuickTime:CreationDate",
     # Location
     "XMP:City", "City",
@@ -227,15 +229,17 @@ PRESERVED_NAME = "XMP-xmpMM:PreservedFileName"
 PHOTO_WRITES = ("tags", "title", "date", "rotate", "name")
 
 #: What a journaled write may change of a clip (DECISIONS 2026-11-05, M7; on since DECISIONS 2026-11-07): its tags, its
-#: title and its name (DECISIONS 2026-11-08, A5: a rename moves no byte, and the name it had before its first is kept in
-#: its XMP, PRESERVED_NAME, patched as its tags are). A page writes no caption of it (DECISIONS 2026-11-06); a Date Taken
-#: and a turn of a clip are ExifTool's rewrite of the whole file, refused before they are planned.
-CLIP_WRITES = ("tags", "title", "name")
+#: title, its name (DECISIONS 2026-11-08, A5: a rename moves no byte, and the name it had before its first is kept in
+#: its XMP, PRESERVED_NAME, patched as its tags are) and its Date Taken, in its XMP (DECISIONS 2026-11-08, A5 (D)
+#: REVISED: the date the library reads first, tagpup.core.dates.CLIP_XMP_DATE_FIELDS). A page writes no caption of it
+#: (DECISIONS 2026-11-06); a turn of a clip is ExifTool's rewrite of the whole file, refused before it is planned.
+CLIP_WRITES = ("tags", "title", "name", "date")
 
 #: The fields each of CLIP_WRITES names: a clip's title is its title fields and its QuickTime Title (CLIP_TITLE), which
-#: a photo's write never names (title_fields is what ExifTool writes into a JPEG); its name, the one it had before.
+#: a photo's write never names (title_fields is what ExifTool writes into a JPEG); its name, the one it had before; its
+#: date, its XMP dates (date_taken_fields of a clip), never its QuickTime ones.
 _CLIP_WRITE_FIELDS = {"tags": frozenset(keyword_fields([], [])), "title": frozenset(title_fields("")) | {CLIP_TITLE},
-                      "name": frozenset({PRESERVED_NAME})}
+                      "name": frozenset({PRESERVED_NAME}), "date": frozenset(dates.CLIP_XMP_DATE_FIELDS)}
 
 
 def fields_of(writes):
@@ -310,17 +314,36 @@ def date_taken_value(date_taken):
     return str(date_taken).replace("T", " ").replace("-", ":").strip()
 
 
-def date_taken_fields(date_taken):
-    """Every field a Date Taken write sets. A Date Taken is to the second: the page's picker sets no fraction, and no
-    row's `taken` holds one (0 in the three libraries, counted 2026-11-05), so no SubSecTime is written."""
+def date_taken_fields(date_taken, clip=False):
+    """Every field a Date Taken write may set. A Date Taken is to the second: the page's picker sets no fraction, and no
+    row's `taken` holds one (0 in the three libraries, counted 2026-11-05), so no SubSecTime is written; nor a zone. A
+    clip's are its XMP dates (dates.CLIP_XMP_DATE_FIELDS), patched into its XMP (tagpup.files.segment_edits.new_packet),
+    of which held_dates keeps XMP:CreateDate only where the clip holds one; its QuickTime dates are never written."""
     value = date_taken_value(date_taken)
+    if clip:
+        return {field: value for field in dates.CLIP_XMP_DATE_FIELDS}
     return {"EXIF:DateTimeOriginal": value, "XMP:DateTimeOriginal": value, "EXIF:CreateDate": value}
 
 
-def record_date_taken(raw_meta, date_taken):
-    """Make `raw_meta` say what a Date Taken write just put in the file -- the fields
-    the scan reads, as record_keyword_fields does for keywords. Returns it."""
-    for field, value in date_taken_fields(date_taken).items():
+#: The date field a write sets only where the file holds it already: a clip's XMP:CreateDate, which Adobe's tools wrote
+#: (41 photo_index clips, counted 2026-11-08), refreshed so it does not contradict the date saved, and made in no other
+#: (the owner's answer, DECISIONS 2026-11-08, A5 (D) REVISED).
+_WHERE_HELD = "XMP:CreateDate"
+assert _WHERE_HELD in dates.CLIP_XMP_DATE_FIELDS
+
+
+def held_dates(values, held):
+    """`values` ({field: value} a write sets) without _WHERE_HELD when `held` (what the file holds, or a row's
+    raw_metadata) holds none: decided once, by a save from what the file holds (tagpup.services.tagging); the page's
+    record is told what that save wrote (record_dates), not left to decide it again."""
+    return {field: value for field, value in values.items()
+            if field != _WHERE_HELD or field_values(held.get(field))}
+
+
+def record_dates(raw_meta, written):
+    """Make `raw_meta` say what a Date Taken write just put in the file -- `written`, {field: value} the save reports it
+    wrote -- the fields the scan reads, as record_keyword_fields does for keywords. Returns it."""
+    for field, value in written.items():
         if scan_reads(field):
             raw_meta[field] = value
     return raw_meta

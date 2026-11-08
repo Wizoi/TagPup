@@ -947,7 +947,7 @@ export function wireDateTakenModal() {
                     alert("Error saving date taken: " + err.message);
                     return false;
                 }
-                const formattedDate = newDateVal.replace("T", " ").replace(/-/g, ":");
+                const formattedDate = saved.taken;   // as the server spells it (fields.date_taken_value)
 
                 // What the server now records as when it was taken.
                 photo.taken = formattedDate;
