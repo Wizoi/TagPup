@@ -12,6 +12,8 @@ again, renames with the name each had. A second library holding the folder, its 
 finds the clip again by its PreservedFileName (relink_photos). A clip of a folder the library does not hold (Just look)
 is not written and keeps its name; the photo beside it is renamed.
 
+A clip renamed a second time keeps the first name it kept, and writes no second one.
+
 Real ffmpeg clips and the real ExifTool (tests/test_a_clip_tagged_through_the_journal.ALibraryHoldingAClip), Flask's
 test client in a home of its own. Skipped, saying so, without ffmpeg or ExifTool. Fictional names only.
 """
@@ -123,6 +125,28 @@ class AClipRenamed(tagged.ALibraryHoldingAClip):
         self.assertEqual(400, lone.status_code, "a refusal, as a Just-look clip's is, not a 500")
         self.assertIn(images.CLIP_NOT_PATCHED, lone.get_json()["error"])
         self.assertEqual(clip_bytes, self.read_bytes(self.clip_path))
+
+    def test_a_clip_renamed_a_second_time_keeps_the_first_name_it_kept(self):
+        clip, = self.index(self.clip_path)
+        first = self.renamed([self.clip_path], grouping="Harbour Day")
+        self.assertEqual(200, first.status_code, first.get_json())
+        once = first.get_json()["updated_paths"][self.clip_path]
+        kept_then = self.changes_of(clip)
+        self.assertEqual(2, len(kept_then), "the name kept, then the rename")
+        second = self.renamed([once], grouping="Quay Day")
+        self.assertEqual(200, second.status_code, second.get_json())
+        twice = {paths.key(old): new for old, new in second.get_json()["updated_paths"].items()}[paths.key(once)]
+        self.assertNotEqual(paths.key(once), paths.key(twice))
+        self.assertTrue(os.path.basename(twice).startswith("Quay Day"), twice)
+        self.assertEqual("jetty.mp4", self.kept_name(twice), "the first name, not the one it had the second time")
+        with ExifToolSession(executable=EXIFTOOL) as et:
+            every = et.execute("-a", "-s3", "-XMP-xmpMM:PreservedFileName", twice).split()
+        every = [value for value in every if value != "XMP"]   # ExifTool's group line, not a value
+        self.assertEqual(["jetty.mp4"], every, "no second PreservedFileName")
+        self.assertEqual(3, len(self.changes_of(clip)), "only the rename is a change the second time: no name kept again")
+        lone = self.post("photo/smart-rename", {"path": twice, "grouping": "Cove"})
+        self.assertEqual(200, lone.status_code, lone.get_json())
+        self.assertEqual("jetty.mp4", self.kept_name(lone.get_json()["new_path"]))
 
     def test_a_rename_stopped_after_the_names_were_kept_renames_with_them_when_run_again(self):
         self.index(self.photo_path, self.clip_path)
