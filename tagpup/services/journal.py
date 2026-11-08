@@ -111,6 +111,7 @@ UNDO_CHECKS = {
     "rotate": None,
     "faces_from_tags": None,
     refresh_rows.REDERIVE_OPERATION: None,
+    refresh_rows.REDATE_CLIPS_OPERATION: None,
 }
 UNDO_CHECKS.update({operation: None for operation in bulk_edit.OPERATIONS.values()})
 UNDO_CHECKS.update({operation: None for operation in face_batch.DESCRIPTIONS.values()})

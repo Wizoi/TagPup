@@ -36,15 +36,19 @@ def date_photos(conn, photo_ids=None):
             return
         query += " WHERE id IN (%s)" % ",".join("?" * len(photo_ids))
         params = tuple(photo_ids)
-    dated = []
     roots = store_roots.roots_for(conn)
-    for photo_id, path, raw_json in conn.execute(query, params).fetchall():
-        try:
-            raw = json.loads(raw_json) if raw_json else {}
-        except (TypeError, ValueError):
-            raw = {}
-        dated.append((dates.date_taken(raw), dates.photo_year(raw, paths.from_row(path, roots)), photo_id))
+    dated = [_dated(raw_json, paths.from_row(path, roots)) + (photo_id,)
+             for photo_id, path, raw_json in conn.execute(query, params).fetchall()]
     conn.executemany("UPDATE photos SET taken = ?, year = ? WHERE id = ?", dated)
+
+
+def _dated(raw_json, path):
+    """(taken, year) of a row holding `raw_json` at `path` (native): date_photos' one rule, and clip_dates_apart's."""
+    try:
+        raw = json.loads(raw_json) if raw_json else {}
+    except (TypeError, ValueError):
+        raw = {}
+    return dates.date_taken(raw), dates.photo_year(raw, path)
 
 
 def _dated_paths(conn, photo_paths):
@@ -748,6 +752,25 @@ def derived_apart(conn):
         if differs:
             apart.append((photo_id, dict(stored, raw_metadata=store_roots.raw_to_native(raw_json, roots)), differs))
     return photos, unread or 0, apart
+
+
+def clip_dates_apart(conn):
+    """The clips whose stored `taken` or `year` is not what date_photos makes of their stored raw_metadata and path now:
+    the rows dated before a clip's XMP date was read first (DECISIONS 2026-11-08, A5 (D) REVISED). (clips, [(id, the
+    row's taken, year, raw_metadata -- native -- and path -- native -- as read, {"taken", "year"} dated now)]). Reads
+    only."""
+    roots = store_roots.roots_for(conn)
+    clips, apart = 0, []
+    for photo_id, path, raw_json, taken, year in conn.execute(
+            "SELECT id, path, raw_metadata, taken, year FROM photos WHERE kind = 'video'"):
+        clips += 1
+        native = paths.from_row(path, roots)
+        now = dict(zip(("taken", "year"), _dated(raw_json, native)))
+        if (taken, year) != (now["taken"], now["year"]):
+            stored = {"taken": taken, "year": year, "path": native,
+                      "raw_metadata": store_roots.raw_to_native(raw_json, roots)}
+            apart.append((photo_id, stored, now))
+    return clips, apart
 
 
 def row_as_recorded(conn, stored_path):

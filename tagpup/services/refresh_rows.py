@@ -12,7 +12,9 @@ schema 10), listed in History and never undone: the library is at schema 35 and 
 version (tagpup.services.journal.RETIRED).
 
 `rederive` is a one-off (scripts/rederive_captions.py): the rows stored before a photo's captions were read from XMP
-first (DECISIONS 2026-11-03) are derived again from their own raw_metadata, no file read, as one change.
+first (DECISIONS 2026-11-03) are derived again from their own raw_metadata, no file read, as one change. So is
+`redate_clips` (scripts/rederive_clip_dates.py): the clips dated before a clip's XMP date was read first (DECISIONS
+2026-11-08, A5 (D) REVISED) are dated again from their own raw_metadata, no file read, as one change.
 """
 import json
 from collections import Counter
@@ -30,6 +32,9 @@ BATCH = 200
 
 #: The change `rederive` is recorded as.
 REDERIVE_OPERATION = "rederive tags and captions"
+
+#: The change `redate_clips` is recorded as.
+REDATE_CLIPS_OPERATION = "rederive clip dates"
 
 
 def read_files(conn, photo_paths, exiftool_path):
@@ -128,6 +133,36 @@ def rederive(library, apply=False):
                 for photo_id, stored, differs in planned.work]
 
     return maintenance.run(library, REDERIVE_OPERATION, plan, edits, apply=apply)
+
+
+def clips_apart(library):
+    """(counts, the rows apart) of the clips of `library` whose stored `taken` or `year` is not what their stored
+    raw_metadata dates now (store.photos.clip_dates_apart), on a read-only connection: counts only, safe to print."""
+    conn = db.connect(db.readonly_uri(library.path), uri=True)
+    try:
+        clips, rows = store_photos.clip_dates_apart(conn)
+    finally:
+        conn.close()
+    return {"clips": clips, "apart": len(rows),
+            "year": sum(stored["year"] != now["year"] for _id, stored, now in rows)}, rows
+
+
+def redate_clips(library, apply=False):
+    """Make each clip's stored `taken` and `year` what its stored raw_metadata and path date now, as one change of the
+    journal (maintenance.run: a rehearsal without `apply`). Each row is written only while its taken, year, raw_metadata
+    and path are what the plan read: one saved or moved meanwhile is skipped and reported, as it was dated by the rule
+    already. The change names only the two columns, so its undo puts them back as they were and dates nothing again
+    (store.journal._touched re-dates a row only for a change of its path or raw_metadata). Run again, it changes
+    nothing."""
+    def plan(_library):
+        counts, rows = clips_apart(library)
+        return maintenance.Plan(size=len(rows), counts=counts, ids={"photos": [row[0] for row in rows]}, work=rows)
+
+    def edits(planned):
+        return [journal.update("photos", (photo_id,), stored, now, kind="rederived", skippable=True)
+                for photo_id, stored, now in planned.work]
+
+    return maintenance.run(library, REDATE_CLIPS_OPERATION, plan, edits, apply=apply)
 
 
 def edits_for(records, to_write, found, identities, ids):
