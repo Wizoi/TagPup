@@ -1151,13 +1151,24 @@ def _take_held_out(library, row, now, target, stat):
 
 def _after_failure(et, library, row, origin, target, finished, on_failure, error, stall_stops=False):
     """A write that raised: settled by what the file holds after it. `row.read_only`: the file is marked read-only
-    (its stat after the failure), the one failure told from one that may pass the next time."""
+    (its stat after the failure), the one failure told from one that may pass the next time.
+
+    A forward write's (`stall_stops`) whose share did not answer (NotAnswered: a patch's, or ExifTool's picture check;
+    in_place.Away: a patch's look after its write) stops there, raising _Stalled, as one ExifTool stops answering for
+    (_read_now): before its record was saved, no byte was written; after, the file is left `writing` when its bytes
+    cannot be read now (_by_bytes), for the next settle. Read through ExifTool instead, it, and the next photo on that
+    share, would each wait ExifTool's whole deadline (#2400)."""
     seen = _stat(row.path)
     row.read_only = seen is not None and not seen.st_mode & S_IWRITE
+    away = stall_stops and isinstance(error, (field_values.NotAnswered, in_place.Away))
     if row.patched:
         settled = _by_bytes(library, row)
+        if away and settled is not None and settled[0] == "writing":
+            raise _Stalled(settled[1])
         if settled is not None:
             return settled
+    elif away:
+        raise _Stalled(str(error))
     try:
         now = _read_now(et, row, target, stall_stops)
     except field_values.Unreadable:

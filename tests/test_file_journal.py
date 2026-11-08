@@ -523,6 +523,79 @@ class APatchInPlace(FilesCase):
         self.assertEqual((["Beach"], [], ["Beach"]), (keywords_of(a), self.recorded(), self.indexed(a)))
 
 
+@contextlib.contextmanager
+def share_away(at_the_write=True):
+    """The photos' share stops answering a patch in place and stays away: from half way through the first patch's first
+    range (`at_the_write`), or from the patch's first look at the photo, before its record is saved. Every later bounded
+    call of in_place (a put back, a look at the bytes, the next photo's patch) is Away, as a share gone is. Yields the
+    paths field_values.read_one was asked to read through ExifTool after the share went: on a share gone, each waits
+    ExifTool's whole deadline (five minutes)."""
+    real_write, real_bounded, away, asked = in_place._write, in_place._bounded, [], []
+    real_read_one = field_values.read_one
+
+    def write(handle, changes):
+        at, new = changes[0]
+        real_write(handle, [(at, new[:len(new) // 2])])
+        away.append(True)
+        raise in_place.Away("the photo's folder did not answer in 30 s")
+
+    def bounded(path, call):
+        if away or not at_the_write:
+            away.append(True)
+            raise in_place.Away("the photo's folder did not answer in 30 s")
+        return real_bounded(path, call)
+
+    def read_one(et, path, *args, **kwargs):
+        if away:
+            asked.append(path)
+        return real_read_one(et, path, *args, **kwargs)
+
+    with mock.patch.object(in_place, "_write", write), mock.patch.object(in_place, "_bounded", bounded), \
+            mock.patch.object(field_values, "read_one", read_one):
+        yield asked
+
+
+class AShareThatStopsAnsweringInAPatch(FilesCase):
+    """A keyword renamed in three photos on a share that stops answering in the patch of the first (#2400): the write stops
+    there, as it does when ExifTool stops answering (#1921), and no photo is read through ExifTool after it, which on a
+    share gone waits ExifTool's whole deadline each. The photo under way stays `writing` for a settle by its bytes once
+    the share answers; the two after it are taken out, untouched. Break: _after_failure going on to the next photo (the
+    trunk before #2400: the next photo's read waited its deadline before the write stopped)."""
+
+    def rename(self, photo_paths):
+        """Beach renamed Shore: the same length, so each photo's fields fit its segments and are patched in place."""
+        return tagging.replace_tag(self.library, photo_paths, "Beach", "Shore", EXIFTOOL)
+
+    def test_a_share_gone_half_way_through_the_first_patch_stops_the_write_there(self):
+        a, b, c = self.make("a.jpg"), self.make("b.jpg"), self.make("c.jpg")
+        untouched = {path: os.stat(path).st_mtime_ns for path in (b, c)}
+        with share_away() as asked:
+            result = self.rename([a, b, c])
+        self.assertEqual([], asked, "a photo was read through ExifTool after its share went away")
+        change = result.details["change"]
+        self.assertEqual((0, ["writing"]), (result.changed, self.states(change)))
+        self.assertEqual([a, b, c], result.details["not_answered"])
+        self.assertIn("stopped answering as it was written", str(result.errors[0][1]))
+        self.assertEqual(untouched, {path: os.stat(path).st_mtime_ns for path in (b, c)})
+        # The share answers again: the torn patch is put back by its bytes and written again; the change ends applied.
+        self.assertEqual(1, self.settle())
+        self.assertEqual((["done"], "applied", ["Shore"]), (self.states(change), self.status(change), keywords_of(a)))
+        self.assertEqual([["Beach"], ["Beach"]], [keywords_of(b), keywords_of(c)])
+
+    def test_a_share_gone_before_the_first_patch_saved_its_record_stops_the_write_with_no_byte_written(self):
+        a, b, c = self.make("a.jpg"), self.make("b.jpg"), self.make("c.jpg")
+        with open(a, "rb") as handle:
+            held = handle.read()
+        with share_away(at_the_write=False) as asked:
+            result = self.rename([a, b, c])
+        self.assertEqual([], asked, "a photo was read through ExifTool after its share went away")
+        with open(a, "rb") as handle:
+            self.assertEqual(held, handle.read())
+        self.assertEqual((0, ["writing"]), (result.changed, self.states(result.details["change"])))
+        self.assertEqual(1, self.settle())
+        self.assertEqual(["Shore"], keywords_of(a))
+
+
 class ThePatchRecordHasOneReader(unittest.TestCase):
     """The saved bytes of a patch are a crash record, not a second undo: only the journal (file_journal), the schema
     that adds them and the doctor, by the journal's functions, name them in SQL. History, the MCP server and an undo's
