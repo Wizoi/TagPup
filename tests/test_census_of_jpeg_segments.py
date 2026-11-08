@@ -2,7 +2,8 @@
 docs/PLAN_OWN_METADATA.md): what TagPup's own writer must meet, counted read-only from the bytes before the first scan.
 
 One library in a home of its own, its rows as the indexer records them (photo_rows.add_read), its files hand-built
-JPEGs: one holding two EXIF segments (one with a Canon MakerNote whose pointers count from the TIFF header), an XMP
+JPEGs: one holding two EXIF segments (one with a Canon MakerNote whose pointers count from the TIFF header, one an
+Orientation stored as a LONG, which is counted as the EXIF block editor reads it, not as absent: #2427), an XMP
 packet whose dc:subject occurs twice, whose xmp:CreateDate is an attribute and which names two rdf:about values, an
 extended XMP segment, an MPF segment, IPTC with no charset, a keyword outside ASCII and a digest that does not match,
 and bytes after its end; one plain (UTF-8 IPTC, a digest that matches, a MakerNote moved with an OffsetSchema, which
@@ -41,10 +42,12 @@ def _segment(marker, body):
     return bytes((0xFF, marker)) + struct.pack(">H", len(body) + 2) + body
 
 
-def _tiff(make=None, maker_note=False, slack=0, moved=None):
-    """A little-endian TIFF block: IFD0 (Make when given, the Exif IFD when a MakerNote is asked), the Exif IFD holding a
-    MakerNote with one pointer counted from the TIFF header, then `slack` zero bytes. A note `moved` (a shift in bytes)
-    points from where it was before, and the Exif IFD's OffsetSchema says by how much, as Windows' writers leave one."""
+def _tiff(make=None, maker_note=False, slack=0, moved=None, orientation=3):
+    """A little-endian TIFF block: IFD0 (Make when given, the Exif IFD when a MakerNote is asked; else an Orientation of
+    1, of TIFF type `orientation`: 3 SHORT, 4 LONG as 2 of photo_index's 1,064 sampled Orientations are), the Exif IFD
+    holding a MakerNote with one pointer counted from the TIFF header, then `slack` zero bytes. A note `moved` (a shift in
+    bytes) points from where it was before, and the Exif IFD's OffsetSchema says by how much, as Windows' writers leave
+    one."""
     entries, data = [], b""
     ifd0_count = (make is not None) + bool(maker_note) or 1
     at = 8 + 2 + 12 * ifd0_count + 4
@@ -63,7 +66,7 @@ def _tiff(make=None, maker_note=False, slack=0, moved=None):
         data += (struct.pack("<H", exif_entries) + struct.pack("<HHII", 0x927C, 7, len(note), note_at) + schema
                  + struct.pack("<I", 0) + note)
     if not entries:
-        entries.append(struct.pack("<HHIHH", 0x0112, 3, 1, 1, 0))   # Orientation, its value in its entry
+        entries.append(struct.pack("<HHIHH", 0x0112, orientation, 1, 1, 0))   # Orientation, its value in its entry
     ifd0 = struct.pack("<H", len(entries)) + b"".join(entries) + struct.pack("<I", 0)
     return b"II*\0" + struct.pack("<I", 8) + ifd0 + data + b"\0" * slack
 
@@ -120,7 +123,7 @@ DESCRIPTION = (b'<rdf:Description rdf:about="" xmlns:dc="http://purl.org/dc/elem
                b"<dc:subject><rdf:Bag><rdf:li>Places/Lakeside</rdf:li></rdf:Bag></dc:subject></rdf:Description>")
 RICH = (b"\xff\xd8" + JFIF
         + _segment(0xE1, b"Exif\0\0" + _tiff("Canon", maker_note=True, slack=100))
-        + _segment(0xE1, b"Exif\0\0" + _tiff())
+        + _segment(0xE1, b"Exif\0\0" + _tiff(orientation=4))
         + _xmp(b"", b"Image::ExifTool 12.40", DESCRIPTION)
         + _segment(0xE1, b"http://ns.adobe.com/xmp/extension/\0" + b"0123456789ABCDEF0123456789ABCDEF"
                    + struct.pack(">II", 20, 0) + b"<x:xmpmeta></x:xmpmeta")
