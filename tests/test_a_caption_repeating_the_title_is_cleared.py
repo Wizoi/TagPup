@@ -356,10 +356,15 @@ class StoppedPartWay(CaptionSweep):
             self.assertEqual((TITLE, TITLE, TITLE), self.captions_of(path), "a file not reached was written")
 
     def test_a_ctrl_c_while_exiftool_starts_is_a_message_not_a_traceback(self):
+        """Opening the library first finishes a change an earlier run left half done (runtime.library_settings'
+        settle_once), and that settle writes files: a Ctrl+C then is before this run wrote anything, not before anything
+        was written (#2611 said the latter)."""
         with mock.patch.object(clear_duplicate_captions.runtime, "exiftool", side_effect=KeyboardInterrupt):
             code, said = self.sweep("--apply")
         self.assertEqual(130, code, said)
-        self.assertIn("stopped before anything was written", said)
+        self.assertIn("stopped before this run planned or wrote anything", said)
+        self.assertIn("a change an earlier run left half done", said)
+        self.assertNotIn("before anything was written", said)
 
     def test_a_process_killed_mid_chunk_is_finished_by_the_next_run(self):
         with mock.patch.object(file_changes, "_reached", side_effect=crash_at("file writing", 3)):
