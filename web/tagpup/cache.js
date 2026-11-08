@@ -10,8 +10,9 @@ export const CACHE_TTL_MS = 30 * 60 * 1000;
 // The shape of the photo records an entry holds. An entry saved by a page that made records of another shape (no version at
 // all, or an older one) is not used: the folder is scanned again. Raise it whenever a record gains a field a page reads
 // (2: `camera`, which Shift Date Taken's list of cameras is made of: a record without it is "Unknown Camera"; 3: a
-// folder's clips, with `media` and a recorded clip's `id` and `thumb`: an older entry lists none of them).
-export const CACHE_VERSION = 3;
+// folder's clips, with `media` and a recorded clip's `id` and `thumb`: an older entry lists none of them; 4: `writes`, the
+// edits a photo's panel offers (stale.js): a record without it offers none).
+export const CACHE_VERSION = 4;
 
 export function saveToLocalStorageCache() {
     if (!state.scannedFolder) return;
