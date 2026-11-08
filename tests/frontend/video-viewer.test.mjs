@@ -289,6 +289,32 @@ describe("a video's title and keywords are edited, nothing else of it", () => {
     assert.equal(sent[1].path, sent[0].path);
     assert.equal(ctx.state.library.activeId, VIDEO + 1, "deleted: the next photo opens");
     assert.ok(!ctx.state.library.ids.includes(VIDEO) || ctx.cardById(VIDEO) === null, "the clip has left the view");
+    assert.equal(status(ctx), "Deleted for good, as you confirmed: the Recycle Bin of its drive would not keep it.",
+      "the status line says what the server did, never Ready");
+  });
+
+  test("a clip opened again while its delete is out is not played: its file is let go until the reply", async (t) => {
+    // A range read of the clip as its original is removed makes the remove fail ('the file is there twice').
+    const ctx = await viewWithAVideo(t);
+    const answer = [];
+    ctx.server.first("/api/photo/delete", () => new Promise((resolve) => answer.push(resolve)));
+    ctx.window.confirm = () => true;
+    ctx.window.alert = () => {};
+    await open(ctx, VIDEO);
+    click(ctx.window, el(ctx, "btn-delete-photo"));
+    await ctx.settle(40);
+    assert.equal(answer.length, 1, "the delete was sent");
+    press(ctx, "ArrowRight");
+    await ctx.settle(80);
+    press(ctx, "ArrowLeft");
+    await ctx.settle(80);
+    assert.equal(ctx.state.library.activeId, VIDEO, "the clip is the one shown again");
+    assertStopped(ctx, "opened again while its delete is out");
+    assert.equal(status(ctx), "This video is being deleted.");
+    answer[0]({ success: false, error: "The file is in use" });
+    await ctx.settle(80);
+    ctx.consoleErrors.length = 0;
+    assertPlaying(ctx, VIDEO, "the delete failed: the clip plays again");
   });
 
   test("Cancel at the warning deletes nothing: one delete sent, nothing said deleted, the clip plays again", async (t) => {

@@ -9,7 +9,8 @@ export const state = {
     scannedFolder: '',
     folderPhotos: [],
     activePhotoPath: null,
-    // A delete of the panel's photo is out: its Delete is inert until the reply (stale.js holdDeletes).
+    // The path of the panel's photo whose delete is out, or false: its Delete is inert until the reply (stale.js
+    // holdDeletes), and a clip of that path is not played meanwhile (media.js showMedia).
     deleting: false,
     // The selection: paths, in the order they were picked, which the bulk edits read; and
     // the same photos by pathKey, for O(1) membership. selected.js is the one writer of both.

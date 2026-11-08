@@ -18,7 +18,9 @@
 // Taken are inert while one is shown (stale.js applyPhotoStale, from its record's `writes`), as the server refuses them of a
 // clip. Zoom stands down because there is no picture.
 import { api } from './common/api.js';
+import { samePath } from './common/paths.js';
 import { mainImage, mainVideo, panelContent } from './elements.js';
+import { state } from './state.js';
 import { setStatus } from './status.js';
 
 /** Is `photo` a video? Only what the library says: a record without `media` is a photo. */
@@ -40,6 +42,14 @@ export function showMedia(photo, pictureUrl) {
     if (!isVideo(photo) || photo.missing) {
         stopVideo();
         mainImage.src = pictureUrl;
+        return;
+    }
+    if (state.deleting && samePath(state.deleting, photo.path)) {
+        // Its delete is out (photo.js deleteActivePhoto): a range read of it as the original is removed would make the remove
+        // fail, the copy in the Bin and the file there twice. Shown again by the delete's reply if it stayed.
+        stopVideo();
+        mainImage.src = '';
+        setStatus('ready', 'This video is being deleted.', { transient: false });
         return;
     }
     if (photo.id === undefined) {

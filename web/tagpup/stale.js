@@ -61,9 +61,9 @@ function heldSentence(held) {
  * so the state of one photo is never carried to the next. No photo (none found) offers no edit.
  */
 /**
- * A delete of the panel's photo is out (`on`) or answered: its Delete (`data-deletes`) is inert from the click to the reply, for
- * a photo as for a clip, whose copy through this PC can take minutes; a second click would start a second copy into the same
- * `.partial`. Answered (`on` false), the Delete is offered as applyPhotoStale offers it for `photo`, the record shown now.
+ * A delete of the panel's photo is out (`on`, its path) or answered: its Delete (`data-deletes`) is inert from the click to the
+ * reply, for a photo as for a clip, whose copy through this PC can take minutes; a second click would start a second copy into
+ * the same `.partial`. Answered (`on` false), the Delete is offered as applyPhotoStale offers it for `photo`, the record shown now.
  */
 export function holdDeletes(on, photo) {
     state.deleting = on;

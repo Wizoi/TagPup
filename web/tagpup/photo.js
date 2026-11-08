@@ -800,7 +800,8 @@ export function deleteActivePhoto() {
     // original is deleted would make Windows refuse the delete. Shown again if the delete fails while it is still open.
     const video = isVideo(asked);
     if (video) stopVideo();
-    holdDeletes(true);
+    holdDeletes(path);
+    let stayed = false;     // the delete was cancelled or failed: the clip, if still the one shown, plays again
     const send = (forGood) => api.json('/api/photo/delete', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -815,13 +816,13 @@ export function deleteActivePhoto() {
         if (data === cancelled) {
             statusDot.className = 'status-indicator-dot';
             statusText.textContent = 'Nothing was deleted.';
-            if (video && samePath(state.activePhotoPath, path)) showMedia(asked, '');
+            stayed = true;
             return;
         }
         if (data.success && askedInView && state.library !== askedInView) {
             // Another view (or a folder) was opened while the delete was out: nothing of it is this photo's.
             statusDot.className = 'status-indicator-dot';
-            statusText.textContent = 'Ready';
+            statusText.textContent = data.message || 'Ready';
             return;
         }
         if (data.success && askedInView) {
@@ -837,7 +838,7 @@ export function deleteActivePhoto() {
             if (nextId === undefined) backToView();
             else openLibraryPhoto(nextId);
             statusDot.className = 'status-indicator-dot';
-            statusText.textContent = 'Ready';
+            statusText.textContent = data.message || 'Ready';
         } else if (data.success) {
             // Found again now, by its path: a folder opened meanwhile has no such card, and none of it goes.
             const at = state.folderPhotos.findIndex(p => samePath(p.path, path));
@@ -886,12 +887,13 @@ export function deleteActivePhoto() {
         console.error(err);
         statusDot.className = 'status-indicator-dot';
         statusText.textContent = 'Error';
-        if (video && samePath(state.activePhotoPath, path)) showMedia(asked, '');
+        stayed = true;
         alert("Error deleting photo: " + err.message);
     })
     .finally(() => {
         // Answered: the photo shown now (the next one, or this one if it stayed) offers its Delete again.
         holdDeletes(false, state.folderPhotos.find(p => samePath(p.path, state.activePhotoPath)) || null);
+        if (stayed && video && samePath(state.activePhotoPath, path)) showMedia(asked, '');
     });
 }
 
