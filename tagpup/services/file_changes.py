@@ -87,7 +87,7 @@ from tagpup.core import fields, paths
 from tagpup.core.result import Conflict, Refused, Result
 # Looked up at call time, as exiftool_session.ExifToolSession, so a test standing in for
 # ExifTool there reaches this too.
-from tagpup.files import exiftool_session, field_values, images, in_place, lock_owners, metadata, names, segment_edits, shares
+from tagpup.files import exiftool_session, field_values, images, in_place, lock_owners, metadata, names, shares
 from tagpup.services import baking, batches, face_batch, rotation
 from tagpup.services import roots as roots_service
 from tagpup.store import db, derived, file_journal, photos, schema
@@ -294,10 +294,22 @@ PRESENT, GONE, AWAY = "present", "gone", "away"
 AWAY_WHY = "its folder could not be reached just now (a network share that did not answer), so nothing was written to it"
 
 
+#: Why the last keyword is not taken off a clip whose keywords are held in QuickTime's Subject (14 live clips, counted
+#: 2026-11-05; owner, 2026-11-05): with none left in its XMP, the index reads them from QuickTime again.
+KEPT_IN_QUICKTIME = ("its keywords are also held in the clip's QuickTime Subject, which TagPup does not write: with none "
+                     "left in its XMP they would be read back from there, so the last one stays; nothing was written")
+
+
+def _takes_off_every_keyword(values):
+    """Does a write of `values` leave a clip's XMP holding no keyword (KEPT_IN_QUICKTIME's case)?"""
+    return "XMP:Subject" in values and not fields.field_values(values["XMP:Subject"])
+
+
 def leave_out_clips(result, photo_paths, unreadable="fail", read=None):
     """The paths of `photo_paths` that are not clips (images.is_clip), in order, and the clips a journaled write of
     `read`, the fields it reads of each file, may patch: only while writing clips is on (field_values.CLIP_PATCH_IN_PLACE)
-    and only a keyword or caption save (every field read in fields.CLIP_READ; DECISIONS 2026-11-05, M7). Any other clip
+    and only a keyword or caption save (every field read in fields.CLIP_READ; DECISIONS 2026-11-05, M7) that reads its
+    QuickTime keywords (fields.CLIP_KEYWORDS), from which the plan keeps its last keyword (KEPT_IN_QUICKTIME). Any other clip
     is not written (images.CLIP_NOT_EDITED): it is the write's error, with that sentence -- or, `unreadable="skip"` (a
     write over every photo of a camera or a folder that leaves out what it cannot write), skipped with it -- read for
     nothing, planned and journaled for nothing, and never the error that stops a write at its first
@@ -307,7 +319,7 @@ def leave_out_clips(result, photo_paths, unreadable="fail", read=None):
     journal to settle a patch a crash cut short) and a Smart Rename (tagpup.services.photos.smart_rename) before it keeps
     a name; a save of a clip is refused before its rename."""
     patched = (read is not None and field_values.CLIP_PATCH_IN_PLACE
-               and set(read) <= fields.CLIP_READ)
+               and fields.CLIP_KEYWORDS in read and set(read) <= fields.CLIP_READ)
     photos = []
     for path in photo_paths:
         if images.is_clip(path) and not patched:
@@ -518,13 +530,14 @@ def _write_fields(et, library, operation, exiftool_path, photo_paths, read, plan
             continue
         after = {field: fields.field_values(value) for field, value in plan.after.items()}
         before = {field: now.get(field, []) for field in after}
-        if (images.is_clip(path) and field_values.takes_off_every_keyword(after)
+        if (images.is_clip(path) and _takes_off_every_keyword(after)
                 and fields.field_values(now.get(fields.CLIP_KEYWORDS))):
             # A clip left with no keyword in its XMP while its QuickTime Subject (read, never written) holds one: its tags
-            # would be read from there again (the last tag taken off one of the 14 live clips holding them only there). The
-            # writer's refusal, said here from what was read, as the writer says it when the plan did not read QuickTime:
-            # its XMP being empty already, the plan would call it held and the tag-tree edit say nothing of why.
-            result.fail(path, segment_edits.KEPT_IN_QUICKTIME)
+            # would be read from there again (the last tag taken off one of the 14 live clips holding them only there).
+            # The one place of the rule: every write that reaches a clip read fields.CLIP_KEYWORDS (leave_out_clips), and
+            # an undo never refuses on it (#2554). Asked before _holds_already: a clip whose XMP is empty already would be
+            # called held, and the tag-tree edit say nothing of why.
+            result.fail(path, KEPT_IN_QUICKTIME)
             continue
         if _holds_already(path, before, after) and not (alongside is not None and alongside.wants(path)):
             written[path] = plan.detail
@@ -869,13 +882,11 @@ def _carry(et, library, row, origin, target, finished, on_failure, wrote=None, n
     row.patched = False
     _reached("file writing")
     saving = _saving(library, row)
-    # An undo takes a clip back to what it held: its QuickTime keywords were checked against what it undoes (_undoable).
-    elsewhere = () if finished == "undone" else None
-    failed = _written(et, row, target, saving, elsewhere)
+    failed = _written(et, row, target, saving)
     if exiftool_session.scratch_in_the_way(failed):
         left = _removed_scratch(row.path, stamp, interrupted)
         if left is None:
-            failed = _written(et, row, target, saving, elsewhere)      # once: a second failure is the write's own
+            failed = _written(et, row, target, saving)      # once: a second failure is the write's own
         elif left == SCRATCH_UNDER_WAY:
             failed = exiftool_session.written_lately(failed)
     if isinstance(failed, field_values.PictureChanged):
@@ -903,10 +914,10 @@ def _carry(et, library, row, origin, target, finished, on_failure, wrote=None, n
     return finished, None
 
 
-def _written(et, row, target, saving=None, keywords_elsewhere=None):
+def _written(et, row, target, saving=None):
     """None when field_values.write wrote `target` into the file of `row`, the fields it left as they were in
     `row.stale`; else what it raised. A new file whose picture changed is written once more, logged and counted
-    (field_values.written_once_more; `pictures_refused`). `keywords_elsewhere`, a clip's, as write takes it."""
+    (field_values.written_once_more; `pictures_refused`)."""
     def again():
         logger.warning("%s: its write changed the picture's bytes; the new file was discarded, and it is written once more",
                        row.named())
@@ -914,8 +925,7 @@ def _written(et, row, target, saving=None, keywords_elsewhere=None):
     row.stale = ()
     try:
         row.stale = tuple(field_values.written_once_more(et, row.path, target, again, saving=saving,
-                                                         scratch_written=lambda: _reached(SCRATCH_WRITTEN),
-                                                         keywords_elsewhere=keywords_elsewhere))
+                                                         scratch_written=lambda: _reached(SCRATCH_WRITTEN)))
     except Exception as e:
         return e
     return None
@@ -1718,8 +1728,8 @@ def _undoable(library, change_id, exiftool_path, check):
     (tagpup.services.journal.why_not: a newer change of the same files among it), asked on
     a read-only connection, once, before anything is written. A clip the writer would refuse to put back (writing clips
     off: field_values.clip_refused) refuses the whole undo, so the change stays applied, never half undone nor a conflict
-    (#2546). Never its last keyword kept in QuickTime: an undo writes what the clip's XMP held before (_carry passes
-    keywords_elsewhere=()), its keywords read from QuickTime again if that was none."""
+    (#2546). Never its last keyword kept in QuickTime: an undo writes what the clip's XMP held before, its keywords read
+    from QuickTime again if that was none (#2554)."""
     change = file_journal.change(library.path, change_id)
     if change is None:
         return None, "there is no change %d" % change_id, None

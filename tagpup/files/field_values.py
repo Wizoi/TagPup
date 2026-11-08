@@ -242,7 +242,7 @@ def read_one(et, photo_path, wanted):
     return held
 
 
-def write(et, photo_path, values, saving=None, scratch_written=None, own_writer=None, keywords_elsewhere=None):
+def write(et, photo_path, values, saving=None, scratch_written=None, own_writer=None):
     """Write `values` ({field: value}) into a photo, in one ExifTool command, clearing a
     field whose value is empty, telling ExifTool an objection it calls minor does not stop it (WRITE_OPTIONS: a photo
     with two rdf:about attributes in its XMP takes a write; DECISIONS 2026-10-27). Raises
@@ -274,10 +274,9 @@ def write(et, photo_path, values, saving=None, scratch_written=None, own_writer=
     `own_writer` chooses a patch's writer for this write alone, True the own, False ExifTool's; None, OWN_WRITER. Only
     the shadow comparison of the two (tagpup.services.metadata_check) chooses: it writes each side on a copy.
 
-    A clip (images.is_clip) is never ExifTool's to write: _clip_written patches its XMP or refuses it, given its
-    `keywords_elsewhere` (None: read from the clip)."""
+    A clip (images.is_clip) is never ExifTool's to write: _clip_written patches its XMP or refuses it."""
     if images.is_clip(photo_path):
-        return _clip_written(et, photo_path, values, saving, keywords_elsewhere)
+        return _clip_written(photo_path, values, saving)
     own = [field for field in values if str(field).startswith(bake.NAMESPACE + ":")]
     if own and getattr(et, "config_file", None) != bake.config_path():
         raise ValueError("%s is written only by a session that knows TagPup's namespace (field_values.session); this one "
@@ -338,29 +337,18 @@ def clip_refused(values):
     return None
 
 
-def takes_off_every_keyword(values):
-    """Does a write of `values` leave a clip's XMP holding no keyword (segment_edits.KEPT_IN_QUICKTIME's case)?"""
-    return "XMP:Subject" in values and not fields.field_values(values["XMP:Subject"])
-
-
-def _clip_written(et, photo_path, values, saving, keywords_elsewhere=None):
+def _clip_written(photo_path, values, saving):
     """write() of a clip: the fields it left as they were (segment_edits.clip_stale_of) once its XMP holds `values`, by a
     patch of its XMP in place (in_place.patch_clip), saved by `saving` before a byte is written. Raises Refused, nothing
     written, while CLIP_PATCH_IN_PLACE is off, for a write that is not the journal's (no `saving`: nothing could settle a
     patch a crash cut short), or one naming a field outside fields.CLIP_FIELDS (images.CLIP_NOT_EDITED); for a clip the
-    patch cannot place (images.CLIP_NOT_PATCHED); a clip open in another program, or the last keyword of one holding its
-    keywords in QuickTime too (in_place's and segment_edits' sentences). Raises Unreadable when it could not be read
-    before a byte was written (NotAnswered: its share did not answer); a write that failed after its record was saved
-    raises as it failed, the file settled by its bytes. ExifTool only reads: the clip's QuickTime keywords, before the
-    patch opens the file alone, when the save takes the last keyword off its XMP and the caller has not said them
-    (`keywords_elsewhere`: an undo's, () when what it undoes held every one of them in XMP too)."""
+    patch cannot place (images.CLIP_NOT_PATCHED); a clip open in another program (in_place's sentence). Raises Unreadable
+    when it could not be read before a byte was written (NotAnswered: its share did not answer); a write that failed
+    after its record was saved raises as it failed, the file settled by its bytes. ExifTool is not asked: the last
+    keyword of a clip holding its keywords in QuickTime too is kept by the plan, which read them
+    (file_changes.KEPT_IN_QUICKTIME)."""
     if saving is None or clip_refused(values):
         raise Refused(images.CLIP_NOT_EDITED)
-    elsewhere = keywords_elsewhere or ()
-    if keywords_elsewhere is None and takes_off_every_keyword(values):
-        # The keywords a clip holds where TagPup does not write them (fields.CLIP_KEYWORDS), read before the last
-        # keyword is taken off its XMP (segment_edits.new_packet's `keywords_elsewhere`).
-        elsewhere = read_one(et, photo_path, [fields.CLIP_KEYWORDS])[fields.CLIP_KEYWORDS]
     saved = []
 
     def saved_first(record, before):
@@ -369,7 +357,7 @@ def _clip_written(et, photo_path, values, saving, keywords_elsewhere=None):
 
     try:
         stale = in_place.patch_clip(
-            photo_path, lambda old: segment_edits.new_packet(old, values, keywords_elsewhere=elsewhere), saved_first)
+            photo_path, lambda old: segment_edits.new_packet(old, values), saved_first)
     except in_place.Away:
         raise NotAnswered("its folder did not answer the patch of its fields in %d s; it is settled by its bytes "
                           "the next time" % in_place.SECONDS) from None

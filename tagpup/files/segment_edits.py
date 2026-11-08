@@ -6,8 +6,8 @@ Pure: a header's bytes and layout in, bytes out; no file, nothing written. The o
 
 `new_packet(old, values)` is a clip's: the packet its XMP box holds (None, a clip with none: xmp_packet.blank()) made to
 hold a keyword or caption save (fields.CLIP_FIELDS), grown when it must be (tagpup.files.clip_patch places it); every
-copy outside XMP is left stale (`clip_stale_of`), also when the XMP value is cleared; the last keyword taken off a clip
-whose keywords are in QuickTime's Subject is refused, a sentence (KEPT_IN_QUICKTIME).
+copy outside XMP is left stale (`clip_stale_of`), also when the XMP value is cleared. The last keyword of a clip whose
+keywords are in QuickTime's Subject is kept by the plan, which read it (file_changes.KEPT_IN_QUICKTIME).
 
 `new_header(layout, header, values)` is (the header with only its edited segments' bodies changed, the fields left
 stale), or None when the write is not a patch -- a field the own writer does not write, a value it cannot spell, a
@@ -69,28 +69,17 @@ def clip_stale_of(values):
     return tuple(field for leaves in fields.XMP_ONLY.values() for field in leaves if field in values)
 
 
-#: Why the last keyword is not taken off a clip whose keywords are held in QuickTime's Subject (14 live clips, counted
-#: 2026-11-05; owner, 2026-11-05).
-KEPT_IN_QUICKTIME = ("its keywords are also held in the clip's QuickTime Subject, which TagPup does not write: with none "
-                     "left in its XMP they would be read back from there, so the last one stays; nothing was written")
-
-
-def new_packet(old, values, *, keywords_elsewhere):
+def new_packet(old, values):
     """(the clip's new XMP packet, the fields of `values` left stale) of a keyword or caption save, `values` naming only
     fields.CLIP_FIELDS (another raises ValueError: the caller refuses it before planning). `old` is the packet the clip's
     one XMP box holds (bytes, at most xmp_packet.LIMIT), None for a clip with none, which is given xmp_packet.blank().
     The packet is `old` itself when it already holds the values (None, a clip with none and nothing to write). None when
-    it is not a patch: a value it cannot spell, a packet the editor refuses (the clip waits for the whole-file rewrite).
-    containers.Refusal(KEPT_IN_QUICKTIME) for a write clearing XMP:Subject of a clip holding `keywords_elsewhere`, the
-    keywords its QuickTime Subject holds, as the caller read them: required, so a caller cannot forget it and let the
-    last keyword come off XMP only to be read back from QuickTime (#2538)."""
+    it is not a patch: a value it cannot spell, a packet the editor refuses (the clip waits for the whole-file rewrite)."""
     unknown = sorted(set(values) - fields.CLIP_FIELDS)
     if unknown:
         raise ValueError("%s is not a field a clip's write names (fields.CLIP_FIELDS)" % unknown[0])
     stale = clip_stale_of(values)
     wanted = {field: texts for field, texts in values.items() if field not in stale}
-    if "XMP:Subject" in wanted and not fields.field_values(wanted["XMP:Subject"]) and keywords_elsewhere:
-        return containers.Refusal(KEPT_IN_QUICKTIME)
     base = xmp_packet.blank() if old is None else old
     try:
         changes = {name: _value(field, name, texts) for field, texts in wanted.items()

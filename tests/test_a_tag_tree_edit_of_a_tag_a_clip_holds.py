@@ -20,8 +20,8 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import test_a_clip_tagged_through_the_journal as tagged  # noqa: E402
 
-from tagpup.files import images, segment_edits  # noqa: E402
-from tagpup.services import tags  # noqa: E402
+from tagpup.files import images  # noqa: E402
+from tagpup.services import file_changes, tags  # noqa: E402
 from tagpup.store import taxonomy  # noqa: E402
 
 EXIFTOOL = tagged.EXIFTOOL
@@ -76,12 +76,12 @@ class ATagTreeEditOfATagAClipHolds(tagged.ALibraryHoldingAClip):
         reply = self.post("taxonomy/delete-confirm", {"tag_id": self.node("Trips/Coast"), "action": "delete"})
         body = reply.get_json()
         self.assertEqual((False, 0), (body["success"], body["photos_rewritten"]), body)
-        self.assertIn("jetty.mp4: " + segment_edits.KEPT_IN_QUICKTIME[:150], body["error"], "the alert says which and why")
+        self.assertIn("jetty.mp4: " + file_changes.KEPT_IN_QUICKTIME[:150], body["error"], "the alert says which and why")
         self.assertTrue(self.node("Trips/Coast"), "the clip still carries it, so the tree keeps it")
         self.assertEqual(before, self.read_bytes(self.clip_path), "the clip is as it was")
         self.assertEqual(["Trips/Coast"], self.tags_of(clip))
         result = tags.merge(self.vl.library, "Trips/Coast", "", EXIFTOOL, retire=True, apply=True)
-        self.assertEqual([segment_edits.KEPT_IN_QUICKTIME], [each["why"] for each in result.details["failed_photos"]],
+        self.assertEqual([file_changes.KEPT_IN_QUICKTIME], [each["why"] for each in result.details["failed_photos"]],
                          "TagTuner's reply names it and why")
         self.assertTrue(self.node("Trips/Coast"))
 
@@ -89,7 +89,7 @@ class ATagTreeEditOfATagAClipHolds(tagged.ALibraryHoldingAClip):
         tagged.with_quicktime_subject(self.clip_path, ["Trips/Coast"])
         clip, = self.index(self.clip_path)
         reply = self.post("photos/bulk-tags", {"paths": [self.clip_path], "remove_tags": ["Trips/Coast"]})
-        self.assertIn(segment_edits.KEPT_IN_QUICKTIME, reply.get_json()["error"])
+        self.assertIn(file_changes.KEPT_IN_QUICKTIME, reply.get_json()["error"])
         self.assertEqual([], self.change_states(clip), "nothing journaled")
         self.assertEqual(["Trips/Coast"], self.tags_of(clip))
 

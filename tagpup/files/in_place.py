@@ -361,8 +361,8 @@ def patch_clip(path, new_packet, saving):
     it is not a patch's (clip_patch says when, and new_packet), nothing written: the clip is not written.
 
     `new_packet(old)` is the writer's (segment_edits.new_packet, its values given): given the packet of the clip's one
-    XMP box (bytes; None for a clip with none), it answers (the new packet, the fields left stale), None for no patch, or
-    a containers.Refusal, raised here as Refused. Raises Refused(OPEN_ELSEWHERE) at once when another program holds the
+    XMP box (bytes; None for a clip with none), it answers (the new packet, the fields left stale) or None for no patch.
+    Raises Refused(OPEN_ELSEWHERE) at once when another program holds the
     clip open; Away when its share does not answer, the file as it was or as far as the patch wrote it (held settles
     it); any other OSError the open or a write raised; whatever `new_packet` or `saving` raises."""
     with _opened_to_patch(path) as lent:
@@ -373,8 +373,6 @@ def patch_clip(path, new_packet, saving):
         made = new_packet(old)
         if made is None:
             return None
-        if isinstance(made, containers.Refusal):
-            raise Refused(made.reason)
         packet, stale = made
         if packet == old:
             return tuple(stale)

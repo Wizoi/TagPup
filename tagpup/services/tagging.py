@@ -254,9 +254,10 @@ def save_photo(library, photo_path, title, tags, date_taken, exiftool_path, rena
     photo_path = paths.stored(photo_path)
     # A clip this save may not write is refused with its own sentence before anything is compared (#2584); one it may
     # write is compared by its title as the page shows it, its QuickTime Title among the fields read (BASE_READ).
-    # The read is the write's (write_fields asks again with all of it); a file of a folder the library does not hold
-    # names none, as file_only.write_fields asks.
-    clip_read = None if files_only else list(fields.keyword_fields([], [])) + list(wanted)
+    # The read is the write's (write_fields asks again with all of it): the fields it writes and the ones its tags come
+    # from, a clip's QuickTime keywords among them, from which the plan keeps a clip's last keyword
+    # (file_changes.KEPT_IN_QUICKTIME). A file of a folder the library does not hold names none, as file_only asks.
+    clip_read = None if files_only else _save_read(fields.keyword_fields([], []), wanted)
     if not file_changes.leave_out_clips(Result(), [photo_path], read=clip_read):
         result.refuse(images.CLIP_NOT_EDITED)
         return result
@@ -292,8 +293,8 @@ def save_photo(library, photo_path, title, tags, date_taken, exiftool_path, rena
                                              held={paths.key(photo_path): now})
         else:
             # Read back whole and recorded so, stamped, as the file is marked done: the save's row, once.
-            written = file_changes.write_fields(library, "save photo", exiftool_path, [photo_path], list(after),
-                                                plan, summary={"photos": 1}, et=et,
+            written = file_changes.write_fields(library, "save photo", exiftool_path, [photo_path],
+                                                _save_read(after), plan, summary={"photos": 1}, et=et,
                                                 held={paths.key(photo_path): now}, whole=True)
         if not written.ok:
             result.errors.extend(written.errors)
@@ -587,6 +588,12 @@ KEYWORD_READ = tuple(dict.fromkeys(fields.TAG_SOURCE_FIELDS + tuple(fields.keywo
 #: it writes: the fields its tags come from and every keyword field (KEYWORD_READ), and
 #: the name Smart Rename kept, by which a new caption renames it.
 SAVE_READ = KEYWORD_READ + (names.PRESERVED_NAME,)
+
+
+def _save_read(*written):
+    """What a save of a held photo says it reads (file_changes.write_fields' `read`): the fields of each of `written` and
+    every field its tags come from (fields.TAG_SOURCE_FIELDS), a clip's QuickTime keywords among them."""
+    return list(dict.fromkeys([field for each in written for field in each] + list(fields.TAG_SOURCE_FIELDS)))
 
 
 def _keywords_plan(tags):

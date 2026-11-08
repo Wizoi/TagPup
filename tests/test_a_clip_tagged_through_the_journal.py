@@ -6,7 +6,8 @@ What the owner lives through: a clip's card opens the photo panel and its tags a
 photos and clips is tagged. With writing clips off, every write of a clip is refused with the sentence; on, a keyword or
 caption save is patched into its XMP, and a turn, a Date Taken and a rename stay refused. A clip the patch cannot place
 (a tail, two XMP boxes) is refused, ExifTool never asked to rewrite it; one whose share fails part-way through its read
-says it could not be read, never that it cannot be patched; one whose keywords are held in QuickTime too keeps its last.
+says it could not be read, never that it cannot be patched; one whose keywords are held in QuickTime too keeps its last,
+whether a selection or the panel takes it off.
 
 Real clips made by the machine's ffmpeg (tests/test_a_clip_patched_in_place.FfmpegClips) and the real ExifTool, whose
 write command (field_values._command) fails the test if asked. No ExifTool writes a clip's QuickTime Subject (14 live
@@ -30,7 +31,7 @@ from view_library import ViewLibrary, make_jpeg  # noqa: E402
 from tagpup.core import fields, paths, processes  # noqa: E402
 from tagpup.core.result import Refused  # noqa: E402
 from tagpup.files import containers, field_values, images, in_place, metadata, segment_edits  # noqa: E402
-from tagpup.services import file_only  # noqa: E402
+from tagpup.services import file_changes, file_only  # noqa: E402
 from tagpup.store import photos  # noqa: E402
 
 EXIFTOOL = patched.EXIFTOOL
@@ -110,24 +111,6 @@ class AClipWrittenByTheOneWriter(patched.FfmpegClips):
         self.assertIn("could not be read", str(raised.exception))
         self.assertNotIn(images.CLIP_NOT_PATCHED, str(raised.exception))
         self.assertEqual(([], before), (self.saved, self.bytes_of(path)))
-
-    def test_the_last_keyword_of_a_clip_holding_its_keywords_in_quicktime_too_is_not_taken_off(self):
-        path = self.clip("first.mp4")
-        answer = self.et.get_tags
-
-        def with_quicktime(files, tags, **options):
-            rows = answer(files, tags=tags, **options)
-            for row in rows:
-                if fields.CLIP_KEYWORDS in tags:
-                    row[fields.CLIP_KEYWORDS] = "Trips/Coast"
-            return rows
-
-        with writing_clips(), mock.patch.object(self.et, "get_tags", side_effect=with_quicktime):
-            self.write(path, keywords(["Trips/Coast"]))
-            self.saved = []
-            self.assert_refused(segment_edits.KEPT_IN_QUICKTIME, path, keywords([]))
-            self.write(path, keywords(["Trips/Harbour"]))
-        self.read_back(path, ("Trips/Harbour",))
 
 
 def with_quicktime_subject(path, words):
@@ -229,8 +212,22 @@ class AClipInTheLibrary(ALibraryHoldingAClip):
                          "the index reads its XMP, not the QuickTime copy TagPup does not write")
         self.assertEqual(["Trips/Pier"], self.tags_of(clip))
         reply = self.post("photos/bulk-tags", {"paths": [self.clip_path], "remove_tags": ["Trips/Pier"]})
-        self.assertIn(segment_edits.KEPT_IN_QUICKTIME, reply.get_json()["error"])
+        self.assertIn(file_changes.KEPT_IN_QUICKTIME, reply.get_json()["error"])
         self.assertEqual((["Trips/Pier"], ["Trips/Pier"]), self.read_now(self.clip_path), "the last is kept")
+
+    def test_the_last_tag_saved_off_a_clip_whose_tags_are_only_in_its_quicktime_subject_is_refused_from_the_panel(self):
+        # The panel's save plans from what it read (fields.TAG_SOURCE_FIELDS), the clip's QuickTime Subject among it; the
+        # writer reads nothing of it, so the plan is the one place that keeps the last tag (#2556).
+        with_quicktime_subject(self.clip_path, ["Trips/Pier"])
+        clip, = self.index(self.clip_path)
+        self.assertEqual(["Trips/Pier"], self.tags_of(clip))
+        before = self.read_bytes(self.clip_path)
+        reply = self.post("photo/save-metadata", {"path": self.clip_path, "tags": []})
+        self.assertNotEqual(200, reply.status_code)
+        self.assertIn(file_changes.KEPT_IN_QUICKTIME, reply.get_json()["error"])
+        self.assertEqual(before, self.read_bytes(self.clip_path), "nothing written")
+        self.assertEqual([], self.change_states(clip), "nothing journaled")
+        self.assertEqual(["Trips/Pier"], self.tags_of(clip))
 
     def test_a_tag_save_from_the_photo_panel_writes_the_clips_xmp_and_journals_it_done(self):
         clip, = self.index(self.clip_path)
