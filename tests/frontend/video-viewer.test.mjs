@@ -5,8 +5,8 @@
  * a video and photos, the same video shown again (it plays on), a record with no `media` (a photo), and the video's
  * error event: a format the browser cannot play, a file gone, a share away, and an error of a video already left.
  * Switching library is another page (web/common/library.js): nothing of the video outlives it. A video offers the
- * edits its record's `writes` names (its title, people, keywords and name): Rotate and Date Taken are inert with a
- * sentence naming them, a photo stepped to after it has every control back, and a missing one has none (stale.js
+ * edits its record's `writes` names (its title, people, keywords, name and Date Taken: DECISIONS 2026-11-08, A5 (D)
+ * REVISED): Rotate is inert with a sentence naming it, a photo stepped to after it has every control back, and a missing one has none (stale.js
  * applyPhotoStale). Its delete is live, as a photo's (DECISIONS 2026-11-08, A5, cut B): a clip playing is stopped before
  * the delete is sent, so the server holds no range of its file open, and shown again when the delete fails. A clip its
  * drive's Recycle Bin would not keep is answered with its name and nothing deleted: the page warns, naming it, and sends
@@ -146,21 +146,21 @@ describe("leaving a video while it plays", () => {
   });
 });
 
-describe("a video's title and keywords are edited, nothing else of it", () => {
+describe("a video's title, keywords, name and date are edited, not its turn", () => {
   const writers = (ctx) => [...ctx.document.querySelectorAll("[data-writes]")];
   const inert = (ctx) => writers(ctx).filter((node) => node.hasAttribute("inert"));
   const note = (ctx) => el(ctx, "photo-missing-note");
   const held = (ctx, id) => Boolean(el(ctx, id).closest("[inert]"));
   const LIVE = ["input-photo-title", "btn-save-title", "btn-edit-people", "input-add-person", "btn-add-person",
-    "btn-edit-tags", "input-add-tag", "btn-add-tag", "input-smart-rename-one", "btn-delete-photo"];
-  const HELD = ["btn-edit-date-taken", "btn-rotate-left", "btn-rotate-right"];
+    "btn-edit-tags", "input-add-tag", "btn-add-tag", "input-smart-rename-one", "btn-delete-photo", "btn-edit-date-taken"];
+  const HELD = ["btn-rotate-left", "btn-rotate-right"];
 
   function assertClip(ctx, what) {
     for (const id of LIVE) assert.equal(held(ctx, id), false, `${what}: ${id} is live`);
     for (const id of HELD) assert.equal(held(ctx, id), true, `${what}: ${id} is inert`);
     assert.ok(inert(ctx).every((node) => node.getAttribute("aria-disabled") === "true"), `${what}: and says so`);
     assert.equal(note(ctx).classList.contains("hidden"), false, `${what}: the sentence is shown`);
-    assert.equal(note(ctx).textContent, "This is a video: its date and turn are not edited here.",
+    assert.equal(note(ctx).textContent, "This is a video: its turn is not edited here.",
       `${what}: it names only what is not edited`);
   }
 
@@ -171,7 +171,7 @@ describe("a video's title and keywords are edited, nothing else of it", () => {
     assert.equal(note(ctx).classList.contains("hidden"), true, `${what}: no sentence`);
   }
 
-  test("a clip opened: its title, keywords, name and delete live, its date and turn inert, and the sentence names those", async (t) => {
+  test("a clip opened: its title, keywords, name, date and delete live, its turn inert, and the sentence names it", async (t) => {
     const ctx = await viewWithAVideo(t);
     await open(ctx, VIDEO);
     assertClip(ctx, "the clip");
