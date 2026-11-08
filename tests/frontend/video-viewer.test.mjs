@@ -293,8 +293,8 @@ describe("a video's title and keywords are edited, nothing else of it", () => {
       "the status line says what the server did, never Ready");
   });
 
-  test("a clip opened again while its delete is out is not played: its file is let go until the reply", async (t) => {
-    // A range read of the clip as its original is removed makes the remove fail ('the file is there twice').
+  test("a clip opened again while its delete is out is asked of the server, which refuses it; the delete failed, it plays", async (t) => {
+    // Only the server knows which file it is deleting (a range read of it as its original is removed makes the remove fail).
     const ctx = await viewWithAVideo(t);
     const answer = [];
     ctx.server.first("/api/photo/delete", () => new Promise((resolve) => answer.push(resolve)));
@@ -304,17 +304,24 @@ describe("a video's title and keywords are edited, nothing else of it", () => {
     click(ctx.window, el(ctx, "btn-delete-photo"));
     await ctx.settle(40);
     assert.equal(answer.length, 1, "the delete was sent");
+    assertStopped(ctx, "stopped before the delete");
     press(ctx, "ArrowRight");
     await ctx.settle(80);
     press(ctx, "ArrowLeft");
     await ctx.settle(80);
     assert.equal(ctx.state.library.activeId, VIDEO, "the clip is the one shown again");
-    assertStopped(ctx, "opened again while its delete is out");
-    assert.equal(status(ctx), "This video is being deleted.");
+    assertPlaying(ctx, VIDEO, "opened again: asked of the server");
+    ctx.server.first("/api/video-file", { success: false, error: "This video is being deleted." }, { status: 409 });
+    Object.defineProperty(video(ctx), "error", { value: { code: 4 }, configurable: true });
+    video(ctx).dispatchEvent(new ctx.window.Event("error"));
+    await ctx.settle(40);
+    assert.equal(status(ctx), "This video is being deleted.", "the server's sentence, never 'not there' or the format");
+    const asked = ctx.played.src;
     answer[0]({ success: false, error: "The file is in use" });
     await ctx.settle(80);
     ctx.consoleErrors.length = 0;
-    assertPlaying(ctx, VIDEO, "the delete failed: the clip plays again");
+    assertPlaying(ctx, VIDEO, "the delete failed");
+    assert.ok(ctx.played.src > asked, "the clip that was refused is asked for again, not left failed");
   });
 
   test("Cancel at the warning deletes nothing: one delete sent, nothing said deleted, the clip plays again", async (t) => {

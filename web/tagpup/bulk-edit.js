@@ -11,7 +11,7 @@ import { state } from './state.js';
 import { bulkAddPeopleInput, bulkAddTagsInput } from './elements.js';
 import { setStatus } from './status.js';
 import { resolveTagOrPerson, updatePeopleDatalist, updateTagsDatalist } from './tags.js';
-import { idSelectionNow, isIdSelected, selectionCount, selectionRequest } from './selected.js';
+import { isIdSelected, selectionCount, selectionRequest } from './selected.js';
 import { BUSY_SENTENCE, bulkBusy, runBulk } from './bulk-run.js';
 import { photosOf } from './common/batch-strip.js';
 import { confirmSentence, deleteQuestion, describeDelete, describeTags, forGoodQuestion } from './bulk-words.js';
@@ -132,8 +132,9 @@ function playAgainIfKept(clip) {
  * them and the owner pressed OK (DECISIONS 2026-11-08; the token is of that answer). Files from folders with no Recycle Bin go through
  * this PC's (#694), and the question says so and where they restore to. A clip the panel plays that is being deleted is stopped first
  * (the server reads it a range at a time, and a range read as its file is deleted leaves the file there), and plays again if it
- * stayed; no clip of the selection sent is played while the delete is out (`state.bulk.deleting`), opened again from the grid or
- * not. Rapid clicks ask once (`state.bulk.asking`). Resolves true when the edit was written.
+ * stayed; a clip opened while the delete is out is asked of the server, which refuses the one whose file it is deleting
+ * (/api/video-file, 409: media.js says its sentence). Rapid clicks ask once (`state.bulk.asking`). Resolves true when the edit
+ * was written.
  */
 export async function deleteSelection() {
     if (state.bulk.asking) return false;
@@ -176,14 +177,12 @@ export async function deleteSelection() {
         const params = forGood ? { token: where.token, for_good: true } : { token: where.token };
         const clip = panelClipDeleted();
         if (clip) stopVideo();
-        state.bulk.deleting = idSelectionNow();
         const started = await runBulk({ op: 'delete', selection: picked.selection, params, desc, picked: count });
         // Not deleted (refused, or an error of its own): it plays again; deleted, the re-read has closed the panel.
         if (clip) Promise.resolve(started.reread).then(() => playAgainIfKept(clip), () => playAgainIfKept(clip));
         return started.ok;
     } finally {
         state.bulk.asking = false;
-        state.bulk.deleting = null;
     }
 }
 

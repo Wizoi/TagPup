@@ -11,16 +11,17 @@
 //    shown. Stopped is no src at all: the browser lets go of the stream, and the server of the file;
 //  * the same video shown again (a refresh of the panel, a save) keeps playing where it is;
 //  * a video the browser cannot play says why on the status line: its file is gone, the share or the server is not
-//    answering, or its format is not one this browser plays (an HEVC clip without the HEVC extension). The browser
-//    gives the same error for a refused request as for a format it cannot play, so the server is asked which it was.
+//    answering, the server refused it in a sentence of its own (409: its file is being deleted, from this page or
+//    another), or its format is not one this browser plays (an HEVC clip without the HEVC extension). The browser
+//    gives the same error for a refused request as for a format it cannot play, so the server is asked which it was;
+//  * which files a delete is working on is the server's to know (tagpup.files.recycle_bin.being_deleted), never this
+//    page's guess: a clip is always asked for, and one that failed is asked for again when it is shown again.
 // Switching library is another page: the video goes with it. A video's title, people and keywords are edited as a
 // photo's, and it is renamed and deleted as one is (a delete stops it first: photo.js deleteActivePhoto); Rotate and Date
 // Taken are inert while one is shown (stale.js applyPhotoStale, from its record's `writes`), as the server refuses them of a
 // clip. Zoom stands down because there is no picture.
 import { api } from './common/api.js';
-import { samePath } from './common/paths.js';
 import { mainImage, mainVideo, panelContent } from './elements.js';
-import { state } from './state.js';
 import { setStatus } from './status.js';
 
 /** Is `photo` a video? Only what the library says: a record without `media` is a photo. */
@@ -44,15 +45,6 @@ export function showMedia(photo, pictureUrl) {
         mainImage.src = pictureUrl;
         return;
     }
-    if ((state.deleting && samePath(state.deleting, photo.path)) || (state.bulk.deleting && state.bulk.deleting(photo.id))) {
-        // Its delete is out (photo.js deleteActivePhoto, or a bulk Delete of a selection that holds it: bulk-edit.js): a range read
-        // of it as the original is removed would make the remove fail, the copy in the Bin and the file there twice. Shown again by
-        // the delete's reply if it stayed.
-        stopVideo();
-        mainImage.src = '';
-        setStatus('ready', 'This video is being deleted.', { transient: false });
-        return;
-    }
     if (photo.id === undefined) {
         // A folder's clip the index has not recorded: never its file as a picture (/api/photo-file refuses a video).
         stopVideo();
@@ -64,7 +56,7 @@ export function showMedia(photo, pictureUrl) {
     mainImage.classList.add('hidden');
     mainVideo.classList.remove('hidden');
     const route = videoRoute(photo);
-    if (mainVideo.dataset.route === route) return;       // the same video again: it plays on
+    if (mainVideo.dataset.route === route && !mainVideo.error) return;   // the same video again: it plays on (one that failed is asked again)
     mainVideo.dataset.route = route;
     mainVideo.src = api.url(route);
 }
@@ -85,7 +77,7 @@ const GONE = 'This video’s file is not there.';
 const NOT_INDEXED = 'This video has not been indexed yet: it plays here once its folder is indexed.';
 const AWAY = 'This video could not be read just now: the share or the server is not answering. Open it again in a moment.';
 
-/** The video failed: ask the server whether it refused (gone, away) before blaming the format, and say which. */
+/** The video failed: ask the server whether it refused (gone, away, in a sentence of its own) before blaming the format, and say which. */
 function videoFailed() {
     const route = mainVideo.dataset.route;
     if (!route) return;                                  // stopped already: an error of the stream let go
@@ -94,7 +86,12 @@ function videoFailed() {
         if (mainVideo.dataset.route === route) setStatus('error', sentence, { transient: false });
     };
     api.fetch(route, { headers: { Range: 'bytes=0-0' } }).then(
-        res => say(res.ok ? (code === 4 ? FORMAT : UNREAD) : (res.status === 404 ? GONE : AWAY)),
+        res => {
+            if (res.ok) return say(code === 4 ? FORMAT : UNREAD);
+            if (res.status === 404) return say(GONE);
+            if (res.status === 409) return res.json().then(body => say(body.error || AWAY), () => say(AWAY));
+            return say(AWAY);
+        },
         () => say(AWAY),
     );
 }

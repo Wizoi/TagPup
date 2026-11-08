@@ -800,7 +800,7 @@ export function deleteActivePhoto() {
     // original is deleted would make Windows refuse the delete. Shown again if the delete fails while it is still open.
     const video = isVideo(asked);
     if (video) stopVideo();
-    holdDeletes(path);
+    holdDeletes(true);
     let stayed = false;     // the delete was cancelled or failed: the clip, if still the one shown, plays again
     const send = (forGood) => api.json('/api/photo/delete', {
         method: 'POST',

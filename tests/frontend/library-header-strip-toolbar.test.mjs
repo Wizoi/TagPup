@@ -422,19 +422,26 @@ describe("#674: Delete of a view's selection", () => {
     assert.ok(el(ctx, "panel-content").classList.contains("hidden"), "the panel closed onto the grid");
   });
 
-  test("while the delete is out, the clip opened again from the grid does not play; deleted, it never does", async (t) => {
+  // Which files a delete is working on is the server's to know: a Select all names a source, which holds every id outside it too.
+  test("while a Select all's delete is out, a clip opened again is asked of the server; refused, its sentence is said", async (t) => {
     let ids = range(40);
     const ctx = await viewWithClipOpen(t, () => ids);
+    el(ctx, "btn-select-all-thumbnails").click();
     ctx.hold.bulkEdit = true;
     await remove(ctx);
-    assert.equal(src(ctx), "", "stopped before the delete");
+    assert.ok(plain(calls(ctx, "/api/library/bulk-edit")[0].body.selection).source, "the delete of a Select all is out");
+    assert.equal(src(ctx), "", "the clip was stopped before it");
     ctx.module("photo.js").openLibraryPhoto(7);      // another photo, then the clip again, as a click on its card does
     await ctx.settle(80);
     ctx.module("photo.js").openLibraryPhoto(CLIP);
     await ctx.settle(80);
     assert.equal(ctx.state.library.activeId, CLIP, "the clip is the one shown");
-    assert.equal(src(ctx), "", "but not played: the server would read a range of the file it is deleting");
-    assert.equal(el(ctx, "status-text").textContent, "This video is being deleted.");
+    assert.match(src(ctx), /\/api\/video-file\?id=5&/, "and asked of the server: the page does not guess what is being deleted");
+    ctx.server.first("/api/video-file", { success: false, error: "This video is being deleted." }, { status: 409 });
+    Object.defineProperty(el(ctx, "main-video"), "error", { value: { code: 4 }, configurable: true });
+    el(ctx, "main-video").dispatchEvent(new ctx.window.Event("error"));
+    await ctx.settle(40);
+    assert.equal(el(ctx, "status-text").textContent, "This video is being deleted.", "the server's sentence, not 'not there'");
     ids = ids.filter((id) => ![2, CLIP].includes(id));
     await ctx.release("bulkEdit");
     await ctx.until(() => ctx.state.activePhotoPath === null);
