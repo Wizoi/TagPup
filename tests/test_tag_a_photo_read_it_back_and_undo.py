@@ -43,6 +43,7 @@ from unittest import mock
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import damaged_photos  # noqa: E402
 import face_rows  # noqa: E402
+import page_fixtures  # noqa: E402
 import photo_rows  # noqa: E402
 import test_stale_record_precondition as S  # noqa: E402
 from test_a_file_holds_what_exiftool_kept import ReadFilesCase, flip_a_picture_byte  # noqa: E402
@@ -396,7 +397,7 @@ class TaggingAPhoto(ReadFilesCase):
 
 
 #: The replies of a save the page test reads (tests/frontend/rename-failed.test.mjs).
-SAVE_REPLIES = os.path.join(os.path.dirname(os.path.abspath(__file__)), "frontend", "fixtures", "save_replies.json")
+SAVE_REPLIES = page_fixtures.path_of("save_replies.json")
 
 
 @unittest.skipIf(S.EXIFTOOL is None, "ExifTool not installed")
@@ -473,9 +474,7 @@ class ASaveFromThePage(S.Fresh):
             if "new_path" in each:
                 each["new_path"] = os.path.basename(each["new_path"])
         text = json.dumps(found, sort_keys=True, indent=1) + "\n"
-        if not os.path.exists(SAVE_REPLIES) or open(SAVE_REPLIES, encoding="utf-8").read() != text:
-            with open(SAVE_REPLIES, "w", encoding="utf-8", newline="\n") as handle:
-                handle.write(text)
+        page_fixtures.hold_to(self, SAVE_REPLIES, text, "tests.test_tag_a_photo_read_it_back_and_undo", "the photo panel's save")
 
 
 class TheUndoOrder(ReadFilesCase):
