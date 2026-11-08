@@ -444,8 +444,9 @@ LEFT_OUT = "left_out"
 def _refused_clips(kept):
     """The keys of the clips preserve_names' Result `kept` failed because their writer refused them before a byte was
     written (field_values._clip_written raises Refused; file_changes.WRITER_REFUSED): left out of a Smart Rename, not
-    the error that stops it."""
-    return {paths.key(path) for path in kept.details.get(file_changes.WRITER_REFUSED, ()) if images.is_clip(path)}
+    the error that stops it. Only a clip's writer raises Refused per file (field_values._clip_written, and in_place when
+    another program holds the clip open), so no filter on the path is needed."""
+    return {paths.key(path) for path in kept.details.get(file_changes.WRITER_REFUSED, ())}
 
 
 @roots_service.canonical_args("photo_paths")
