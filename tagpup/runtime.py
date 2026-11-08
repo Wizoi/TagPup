@@ -72,10 +72,25 @@ def library_settings(library):
     The first time this process reads them, a change of photo files a crash left half
     done is settled, with the ExifTool they name (tagpup.services.file_changes.settle_once):
     the changes of rows are settled when the library is first opened (schema.ensure), but
-    files need ExifTool, which only the library's settings say where to find."""
+    files need ExifTool, which only the library's settings say where to find. In the web server, on a thread of its
+    own (settle_on_a_thread), so the request that first opens the library returns at once."""
     settings = library_settings_service.of(library)
-    file_changes.settle_once(library, tagpup_config.exiftool_path(settings.exiftool))
+    file_changes.settle_once(library, tagpup_config.exiftool_path(settings.exiftool), on_a_thread=_settle_on_a_thread)
     return settings
+
+
+#: Does this process settle a change of photo files a kill left half done on a thread of its own (the web server), or in
+#: the call that first opens the library (the CLI, a test)? DECISIONS 2026-11-07 (1), #2610.
+_settle_on_a_thread = False
+
+
+def settle_on_a_thread():
+    """The web server, as it starts: each library's settle at its first open runs on a thread of its own
+    (tagpup.services.file_changes.settle_once), so that page load returns at once while a killed long change is
+    finished a chunk at a time, listed on the Activity page as a batch and cancelled from there. The CLI never asks: a
+    daemon thread would die at its exit."""
+    global _settle_on_a_thread
+    _settle_on_a_thread = True
 
 
 def peek_settings(library):

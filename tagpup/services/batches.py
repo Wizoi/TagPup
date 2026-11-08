@@ -68,14 +68,17 @@ def current():
 
 
 @contextlib.contextmanager
-def claim(library, operation, photos, wait=True):
+def claim(library, operation, photos, wait=True, change_id=None):
     """Wait for this process's turn to carry out a batch of `photos` photos, and hold it. Conflict, nothing begun, when MOST_WAITING
     are waiting already; Refused when it was cancelled while it waited. Inside a batch's own claim it is that batch. Without `wait`
-    (a caller holding the lock of changes of photo files, which the batch ahead needs) any batch ahead is a Conflict at once."""
+    (a caller holding the lock of changes of photo files, which the batch ahead needs) any batch ahead is a Conflict at once.
+    `change_id`: the journal's change it carries out, known before it waits (a settle's: file_changes._settle_in_turn), so that
+    listing names it once, waiting."""
     if current() is not None:
         yield current()
         return
     batch = Batch(library, operation, photos)
+    batch.change_id = change_id
     with _turn:
         if _line and not wait:
             raise Conflict("A batch of photo files is running; try again when it has finished.")
@@ -166,7 +169,8 @@ def listing(library):
     journal's change, None until planned), operation, library, photos, done, conflict, planned, started, state, position, here}].
     Never raises for a library that cannot be read: the journal's batches are then left out and logged. An internal change
     (file_journal.INTERNAL: the index's bake) is none: it is the index's work, shown as its job, and History and Undo know
-    no such change, so a batch of it would name an id nothing else does."""
+    no such change, so a batch of it would name an id nothing else does. A change of this process is listed only as its
+    batch: one it owns and has no batch running or waiting for (a settle thread's next change) is not another's."""
     with _turn:
         here = list(_line)
     mine = [(position, batch) for position, batch in enumerate(here) if batch.library.key == library.key]
@@ -184,11 +188,10 @@ def listing(library):
     except Exception as problem:
         logger.warning("Could not read the batches under way in %s: %s", library.name, problem)
         changes = []
-    ours = {batch.change_id for _position, batch in mine if batch.change_id}
     rows = [_row(batch, position, counts.get(batch.change_id)) for position, batch in mine]
     for change in changes:
         total = sum(counts.get(change.id, {}).values())
-        if change.id in ours or total <= CHUNK:
+        if is_this_process(change.owner) or total <= CHUNK:
             continue
         states = counts[change.id]
         rows.append({"ticket": None, "id": change.id, "operation": change.operation, "library": library.name, "photos": total,
