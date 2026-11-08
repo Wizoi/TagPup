@@ -1676,15 +1676,19 @@ def _settle_in_turn(library, taken, exiftool_path):
     cancelled as any, asked to stop and waited for by an update's drain (batches.stop_all, batches.sentences). A batch of
     another library's settle, or the owner's own, runs ahead of it.
 
-    Cancelled (or a hand-over) while it waits, refused a place in line (Conflict: MOST_WAITING wait already), or failed
-    (ExifTool, the disk, the journal; logged): put off for the next start (_put_aside), its photos still refused, as a
-    settle stopped at a chunk is. This process's next write does not take it up."""
+    Cancelled (or a hand-over) while it waits, refused a place in line (Conflict: MOST_WAITING wait already), failed
+    (ExifTool, the disk, the journal; logged), or left (_finished False: a file on a share away, ExifTool stalled, a
+    patched file left `writing`): put off for the next start (_put_aside), its photos still refused, as a settle stopped
+    at a chunk is. This process's next write does not take it up: freed, its own settle would take the whole change in
+    that request (the wait this thread is for), or, with another batch running (_NoTurn), write a photo ahead of it, a
+    conflict at the next start."""
     for change in taken:
         mine = (library.key, change.id)
         try:
             with batches.claim(library, change.operation, sum(map(len, _pending(library, change))), change_id=change.id):
                 with exclusively():
-                    _finished(library, change, exiftool_path)
+                    if not _finished(library, change, exiftool_path):
+                        _put_aside(library, change)
         except Refused:
             _put_aside(library, change)
             logger.info("%s: change %d: its settle was stopped as asked before it began; it is settled the next time "
