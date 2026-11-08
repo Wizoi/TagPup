@@ -265,7 +265,7 @@ class TagSuggester:
         """Get standard or year-specific candidate embeddings."""
         self._precompute_candidates()
 
-        if year is None:
+        if year is None or not self.candidate_tags:
             return self.candidate_embeddings
 
         if year in self.year_candidate_embeddings:
@@ -774,6 +774,17 @@ class SuggestionModel:
         if not self.suggester.knows_named_faces():
             notes.append("The library has no named faces yet, so no people are suggested.")
         return notes
+
+
+def neighbours_model(photo_index, faces):
+    """A suggester for the photos of `photo_index` (loaded) from their neighbours' tags alone: no word is asked of CLIP,
+    so no model is loaded, and nothing is kept in the library (a Just look's `remember` False). `faces`, the face model
+    whose faces on file are read. The measurement of Suggest's neighbour cut, the one cut the words do not pass
+    (scripts/measure_pipeline_holdouts.py, clips; findings #2626)."""
+    taxonomy = TagTaxonomy(photo_index.db_path)
+    taxonomy.load()
+    suggester = TagSuggester(photo_index, taxonomy, embedder=None, candidate_tags=[], faces=faces, remember=False)
+    return SuggestionModel(suggester, None, suggester.face_roots)
 
 
 def model_for_run(photo_index, clip, faces, configured_words, *, embeddings, remember=True):

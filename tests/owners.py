@@ -76,6 +76,7 @@ SCENARIOS = {
     "V14": ("views", "After the switch, the old photo model's vectors and Suggest's words under it are retired (retire-photo-vectors): a dry run that writes nothing, the own key's vectors and words kept byte for byte, one change a key whose undo is refused and the undo of the switch refused with the switch's sentence, a run stopped (or an app started) and run again as the same change, a switch back beside the run ending it, a photo removed meanwhile, and a library whose own model does not hold its photos refused."),
     "V15": ("views", "A video played in the browser: a range answered with its bytes and capped, one that cannot be answered refused with the size, sought back and forth quickly, closed half way without holding the file, renamed while it plays ending every stream short, a share that stops answering ending the stream within its wait and the next ask answered 503 at once, an id a video in one library and a photo in another; the cards and the record say which are videos."),
     "V16": ("views", "A clip in the grid shows its poster frame, its middle frame, kept as a photo's thumbnail is: made once (two cards at once one ffmpeg run, a folder scrolled fast at most three at once), found again by its stamp, made again once renamed or changed, its last poster shown once its file is gone; a clip cut short or a machine with no ffmpeg answered the placeholder and nothing kept, a share asleep one bounded look and no ffmpeg; `thumbs warm` making the posters ahead."),
+    "V17": ("views", "The owner measures Suggest's neighbour cut for clips on a copy of a library, nothing written to it and no model loaded: a clip matched on its best of five frames against its frame 0 alone, the share of the neighbour slots clips take and the tags offered at each cut, held out by photo and by folder, ids and counts only."),
     "I1": ("apps", "Switching library in the middle of a folder shows no card of the first."),
     "I2": ("apps", "A write through a server update is waited out and not repeated."),
     "I3": ("apps", "An update by a launch and by an install hands one server over to the next without killing its work."),
@@ -187,6 +188,7 @@ _SCENARIO_FILES = {
     "V14": "test_retiring_the_old_photo_models_vectors",
     "V15": "test_playing_a_video",
     "V16": "test_a_clip_shows_its_poster",
+    "V17": "test_measuring_the_neighbour_cut_for_clips",
 }
 
 #: owner -> kind -> the unit, migration and guard files, a .mjs without its ".test.mjs".

@@ -452,6 +452,20 @@ class PhotoIndex:
         by_id = {record["id"]: record for record in found}
         return [by_id[photo_id] for photo_id in photo_ids if photo_id in by_id]
 
+    def vectors_by_photo(self):
+        """{photo id: [its vector, then a clip's frames 1 to n]} (float32 arrays) of every photo holding a vector under
+        this index's model, read now on its connection from the rows search reads (store.photos.vectors and
+        frame_vectors): a clip is a photo holding more than one. What the measurement of Suggest's neighbour cut for clips
+        compares a clip's frame 0 with its best frame on (scripts/measure_pipeline_holdouts.py, clips; findings #2626).
+        Asked of an index that is loaded."""
+        with self._read_lock:
+            rows = store_photos.vectors(self.conn, self.model)
+            frames = store_photos.frame_vectors(self.conn, self.model)
+        found = {photo_id: [np.frombuffer(emb_bytes, dtype=np.float32)] for photo_id, emb_bytes in rows if emb_bytes}
+        for photo_id, emb_bytes in frames:
+            found[photo_id].append(np.frombuffer(emb_bytes, dtype=np.float32))
+        return found
+
     def build_or_update(self, embeddings: List[Optional[List[float]]], metas: List[Dict[str, Any]], dim: int = 512):
         """Record each of `metas` with its vector in `embeddings`, in one transaction: None writes no vector (a clip
         whose frames were not had, or whose vector is kept by its stamp: the one it holds stays, frames and all). Each
