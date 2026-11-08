@@ -204,14 +204,14 @@ def _for_good(conn, photo_ids, sizes, named, binless):
     """({the ids of `photo_ids` on a drive whose Recycle Bin would not keep them -- larger than it keeps, or a Bin set to delete
     at once, recycle_bin.keeps_up_to, by the index's sizes --}, the stored paths of the first MOST_FOR_GOOD_NAMED of each Bin's):
     the files a Delete deletes for good once confirmed. A folder of `binless` goes through this PC instead; one whose Bin
-    Windows cannot tell of is left out (the delete of each of its files asks again, and refuses it untouched)."""
+    Windows cannot tell of is left out (the delete of each of its files asks again, and refuses it untouched). Each drive's Bin
+    is asked once (recycle_bin.keeps_up_to_by_folder)."""
     not_kept = collections.defaultdict(list)        # {what a Bin keeps: [folder ids with a file over it]}
-    for folder_id, (path, _name) in named.items():
-        if folder_id in binless:
-            continue
-        try:
-            kept = recycle_bin.keeps_up_to(path)
-        except OSError:
+    looked = {folder_id: path for folder_id, (path, _name) in named.items() if folder_id not in binless}
+    keeps = recycle_bin.keeps_up_to_by_folder(looked.values())
+    for folder_id, path in looked.items():
+        kept = keeps[path]
+        if kept is None:
             continue
         if (sizes.get(folder_id) or (0, 0))[1] > kept:
             not_kept[kept].append(folder_id)

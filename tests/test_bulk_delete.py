@@ -251,6 +251,13 @@ class Asking(Delete):
         self.assertEqual(sorted([paths.key(self.folder("2023 Lakes")), paths.key(self.folder("2024 Coast"))]),
                          sorted(paths.key(path) for path in asked))
 
+    def test_the_bin_of_a_drive_is_asked_once_for_all_its_folders(self):
+        # Two folders on this PC's one drive: its Bin's settings are read once for the question, not once a folder (a Select all
+        # of photo_index is about 2,600 folders on two drives).
+        with mock.patch.object(recycle_bin, "_bin_settings", wraps=recycle_bin._bin_settings) as settings:
+            self.assertEqual(35, self.check(ALL)["total"])
+        self.assertEqual(1, settings.call_count)
+
     def test_over_the_bulk_cap_this_pc_only_and_nonsense(self):
         with mock.patch.object(batches, "MAX_BATCH", 10):
             self.assertIn("Select up to 10 photos at a time", self.check(ALL, expect=400)["error"])

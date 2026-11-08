@@ -422,8 +422,38 @@ def _mb(byte_count):
 def keeps_up_to(path):
     """The largest file, in bytes, the Recycle Bin of the volume `path` is on (where its links lead) keeps: its capacity
     (_bin_settings), 0 when it is set to delete at once. Raises OSError when Windows cannot say."""
+    return _keeps(_bin_mount(path))
+
+
+def keeps_up_to_by_folder(folders):
+    """{folder of `folders`: keeps_up_to of it, or None when Windows cannot say}, each volume's Bin asked once: the delete
+    question's look at a selection's folders (a Select all of photo_index is about 2,600 folders on two drives). Asked afresh on
+    every call: a Bin set smaller between the question and the start is seen by the start."""
+    by_mount, found = {}, {}
+    for folder in folders:
+        try:
+            mount = _bin_mount(folder)
+            key = paths.key(mount)
+            if key not in by_mount:
+                by_mount[key] = _keeps(mount)
+            found[folder] = by_mount[key]
+        except OSError:
+            found[folder] = None
+    return found
+
+
+def _bin_mount(path):
+    """The volume whose Recycle Bin a file at `path` would go to (where its links lead). Raises OSError."""
     try:
-        capacity, nuke = _bin_settings(_mount_point(_real(paths.stored(path))))
+        return _mount_point(_real(paths.stored(path)))
+    except (AttributeError, ValueError) as e:
+        raise OSError(str(e)) from None
+
+
+def _keeps(mount):
+    """keeps_up_to of the volume `mount`."""
+    try:
+        capacity, nuke = _bin_settings(mount)
     except (AttributeError, ValueError) as e:
         raise OSError(str(e)) from None
     return 0 if nuke else capacity
