@@ -273,6 +273,29 @@ class OnAShareThatIsSlowToAnswer(CaptionSweep):
         self.awake.set()
         self.assertEqual([], self.changes(), "nothing was written, nothing recorded")
 
+    def test_a_ctrl_c_while_a_batch_waits_for_the_share_stops_it_before_anything_is_planned(self):
+        """Three photos past a chunk of two are a batch: the wait for the share asks the batch whether to stop, and the
+        owner pressing Ctrl+C during it stops the sweep there, nothing planned or written, said as such."""
+        self.asleep_for, self.slow_looks = 30, 10 ** 6
+        real, asked = shares.wait_back, []
+
+        def wait_back(share, seconds, stop=None):
+            asked.append(stop)
+            signal.raise_signal(signal.SIGINT)
+            return real(share, seconds, stop)
+        with mock.patch.object(batches, "CHUNK", 2), mock.patch.object(shares, "wait_back", side_effect=wait_back):
+            code, said = self.sweep("--apply")
+        self.awake.set()
+        self.assertEqual(130, code, said)
+        [stop] = asked
+        self.assertIsNotNone(stop, "the wait of a batch did not ask it whether to stop")
+        self.assertFalse(stop())
+        self.assertIn("stopped before this run planned or wrote anything", said)
+        self.assertEqual([], self.changes(), "nothing was planned")
+        self.assertEqual(0, batches.running_here(), "the batch's turn was given back")
+        for path in self.photos:
+            self.assertEqual((TITLE, TITLE, TITLE), self.captions_of(path), "a photo was written")
+
 
 class StoppedPartWay(CaptionSweep):
     """Hours on a share: the owner presses Ctrl+C, or the process dies, mid-chunk; running it again finishes."""
