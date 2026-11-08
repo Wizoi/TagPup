@@ -14,8 +14,8 @@
 //    answering, or its format is not one this browser plays (an HEVC clip without the HEVC extension). The browser
 //    gives the same error for a refused request as for a format it cannot play, so the server is asked which it was.
 // Switching library is another page: the video goes with it. A video's title, people and keywords are edited as a
-// photo's; Rotate, Date Taken, rename and delete are inert while one is shown (stale.js applyPhotoStale, from its
-// record's `writes`), as the server refuses them of a clip. Zoom stands down because there is no picture.
+// photo's, and it is renamed as one is; Rotate, Date Taken and delete are inert while one is shown (stale.js
+// applyPhotoStale, from its record's `writes`), as the server refuses them of a clip. Zoom stands down because there is no picture.
 import { api } from './common/api.js';
 import { mainImage, mainVideo, panelContent } from './elements.js';
 import { setStatus } from './status.js';

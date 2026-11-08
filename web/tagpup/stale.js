@@ -12,9 +12,9 @@
 //
 // Any other photo offers the edits its record's `writes` names (tagpup.files.field_values.writes, the one statement of
 // what a save may change): each control's `data-writes` names the field it changes, and a control whose field is not
-// named is inert, with a sentence naming what is not edited. A photo's record names all four; a clip's its tags and
-// title (fields.CLIP_WRITES), so its date and turn are inert, and so are its rename and delete, which sit with the turn
-// as whole-file changes the server refuses of a clip (file_changes.leave_out_clips, recycle_bin).
+// named is inert, with a sentence naming what is not edited. A photo's record names all five; a clip's its tags, title
+// and name (fields.CLIP_WRITES), so its date and turn are inert, and so is its delete, which sits with the turn as a
+// change the server refuses of a clip (recycle_bin).
 import { buildElement } from './common/dom.js';
 import { state } from './state.js';
 import { mainImage, photoMissingNote } from './elements.js';
@@ -51,7 +51,7 @@ function heldSentence(held) {
     const words = Object.keys(FIELD_WORDS).filter((field) => held.has(field)).map((field) => FIELD_WORDS[field]);
     if (!words.length) return '';
     const listed = words.length === 1 ? words[0] : `${words.slice(0, -1).join(', ')} and ${words[words.length - 1]}`;
-    const whole = held.has('rotate') ? ', and it is not renamed or deleted here' : '';
+    const whole = held.has('rotate') ? ', and it is not deleted here' : '';
     return `This is a video: its ${listed} ${words.length === 1 ? 'is' : 'are'} not edited here${whole}.`;
 }
 
