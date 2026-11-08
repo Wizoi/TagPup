@@ -26,8 +26,7 @@ sys.path.insert(0, WORKSPACE_DIR)
 
 import test_xmp_packet_edits_what_it_owns as shapes  # noqa: E402
 from tagpup.core import dates, fields  # noqa: E402
-from tagpup.files import (containers, exif_block, identity, in_place, iptc_block, names,  # noqa: E402
-                          segment_edits, xmp_packet)
+from tagpup.files import (containers, exif_block, identity, in_place, iptc_block, segment_edits, xmp_packet)
 
 PERSON = "People/Ida Corwell"
 KEYWORD_FIELDS = ("XMP:Subject", "IPTC:Keywords", "EXIF:XPKeywords", "XMP:HierarchicalSubject")
@@ -184,7 +183,7 @@ class TheMapCoversEveryWriter(unittest.TestCase):
     def test_every_field_a_writer_names_has_its_place_and_the_rest_go_to_the_rewrite(self):
         written = (list(keyword_fields_of()) + list(caption("x")) + list(title("x"))
                    + list(fields.date_taken_fields("2019-06-15T10:30:00"))
-                   + list(dates.SHIFTED_FIELDS) + [fields.ORIENTATION, names.PRESERVED_NAME])
+                   + list(dates.SHIFTED_FIELDS) + [fields.ORIENTATION, fields.PRESERVED_NAME])
         self.assertEqual([], [field for field in written if field not in fields.EDITED_AS])
         owned = {"xmp": xmp_packet.PROPERTIES, "exif": exif_block.FIELDS, "iptc": iptc_block.DATASETS}
         for field, targets in fields.EDITED_AS.items():
@@ -355,7 +354,7 @@ class AClipsSave(unittest.TestCase):
         for field in (fields.ORIENTATION, *fields.date_taken_fields("2019-06-15T10:30:00"), *caption("")):
             with self.subTest(field), self.assertRaises(ValueError):
                 segment_edits.new_packet(None, {**keywords(["Pier"]), field: ["1"]})
-        self.assertEqual(set(keywords([])) | set(title("")) | {fields.CLIP_TITLE, names.PRESERVED_NAME},
+        self.assertEqual(set(keywords([])) | set(title("")) | {fields.CLIP_TITLE, fields.PRESERVED_NAME},
                          set(fields.CLIP_FIELDS), "its name it had kept too, before its first rename (A5)")
 
 

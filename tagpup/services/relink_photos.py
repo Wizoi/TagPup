@@ -24,7 +24,7 @@ from tagpup.store import faces as store_faces
 from tagpup.store import photos as store_photos
 
 #: The two fields a dead row is matched to a file by, read by their owners (files.identity, files.names).
-MATCHED_BY = [identity.DOCUMENT_ID_FIELD, names.PRESERVED_NAME]
+MATCHED_BY = [identity.DOCUMENT_ID_FIELD, core_fields.PRESERVED_NAME]
 
 
 def stem_of(path):

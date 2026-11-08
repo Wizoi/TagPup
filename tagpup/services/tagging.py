@@ -307,7 +307,7 @@ def save_photo(library, photo_path, title, tags, date_taken, exiftool_path, rena
             result.changed = written.changed
             return result
         result.changed = written.changed
-        kept = now.get(names.PRESERVED_NAME) or [""]
+        kept = now.get(fields.PRESERVED_NAME) or [""]
         new_path, skipped, rename_failed = _rename_after_caption(
             library, photo_path, paths.stored(metadata.title_filename(photo_path, title, rename_format, kept[0])),
             files_only)
@@ -593,7 +593,7 @@ KEYWORD_READ = tuple(dict.fromkeys(fields.TAG_SOURCE_FIELDS + tuple(fields.keywo
 #: What a save reads of the file before it writes, beside the caption and date fields
 #: it writes: the fields its tags come from and every keyword field (KEYWORD_READ), and
 #: the name Smart Rename kept, by which a new caption renames it.
-SAVE_READ = KEYWORD_READ + (names.PRESERVED_NAME,)
+SAVE_READ = KEYWORD_READ + (fields.PRESERVED_NAME,)
 
 
 def _save_read(*written):

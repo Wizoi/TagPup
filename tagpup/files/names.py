@@ -11,12 +11,9 @@ from tagpup.files import exiftool_session, lock_owners
 
 logger = logging.getLogger(__name__)
 
-#: Where a photo keeps the name it had before Smart Rename first renamed it (fields.PRESERVED_NAME).
-PRESERVED_NAME = fields.PRESERVED_NAME
-
 #: What Smart Rename reads from each photo: the name it had before it was first renamed,
 #: and every field its title is read from (vocabulary.CAPTION_FIELDS: the title, else the description).
-RENAME_FIELDS = [PRESERVED_NAME, "XMP:PreservedFileName", *vocabulary.CAPTION_FIELDS]
+RENAME_FIELDS = [fields.PRESERVED_NAME, "XMP:PreservedFileName", *vocabulary.CAPTION_FIELDS]
 
 
 def _field(meta, *names):
@@ -46,7 +43,7 @@ def caption_for_name(meta):
 
 def read_for_renaming(exiftool_path, photo_paths):
     """{path: caption} for each photo, in one ExifTool session. Reads only: the name a
-    photo had before its first rename is written into PRESERVED_NAME by the caller, as
+    photo had before its first rename is written into fields.PRESERVED_NAME by the caller, as
     a change of photo files (tagpup.services.photos.preserve_names); it was written here,
     and recorded nowhere (docs/findings.md, #266)."""
     captions = {}

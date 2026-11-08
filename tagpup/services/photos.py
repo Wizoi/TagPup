@@ -406,9 +406,9 @@ def preserve_names(library, photo_paths, exiftool_path, split=None):
     """
     def plan_one(path, held):
         # A clip's is patched into its XMP, as its tags are (fields.CLIP_WRITES, "name"; field_values.write).
-        if held.get(names.PRESERVED_NAME):
+        if held.get(fields.PRESERVED_NAME):
             return file_changes.skip("keeps the name it had before it was first renamed")
-        return file_changes.Plan(after={names.PRESERVED_NAME: os.path.basename(path)})
+        return file_changes.Plan(after={fields.PRESERVED_NAME: os.path.basename(path)})
 
     if split is None:
         held, loose = libraries.split(library, photo_paths)
@@ -423,7 +423,7 @@ def preserve_names(library, photo_paths, exiftool_path, split=None):
 
 
 #: What preserve_names reads and writes of each file: the name it had before its first rename.
-_PRESERVE_READ = (names.PRESERVED_NAME,)
+_PRESERVE_READ = (fields.PRESERVED_NAME,)
 
 
 def _renamable(result, photo_paths, held, loose):
