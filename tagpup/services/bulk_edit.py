@@ -249,18 +249,26 @@ def _cannot_keep(present, sizes):
 CHANGED = ("The selection changed since you were asked (photos came into it or left it): nothing was deleted. Ask again: "
            "click Delete once more.")
 
+#: What it says when the photos are the same but not the files that would be deleted for good: a drive's Recycle Bin set
+#: otherwise, or a file's size changed, since the question.
+FOR_GOOD_CHANGED = ("The files that would be deleted for good are not the ones you were warned of (a drive's Recycle Bin "
+                    "setting or a file's size changed since you were asked): nothing was deleted. Ask again: click Delete "
+                    "once more.")
+
 
 def refuse_if_changed(edit, photo_ids, token_of, deleted_for_good):
     """A delete is started only on exactly the photos its question named: Conflict (CHANGED), nothing begun, when `photo_ids`
     (the selection resolved at the start) is not the set whose token the question carried -- nor, when the start confirmed a
     delete for good, the files `deleted_for_good(photo_ids)` says it would delete for good now (a Bin set smaller since), which
-    are then the edit's for_good_ids. `token_of` and `deleted_for_good` are tagpup.services.selection's, the one hash of both
-    and the one answer of which files a Bin would not keep."""
+    are then the edit's for_good_ids; the photos the same and those files not, Conflict (FOR_GOOD_CHANGED). `token_of` and
+    `deleted_for_good` are tagpup.services.selection's, the one hash of both and the one answer of which files a Bin would not
+    keep."""
     if edit.op != DELETE:
         return
     confirmed = frozenset(deleted_for_good(photo_ids)) if edit.for_good else frozenset()
     if token_of(photo_ids, confirmed) != edit.token:
-        raise Conflict(CHANGED)
+        same_photos = edit.token.startswith(token_of(photo_ids))
+        raise Conflict(FOR_GOOD_CHANGED if same_photos else CHANGED)
     edit.for_good_ids = confirmed
 
 

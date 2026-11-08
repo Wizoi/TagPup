@@ -134,14 +134,17 @@ def _kept(counted, name_of):
 
 
 def token_of(photo_ids, for_good_ids=()):
-    """The token of a set of photos: a hash of their ids, sorted (the order they were named in is no matter), and of the ids
-    of those the question said would be deleted for good, every one of them (deleted_for_good), not only those it named. What
-    a Delete's question was about, and what its start must still resolve to (#691): a start confirmed for good carries the
-    token of a question that warned of exactly the files it would now delete for good. 68,000 ids are about 20 ms."""
-    text = ",".join(str(each) for each in sorted(set(photo_ids)))
-    if for_good_ids:
-        text += ";for good:" + ",".join(str(each) for each in sorted(set(for_good_ids)))
-    return hashlib.sha256(text.encode("ascii")).hexdigest()
+    """The token of a set of photos: a hash of their ids, sorted (the order they were named in is no matter), and, after a
+    ".", a hash of the ids of those the question said would be deleted for good, every one of them (deleted_for_good), not
+    only those it named. What a Delete's question was about, and what its start must still resolve to (#691): a start
+    confirmed for good carries the token of a question that warned of exactly the files it would now delete for good. A token
+    begins with token_of its photos alone, so a start can tell photos that changed from files for good that did
+    (bulk_edit.refuse_if_changed). 68,000 ids are about 20 ms."""
+    photos = hashlib.sha256(",".join(str(each) for each in sorted(set(photo_ids))).encode("ascii")).hexdigest()
+    if not for_good_ids:
+        return photos
+    for_good = ",".join(str(each) for each in sorted(set(for_good_ids)))
+    return photos + "." + hashlib.sha256(("for good:" + for_good).encode("ascii")).hexdigest()
 
 
 #: How many of the files a Delete would delete for good its question names; the rest are counted.

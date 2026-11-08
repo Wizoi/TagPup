@@ -311,6 +311,10 @@ class AFileOnALocalDrive(APhotoAndAClip):
             reply = self.post("library/bulk-edit", {"op": "delete", "selection": {"ids": ids},
                                                     "params": {"token": asked["token"], "for_good": True}})
         self.assertEqual(409, reply.status_code, reply.get_json())
+        said = reply.get_json()["error"]
+        self.assertIn("deleted for good", said, "the sentence says what changed: what would go for good")
+        self.assertIn("nothing was deleted", said)
+        self.assertNotIn("came into it or left it", said, "no photo came into the selection or left it")
         self.assert_kept(self.clip_path, self.clip)
         self.assert_kept(self.photo_path, self.photo)
         self.assertEqual([], self.binned())
