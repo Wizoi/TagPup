@@ -2,6 +2,9 @@
 goes to the Recycle Bin -- from a share, through this PC: copied under the Downloads mirror, the copy checked and recycled,
 then the original deleted -- and leaves the library with everything it had: its row, its vector and frames, its poster. A
 larger clip is refused with its size, its bytes counted in no copy, and the photos beside it are deleted as always.
+On a local drive a file goes to its own drive's Recycle Bin, and one larger than that Bin, or on a drive whose Bin keeps
+nothing, is refused before anything is touched: Windows, asked without a question, would delete it for good and say it
+had recycled it.
 
 What the owner lives through: a day in the library view holds photos and clips together, on a share (no Recycle Bin of its
 own); a Delete of the day asks first how much will be copied through this PC (the delete-check), then deletes them. A clip's
@@ -46,7 +49,9 @@ def digest(path):
 
 @unittest.skipIf(TOOLS.problem, "ffmpeg is not installed on this machine (winget install Gyan.FFmpeg): %s" % TOOLS.problem)
 @unittest.skipIf(EXIFTOOL is None, "ExifTool not installed")
-class AClipOnAShare(unittest.TestCase):
+class APhotoAndAClip(unittest.TestCase):
+    """A photo and a clip in one folder of a library: the setting of each scenario below."""
+
     def setUp(self):
         self.app, self.home = web_client.app_for(self, "tagpup")
         self.client = self.app.test_client()
@@ -113,6 +118,8 @@ class AClipOnAShare(unittest.TestCase):
         root = self.vl.library.thumbs
         return sum(1 for _folder, _dirs, names in os.walk(root) for name in names if name.startswith("%d_" % photo_id))
 
+
+class AClipOnAShare(APhotoAndAClip):
     def test_a_day_of_a_photo_and_a_clip_is_deleted_through_this_pc_the_clip_copied_whole(self):
         sizes = os.path.getsize(self.photo_path) + os.path.getsize(self.clip_path)
         asked, done = self.delete_all(self.photo, self.clip)
@@ -193,6 +200,45 @@ class AClipOnAShare(unittest.TestCase):
         self.assertTrue(followed, "two clips: at least one is followed by another file")
         for n in followed:
             self.assertEqual("turn", kinds[n + 1], "the lock is let go of after %s, before the next file" % self.events[n][1])
+
+
+class AFileOnALocalDrive(APhotoAndAClip):
+    """The folder is on a local drive with a Recycle Bin of its own: each file goes straight to that Bin."""
+
+    def reason(self, path):
+        return None
+
+    def assert_refused(self, said, path, photo_id, why):
+        self.assertIn(why, said)
+        self.assertIn("Nothing was deleted", said)
+        self.assertTrue(os.path.exists(path), "%s is where it was" % os.path.basename(path))
+        self.assertEqual([(photo_id,)], self.vl.rows("SELECT id FROM photos WHERE id = ?", photo_id), "its row stays")
+
+    def test_a_file_larger_than_its_drives_recycle_bin_is_refused_before_anything_is_touched(self):
+        with mock.patch.dict(os.environ, {"TAGPUP_RECYCLE_BIN": "0,0,0"}):     # a Bin of 0 MB: every file is larger
+            for path, photo_id in ((self.clip_path, self.clip), (self.photo_path, self.photo)):
+                reply = self.post("photo/delete", {"path": path})
+                self.assertNotEqual(200, reply.status_code, reply.get_json())
+                self.assert_refused(reply.get_json()["error"], path, photo_id, "larger than this PC's Recycle Bin")
+            _asked, done = self.delete_all(self.photo, self.clip)
+        self.assertEqual((0, 2), (done["changed"], done["error_count"]), done["errors"])
+        for error in done["errors"]:
+            self.assertIn("larger than this PC's Recycle Bin", error["why"])
+        self.assertEqual([], self.binned(), "nothing was sent to the Bin")
+        self.assertEqual(self.clip_bytes, digest(self.clip_path))
+
+    def test_a_file_on_a_drive_whose_recycle_bin_keeps_nothing_is_refused(self):
+        with mock.patch.dict(os.environ, {"TAGPUP_RECYCLE_BIN": "1000,0,1"}):  # set to delete files at once
+            reply = self.post("photo/delete", {"path": self.clip_path})
+        self.assertNotEqual(200, reply.status_code, reply.get_json())
+        self.assert_refused(reply.get_json()["error"], self.clip_path, self.clip, "deletes files at once")
+        self.assertEqual([], self.binned(), "nothing was sent to the Bin")
+
+    def test_a_file_its_drives_bin_can_keep_goes_straight_there(self):
+        reply = self.post("photo/delete", {"path": self.clip_path})
+        self.assertEqual(200, reply.status_code, reply.get_json())
+        self.assert_gone(self.clip_path, self.clip)
+        self.assertEqual(["jetty.mov"], self.binned(), "the clip itself, not a copy, went to the Bin")
 
 
 if __name__ == "__main__":
