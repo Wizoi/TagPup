@@ -742,8 +742,9 @@ def shift_date_taken(library, photo_paths, minutes, exiftool_path):
 
 @roots_service.canonical_args("photo_path")
 def delete(library, photo_path):
-    """Send a photo to the Recycle Bin, and forget it: its row, faces and cached
-    embedding. Clicking Delete (Organize's, and each photo of a library view's bulk Delete).
+    """Send a photo or a clip to the Recycle Bin, and forget it: its row, faces, cached
+    embedding (a clip's frames with it) and thumbnail or poster. Clicking Delete (Organize's,
+    and each photo or clip of a library view's bulk Delete).
 
     The file goes first. A photo that could not be moved stays in the library, and its
     rows with it.
@@ -751,8 +752,9 @@ def delete(library, photo_path):
     A photo of a folder the library does not hold (Just look) is sent to the Recycle Bin
     and nothing else happens: it has no row to forget (tagpup.services.file_only).
 
-    Only an existing photo FILE is deleted, in a held folder or not: a folder, a .txt, a path
-    that is not there or ends in a separator is refused, and nothing is moved (#520). A file on
+    Only an existing photo or clip FILE is deleted, in a held folder or not: a folder, a .txt, a
+    path that is not there or ends in a separator is refused, and nothing is moved (#520); so is a
+    clip over recycle_bin.MOST_CLIP_BYTES, with its size (DECISIONS 2026-11-08, A5). A file on
     a network share, or a drive with no Recycle Bin, is never deleted for good (#694): it goes
     THROUGH THIS PC (tagpup.files.recycle_bin.delete_file) -- copied under the Downloads folder's
     "TagPup deleted from shares", the copy checked, the copy to this PC's Recycle Bin, then the

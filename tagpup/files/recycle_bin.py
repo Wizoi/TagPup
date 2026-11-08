@@ -11,18 +11,18 @@ to local storage (\\\\localhost\\C$\\...): it reported success, the file was gon
 $Recycle.Bin held no entry for it, where the same file by its local path held one. So `goes_to_bin`
 says it beforehand, for the page to tell the owner before it deletes, and the reply after.
 
-**Nothing is deleted for good** (#694, the owner's decision, 2026-10-04). A photo in a place with no Recycle Bin goes THROUGH THIS
-PC (`delete_file`, the one way every delete of a photo takes: Organize's and the bulk Delete's): it is copied under
+**Nothing is deleted for good** (#694, the owner's decision, 2026-10-04). A photo or clip in a place with no Recycle Bin goes
+THROUGH THIS PC (`delete_file`, the one way every delete of one takes: Organize's and the bulk Delete's): it is copied under
 <Downloads>/TagPup deleted from shares/<server>/<share>/<path> (the Downloads known folder, wherever it was moved), the copy is
 checked against the original (size, then a SHA-256 of each), the COPY is sent to this PC's Recycle Bin, and only then is the
 original deleted at its place. Each step that fails leaves the original where it is: a copy that fails or differs is taken away; a
 Bin that refuses the copy, the copy taken away; an original that cannot be deleted after its copy is in the Bin is still there,
-and so the photo is there twice -- the error says so. Restored from the Bin, the copy goes back to the mirror folder under
+and so the file is there twice -- the error says so. Restored from the Bin, the copy goes back to the mirror folder under
 Downloads, not to the share. Before copying, the drive of that folder must have room for the copy and SPARE_BYTES more.
 
 And a copy is made only where it would be KEPT (the owner's review, #703-#706; `can_copy_here`): Windows makes room in a full
 Recycle Bin by purging its OLDEST items for good, so the Bin of the Downloads volume must hold what it holds, the copies, and
-BIN_MARGIN of its capacity (its per-volume MaxCapacity; a Bin set to NukeOnDelete keeps nothing and refuses all, and a photo larger
+BIN_MARGIN of its capacity (its per-volume MaxCapacity; a Bin set to NukeOnDelete keeps nothing and refuses all, and a file larger
 than the Bin is refused); the Bin's size is asked of Windows (SHQueryRecycleBinW: 11.8 s for 3,353 items here) once, then counted
 on by what this process sends (`note_binned`), and asked again after BIN_FRESH. A copy whose path would be MAX_PATH or more is
 refused up front (SHFileOperation takes none). A Downloads folder under OneDrive is refused: a copy would be synced to the cloud
@@ -421,7 +421,7 @@ def room_for_copies(byte_count, largest, root=None, fresh=False):
         return ("This PC's Recycle Bin on %s deletes files at once (it is set not to keep them), so a copy would not be kept. "
                 "Nothing was deleted." % mount)
     if largest > capacity:
-        return ("A photo of %s is larger than this PC's Recycle Bin on %s (%s), which could not keep it. Nothing was deleted."
+        return ("A file of %s is larger than this PC's Recycle Bin on %s (%s), which could not keep it. Nothing was deleted."
                 % (_mb(largest), mount, _mb(capacity)))
     if used + byte_count > capacity * (1 - BIN_MARGIN):
         return ("This PC's Recycle Bin on %s cannot keep the copies: it holds %s of %s, and the copies are %s. Windows would make room "
@@ -502,7 +502,7 @@ def _take_away(path):
 def recycle_through_this_pc(file_path, root=None):
     """Delete `file_path`, in a place with no Recycle Bin, through this PC (the module's docstring): copy, check, the copy to this
     PC's Recycle Bin, then the original. Returns where the copy was put (so where Windows restores it). Raises ValueError for a
-    path that is no photo file (problem) and OSError, with a sentence, for any step that failed: the original is then left where it
+    path that is no photo or clip file (problem) and OSError, with a sentence, for any step that failed: the original is then left where it
     is (and, when only its own delete failed, is there twice: the error says so)."""
     why = problem(file_path)
     if why:
@@ -544,12 +544,12 @@ def recycle_through_this_pc(file_path, root=None):
         os.remove(source)
     except OSError as e:
         raise OSError("A copy is in this PC's Recycle Bin, but the original could not be deleted (%s): it is still where it was, so "
-                      "the photo is there twice." % (e.strerror or e)) from None
+                      "the file is there twice." % (e.strerror or e)) from None
     return target
 
 
 def delete_file(file_path):
-    """Delete a photo FILE the one way every delete of a photo takes (#694): to its own Recycle Bin, or -- where its place has none
+    """Delete a photo or clip FILE the one way every delete of one takes (#694): to its own Recycle Bin, or -- where its place has none
     -- through this PC (recycle_through_this_pc). {"through_this_pc": bool, "reason": why its place has no Bin or None, "copy":
     where the copy was put, or None}. Raises ValueError (problem) or OSError with a sentence; the original is then still there."""
     reason = no_bin_reason(file_path)
@@ -567,7 +567,7 @@ def goes_to_bin(file_path):
 
 
 def send_to_recycle_bin(file_path):
-    """Move the photo file to the Recycle Bin; False when Windows would not. Raises ValueError,
+    """Move the photo or clip file to the Recycle Bin; False when Windows would not. Raises ValueError,
     moving nothing, for anything `problem` names. A file for which `no_bin_reason` names a reason is
     deleted permanently, and Windows says it succeeded."""
     from ctypes import wintypes
