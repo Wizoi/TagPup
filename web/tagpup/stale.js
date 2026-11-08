@@ -14,7 +14,7 @@
 // what a save may change): each control's `data-writes` names the field it changes, and a control whose field is not
 // named is inert, with a sentence naming what is not edited. A photo's record names all five; a clip's its tags, title
 // and name (fields.CLIP_WRITES), so its date and turn are inert. The delete (`data-deletes`) is no write of a field: a
-// clip is deleted as a photo is (recycle_bin, up to its MOST_CLIP_BYTES, a larger one refused with a sentence), and the
+// clip is deleted as a photo is (recycle_bin, up to its MOST_CLIP_BYTES, a larger one for good once confirmed), and the
 // button is inert only while the file is missing.
 import { buildElement } from './common/dom.js';
 import { state } from './state.js';

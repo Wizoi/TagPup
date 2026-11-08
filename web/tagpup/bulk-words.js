@@ -87,7 +87,8 @@ export function deleteQuestion(where, count) {
 }
 
 /**
- * The warning before files are deleted for good (DECISIONS 2026-11-08): `names` the file names the server gave (the delete-check's
+ * The warning before files are deleted for good (DECISIONS 2026-11-08; a video over 2 GiB, 2026-11-02 item 7, whose copy through
+ * this PC would be gigabytes over the share): `names` the file names the server gave (the delete-check's
  * `for_good.names`, as many as it names: selection.MOST_FOR_GOOD_NAMED; or the one file of the panel's delete), `count` how many
  * in all, the rest counted. The owner's OK is the only way the server deletes one for good; Cancel deletes nothing.
  */
@@ -97,8 +98,9 @@ export function forGoodQuestion(names, count) {
     const more = total - shown.length;
     const one = total === 1;
     const list = shown.map(name => `  ${name}`).join('\n') + (more > 0 ? `\n  and ${more.toLocaleString()} more` : '');
-    return `${one ? 'This file' : 'These files'} would be deleted for good, not moved to the Recycle Bin: the Recycle Bin of `
-        + `${one ? 'its' : 'their'} drive would not keep ${one ? 'it' : 'them'} (too large, or set to delete files at once).`
+    return `${one ? 'This file' : 'These files'} would be deleted for good, not moved to the Recycle Bin: no Recycle Bin would `
+        + `keep ${one ? 'it' : 'them'} (larger than ${one ? 'its' : 'their'} drive's Recycle Bin keeps, a Recycle Bin set to delete `
+        + 'files at once, or a video too large for TagPup to copy to one).'
         + `\n\n${list}\n\nOK deletes ${one ? 'it' : 'them'} for good; Cancel deletes nothing.`;
 }
 

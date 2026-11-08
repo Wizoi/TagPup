@@ -336,6 +336,8 @@ describe("#674: Delete of a view's selection", () => {
     assert.match(ctx.questions[0], /^Delete 3 photos\?/);
     assert.match(ctx.questions[1], /^This file would be deleted for good, not moved to the Recycle Bin/);
     assert.ok(ctx.questions[1].includes("  Harbour_Swim_Long.mp4"), "the warning names the file");
+    assert.match(ctx.questions[1], /or a video too large for TagPup to copy to one\)/,
+      "a video over 2 GiB is told as a reason: no copy of it is made through this PC (cut C)");
     assert.match(ctx.questions[1], /Cancel deletes nothing\.$/);
     const [start] = calls(ctx, "/api/library/bulk-edit");
     assert.deepEqual(plain(start.body.params), { token: "t-three-for-good", for_good: true },
