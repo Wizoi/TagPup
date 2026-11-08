@@ -1,0 +1,9 @@
+# Findings of a branch
+
+Provisional numbers `B-n`: `tools/add_findings.py --take` gives each row its number in
+docs/findings.md when the main session merges the branch, and removes this file.
+
+| # | Found | Finding | Status |
+|---|---|---|---|
+| B-1 | 2026-11-08 | low: a clip title clear that found no QuickTime title item under moov/udta/meta/ilst (`clip_patch._title_ranges`) answered "nothing to free" and wrote the XMP alone, though a clear is asked only of a clip whose QuickTime Title ExifTool read (`tagging._title_written`): a title held in a form the walk does not reach (an 'mdta' keys meta, Apple's form; 0 of the 2,018 photo_index clips holding a QuickTime Title, all in the ilst form, counted read-only 2026-11-08 from the rows by the Files owner, the 2,018 recounted this session) would have had its XMP written and then read back still titled. Now refused as the rewrite's (CLIP_NOT_PATCHED) before a byte is written; the branch is not written for the keys form (CLAUDE.md, a special case needs a real instance). The new subtest of `tests/test_a_clip_patched_in_place.py` (the keys meta) failed on the branch before the change. | fixed: clips: a title clear finding no title item is the rewrite's, refused before the XMP is written (a title in a form the walk does not reach) |
+| B-2 | 2026-11-08 | low: a clip holding its QuickTime title both as an ilst `©nam` and in an 'mdta' keys meta would have the `©nam` freed and the keys title still read by ExifTool, the save then reporting a read-back failure after its XMP and four bytes were written (journaled, so settled and undoable). No live instance (every one of the 2,018 photo_index clips holding a QuickTime Title has it in the ilst form; kr-track and renton_parkrun hold none, counted this session); no branch written, by CLAUDE.md "a special case needs a real instance". | decided: no live instance; reopen if a clip is reported |
