@@ -229,6 +229,32 @@ class AClipInTheLibrary(ALibraryHoldingAClip):
         self.assertEqual([], self.change_states(clip), "nothing journaled")
         self.assertEqual(["Trips/Pier"], self.tags_of(clip))
 
+    def records(self, ids):
+        """{filename: writes} of the records the page is given: a folder's scan (Refresh's: the server keeps the last
+        one), and the panel's of each of `ids`."""
+        scan = self.client.get("/library/api/folder/scan", query_string={"path": self.folder, "force": "true"})
+        self.assertEqual(200, scan.status_code, scan.data)
+        listed = scan.get_json()
+        listed = listed if isinstance(listed, list) else listed["photos"]
+        found = {"scan " + record["filename"]: record["writes"] for record in listed}
+        for photo_id in ids:
+            reply = self.client.get("/library/api/library/photo", query_string={"id": photo_id})
+            self.assertEqual(200, reply.status_code, reply.data)
+            record = reply.get_json()["photo"]
+            found["panel " + record["filename"]] = record["writes"]
+        return found
+
+    def test_the_page_is_told_what_a_save_may_change_of_a_clip_and_of_a_photo(self):
+        # The panel offers a clip its tags and title alone; a photo all four (field_values.writes). Writing clips off,
+        # the clip says nothing may change, as every write of it is then refused.
+        ids = self.index(self.photo_path, self.clip_path)
+        photo, clip = ["tags", "title", "date", "rotate"], ["tags", "title"]
+        self.assertEqual({"scan pier.jpg": photo, "scan jetty.mp4": clip, "panel pier.jpg": photo, "panel jetty.mp4": clip},
+                         self.records(ids))
+        with writing_clips(False):
+            self.assertEqual({"scan pier.jpg": photo, "scan jetty.mp4": [], "panel pier.jpg": photo, "panel jetty.mp4": []},
+                             self.records(ids))
+
     def test_a_tag_save_from_the_photo_panel_writes_the_clips_xmp_and_journals_it_done(self):
         clip, = self.index(self.clip_path)
         reply = self.post("photo/save-metadata", {"path": self.clip_path, "tags": ["Trips/Coast"]})

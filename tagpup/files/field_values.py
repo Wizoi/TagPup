@@ -328,11 +328,25 @@ def write(et, photo_path, values, saving=None, scratch_written=None, own_writer=
     return ()
 
 
-def clip_refused(values):
-    """images.CLIP_NOT_EDITED when a write of `values` to a clip is refused before the clip is looked at -- writing clips
-    off, or a field outside fields.CLIP_FIELDS -- else None: the one rule, asked by _clip_written and, before anything is
-    written, by an undo's rehearsal (tagpup.services.file_changes._undoable), so the change it refuses stays applied."""
-    if not CLIP_PATCH_IN_PLACE or not set(values) <= fields.CLIP_FIELDS:
+def writes(path):
+    """What a journaled write may change of the file at `path`, by name: a photo's tags, title, Date Taken and turn
+    (fields.PHOTO_WRITES); a clip's tags and title (fields.CLIP_WRITES) while writing clips is on, else nothing. The one
+    statement of it: a page's record carries it (tagpup.services.photos.page_record), and the writer (clip_refused) and
+    the journal (tagpup.services.file_changes.leave_out_clips) refuse what it leaves out. Whether a clip's folder is held
+    is not said here: a clip of a folder the library does not hold is refused at its write (file_only), never in a record
+    the folder cache keeps across an Add to the library. Nothing is read of the file."""
+    if not images.is_clip(path):
+        return fields.PHOTO_WRITES
+    return fields.CLIP_WRITES if CLIP_PATCH_IN_PLACE else ()
+
+
+def clip_refused(path, values):
+    """images.CLIP_NOT_EDITED when a write of `values` to the clip at `path` is refused before the clip is looked at --
+    a field outside those writes(path) names (fields.fields_of), all of them while writing clips is off -- else None: the
+    one rule, asked by _clip_written and, before anything is written, by an undo's rehearsal
+    (tagpup.services.file_changes._undoable), so the change it refuses stays applied."""
+    named = fields.fields_of(writes(path))
+    if not named or not set(values) <= named:
         return images.CLIP_NOT_EDITED
     return None
 
@@ -347,7 +361,7 @@ def _clip_written(photo_path, values, saving):
     after its record was saved raises as it failed, the file settled by its bytes. ExifTool is not asked: the last
     keyword of a clip holding its keywords in QuickTime too is kept by the plan, which read them
     (file_changes.KEPT_IN_QUICKTIME)."""
-    if saving is None or clip_refused(values):
+    if saving is None or clip_refused(photo_path, values):
         raise Refused(images.CLIP_NOT_EDITED)
     saved = []
 

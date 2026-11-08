@@ -307,9 +307,10 @@ def _takes_off_every_keyword(values):
 
 def leave_out_clips(result, photo_paths, unreadable="fail", read=None):
     """The paths of `photo_paths` that are not clips (images.is_clip), in order, and the clips a journaled write of
-    `read`, the fields it reads of each file, may patch: only while writing clips is on (field_values.CLIP_PATCH_IN_PLACE)
-    and only a keyword or caption save (every field read in fields.CLIP_READ; DECISIONS 2026-11-05, M7) that reads its
-    QuickTime keywords (fields.CLIP_KEYWORDS), from which the plan keeps its last keyword (KEPT_IN_QUICKTIME). Any other clip
+    `read`, the fields it reads of each file, may patch: one reading only the fields of what a clip's write may change
+    (field_values.writes: its tags and title, while writing clips is on; DECISIONS 2026-11-05, M7) and those its tags are
+    read from, its QuickTime keywords (fields.CLIP_KEYWORDS) among them, from which the plan keeps its last keyword
+    (KEPT_IN_QUICKTIME). Any other clip
     is not written (images.CLIP_NOT_EDITED): it is the write's error, with that sentence -- or, `unreadable="skip"` (a
     write over every photo of a camera or a folder that leaves out what it cannot write), skipped with it -- read for
     nothing, planned and journaled for nothing, and never the error that stops a write at its first
@@ -318,15 +319,20 @@ def leave_out_clips(result, photo_paths, unreadable="fail", read=None):
     which gives `read`; file_only.write_fields, which does not: a clip of a folder the library does not hold has no
     journal to settle a patch a crash cut short) and a Smart Rename (tagpup.services.photos.smart_rename) before it keeps
     a name; a save of a clip is refused before its rename."""
-    patched = (read is not None and field_values.CLIP_PATCH_IN_PLACE
-               and fields.CLIP_KEYWORDS in read and set(read) <= fields.CLIP_READ)
     photos = []
     for path in photo_paths:
-        if images.is_clip(path) and not patched:
+        if images.is_clip(path) and not _clip_admitted(path, read):
             (result.skip if unreadable == "skip" else result.fail)(path, images.CLIP_NOT_EDITED)
         else:
             photos.append(path)
     return photos
+
+
+def _clip_admitted(path, read):
+    """May a journaled write reading `read` patch the clip at `path` (leave_out_clips)?"""
+    named = fields.fields_of(field_values.writes(path))
+    return (bool(named) and read is not None and fields.CLIP_KEYWORDS in read
+            and set(read) <= named | frozenset(fields.TAG_SOURCE_FIELDS))
 
 
 #: What a forward write's file found holding its after since the plan comes to (_held_or_conflict's `held_out`): out of
@@ -1768,7 +1774,7 @@ def _undoable(library, change_id, exiftool_path, check):
                 refused.append((row, "could not be read: %s" % now))
             elif not fields.reads_same(now, row.after):
                 refused.append((row, "no longer holds what the change left"))
-            elif images.is_clip(row.path) and (why := field_values.clip_refused(row.before)):
+            elif images.is_clip(row.path) and (why := field_values.clip_refused(row.path, row.before)):
                 # The writer would refuse it: the undo is refused whole, the change left applied, to be undone later.
                 return None, "%s: %s" % (row.named(), why), None
             else:

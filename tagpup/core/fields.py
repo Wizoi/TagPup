@@ -222,16 +222,28 @@ XMP_ONLY = {
     "XMP:Description": tuple(field for field in caption_fields("") if not field.startswith("XMP:")),
 }
 
-#: The fields a journaled write of a clip may name (DECISIONS 2026-11-05, M7): a keyword or title save's (a page
-#: writes no caption, DECISIONS 2026-11-06). Only the XMP
-#: field of each group is written, into the clip's XMP packet (tagpup.files.segment_edits.new_packet); every other copy is
-#: left as it was, whatever the XMP value (segment_edits.clip_stale_of): a clip's EXIF and IPTC, if any, are not TagPup's
-#: to write. A Date Taken, a rotation and a rename of a clip are refused before they are planned.
-CLIP_FIELDS = frozenset(keyword_fields([], [])) | frozenset(title_fields(""))
+#: What a journaled write may change of a photo, by name: its tags, its title, its Date Taken, its turn
+#: (tagpup.files.field_values.writes, which a page's record carries as `writes`).
+PHOTO_WRITES = ("tags", "title", "date", "rotate")
 
-#: The fields a journaled write of a clip may read (tagpup.services.file_changes.leave_out_clips): those it may write
-#: and those its tags are read from, a clip's QuickTime Subject among them (read, never written).
-CLIP_READ = CLIP_FIELDS | frozenset(TAG_SOURCE_FIELDS)
+#: What a journaled write may change of a clip, while writing clips is on (DECISIONS 2026-11-05, M7): its tags and title.
+#: A page writes no caption of it (DECISIONS 2026-11-06); a Date Taken, a turn and a rename of a clip are ExifTool's
+#: rewrite of the whole file, refused before they are planned.
+CLIP_WRITES = ("tags", "title")
+
+#: The fields each of CLIP_WRITES names.
+_CLIP_WRITE_FIELDS = {"tags": frozenset(keyword_fields([], [])), "title": frozenset(title_fields(""))}
+
+
+def fields_of(writes):
+    """The fields a journaled write of `writes` (names of CLIP_WRITES) may name."""
+    return frozenset(field for write in writes for field in _CLIP_WRITE_FIELDS[write])
+
+
+#: The fields a journaled write of a clip may name: those of CLIP_WRITES. Only the XMP field of each group is written,
+#: into the clip's XMP packet (tagpup.files.segment_edits.new_packet); every other copy is left as it was, whatever the
+#: XMP value (segment_edits.clip_stale_of): a clip's EXIF and IPTC, if any, are not TagPup's to write.
+CLIP_FIELDS = fields_of(CLIP_WRITES)
 
 #: Where TagPup's own JPEG writer (tagpup.files.segment_edits) puts each field a journaled write names: (segment kind,
 #: the property or field its editor names it by), xmp_packet's, exif_block's or iptc_block's. A target after the first

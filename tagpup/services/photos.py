@@ -6,7 +6,7 @@ import os
 
 from tagpup.core import dates, fields, paths, photo_meta, renaming, validation, vocabulary
 from tagpup.core.result import NotFound, Refused, Result, Unavailable
-from tagpup.files import images, metadata, names, recycle_bin, shares
+from tagpup.files import field_values, images, metadata, names, recycle_bin, shares
 from tagpup.services import file_changes, file_only, libraries, rotation, thumbnails
 from tagpup.services import roots as roots_service
 from tagpup.store import db, faces, generations, photos, taxonomy
@@ -54,6 +54,8 @@ def page_record(path, meta, mtime=0.0, size=0):
         # 'photo' or 'video', as the index gives a row its kind (images.kind_of, photos.kind) and a library card carries
         # it: the page plays a video and draws it by its poster, never asks /api/photo-file for it (media.js, grid.js).
         "media": images.kind_of(path),
+        # What a save may change of it, by name (field_values.writes): the page offers no other edit of it.
+        "writes": list(field_values.writes(path)),
     }
     if meta.get("read_error"):
         # ExifTool could not read it: it shows as holding nothing, which a save must not take for what the file holds.
