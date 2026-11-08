@@ -133,6 +133,12 @@ CLIP_KEYWORDS = "QuickTime:Subject"
 #: (CLIP_KEYWORDS), so a keyword write of a clip plans from the tags it holds there.
 TAG_SOURCE_FIELDS = ("IPTC:Keywords", "XMP:Subject", "XMP:HierarchicalSubject", CLIP_KEYWORDS)
 
+#: Where a clip may hold a title TagPup reads and never writes: its QuickTime Title (2,017 photo_index clips hold their
+#: title there alone, one more there and in XMP:Title alike; no photo of the three libraries holds a QuickTime field;
+#: counted 2026-11-07). Read as XMP's copy when XMP holds none (vocabulary.TITLE_COPIES); a save writes XMP:Title only
+#: (title_fields), never this (DECISIONS 2026-11-07, THE OWNER'S ANSWERS ON THE VIDEO BUILD ORDER, item 3).
+CLIP_TITLE = "QuickTime:Title"
+
 
 def expand_tag_fields(tags):
     """Split a tag list into the flat and hierarchical keyword forms written to files.

@@ -248,11 +248,16 @@ def follow_fields(conn, photo_path, written, stat=None, before=None, batch=None,
         texts = fields.field_values(value)
         if whole is None and fields.scan_reads(key):
             bare = key.split(":", 1)[1]
+            held = raw.get(key)
             for name in (key, bare):
                 if name != key and name not in raw:
                     continue
                 if not texts:
-                    raw.pop(name, None)
+                    # The bare name is the copy of whichever group a read answered last: a group holding nothing takes it
+                    # out only when it was that group's. A JPEG's empty QuickTime Title (fields.CLIP_TITLE) or Subject,
+                    # read beside its XMP copy, took the bare Title and Subject the scan stores out of its row.
+                    if name == key or raw.get(name) == held:
+                        raw.pop(name, None)
                 elif key in fields.LIST_FIELDS or len(texts) > 1:
                     raw[name] = list(texts)
                 else:

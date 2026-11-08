@@ -312,6 +312,8 @@ class TaggingAPhoto(ReadFilesCase):
         followed = json.loads(self.rows("SELECT raw_metadata FROM photos WHERE path = ?", (a,))[0][0])
         self.assertEqual(("Quay at dusk", "Quay at dusk"), (followed["XMP:Title"], followed["Title"]),
                          "the row of a file holding the save already was not made to say what it holds")
+        self.assertEqual(raw.get("Subject"), followed.get("Subject"),
+                         "the bare Subject a scan stores is kept: the photo's empty QuickTime Subject is not its copy")
 
         undone = self.undo(change)
 

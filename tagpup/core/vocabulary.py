@@ -247,12 +247,13 @@ NOT_A_PERSON = frozenset(name.lower() for name in (*BUCKETS.values(), UNMATCHED)
 #: none (DECISIONS 2026-11-03, XMP IS THE COPY THE INDEX READS): a keyword or caption save may patch XMP alone and
 #: leave IPTC holding what it held before (tagpup.core.fields.XMP_ONLY). A title's copies (TITLE_COPIES) are
 #: XMP:Title and IPTC:ObjectName (tagpup.core.fields.title_fields), a caption's (DESCRIPTION_COPIES) the Description.
-#: A clip's keywords may be in its QuickTime Subject (fields.CLIP_KEYWORDS), which TagPup reads and never writes: read
-#: as XMP's copy when XMP holds none. ExifTool answers it beside XMP's, and the bare "Subject" is whichever it answered
-#: last (tagpup.files.metadata.structured), so a copy is read by the first of its names that holds a value
-#: (_read_copy), the prefixed names first.
+#: A clip's keywords may be in its QuickTime Subject (fields.CLIP_KEYWORDS), its title in its QuickTime Title
+#: (fields.CLIP_TITLE), which TagPup reads and never writes: each read as XMP's copy when XMP holds none (a clip's title
+#: is its XMP:Title, else its QuickTime Title: DECISIONS 2026-11-07, item 3). ExifTool answers it beside XMP's, and the
+#: bare "Subject" or "Title" is whichever it answered last (tagpup.files.metadata.structured), so a copy is read by the
+#: first of its names that holds a value (_read_copy), the prefixed names first.
 KEYWORD_COPIES = (("XMP:Subject", fields.CLIP_KEYWORDS, "Subject"), ("IPTC:Keywords", "Keywords"))
-TITLE_COPIES = (("XMP:Title", "Title"), ("IPTC:ObjectName", "ObjectName"))
+TITLE_COPIES = (("XMP:Title", fields.CLIP_TITLE, "Title"), ("IPTC:ObjectName", "ObjectName"))
 DESCRIPTION_COPIES = (("XMP:Description", "Description"), ("IPTC:Caption-Abstract", "Caption-Abstract"))
 #: The title first, then the caption: the first a photo holds is its title as the page shows it (title_of). A photo
 #: with a Description and no Title shows the Description as its title (DECISIONS 2026-11-06, THE TITLE AND THE
@@ -347,8 +348,8 @@ def title_of(meta):
 
 
 def own_title(meta):
-    """The title the photo holds of its own (TITLE_COPIES: XMP:Title, else IPTC:ObjectName), trimmed; "" for none, a
-    photo showing its description as its title among them."""
+    """The title the photo holds of its own (TITLE_COPIES: XMP:Title, else a clip's QuickTime Title, else IPTC:ObjectName),
+    trimmed; "" for none, a photo showing its description as its title among them."""
     found = _read_copy(meta, TITLE_COPIES)
     return found[0] if found else ""
 
