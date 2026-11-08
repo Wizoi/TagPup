@@ -37,8 +37,8 @@ journal's values by field, which writes a keyword or caption save into the XMP c
 left (fields.XMP_ONLY). What does not fit is rewritten as above. The picture is never read or written by a patch; the journal checks the bytes it changed, and the fields
 read back, before the file is done (tagpup.services.file_changes._verified), and reads no other byte of the file.
 
-**A clip** (DECISIONS 2026-11-05, M7). A clip's file is never ExifTool's to write: a journaled keyword or caption save of
-one (fields.CLIP_FIELDS) patches its XMP alone (tagpup.files.in_place.patch_clip, its packet segment_edits.new_packet's),
+**A clip** (DECISIONS 2026-11-05, M7). A clip's file is never ExifTool's to write: a journaled save of its tags, title,
+name or Date Taken (fields.CLIP_FIELDS) patches its XMP alone (tagpup.files.in_place.patch_clip, its packet segment_edits.new_packet's),
 on since the owner's trial on 20 copies (DECISIONS 2026-11-07, item 4); every other write of a clip is refused before a byte (a Refused, its sentence
 the owner's), and so is one the patch cannot place (images.CLIP_NOT_PATCHED).
 """
@@ -325,7 +325,7 @@ def write(et, photo_path, values, saving=None, scratch_written=None, own_writer=
 
 def writes(path):
     """What a journaled write may change of the file at `path`, by name: a photo's tags, title, Date Taken, turn and name
-    (fields.PHOTO_WRITES); a clip's tags, title and name (fields.CLIP_WRITES). The one
+    (fields.PHOTO_WRITES); a clip's tags, title, name and Date Taken (fields.CLIP_WRITES). The one
     statement of it: a page's record carries it (tagpup.services.photos.page_record), and the writer (clip_refused) and
     the journal (tagpup.services.file_changes.leave_out_clips) refuse what it leaves out. Whether a clip's folder is held
     is not said here: a clip of a folder the library does not hold is refused at its write (file_only), never in a record

@@ -240,9 +240,10 @@ def people_of(library, tags, photo_path):
                                       taxonomy.people_vocabulary(library.path))
 
 
-def record_written(library, record, path, tags, flat, hierarchical):
+def record_written(library, record, path, tags, flat, hierarchical, date_taken=None):
     """Bring a page record up to date with the keywords just written to its photo: its
-    tags, every keyword field of its raw metadata, and its people.
+    tags, every keyword field of its raw metadata, and its people; and with `date_taken`, the date fields the save
+    wrote (fields.record_date_taken: a clip's XMP dates, a photo's EXIF and XMP).
 
     Every keyword field, not just the XMP pair: the page re-derives tags from the raw
     metadata, and a stale IPTC:Keywords brought a removed tag straight back.
@@ -250,6 +251,8 @@ def record_written(library, record, path, tags, flat, hierarchical):
     raw_meta = fields.record_keyword_fields(record.setdefault("raw_metadata", {}), flat, hierarchical)
     record["tags"] = list(tags)
     record["people"] = people_of(library, tags, path)
+    if date_taken:
+        fields.record_date_taken(raw_meta, date_taken, clip=images.is_clip(path))
     return raw_meta
 
 

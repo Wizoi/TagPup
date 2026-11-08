@@ -5,7 +5,7 @@ Pure: a header's bytes and layout in, bytes out; no file, nothing written. The o
 (xmp_packet, exif_block, iptc_block): each field goes where `fields.EDITED_AS` says, as the editor names it.
 
 `new_packet(old, values)` is a clip's: the packet its XMP box holds (None, a clip with none: xmp_packet.blank()) made to
-hold a keyword or caption save (fields.CLIP_FIELDS), grown when it must be (tagpup.files.clip_patch places it); every
+hold a save of its tags, title, name or Date Taken (fields.CLIP_FIELDS), grown when it must be (tagpup.files.clip_patch places it); every
 copy outside XMP is left stale (`clip_stale_of`), also when the XMP value is cleared. A clip's QuickTime Title
 (fields.CLIP_TITLE) is no XMP: clip_patch frees it or gives it back, not the packet.
 
@@ -70,7 +70,7 @@ def clip_stale_of(values):
 
 
 def new_packet(old, values):
-    """(the clip's new XMP packet, the fields of `values` left stale) of a keyword or caption save, `values` naming only
+    """(the clip's new XMP packet, the fields of `values` left stale) of a clip's save, `values` naming only
     fields.CLIP_FIELDS (another raises ValueError: the caller refuses it before planning). `old` is the packet the clip's
     one XMP box holds (bytes, at most xmp_packet.LIMIT), None for a clip with none, which is given xmp_packet.blank().
     The packet is `old` itself when it already holds the values (None, a clip with none and nothing to write). None when

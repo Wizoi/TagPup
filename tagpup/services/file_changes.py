@@ -305,8 +305,8 @@ def leave_out_clips(result, photo_paths, unreadable="fail", read=None):
     read from (fields.TAG_SOURCE_FIELDS). Any other clip is not written (images.CLIP_NOT_EDITED): it is the write's error, with that sentence -- or, `unreadable="skip"` (a
     write over every photo of a camera or a folder that leaves out what it cannot write), skipped with it -- read for
     nothing, planned and journaled for nothing, and never the error that stops a write at its first
-    (`stop_at_first_error`): the photos named beside it are written. A Save carrying a Date Taken reads it, so it is
-    refused whole. The one place of the refusal, asked by every writer of photo files before it reads one (write_fields,
+    (`stop_at_first_error`): the photos named beside it are written. A time shift reads a clip's EXIF dates, so it
+    leaves every clip out. The one place of the refusal, asked by every writer of photo files before it reads one (write_fields,
     which gives `read`; file_only.write_fields, which does not: a clip of a folder the library does not hold has no
     journal to settle a patch a crash cut short) and a Smart Rename (tagpup.services.photos.smart_rename) before it keeps
     a name, which leaves out a clip of a folder the library does not hold; a save of a clip is refused before its rename."""

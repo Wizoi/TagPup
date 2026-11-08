@@ -256,7 +256,7 @@ def save_photo(library, photo_path, title, tags, date_taken, exiftool_path, rena
     files_only = bool(loose)
     wanted = fields.title_fields(title or "")
     if date_taken:
-        wanted.update(fields.date_taken_fields(date_taken))
+        wanted.update(fields.date_taken_fields(date_taken, clip=images.is_clip(photo_path)))
     photo_path = paths.stored(photo_path)
     # A clip this save may not write is refused with its own sentence before anything is compared (#2584); one it may
     # write is compared by its title as the page shows it, its QuickTime Title among the fields read (BASE_READ).
@@ -291,7 +291,7 @@ def save_photo(library, photo_path, title, tags, date_taken, exiftool_path, rena
         tags = [t if t in held else vocabulary.normalize(t) for t in tags]
         flat, hierarchical = fields.expand_tag_fields(tags)
         after = dict(fields.keyword_fields(flat, hierarchical))
-        after.update(_title_written(photo_path, now, wanted))
+        after.update(fields.held_dates(_title_written(photo_path, now, wanted), now))
         after.update(_caption_moved(photo_path, now))
         plan = lambda _path, _held: file_changes.Plan(after=after)   # noqa: E731
         if files_only:

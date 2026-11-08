@@ -1088,9 +1088,7 @@ def photo_save_metadata():
                    else [record for _held, record in folders.of(library).entries_for(photo_path)])
         for record in records:
             raw_meta = photo_actions.record_written(
-                library, record, new_path, tags, result.details["flat"], result.details["hierarchical"])
-            if date_taken:
-                fields.record_date_taken(raw_meta, date_taken)
+                library, record, new_path, tags, result.details["flat"], result.details["hierarchical"], date_taken)
             record["tags"] = vocabulary.extract_tags(raw_meta)
             record["captions"] = [title] if title else []
             record["title"] = title
