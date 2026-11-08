@@ -6,8 +6,7 @@ Pure: a header's bytes and layout in, bytes out; no file, nothing written. The o
 
 `new_packet(old, values)` is a clip's: the packet its XMP box holds (None, a clip with none: xmp_packet.blank()) made to
 hold a keyword or caption save (fields.CLIP_FIELDS), grown when it must be (tagpup.files.clip_patch places it); every
-copy outside XMP is left stale (`clip_stale_of`), also when the XMP value is cleared. The last keyword of a clip whose
-keywords are in QuickTime's Subject is kept by the plan, which read it (file_changes.KEPT_IN_QUICKTIME).
+copy outside XMP is left stale (`clip_stale_of`), also when the XMP value is cleared.
 
 `new_header(layout, header, values)` is (the header with only its edited segments' bodies changed, the fields left
 stale), or None when the write is not a patch -- a field the own writer does not write, a value it cannot spell, a

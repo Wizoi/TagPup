@@ -218,6 +218,28 @@ class AClipInTheLibrary(ALibraryHoldingAClip):
         self.assertEqual(200, reply.status_code, reply.get_json())
         self.assertEqual((["Trips/Pier"], ["Trips/Pier"]), self.read_now(self.clip_path), "its XMP holds the tag saved alone")
         self.assertEqual(["Trips/Pier"], self.tags_of(clip))
+        reply = self.post("photos/bulk-tags", {"paths": [self.clip_path], "remove_tags": ["Trips/Pier"]})
+        self.assertEqual(200, reply.status_code, reply.get_json())
+        self.assertEqual(([], []), self.read_now(self.clip_path), "its last tag comes off, and nothing is read back")
+        self.assertEqual([], self.tags_of(clip))
+        self.assertEqual(["done", "done"], self.change_states(clip))
+
+    def test_a_tag_save_of_a_clip_whose_description_shows_as_its_title_writes_its_tags_and_title_alone(self):
+        # A photo's save clears the Description it showed as its title (tagging._caption_moved); a clip's caption is not
+        # written (fields.CLIP_WRITES), so its save asks none and is not refused at its write for it (#2663).
+        described = patched.packet(()).replace(
+            b"<dc:subject><rdf:Bag></rdf:Bag></dc:subject>",
+            b"<dc:description><rdf:Alt><rdf:li xml:lang='x-default'>Jetty at dusk</rdf:li></rdf:Alt></dc:description>")
+        with open(self.clip_path, "ab") as handle:
+            handle.write(patched.xmp_box(described))
+        clip, = self.index(self.clip_path)
+        reply = self.post("photo/save-metadata", {"path": self.clip_path, "tags": ["Trips/Pier"], "title": "Jetty at dusk"})
+        self.assertEqual(200, reply.status_code, reply.get_json())
+        self.assertEqual((["Trips/Pier"], ["Trips/Pier"]), self.read_now(self.clip_path))
+        record = metadata.MetadataExtractor(EXIFTOOL).batch_read([self.clip_path])[0]["raw_metadata"]
+        self.assertEqual(("Jetty at dusk", "Jetty at dusk"), (record.get("XMP:Title"), record.get("XMP:Description")),
+                         "the title saved, the Description left as it was")
+        self.assertEqual(["done"], self.change_states(clip))
 
     def test_a_row_the_reader_of_before_made_of_such_a_clip_is_re_derived_with_no_tags_and_its_file_left(self):
         held = with_a_quicktime_subject_that_is_not_text(self.clip_path)

@@ -294,24 +294,11 @@ PRESENT, GONE, AWAY = "present", "gone", "away"
 AWAY_WHY = "its folder could not be reached just now (a network share that did not answer), so nothing was written to it"
 
 
-#: Why the last keyword is not taken off a clip whose keywords are held in QuickTime's Subject (14 live clips, counted
-#: 2026-11-05; owner, 2026-11-05): with none left in its XMP, the index reads them from QuickTime again.
-KEPT_IN_QUICKTIME = ("its keywords are also held in the clip's QuickTime Subject, which TagPup does not write: with none "
-                     "left in its XMP they would be read back from there, so the last one stays; nothing was written")
-
-
-def _takes_off_every_keyword(values):
-    """Does a write of `values` leave a clip's XMP holding no keyword (KEPT_IN_QUICKTIME's case)?"""
-    return "XMP:Subject" in values and not fields.field_values(values["XMP:Subject"])
-
-
 def leave_out_clips(result, photo_paths, unreadable="fail", read=None):
     """The paths of `photo_paths` that are not clips (images.is_clip), in order, and the clips a journaled write of
     `read`, the fields it reads of each file, may patch: one reading only the fields of what a clip's write may change
     (field_values.writes: its tags and title, while writing clips is on; DECISIONS 2026-11-05, M7) and those its tags are
-    read from, its QuickTime keywords (fields.CLIP_KEYWORDS) among them, from which the plan keeps its last keyword
-    (KEPT_IN_QUICKTIME). Any other clip
-    is not written (images.CLIP_NOT_EDITED): it is the write's error, with that sentence -- or, `unreadable="skip"` (a
+    read from (fields.TAG_SOURCE_FIELDS). Any other clip is not written (images.CLIP_NOT_EDITED): it is the write's error, with that sentence -- or, `unreadable="skip"` (a
     write over every photo of a camera or a folder that leaves out what it cannot write), skipped with it -- read for
     nothing, planned and journaled for nothing, and never the error that stops a write at its first
     (`stop_at_first_error`): the photos named beside it are written. A Save carrying a Date Taken reads it, so it is
@@ -331,8 +318,7 @@ def leave_out_clips(result, photo_paths, unreadable="fail", read=None):
 def _clip_admitted(path, read):
     """May a journaled write reading `read` patch the clip at `path` (leave_out_clips)?"""
     named = fields.fields_of(field_values.writes(path))
-    return (bool(named) and read is not None and fields.CLIP_KEYWORDS in read
-            and set(read) <= named | frozenset(fields.TAG_SOURCE_FIELDS))
+    return bool(named) and read is not None and set(read) <= named | frozenset(fields.TAG_SOURCE_FIELDS)
 
 
 #: What a forward write's file found holding its after since the plan comes to (_held_or_conflict's `held_out`): out of
@@ -536,15 +522,6 @@ def _write_fields(et, library, operation, exiftool_path, photo_paths, read, plan
             continue
         after = {field: fields.field_values(value) for field, value in plan.after.items()}
         before = {field: now.get(field, []) for field in after}
-        if (images.is_clip(path) and _takes_off_every_keyword(after)
-                and fields.field_values(now.get(fields.CLIP_KEYWORDS))):
-            # A clip left with no keyword in its XMP while its QuickTime Subject (read, never written) holds one: its tags
-            # would be read from there again (the last tag taken off one of the 14 live clips holding them only there).
-            # The one place of the rule: every write that reaches a clip read fields.CLIP_KEYWORDS (leave_out_clips), and
-            # an undo never refuses on it (#2554). Asked before _holds_already: a clip whose XMP is empty already would be
-            # called held, and the tag-tree edit say nothing of why.
-            result.fail(path, KEPT_IN_QUICKTIME)
-            continue
         if _holds_already(path, before, after) and not (alongside is not None and alongside.wants(path)):
             written[path] = plan.detail
             followed.append((path, now))

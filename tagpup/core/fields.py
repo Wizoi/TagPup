@@ -123,15 +123,9 @@ def on_camera(raw_metadata, camera):
     return camera == ALL_CAMERAS or camera_of(raw_metadata) == camera
 
 
-#: Where a clip may hold keywords TagPup reads and never writes: its QuickTime Subject, a Microsoft Xtra atom (14 live
-#: .mp4 clips, ExifTool's family-1 group 'Microsoft', counted 2026-11-05). Read as XMP's copy when XMP holds none
-#: (vocabulary.KEYWORD_COPIES); its last keyword is never taken off XMP (file_changes.KEPT_IN_QUICKTIME).
-CLIP_KEYWORDS = "QuickTime:Subject"
-
-#: The fields a photo's tags are read from: exactly what vocabulary.extract_tags
-#: reads, so tags read here are the tags a folder scan would have found -- a clip's QuickTime Subject too
-#: (CLIP_KEYWORDS), so a keyword write of a clip plans from the tags it holds there.
-TAG_SOURCE_FIELDS = ("IPTC:Keywords", "XMP:Subject", "XMP:HierarchicalSubject", CLIP_KEYWORDS)
+#: The fields a photo's tags are read from: exactly what vocabulary.extract_tags reads, so tags read here are the tags a
+#: folder scan would have found. A clip's too: its QuickTime Subject is never a keyword (vocabulary.KEYWORD_COPIES).
+TAG_SOURCE_FIELDS = ("IPTC:Keywords", "XMP:Subject", "XMP:HierarchicalSubject")
 
 #: Where a clip may hold a title TagPup reads and never writes: its QuickTime Title (2,017 photo_index clips hold their
 #: title there alone, one more there and in XMP:Title alike; no photo of the three libraries holds a QuickTime field;

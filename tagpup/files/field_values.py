@@ -358,9 +358,7 @@ def _clip_written(photo_path, values, saving):
     patch a crash cut short), or one naming a field outside fields.CLIP_FIELDS (images.CLIP_NOT_EDITED); for a clip the
     patch cannot place (images.CLIP_NOT_PATCHED); a clip open in another program (in_place's sentence). Raises Unreadable
     when it could not be read before a byte was written (NotAnswered: its share did not answer); a write that failed
-    after its record was saved raises as it failed, the file settled by its bytes. ExifTool is not asked: the last
-    keyword of a clip holding its keywords in QuickTime too is kept by the plan, which read them
-    (file_changes.KEPT_IN_QUICKTIME)."""
+    after its record was saved raises as it failed, the file settled by its bytes. ExifTool is not asked."""
     if saving is None or clip_refused(photo_path, values):
         raise Refused(images.CLIP_NOT_EDITED)
     saved = []
