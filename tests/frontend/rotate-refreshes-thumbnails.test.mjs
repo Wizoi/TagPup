@@ -8,11 +8,11 @@
  */
 import { test, describe, afterEach } from "node:test";
 import assert from "node:assert/strict";
-import { loadApp, FakeServer, closeAllApps, openFolder } from "./harness.mjs";
+import { loadApp, FakeServer, closeAllApps, openFolder, PHOTO_WRITES } from "./harness.mjs";
 
 const PHOTOS = [
-  { path: "D:\\p\\a.jpg", filename: "a.jpg", tags: [], people: [], captions: [], title: "", mtime: 1000 },
-  { path: "D:\\p\\b.jpg", filename: "b.jpg", tags: [], people: [], captions: [], title: "", mtime: 1000 },
+  { path: "D:\\p\\a.jpg", filename: "a.jpg", tags: [], people: [], captions: [], title: "", writes: PHOTO_WRITES, mtime: 1000 },
+  { path: "D:\\p\\b.jpg", filename: "b.jpg", tags: [], people: [], captions: [], title: "", writes: PHOTO_WRITES, mtime: 1000 },
 ];
 
 describe("a rotate refreshes every image of the photo", () => {

@@ -8,14 +8,14 @@
 import { test, afterEach } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { loadApp, FakeServer, closeAllApps, openFolder, click } from "./harness.mjs";
+import { loadApp, FakeServer, closeAllApps, openFolder, click, PHOTO_WRITES } from "./harness.mjs";
 
-const BASE = { tags: [], people: [], captions: [], title: "", camera: "", lens: "" };
+const BASE = { tags: [], people: [], captions: [], title: "", writes: PHOTO_WRITES, camera: "", lens: "" };
 const BOTH = { ...BASE, path: "D:\\Pictures\\Run\\a.jpg", filename: "a.jpg", camera: "Tidewater TX R6m2", lens: "TX24-70mm f/2.8L II USM" };
 const CAMERA = { ...BASE, path: "D:\\Pictures\\Run\\b.jpg", filename: "b.jpg", camera: "Lanternfly Pixel 8 Pro" };
 const LENS = { ...BASE, path: "D:\\Pictures\\Run\\c.jpg", filename: "c.jpg", lens: "Objectif Élan 35mm F1.4" };
 const SCAN = { ...BASE, path: "D:\\Pictures\\Run\\d.jpg", filename: "d.jpg" };
-const OLD = { path: "D:\\Pictures\\Run\\e.jpg", filename: "e.jpg", tags: [], people: [], captions: [], title: "" };
+const OLD = { path: "D:\\Pictures\\Run\\e.jpg", filename: "e.jpg", tags: [], people: [], captions: [], title: "", writes: PHOTO_WRITES };
 
 function server() {
   return new FakeServer()
@@ -62,7 +62,7 @@ test("Shift Date Taken's list of cameras is by the record's camera, the name Ima
   const named = (filename, camera) => ({ ...BASE, path: "D:\\Pictures\\Shift\\" + filename, filename, camera });
   const fake = new FakeServer()
     .on("/api/folder/scan", [named("a.jpg", "Google Pixel 8 Pro"), named("b.jpg", "Pixel 8 Pro"), named("c.jpg", "Google Pixel 8 Pro"),
-                             named("d.jpg", ""), { path: "D:\\Pictures\\Shift\\e.jpg", filename: "e.jpg", tags: [], people: [], captions: [], title: "" }])
+                             named("d.jpg", ""), { path: "D:\\Pictures\\Shift\\e.jpg", filename: "e.jpg", tags: [], people: [], captions: [], title: "", writes: PHOTO_WRITES }])
     .on("/api/taxonomy/tree", [])
     .on("/api/people", [])
     .on("/api/tags", [])

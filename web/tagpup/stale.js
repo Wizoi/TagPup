@@ -10,13 +10,15 @@
 //    shows is the file's: the badge clears on the card. The library's row is sync's to bring up to date; a view
 //    refreshed before it has will say "changed" again, which is true.
 //
-// A VIDEO (media.js isVideo) is held the same way: it is played, and its write controls are inert with a sentence
-// saying why. The server refuses any write to a clip (file_changes.leave_out_clips); this is the page saying so first.
+// Any other photo offers the edits its record's `writes` names (tagpup.files.field_values.writes, the one statement of
+// what a save may change): each control's `data-writes` names the field it changes, and a control whose field is not
+// named is inert, with a sentence naming what is not edited. A photo's record names all four; a clip's its tags and
+// title (fields.CLIP_WRITES), so its date and turn are inert, and so are its rename and delete, which sit with the turn
+// as whole-file changes the server refuses of a clip (file_changes.leave_out_clips, recycle_bin).
 import { buildElement } from './common/dom.js';
 import { state } from './state.js';
 import { mainImage, photoMissingNote } from './elements.js';
 import { libraryName } from './looking.js';
-import { isVideo } from './media.js';
 
 /** The badge's words for a card's `stale`, or ''. */
 export function staleText(stale) {
@@ -41,25 +43,38 @@ export function markStale(card, photo) {
     }));
 }
 
-const VIDEO_HELD = 'This is a video: it is played as the library holds it. Its date, title, people and keywords '
-    + 'are not edited here, and it is not turned.';
+// What the sentence calls each field a control's `data-writes` names, in the order it names them.
+const FIELD_WORDS = { date: 'date', rotate: 'turn', title: 'title', tags: 'people and keywords' };
+
+/** The sentence of a photo whose record's `writes` leaves out `held` (fields of FIELD_WORDS), or '' when none is. */
+function heldSentence(held) {
+    const words = Object.keys(FIELD_WORDS).filter((field) => held.has(field)).map((field) => FIELD_WORDS[field]);
+    if (!words.length) return '';
+    const listed = words.length === 1 ? words[0] : `${words.slice(0, -1).join(', ')} and ${words[words.length - 1]}`;
+    const whole = held.has('rotate') ? ', and it is not renamed or deleted here' : '';
+    return `This is a video: its ${listed} ${words.length === 1 ? 'is' : 'are'} not edited here${whole}.`;
+}
 
 /**
- * The details panel shows `photo`: a missing one, or a video, gets the notice and inert write controls; any other
- * gets them back. Called for every photo shown, so the state of one photo is never carried to the next.
+ * The details panel shows `photo`: a missing one gets the notice and every write control inert; any other has live
+ * exactly the controls whose field its `writes` names, and a sentence naming the others. Called for every photo shown,
+ * so the state of one photo is never carried to the next. No photo (none found) offers no edit.
  */
 export function applyPhotoStale(photo) {
     const missing = Boolean(photo && photo.missing);
-    const held = missing || isVideo(photo);
-    photoMissingNote.classList.toggle('hidden', !held);
-    photoMissingNote.textContent = missing
+    const writes = photo && !missing ? photo.writes : [];
+    const controls = [...document.querySelectorAll('[data-writes]')];
+    const held = new Set(controls.map((el) => el.dataset.writes).filter((field) => !writes.includes(field)));
+    const sentence = missing
         ? `This photo’s file is not on disk. ${libraryName() || 'The library'} still holds it, and it is shown as the library holds it. `
             + 'It cannot be edited until the file is back or the photo is removed from the library.'
-        : (held ? VIDEO_HELD : '');
+        : (photo ? heldSentence(held) : '');
+    photoMissingNote.classList.toggle('hidden', !sentence);
+    photoMissingNote.textContent = sentence;
     // No picture to show, and no broken-image icon in its place.
     mainImage.classList.toggle('hidden', missing);
-    for (const el of document.querySelectorAll('[data-writes]')) {
-        if (held) {
+    for (const el of controls) {
+        if (held.has(el.dataset.writes)) {
             el.setAttribute('inert', '');
             el.setAttribute('aria-disabled', 'true');
         } else {

@@ -4,13 +4,14 @@
  * no src, the stream let go -- when another photo is shown, on Back and on Escape. How it fails: rapid stepping between
  * a video and photos, the same video shown again (it plays on), a record with no `media` (a photo), and the video's
  * error event: a format the browser cannot play, a file gone, a share away, and an error of a video already left.
- * Switching library is another page (web/common/library.js): nothing of the video outlives it. A video is not edited:
- * while one is shown, Rotate, Date Taken and every control that writes are inert with a sentence saying why, and a
- * photo stepped to after it has them back (stale.js applyPhotoStale). Fictional names only.
+ * Switching library is another page (web/common/library.js): nothing of the video outlives it. A video offers the
+ * edits its record's `writes` names (its title, people and keywords): Rotate, Date Taken, rename and delete are inert
+ * with a sentence naming them, a photo stepped to after it has every control back, and a missing one has none
+ * (stale.js applyPhotoStale). Fictional names only.
  */
 import { test, describe, afterEach } from "node:test";
 import assert from "node:assert/strict";
-import { closeAllApps, click } from "./harness.mjs";
+import { closeAllApps, click, CLIP_WRITES } from "./harness.mjs";
 import { loadViewPage, pageErrors, recordOf } from "./view-page.mjs";
 
 afterEach(() => {
@@ -30,7 +31,9 @@ const status = (ctx) => el(ctx, "status-text").textContent;
  * A view of eight photos, the third a video; the player's pause() and load() counted (jsdom has neither), and each src
  * given it (a browser starts the video again on any, the same address too).
  */
-async function viewWithAVideo(t, { photoExtra = (id) => (id === VIDEO ? { media: "video", mtime: MTIME } : {}) } = {}) {
+async function viewWithAVideo(t, {
+  photoExtra = (id) => (id === VIDEO ? { media: "video", mtime: MTIME, writes: CLIP_WRITES } : {}),
+} = {}) {
   const played = { pause: 0, load: 0, src: 0 };
   const ctx = await loadViewPage(t, {
     search: "?view=all",
@@ -139,51 +142,59 @@ describe("leaving a video while it plays", () => {
   });
 });
 
-describe("a video is not edited", () => {
+describe("a video's title and keywords are edited, nothing else of it", () => {
   const writers = (ctx) => [...ctx.document.querySelectorAll("[data-writes]")];
   const inert = (ctx) => writers(ctx).filter((node) => node.hasAttribute("inert"));
   const note = (ctx) => el(ctx, "photo-missing-note");
+  const held = (ctx, id) => Boolean(el(ctx, id).closest("[inert]"));
+  const LIVE = ["input-photo-title", "btn-save-title", "btn-edit-people", "input-add-person", "btn-add-person",
+    "btn-edit-tags", "input-add-tag", "btn-add-tag"];
+  const HELD = ["btn-edit-date-taken", "btn-rotate-left", "btn-rotate-right", "btn-delete-photo", "input-smart-rename-one"];
 
-  function assertHeld(ctx, what) {
-    assert.ok(writers(ctx).length >= 5, `${what}: the page has its write controls`);
-    assert.equal(inert(ctx).length, writers(ctx).length, `${what}: every control that writes is inert`);
-    assert.ok(el(ctx, "btn-edit-date-taken").hasAttribute("inert"), `${what}: Date Taken`);
-    assert.ok(ctx.document.querySelector(".image-rotation-controls").hasAttribute("inert"), `${what}: Rotate`);
+  function assertClip(ctx, what) {
+    for (const id of LIVE) assert.equal(held(ctx, id), false, `${what}: ${id} is live`);
+    for (const id of HELD) assert.equal(held(ctx, id), true, `${what}: ${id} is inert`);
+    assert.ok(inert(ctx).every((node) => node.getAttribute("aria-disabled") === "true"), `${what}: and says so`);
     assert.equal(note(ctx).classList.contains("hidden"), false, `${what}: the sentence is shown`);
-    assert.match(note(ctx).textContent, /This is a video/);
+    assert.equal(note(ctx).textContent, "This is a video: its date and turn are not edited here, and it is not renamed or deleted here.",
+      `${what}: it names only what is not edited`);
   }
 
   function assertEditable(ctx, what) {
-    assert.deepEqual(inert(ctx), [], `${what}: every control that writes is back`);
+    assert.ok(writers(ctx).length >= 6, `${what}: the page has its write controls`);
+    assert.deepEqual(inert(ctx), [], `${what}: every control that writes is live`);
+    assert.ok(writers(ctx).every((node) => !node.hasAttribute("aria-disabled")), `${what}: none says it is not`);
     assert.equal(note(ctx).classList.contains("hidden"), true, `${what}: no sentence`);
   }
 
-  test("opening a video makes Rotate, Date Taken and the save controls inert, and says why", async (t) => {
+  test("a clip opened: its title and keywords live, its date, turn, rename and delete inert, and the sentence names those", async (t) => {
     const ctx = await viewWithAVideo(t);
     await open(ctx, VIDEO);
-    assertHeld(ctx, "the video");
+    assertClip(ctx, "the clip");
   });
 
-  test("rapid stepping between a video and photos leaves each with its own controls", async (t) => {
+  test("rapid stepping between a clip and photos leaves each with its own controls", async (t) => {
     const ctx = await viewWithAVideo(t);
     await open(ctx, VIDEO - 1);
     assertEditable(ctx, "a photo");
     for (const key of ["ArrowRight", "ArrowRight", "ArrowLeft"]) press(ctx, key);
     await ctx.settle(200);
     assert.equal(ctx.state.library.activeId, VIDEO);
-    assertHeld(ctx, "ended on the video");
+    assertClip(ctx, "ended on the clip");
     press(ctx, "ArrowRight");
     await ctx.settle(120);
     assertEditable(ctx, "stepped on to a photo");
   });
 
-  test("a video whose file is gone says so, not that it is a video", async (t) => {
+  test("a clip whose file is gone has every control inert, and says the file is gone", async (t) => {
     const ctx = await viewWithAVideo(t, {
-      photoExtra: (id) => (id === VIDEO ? { media: "video", mtime: MTIME, missing: true } : {}),
+      photoExtra: (id) => (id === VIDEO ? { media: "video", mtime: MTIME, writes: CLIP_WRITES, missing: true } : {}),
     });
     await open(ctx, VIDEO);
+    assert.ok(writers(ctx).length >= 6);
     assert.equal(inert(ctx).length, writers(ctx).length);
     assert.match(note(ctx).textContent, /not on disk/);
+    assert.doesNotMatch(note(ctx).textContent, /video/);
   });
 });
 

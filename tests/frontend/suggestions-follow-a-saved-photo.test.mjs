@@ -6,7 +6,7 @@
  */
 import { test, describe, afterEach } from "node:test";
 import assert from "node:assert/strict";
-import { loadApp, FakeServer, flush, click, openFolder, closeAllApps } from "./harness.mjs";
+import { loadApp, FakeServer, flush, click, openFolder, closeAllApps, PHOTO_WRITES } from "./harness.mjs";
 
 afterEach(() => closeAllApps());
 
@@ -14,7 +14,7 @@ const FOLDER = "D:\\Library\\2020";
 const A = `${FOLDER}\\a.jpg`;
 const B = `${FOLDER}\\b.jpg`;
 const RENAMED = `${FOLDER}\\Harbour - 01.jpg`;
-const record = (path) => ({ path, filename: path.split("\\").pop(), tags: [], people: [], captions: [], title: "", mtime: 1, size: 1 });
+const record = (path) => ({ path, filename: path.split("\\").pop(), tags: [], people: [], captions: [], title: "", writes: PHOTO_WRITES, mtime: 1, size: 1 });
 const OFFER = { tags: [{ tag: "Harbour", score: 0.9 }], people: [], title: "" };
 
 async function load(t, save) {
