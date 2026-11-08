@@ -86,16 +86,13 @@ export function deleteQuestion(where, count) {
         + `The other ${rest.toLocaleString()} ${rest === 1 ? 'goes' : 'go'} to the Recycle Bin.${rows}${job}`;
 }
 
-/** How many file names the warning of a delete for good lists; the rest are counted. */
-const MOST_FOR_GOOD_NAMED = 5;
-
 /**
  * The warning before files are deleted for good (DECISIONS 2026-11-08): `names` the file names the server gave (the delete-check's
- * `for_good.names`, or the one file of the panel's delete), `count` how many in all. The owner's OK is the only way the server
- * deletes one for good; Cancel deletes nothing.
+ * `for_good.names`, as many as it names: selection.MOST_FOR_GOOD_NAMED; or the one file of the panel's delete), `count` how many
+ * in all, the rest counted. The owner's OK is the only way the server deletes one for good; Cancel deletes nothing.
  */
 export function forGoodQuestion(names, count) {
-    const shown = (names || []).slice(0, MOST_FOR_GOOD_NAMED);
+    const shown = names || [];
     const total = Math.max(count || 0, shown.length);
     const more = total - shown.length;
     const one = total === 1;

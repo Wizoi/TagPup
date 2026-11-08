@@ -367,6 +367,16 @@ describe("#674: Delete of a view's selection", () => {
     assert.equal(calls(ctx, "/api/library/bulk-edit").length, 0, "nothing started: nothing deleted, to the Bin or for good");
   });
 
+  test("the warning names every file the server named, and counts the rest: how many to name is the server's alone", async (t) => {
+    const names = ["Clip_A.mp4", "Clip_B.mp4", "Clip_C.mp4", "Clip_D.mp4", "Clip_E.mp4", "Clip_F.mp4"];
+    const ctx = await view(t, 40, { where: FOR_GOOD(8, names) });
+    for (const id of [2, 5, 9]) pick(ctx, id);
+    ctx.answer = (text) => !/deleted for good/.test(text);
+    await remove(ctx);
+    for (const name of names) assert.ok(ctx.questions[1].includes(`  ${name}`), `${name} is named`);
+    assert.match(ctx.questions[1], /\n  and 2 more\n/);
+  });
+
   test("none for good: one question, and the start does not say for good", async (t) => {
     const ctx = await view(t, 40, { where: FOR_GOOD(0, []) });
     for (const id of [2, 5, 9]) pick(ctx, id);
