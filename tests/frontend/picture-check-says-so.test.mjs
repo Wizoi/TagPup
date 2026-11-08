@@ -6,7 +6,7 @@
 import fs from "node:fs";
 import { test, describe, afterEach } from "node:test";
 import assert from "node:assert/strict";
-import { loadApp, FakeServer, closeAllApps, openFolder, click } from "./harness.mjs";
+import { loadApp, FakeServer, closeAllApps, openFolder, click, PHOTO_WRITES } from "./harness.mjs";
 
 const served = JSON.parse(fs.readFileSync(new URL("./fixtures/save_replies.json", import.meta.url), "utf8"));
 const A = "D:\\p\\a.jpg";
@@ -15,7 +15,7 @@ const SAID = "The first try would have changed the photo's picture, so it was th
 
 async function openA(t, replies) {
   const server = new FakeServer()
-    .on("/api/folder/scan", () => [{ path: A, filename: "a.jpg", tags: [], people: [], captions: [], title: "", mtime: 1 }])
+    .on("/api/folder/scan", () => [{ path: A, filename: "a.jpg", tags: [], people: [], captions: [], title: "", writes: PHOTO_WRITES, mtime: 1 }])
     .on("/api/taxonomy/tree", [])
     .on("/api/people", [])
     .on("/api/tags", [])

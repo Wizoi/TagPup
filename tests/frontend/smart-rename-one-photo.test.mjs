@@ -8,7 +8,7 @@
  */
 import { test, describe, afterEach } from "node:test";
 import assert from "node:assert/strict";
-import { loadApp, FakeServer, flush, click, openFolder, closeAllApps } from "./harness.mjs";
+import { loadApp, FakeServer, flush, click, openFolder, closeAllApps, PHOTO_WRITES } from "./harness.mjs";
 
 afterEach(() => closeAllApps());
 
@@ -16,7 +16,7 @@ const FOLDER = "D:\\Library\\2020";
 const A = `${FOLDER}\\Regatta - 07 - Start.jpg`;
 const B = `${FOLDER}\\Lighthouse - 2.jpg`;
 const RENAMED = `${FOLDER}\\Harbour Day - 07 - Start.jpg`;
-const record = (path) => ({ path, filename: path.split("\\").pop(), tags: [], people: [], captions: [], title: "", mtime: 1, size: 1 });
+const record = (path) => ({ path, filename: path.split("\\").pop(), tags: [], people: [], captions: [], title: "", writes: PHOTO_WRITES, mtime: 1, size: 1 });
 const OFFER = { tags: [{ tag: "Harbour", score: 0.9 }], people: [], title: "" };
 const GROUPING = { [A]: "Regatta", [B]: "Lighthouse" };
 const RENAME = /\/api\/photo\/smart-rename$/;

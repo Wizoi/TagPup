@@ -6,12 +6,12 @@
  */
 import { test, describe, afterEach } from "node:test";
 import assert from "node:assert/strict";
-import { loadApp, FakeServer, closeAllApps, openFolder, click } from "./harness.mjs";
+import { loadApp, FakeServer, closeAllApps, openFolder, click, PHOTO_WRITES } from "./harness.mjs";
 
 const PHOTOS = [
-  { path: "D:\\p\\beach_1.jpg", filename: "beach_1.jpg", tags: [], people: [], captions: [], title: "" },
-  { path: "D:\\p\\city_1.jpg", filename: "city_1.jpg", tags: [], people: [], captions: [], title: "" },
-  { path: "D:\\p\\beach_2.jpg", filename: "beach_2.jpg", tags: [], people: [], captions: [], title: "" },
+  { path: "D:\\p\\beach_1.jpg", filename: "beach_1.jpg", tags: [], people: [], captions: [], title: "", writes: PHOTO_WRITES },
+  { path: "D:\\p\\city_1.jpg", filename: "city_1.jpg", tags: [], people: [], captions: [], title: "", writes: PHOTO_WRITES },
+  { path: "D:\\p\\beach_2.jpg", filename: "beach_2.jpg", tags: [], people: [], captions: [], title: "", writes: PHOTO_WRITES },
 ];
 
 function server() {

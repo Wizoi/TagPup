@@ -10,12 +10,12 @@
  */
 import { test, describe, afterEach } from "node:test";
 import assert from "node:assert/strict";
-import { loadApp, FakeServer, closeAllApps, openFolder, pageExports } from "./harness.mjs";
+import { loadApp, FakeServer, closeAllApps, openFolder, pageExports, PHOTO_WRITES, CLIP_WRITES } from "./harness.mjs";
 
 const FOLDER = "D:\\Pictures\\Lighthouse";
 const record = (name, extra = {}) => ({
   path: `${FOLDER}\\${name}`, filename: name, tags: [], people: [], captions: [], title: "", mtime: 1000,
-  media: "photo", ...extra,
+  media: "photo", writes: extra.media === "video" ? CLIP_WRITES : PHOTO_WRITES, ...extra,
 });
 const SCAN = [
   record("dawn.jpg"),

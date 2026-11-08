@@ -573,6 +573,10 @@ export function click(window, element, { shiftKey = false, ctrlKey = false, meta
 }
 
 /** A photo record in the shape /api/folder/scan returns. */
+/** A record's `writes` as tagpup.services.photos.page_record gives it (field_values.writes): a photo's, and a clip's. */
+export const PHOTO_WRITES = ["tags", "title", "date", "rotate"];
+export const CLIP_WRITES = ["tags", "title"];
+
 export function photoRecord(overrides = {}) {
   const filename = overrides.filename || "IMG_0001.jpg";
   return {
@@ -585,6 +589,7 @@ export function photoRecord(overrides = {}) {
     size: 1024,
     year: "2020",
     raw_metadata: {},
+    writes: PHOTO_WRITES,
     ...overrides,
   };
 }

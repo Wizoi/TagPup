@@ -18,7 +18,7 @@
  */
 import { test, describe, afterEach } from "node:test";
 import assert from "node:assert/strict";
-import { loadApp, FakeServer, closeAllApps, openFolder, click, peopleRecordsOf, PEOPLE_ROUTE } from "./harness.mjs";
+import { loadApp, FakeServer, closeAllApps, openFolder, click, peopleRecordsOf, PEOPLE_ROUTE, PHOTO_WRITES } from "./harness.mjs";
 
 const TAXONOMY = [
   { id: 1, tag: "People", name: "People", parent_id: null, has_face: 1 },
@@ -33,8 +33,8 @@ const B = "D:\\p\\b.jpg";
 
 function photos(aTags = []) {
   return [
-    { path: A, filename: "a.jpg", tags: [...aTags], people: [], captions: [], title: "" },
-    { path: B, filename: "b.jpg", tags: [], people: [], captions: [], title: "" },
+    { path: A, filename: "a.jpg", tags: [...aTags], people: [], captions: [], title: "", writes: PHOTO_WRITES },
+    { path: B, filename: "b.jpg", tags: [], people: [], captions: [], title: "", writes: PHOTO_WRITES },
   ];
 }
 

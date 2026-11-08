@@ -8,12 +8,12 @@
  */
 import { test, describe, afterEach } from "node:test";
 import assert from "node:assert/strict";
-import { loadApp, FakeServer, closeAllApps, openFolder, REAL, realLibrary, until } from "./harness.mjs";
+import { loadApp, FakeServer, closeAllApps, openFolder, REAL, realLibrary, until, PHOTO_WRITES } from "./harness.mjs";
 
 const PHOTOS = [
-  { path: "D:\\p\\a.jpg", filename: "a.jpg", tags: ["Beach"], people: [], captions: [], title: "" },
-  { path: "D:\\p\\b.jpg", filename: "b.jpg", tags: [], people: [], captions: [], title: "" },
-  { path: "D:\\p\\c.jpg", filename: "c.jpg", tags: [], people: [], captions: [], title: "" },
+  { path: "D:\\p\\a.jpg", filename: "a.jpg", tags: ["Beach"], people: [], captions: [], title: "", writes: PHOTO_WRITES },
+  { path: "D:\\p\\b.jpg", filename: "b.jpg", tags: [], people: [], captions: [], title: "", writes: PHOTO_WRITES },
+  { path: "D:\\p\\c.jpg", filename: "c.jpg", tags: [], people: [], captions: [], title: "", writes: PHOTO_WRITES },
 ];
 
 function server(photos = PHOTOS) {

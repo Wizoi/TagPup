@@ -7,14 +7,14 @@
  */
 import { test, describe, afterEach } from "node:test";
 import assert from "node:assert/strict";
-import { loadApp, FakeServer, closeAllApps, openFolder, click, pageExports } from "./harness.mjs";
+import { loadApp, FakeServer, closeAllApps, openFolder, click, pageExports, PHOTO_WRITES } from "./harness.mjs";
 
 const A = "D:\\p\\a.jpg";
 const B = "D:\\p\\b.jpg";
 
 const PHOTOS = () => [
-  { path: A, filename: "a.jpg", tags: [], people: [], captions: [], title: "" },
-  { path: B, filename: "b.jpg", tags: [], people: [], captions: [], title: "" },
+  { path: A, filename: "a.jpg", tags: [], people: [], captions: [], title: "", writes: PHOTO_WRITES },
+  { path: B, filename: "b.jpg", tags: [], people: [], captions: [], title: "", writes: PHOTO_WRITES },
 ];
 
 const settle = (window, ms = 40) => new Promise((r) => window.setTimeout(r, ms));

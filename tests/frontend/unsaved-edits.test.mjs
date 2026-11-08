@@ -14,12 +14,12 @@
  */
 import { test, describe, afterEach } from "node:test";
 import assert from "node:assert/strict";
-import { loadApp, FakeServer, closeAllApps, openFolder, click, peopleRecordsOf, PEOPLE_ROUTE } from "./harness.mjs";
+import { loadApp, FakeServer, closeAllApps, openFolder, click, peopleRecordsOf, PEOPLE_ROUTE, PHOTO_WRITES } from "./harness.mjs";
 
 const PHOTOS = [
-  { path: "D:\\p\\a.jpg", filename: "a.jpg", tags: ["People/Tamsin Ashgrove"], people: ["Tamsin Ashgrove"], captions: [], title: "" },
-  { path: "D:\\p\\b.jpg", filename: "b.jpg", tags: [], people: [], captions: [], title: "" },
-  { path: "D:\\p\\c.jpg", filename: "c.jpg", tags: [], people: [], captions: [], title: "" },
+  { path: "D:\\p\\a.jpg", filename: "a.jpg", tags: ["People/Tamsin Ashgrove"], people: ["Tamsin Ashgrove"], captions: [], title: "", writes: PHOTO_WRITES },
+  { path: "D:\\p\\b.jpg", filename: "b.jpg", tags: [], people: [], captions: [], title: "", writes: PHOTO_WRITES },
+  { path: "D:\\p\\c.jpg", filename: "c.jpg", tags: [], people: [], captions: [], title: "", writes: PHOTO_WRITES },
 ];
 
 // The tree of a library whose photo holds People/Tamsin Ashgrove: the indexer gives the keyword a node.
@@ -431,7 +431,7 @@ describe("changing dog park closes the folder", () => {
 describe("typing while a scan is still running", () => {
   // The scan asks before it starts, and nothing asked when it came back: what was
   // typed in between was overwritten by a refresh, or dropped by another folder.
-  const OTHER = [{ path: "D:\\q\\x.jpg", filename: "x.jpg", tags: [], people: [], captions: [], title: "" }];
+  const OTHER = [{ path: "D:\\q\\x.jpg", filename: "x.jpg", tags: [], people: [], captions: [], title: "", writes: PHOTO_WRITES }];
 
   /** A server whose next scan waits until released. */
   function heldServer() {
