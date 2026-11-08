@@ -763,13 +763,14 @@ def delete(library, photo_path, for_good=False):
     and nothing else happens: it has no row to forget (tagpup.services.file_only).
 
     Only an existing photo or clip FILE is deleted, in a held folder or not: a folder, a .txt, a
-    path that is not there or ends in a separator is refused, and nothing is moved (#520); so is a
-    clip over recycle_bin.MOST_CLIP_BYTES, with its size (DECISIONS 2026-11-08, A5). A file on
-    a network share, or a drive with no Recycle Bin, is never deleted for good (#694): it goes
+    path that is not there or ends in a separator is refused, and nothing is moved (#520). A clip over
+    recycle_bin.MOST_CLIP_BYTES is deleted for good, never copied, only with `for_good` (DECISIONS 2026-11-08, A5). Any other
+    file on a network share, or a drive with no Recycle Bin, is never deleted for good (#694): it goes
     THROUGH THIS PC (tagpup.files.recycle_bin.delete_file) -- copied under the Downloads folder's
     "TagPup deleted from shares", the copy checked, the copy to this PC's Recycle Bin, then the
     original -- and any step that fails leaves it, and its rows, where they are. A file its own drive's Bin would not
-    keep is deleted for good only with `for_good`, else refused untouched (file_only.send: details `not_kept`).
+    keep is deleted for good only with `for_good`, else refused untouched (file_only.send: details `not_kept`). The rows go
+    only once the file is.
 
     details: `removed`, the rows removed from each table (None for such a photo);
     `file_only` and `with_rows`, 1 for the way it was done; `through_this_pc`, `no_bin_reason`

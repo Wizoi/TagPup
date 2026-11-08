@@ -156,13 +156,15 @@ def where_deleted(library, selection):
     (token_of the photos: the start of the delete must carry it, and is refused when the selection no longer resolves to
     them, #691), "folders", "through_this_pc" (photos in folders with no Recycle Bin -- a network share, a mapped or SUBST drive,
     a removable one -- which are copied to this PC and the copies recycled there, #694), "reasons": [{"reason", "photos"}],
-    "copy_bytes" (what those copies take, by the index's sizes), "restores_to" (the folder the copies are put in, and so where
+    "copy_bytes" (what those copies take, by the index's sizes; a clip over recycle_bin.MOST_CLIP_BYTES makes none and is
+    counted in neither: it goes for good), "restores_to" (the folder the copies are put in, and so where
     Windows restores them: <Downloads>\\TagPup deleted from shares), "too_long" (how many of them would have a copy's path of
     260 characters or more, and are left, #704), "no_room" (None, or the sentence when they cannot be copied and kept here:
     Downloads synced to OneDrive, no room on its drive with 1 GB to spare, or this PC's Recycle Bin unable to keep them -- asked of
-    Windows now, #703, #706: nothing is to be asked then), "for_good": {"count", "names"} (the files on a drive whose Recycle
-    Bin would not keep them -- larger than it keeps, or a Bin set to delete at once, recycle_bin.keeps_up_to -- which are
-    deleted for good only when the start says `for_good`, its token then of that; the file names of the first
+    Windows now, #703, #706: nothing is to be asked then), "for_good": {"count", "names"} (the clips over
+    recycle_bin.MOST_CLIP_BYTES, on any drive, and the files on a drive whose Recycle Bin would not keep them -- larger than it
+    keeps, or a Bin set to delete at once, recycle_bin.keeps_up_to -- which are deleted for good only when the start says
+    `for_good`, its token then of that; the file names of the first
     MOST_FOR_GOOD_NAMED; the token covers every one of them)}; the reasons as recycle_bin says them ("on a network share").
     Asked once a folder, never once a photo (a Select all of photo_index is 2,672 folders, about 2 s); a UNC path and a mapped
     drive are told by their spelling and the drive's type, without reading the share. Refused, as `resolve` refuses it, over
@@ -177,8 +179,9 @@ def where_deleted(library, selection):
         for folder_id, (path, _name) in named.items():
             reason = recycle_bin.no_bin_reason(path)
             if reason:
-                total, biggest = sizes.get(folder_id) or (0, 0)
-                reasons[reason] += counted[folder_id]
+                total, biggest, clips_over = sizes.get(folder_id) or (0, 0, 0)
+                if counted[folder_id] > clips_over:
+                    reasons[reason] += counted[folder_id] - clips_over
                 copy_bytes += total
                 largest = max(largest, biggest)
                 binless.add(folder_id)
@@ -186,7 +189,8 @@ def where_deleted(library, selection):
     finally:
         conn.close()
     through = sum(reasons.values())
-    too_long = _too_long(library, resolved.ids, binless, named) if through else 0
+    copied = [photo_id for photo_id in resolved.ids if photo_id not in for_good]
+    too_long = _too_long(library, copied, binless, named) if through else 0
     names = sorted(paths.row_name(each) for each in stored)[:MOST_FOR_GOOD_NAMED]
     return {"total": len(resolved.ids), "token": token_of(resolved.ids, for_good), "folders": len(counted),
             "through_this_pc": through, "for_good": {"count": len(for_good), "names": names},
@@ -204,11 +208,12 @@ def _weighed(conn, photo_ids):
 
 
 def _for_good(conn, photo_ids, sizes, named, binless):
-    """({the ids of `photo_ids` on a drive whose Recycle Bin would not keep them -- larger than it keeps, or a Bin set to delete
-    at once, recycle_bin.keeps_up_to, by the index's sizes --}, the stored paths of the first MOST_FOR_GOOD_NAMED of each Bin's):
-    the files a Delete deletes for good once confirmed. A folder of `binless` goes through this PC instead; one whose Bin
-    Windows cannot tell of is left out (the delete of each of its files asks again, and refuses it untouched). Each drive's Bin
-    is asked once (recycle_bin.keeps_up_to_by_folder)."""
+    """({the ids of `photo_ids` a Delete deletes for good once confirmed: the clips over recycle_bin.MOST_CLIP_BYTES, on any
+    drive, and the files on a drive whose Recycle Bin would not keep them -- larger than it keeps, or a Bin set to delete at
+    once, recycle_bin.keeps_up_to --, by the index's sizes}, the stored paths of the first MOST_FOR_GOOD_NAMED of each kind and
+    Bin). A folder of `binless` goes through this PC instead of a Bin of its own; one whose Bin Windows cannot tell of is left
+    out of the second (the delete of each of its files asks again, and refuses it untouched). Each drive's Bin is asked once
+    (recycle_bin.keeps_up_to_by_folder)."""
     not_kept = collections.defaultdict(list)        # {what a Bin keeps: [folder ids with a file over it]}
     looked = {folder_id: path for folder_id, (path, _name) in named.items() if folder_id not in binless}
     keeps = recycle_bin.keeps_up_to_by_folder(looked.values())
@@ -216,9 +221,14 @@ def _for_good(conn, photo_ids, sizes, named, binless):
         kept = keeps[path]
         if kept is None:
             continue
-        if not recycle_bin.would_keep((sizes.get(folder_id) or (0, 0))[1], kept):
+        if not recycle_bin.would_keep((sizes.get(folder_id) or (0, 0, 0))[1], kept):
             not_kept[kept].append(folder_id)
     found, stored = set(), []
+    holding = [folder_id for folder_id, (_total, _largest, clips) in sizes.items() if clips]
+    if holding:
+        found, stored = store_folders.clips_over(conn, holding, recycle_bin.MOST_CLIP_BYTES, MOST_FOR_GOOD_NAMED, photo_ids,
+                                                 None, ())
+        found = set(found)
     for kept, folder_ids in not_kept.items():
         ids, first = store_folders.larger_than(conn, folder_ids, kept, recycle_bin.MOST_CLIP_BYTES, MOST_FOR_GOOD_NAMED,
                                                photo_ids, None, ())

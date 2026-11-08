@@ -54,6 +54,18 @@ function megabytes(bytes) {
 }
 
 /**
+ * Why a file is deleted for good rather than moved to a Recycle Bin, as the first question says it (the second, forGoodQuestion,
+ * names the files). A clip over MOST_CLIP_BYTES (tagpup/files/recycle_bin.py, 2 GiB) is deleted for good on ANY drive: a copy of it
+ * through this PC is gigabytes over the share (DECISIONS 2026-11-02 item 7). `bigClip` is the page's test of that size.
+ */
+export const MOST_CLIP_BYTES = 2 * 1024 * 1024 * 1024;
+const GOOD_WHY = "a video over 2 GiB is too large for TagPup to copy to a Recycle Bin, and a file larger than its drive's Recycle Bin "
+    + 'keeps, or on a Recycle Bin set to delete files at once, is not kept by it';
+export function bigClip(size) {
+    return Number(size) > MOST_CLIP_BYTES;
+}
+
+/**
  * The question before a Delete: how many, where the files go -- the Recycle Bin, or, for photos in places with none (a network
  * share, a removable drive), through this PC (#694): copied to it, the copies to its Recycle Bin, then the originals deleted, and a
  * copy restored goes to the folder under Downloads, not back to the share -- how long, and that the rows go too.
@@ -66,9 +78,20 @@ export function deleteQuestion(where, count) {
     const takes = through ? `at least ${howLong(Math.max(seconds, 60))} (copies from a share take as long as the share does)` : howLong(seconds);
     const job = ` It takes ${takes}; TagPup is busy until it is done, and saving a photo elsewhere waits for the photos being deleted `
         + 'at that moment. It cannot be undone in TagPup.';
+    // Files deleted for good (the delete-check's `for_good`, as many as the server counts): not copied, not sent to any Recycle Bin,
+    // and said so here, before the second question names them (a start that did not confirm that deletes none of them).
+    const good = Math.min((where && where.for_good && where.for_good.count) || 0, count - through);
+    const goodWords = !good ? '' : good >= count
+        ? ` ${count === 1 ? 'It is' : 'They are'} deleted for good, not moved to a Recycle Bin and not copied to this PC (${GOOD_WHY}); `
+            + 'you are asked next, by name.'
+        : ` ${good.toLocaleString()} of them ${good === 1 ? 'is' : 'are'} deleted for good, not moved to a Recycle Bin and not copied to `
+            + `this PC (${GOOD_WHY}); you are asked next, by name.`;
     if (!through) {
-        const bin = count === 1 ? 'The file goes to the Recycle Bin, where it can be restored.' : 'The files go to the Recycle Bin, where they can be restored.';
-        return `${head} ${bin}${rows}${job}`;
+        if (good >= count) return `${head}${goodWords}${rows}${job}`;
+        const bin = good
+            ? ` The other ${(count - good).toLocaleString()} ${count - good === 1 ? 'goes' : 'go'} to the Recycle Bin, where ${count - good === 1 ? 'it' : 'they'} can be restored.`
+            : (count === 1 ? ' The file goes to the Recycle Bin, where it can be restored.' : ' The files go to the Recycle Bin, where they can be restored.');
+        return `${head}${goodWords}${bin}${rows}${job}`;
     }
     const why = ((where && where.reasons) || []).map(each => `${Number(each.photos).toLocaleString()} ${each.reason}`).join(', ');
     const one = through === 1;
@@ -81,13 +104,14 @@ export function deleteQuestion(where, count) {
     if (through >= count) {
         return `${head} ${one ? 'It is' : 'They are'} where there is no Recycle Bin (${why}): ${copied}${rows}${job}`;
     }
-    const rest = count - through;
-    return `${head} ${through.toLocaleString()} of them ${one ? 'is' : 'are'} where there is no Recycle Bin (${why}): ${copied} `
-        + `The other ${rest.toLocaleString()} ${rest === 1 ? 'goes' : 'go'} to the Recycle Bin.${rows}${job}`;
+    const rest = count - through - good;
+    const others = rest > 0 ? ` The other ${rest.toLocaleString()} ${rest === 1 ? 'goes' : 'go'} to the Recycle Bin.` : '';
+    return `${head} ${through.toLocaleString()} of them ${one ? 'is' : 'are'} where there is no Recycle Bin (${why}): ${copied}${goodWords}${others}${rows}${job}`;
 }
 
 /**
- * The warning before files are deleted for good (DECISIONS 2026-11-08): `names` the file names the server gave (the delete-check's
+ * The warning before files are deleted for good (DECISIONS 2026-11-08; a video over 2 GiB, 2026-11-02 item 7, whose copy through
+ * this PC would be gigabytes over the share): `names` the file names the server gave (the delete-check's
  * `for_good.names`, as many as it names: selection.MOST_FOR_GOOD_NAMED; or the one file of the panel's delete), `count` how many
  * in all, the rest counted. The owner's OK is the only way the server deletes one for good; Cancel deletes nothing.
  */
@@ -97,8 +121,9 @@ export function forGoodQuestion(names, count) {
     const more = total - shown.length;
     const one = total === 1;
     const list = shown.map(name => `  ${name}`).join('\n') + (more > 0 ? `\n  and ${more.toLocaleString()} more` : '');
-    return `${one ? 'This file' : 'These files'} would be deleted for good, not moved to the Recycle Bin: the Recycle Bin of `
-        + `${one ? 'its' : 'their'} drive would not keep ${one ? 'it' : 'them'} (too large, or set to delete files at once).`
+    return `${one ? 'This file' : 'These files'} would be deleted for good, not moved to the Recycle Bin: no Recycle Bin would `
+        + `keep ${one ? 'it' : 'them'} (larger than ${one ? 'its' : 'their'} drive's Recycle Bin keeps, a Recycle Bin set to delete `
+        + 'files at once, or a video too large for TagPup to copy to one).'
         + `\n\n${list}\n\nOK deletes ${one ? 'it' : 'them'} for good; Cancel deletes nothing.`;
 }
 

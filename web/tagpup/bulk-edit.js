@@ -122,14 +122,15 @@ function playAgainIfKept(clip) {
 }
 
 /**
- * Delete the selection of a library view (#674): the photos' files go to the Recycle Bin -- or for good, on a share or a drive with
- * none -- and their rows leave the library, each as the folder view's Delete does it (the server's photos.delete), in one request
+ * Delete the selection of a library view (#674): the photos' files go to the Recycle Bin -- on a share or a drive with none, through
+ * this PC's (#694) -- or, a clip over 2 GiB on any drive and a file its drive's Bin would not keep, are deleted for good once
+ * confirmed; their rows leave the library, each as the folder view's Delete does it (the server's photos.delete), in one request
  * (bulk-run.js), one edit at a time (bulkBusy, lockBulkControls). The selection is read first (a limit is said, nothing asked); then
  * the server is asked where the files would go (POST /api/library/selection/delete-check, one answer a folder); then the question
  * names the server's count of the photos, how long it takes and whether any are deleted for good. What is sent is what was asked: the
  * selection as read, the answer's `token` -- the server refuses the request, nothing deleted, when the selection no longer resolves to
- * exactly those photos (#691) -- and `for_good` only when a second question named the files whose drive's Recycle Bin would not keep
- * them and the owner pressed OK (DECISIONS 2026-11-08; the token is of that answer). Files from folders with no Recycle Bin go through
+ * exactly those photos (#691) -- and `for_good` only when a second question named the files that are deleted for good (a clip over 2 GiB, a file
+ * its drive's Recycle Bin would not keep) and the owner pressed OK (DECISIONS 2026-11-08; the token is of that answer). Files from folders with no Recycle Bin go through
  * this PC's (#694), and the question says so and where they restore to. A clip the panel plays that is being deleted is stopped first
  * (the server reads it a range at a time, and a range read as its file is deleted leaves the file there), and plays again if it
  * stayed; a clip opened while the delete is out is asked of the server, which refuses the one whose file it is deleting

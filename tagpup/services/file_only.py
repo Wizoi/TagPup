@@ -231,8 +231,8 @@ def delete(photo_path, for_good=False):
 
 def send(photo_path, for_good, result):
     """recycle_bin.delete_file(photo_path, for_good) into `result`: what it did in its details (`through_this_pc`,
-    `no_bin_reason`, `copy`, `for_good`), and the dict; or None, `result` refused -- a file its drive's Bin would not keep,
-    unconfirmed (recycle_bin.NotKept: details `not_kept`, its name) -- or failed. The one way a delete of one file is told."""
+    `no_bin_reason`, `copy`, `for_good`, `why_for_good`), and the dict; or None, `result` refused -- a file deleted for good
+    only once confirmed, unconfirmed (recycle_bin.NotKept: details `not_kept`, its name) -- or failed. The one way a delete of one file is told."""
     try:
         went = recycle_bin.delete_file(photo_path, for_good=for_good)
     except recycle_bin.NotKept as e:
@@ -243,5 +243,5 @@ def send(photo_path, for_good, result):
         result.fail(photo_path, e)
         return None
     result.details.update(through_this_pc=went["through_this_pc"], no_bin_reason=went["reason"], copy=went["copy"],
-                          for_good=went["for_good"])
+                          for_good=went["for_good"], why_for_good=went["why_for_good"])
     return went
