@@ -61,7 +61,7 @@ All three libraries name the same set of models (CLIP and face settings): 1 set.
    server starts and the owner clicks Suggest in a library on another set before the warm-up runs.
 6. **Scenario tests, each file owned and mapped.** Met: V1 to V9 and V11 to V14 each have a file in tests/owners.py. Unit tests that
    restated a scenario were lifted and deleted, each with a mutation that fails the scenario: `test_library_view`'s
-   EqualDates and dated-then-undated order (V1), `test_selection`'s source-is-the-ids-route and excluded tests (V7),
+   EqualDates and dated-then-undated order (V1), `test_dates`' rule of a clip's date (V1: its XMP date first, zeros no date, 2026-11-08), `test_selection`'s source-is-the-ids-route and excluded tests (V7),
    `test_embeddings_follow_their_photo`'s rename and folder removal (V9). The unit files that stay hold a rule no
    scenario holds (below).
 7. **No open data or wrong finding, and every low fixed or by design.** Met: #1420, #1423, #1424, #1425, #1089 and #1303
