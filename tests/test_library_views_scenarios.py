@@ -4,7 +4,8 @@ V1: a library of photos with equal Date Taken is scrolled through the real route
 /api/library/cards for the next window of ids; the page's cursor is its place in the id list): no photo twice, none
 skipped, the equal dates in id order in the order's direction, the undated after the dated, whichever source and
 direction, with a reload in the middle, beside a second library, and at the cap. A clip among the photos of a folder is
-one more photo of the view: listed once in Date Taken order by a clip's own date rule, carded as a video, counted under
+one more photo of the view: listed once in Date Taken order by a clip's own date rule (its XMP date first, then its
+QuickTime ones, a date of zeros none), carded as a video, counted under
 its folder and its month by the navigator, found by its file name, and answered the placeholder thumbnail, not kept.
 Every view says how many of its photos are clips (#2569): `videos` beside `total`, the same where in the same read, a clip in
 two members of a union once, a view of clips alone, an empty one, and a cut list's clips the whole source's.
@@ -172,12 +173,13 @@ class ScrollingALibraryOfEqualDates(Views):
 class AClipAmongThePhotosOfAFolder(Views):
     def test_a_clip_is_listed_carded_counted_found_and_thumbnailed_with_the_photos_beside_it(self):
         # The clip was taken at ten, local time; QuickTime keeps its CreateDate in UTC, which a clip's rule reads as
-        # local time (tagpup.core.dates.CLIP_DATE_FIELDS). Read as given, it would fall outside nine to eleven here
-        # wherever the machine is more than an hour from UTC.
+        # local time (tagpup.core.dates.CLIP_DATE_FIELDS), and ExifTool gives its bare CreateDate, the same copy, which is
+        # never read as a photo's. Read as given, it would fall outside nine to eleven here wherever the machine is more
+        # than an hour from UTC.
         ten = datetime.datetime(2024, 6, 1, 10, 0, 0).astimezone()
         utc = ten.astimezone(datetime.timezone.utc).strftime("%Y:%m:%d %H:%M:%S")
         before = self.vl.photo("Coast", "before.jpg", "2024:06:01 09:00:00")
-        clip = self.vl.photo("Coast", "Harbour Swim.mov", fields={"QuickTime:CreateDate": utc})
+        clip = self.vl.photo("Coast", "Harbour Swim.mov", fields={"QuickTime:CreateDate": utc, "CreateDate": utc})
         after = self.vl.photo("Coast", "after.jpg", "2024:06:01 11:00:00")
         self.assertEqual([("video",)], self.vl.rows("SELECT kind FROM photos WHERE id = ?", clip))
         coast = os.path.join(self.vl.pictures, "Coast")
@@ -209,6 +211,26 @@ class AClipAmongThePhotosOfAFolder(Views):
         reply = self.get("/api/photo-thumb", query_string={"id": clip})
         self.assertEqual((200, "unreadable"), (reply.status_code, reply.headers["X-TagPup-Thumb"]))
         self.assertIn("no-cache", reply.headers["Cache-Control"], "a placeholder is not kept")
+
+    def test_a_clip_is_ordered_by_its_xmp_date_first_and_one_holding_zeros_by_its_xmp_date_alone(self):
+        # A clip's rule (tagpup.core.dates, DECISIONS 2026-11-08, A5 (D) REVISED): its XMP date first -- a Date Taken
+        # saved, or the xmp:CreateDate Adobe's tools wrote --, then its QuickTime ones; a camera's date of zeros is no
+        # date, its bare CreateDate (QuickTime's copy) never a photo's. A photo's dates are read as before, a bare
+        # CreateDate among them.
+        zeros = {"QuickTime:CreateDate": "0000:00:00 00:00:00", "CreateDate": "0000:00:00 00:00:00"}
+        before = self.vl.photo("Shore", "before.jpg", "2024:06:01 09:00:00")
+        saved = self.vl.photo("Shore", "Saved.mov", fields={"QuickTime:CreateDate": "2019:01:01 12:00:00",
+                                                            "XMP:DateTimeOriginal": "2024:06:01 10:00:00"})
+        adobes = self.vl.photo("Shore", "Wrapped.mp4", fields=dict(zeros, **{"XMP:CreateDate": "2024:06:01 10:30:00"}))
+        bare = self.vl.photo("Shore", "bare.jpg", fields={"CreateDate": "2024:06:01 10:45:00"})
+        after = self.vl.photo("Shore", "after.jpg", "2024:06:01 11:00:00")
+        undated = self.vl.photo("Shore", "Zeros.mp4", fields=zeros)
+        listed, shown = self.scroll(kind="all", order="taken")
+        self.assertEqual([before, saved, adobes, bare, after, undated], listed,
+                         "the XMP date before the QuickTime one, zeros no date, the undated last")
+        self.assertEqual(listed, shown)
+        self.assertEqual([(2024,), (2024,), (None,)],
+                         [self.vl.rows("SELECT year FROM photos WHERE id = ?", each)[0] for each in (saved, adobes, undated)])
 
 
 class AViewCountsItsClips(Views):
