@@ -266,8 +266,8 @@ def _delete(library, edit, present, out):
     original and its row kept. Before the chunk copies anything through this PC, it asks whether this PC can keep the chunk's
     copies (recycle_bin.can_copy_here: the Bin fills during a long job, #703); if not, those photos are errors with the
     sentence and nothing of them is touched; the others go on. A clip goes as a photo does, up to recycle_bin.MOST_CLIP_BYTES
-    (a larger one is its error, its size counted in no copy); the lock is let go of after each clip, as after each chunk
-    of photos, and a stop asked is taken there."""
+    (a larger one is its error, its size counted in no copy); a clip is a chunk of its own: the lock is let go of before
+    and after each clip, as after each chunk of photos, and a stop asked is taken there."""
     with file_changes.exclusively():
         # Where each file is (file_changes.file_states): one on a share that did not answer is its error, one gone missing.
         states = dict((paths.key(path), state) for path, state in file_changes.file_states([path for _id, path in present]))
@@ -284,7 +284,7 @@ def _delete(library, edit, present, out):
         batch = batches.current()
         for n, (photo_id, path) in enumerate(there):
             # A chunk of photos holds the lock; a clip is a chunk of itself (its copy through this PC can take minutes).
-            turn = n and (n % batches.CHUNK == 0 or images.is_clip(there[n - 1][1]))
+            turn = n and (n % batches.CHUNK == 0 or images.is_clip(there[n - 1][1]) or images.is_clip(path))
             if turn and not file_changes.between_chunks(batch):
                 out.errors.extend((left_id, os.path.basename(left)[:MOST_TEXT], "stopped as asked: not deleted")
                                   for left_id, left in there[n:])

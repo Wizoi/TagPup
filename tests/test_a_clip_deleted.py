@@ -8,7 +8,8 @@ had recycled it.
 
 What the owner lives through: a day in the library view holds photos and clips together, on a share (no Recycle Bin of its
 own); a Delete of the day asks first how much will be copied through this PC (the delete-check), then deletes them. A clip's
-copy can take minutes, so a bulk delete lets other writers in after each clip, as it does after each chunk of photos.
+copy can take minutes, so a bulk delete lets other writers in before and after each clip, as it does after each chunk of
+photos: a clip is a chunk of its own.
 
 A real one-second clip made by the machine's ffmpeg (as tests/test_a_clip_is_not_turned_or_dated.py makes it); rows as the
 indexer records a read (tests/view_library.py, which gives a .mov its kind 'video'). The share is a folder of this test's
@@ -180,7 +181,7 @@ class AClipOnAShare(APhotoAndAClip):
         self.assertEqual(self.clip_bytes, digest(self.clip_path), "and the original is where it was")
         self.assertEqual([("video",)], self.vl.rows("SELECT kind FROM photos WHERE id = ?", self.clip), "with its row")
 
-    def test_a_bulk_delete_lets_other_writers_in_after_each_clip(self):
+    def test_a_bulk_delete_lets_other_writers_in_before_and_after_each_clip(self):
         second = os.path.join(self.folder, "slipway.mov")
         shutil.copyfile(self.clip_path, second)
         other = self.vl.photo("Harbour", "slipway.mov", at=second)
@@ -200,6 +201,12 @@ class AClipOnAShare(APhotoAndAClip):
         self.assertTrue(followed, "two clips: at least one is followed by another file")
         for n in followed:
             self.assertEqual("turn", kinds[n + 1], "the lock is let go of after %s, before the next file" % self.events[n][1])
+        self.assertEqual("pier.jpg", self.binned()[0], "the photo goes first, so a clip follows it")
+        preceded = [n for n, event in enumerate(self.events)
+                    if event[0] == "bin" and event[1].endswith(".mov") and "bin" in kinds[:n]]
+        self.assertTrue(preceded, "a clip follows another file")
+        for n in preceded:
+            self.assertEqual("turn", kinds[n - 1], "the lock is let go of before %s, after the file ahead of it" % self.events[n][1])
 
 
 class AFileOnALocalDrive(APhotoAndAClip):
