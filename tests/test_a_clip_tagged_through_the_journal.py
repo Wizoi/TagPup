@@ -17,6 +17,7 @@ ExifTool. Fictional names only.
 import contextlib
 import json
 import os
+import re
 import struct
 import sys
 import unittest
@@ -319,6 +320,24 @@ class AClipInTheLibrary(ALibraryHoldingAClip):
         self.assertEqual([images.CLIP_NOT_EDITED], [why for _path, why in result.errors],
                          "no journal to settle a patch a crash cut short")
         self.assertEqual(before, self.read_bytes(self.clip_path))
+
+
+class ThePageSpellsWritesAsTheServerDoes(unittest.TestCase):
+    """The panel holds a control unless the record's `writes` names its field: the names the page and the frontend
+    fixtures spell are the server's (fields.PHOTO_WRITES, CLIP_WRITES), or a rename on one side holds a control for
+    every photo with nothing failing."""
+
+    def test_the_names_in_the_page_and_the_fixtures_are_the_servers(self):
+        root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        with open(os.path.join(root, "web", "tagpup", "index.html"), encoding="utf-8") as f:
+            named = set(re.findall(r'data-writes="([^"]+)"', f.read()))
+        self.assertEqual(set(fields.PHOTO_WRITES), named)
+        with open(os.path.join(root, "tests", "frontend", "harness.mjs"), encoding="utf-8") as f:
+            harness = f.read()
+        for name, expected in (("PHOTO_WRITES", fields.PHOTO_WRITES), ("CLIP_WRITES", fields.CLIP_WRITES)):
+            found = re.search(r"export const %s = \[([^\]]*)\]" % name, harness)
+            self.assertIsNotNone(found, name)
+            self.assertEqual(list(expected), re.findall(r'"([^"]+)"', found.group(1)), name)
 
 
 if __name__ == "__main__":
