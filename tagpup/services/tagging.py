@@ -46,8 +46,8 @@ def _held_title(now):
 
 
 #: Every field _differs_from_base reads of the file: the fields its tags come from and every field its title is
-#: shown from -- XMP:Title, else IPTC:ObjectName, else the Description a photo with no title shows as its title
-#: (vocabulary.CAPTION_FIELDS). The save once read the description fields alone, found no title on a photo titled only,
+#: shown from -- XMP:Title, else a clip's QuickTime Title, else IPTC:ObjectName, else the Description a photo with no
+#: title shows as its title (vocabulary.CAPTION_FIELDS). The save once read the description fields alone, found no title on a photo titled only,
 #: and refused every save from the page of it as changed on disk (6,123 photos of one library, 2026-11-06). The
 #: prefixed names alone, as _caption_problem asks: a read answers a field under its group's name (field_values), so a
 #: bare name holds nothing, and a bare key in what the file holds broke the recording of a file that held the save
@@ -61,6 +61,17 @@ def _differs_from_base(now, base):
     as a SET of keyword paths, the title trimmed: the two things a save writes over. `now` holds BASE_READ."""
     return (set(_tags_held(now)) != set(base.get("tags") or [])
             or _held_title(now) != vocabulary.trimmed(base.get("title") or ""))
+
+
+def _title_written(now, wanted):
+    """The title fields a save writes, of `wanted` (fields.title_fields of the title saved): none when the file holds its
+    title only in a clip's QuickTime Title (fields.CLIP_TITLE; 2,017 photo_index clips, counted 2026-11-07) and the save
+    keeps that title, so a tag save of one makes no XMP copy of it; a title changed or cleared is written to XMP:Title
+    (the writer patches a clip's XMP alone). `now` holds BASE_READ."""
+    in_xmp = any(vocabulary.trimmed(held) for held in fields.field_values(now.get("XMP:Title")))
+    if not in_xmp and _holds_text(now, fields.CLIP_TITLE, vocabulary.trimmed(wanted.get("XMP:Title") or "")):
+        return {}
+    return wanted
 
 
 def _caption_moved(now):
@@ -241,8 +252,8 @@ def save_photo(library, photo_path, title, tags, date_taken, exiftool_path, rena
     if date_taken:
         wanted.update(fields.date_taken_fields(date_taken))
     photo_path = paths.stored(photo_path)
-    # A clip this save may not write is refused with its own sentence before anything is compared: a clip titled only in
-    # QuickTime:Title shows that title, which the compare below does not read, and was refused as changed on disk (#2584).
+    # A clip this save may not write is refused with its own sentence before anything is compared (#2584); one it may
+    # write is compared by its title as the page shows it, its QuickTime Title among the fields read (BASE_READ).
     # The read is the write's (write_fields asks again with all of it); a file of a folder the library does not hold
     # names none, as file_only.write_fields asks.
     clip_read = None if files_only else list(fields.keyword_fields([], [])) + list(wanted)
@@ -273,7 +284,7 @@ def save_photo(library, photo_path, title, tags, date_taken, exiftool_path, rena
         tags = [t if t in held else vocabulary.normalize(t) for t in tags]
         flat, hierarchical = fields.expand_tag_fields(tags)
         after = dict(fields.keyword_fields(flat, hierarchical))
-        after.update(wanted)
+        after.update(_title_written(now, wanted))
         after.update(_caption_moved(now))
         plan = lambda _path, _held: file_changes.Plan(after=after)   # noqa: E731
         if files_only:
