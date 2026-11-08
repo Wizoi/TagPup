@@ -351,11 +351,14 @@ class AClipsSave(unittest.TestCase):
         with self.assertLogs("tagpup.files.segment_edits", "INFO") as said:
             self.assertIsNone(segment_edits.new_packet(b"<x:xmpmeta>", keywords(["Pier"])))
         self.assertIn("not well-formed", said.output[0])
-        for field in (fields.ORIENTATION, *fields.date_taken_fields("2019-06-15T10:30:00"), *caption("")):
+        clips_dates = set(fields.date_taken_fields("2019-06-15T10:30:00", clip=True))
+        photos_dates = set(fields.date_taken_fields("2019-06-15T10:30:00")) - clips_dates
+        for field in (fields.ORIENTATION, *sorted(photos_dates), *caption("")):
             with self.subTest(field), self.assertRaises(ValueError):
                 segment_edits.new_packet(None, {**keywords(["Pier"]), field: ["1"]})
-        self.assertEqual(set(keywords([])) | set(title("")) | {fields.CLIP_TITLE, fields.PRESERVED_NAME},
-                         set(fields.CLIP_FIELDS), "its name it had kept too, before its first rename (A5)")
+        self.assertEqual(set(keywords([])) | set(title("")) | {fields.CLIP_TITLE, fields.PRESERVED_NAME} | clips_dates,
+                         set(fields.CLIP_FIELDS), "its name it had kept too, before its first rename (A5), and its "
+                         "XMP dates, a photo's EXIF ones refused (A5 (D) REVISED)")
 
 
 class ADateOrARotation(unittest.TestCase):
