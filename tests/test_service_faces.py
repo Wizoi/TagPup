@@ -116,6 +116,12 @@ class NamingAFace(FacesCase):
         result = faces.name_face(self.lib.library, face, "wren halloway")
         self.assertEqual((result.changed, self.face_row(face)[0]), (1, "Wren Halloway"))
         self.assertEqual(self.lib.rows("SELECT name_source FROM faces WHERE id = ?", (face,))[0][0], "manual")
+        conn = db.connect(db.readonly_uri(self.lib.library.path), uri=True)
+        try:
+            now = store_faces.fingerprint(conn)
+        finally:
+            conn.close()
+        self.assertEqual(now, result.details["fingerprints"][1], "the cached grid is re-stamped with the table as written")
         self.assertEqual(faces.name_face(self.lib.library, face, "Wren Halloway").changed, 0)
 
     def test_a_face_that_is_not_there_is_not_found(self):
