@@ -47,6 +47,8 @@ class Batch:
         self.stop = threading.Event()
         self.started = None
         self.change_id = None
+        #: The thread that claimed it, which carries it out: a request's, or the settle thread's (no request).
+        self.thread = threading.get_ident()
 
     @property
     def state(self):
@@ -150,10 +152,10 @@ def sentences():
                                                         "{:,}".format(sum(batch.photos for batch in here)), waiting)]
 
 
-def running_here():
-    """How many batches this process has, running or waiting."""
+def running_here(threads=None):
+    """How many batches this process has, running or waiting; with `threads` (idents), only those claimed on one of them."""
     with _turn:
-        return len(_line)
+        return sum(1 for batch in _line if threads is None or batch.thread in threads)
 
 
 def _row(batch, position, counts):

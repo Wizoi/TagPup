@@ -38,6 +38,7 @@ from tagpup.core.library import Library  # noqa: E402
 from tagpup.jobs import suggestions as suggestion_jobs  # noqa: E402
 from tagpup.core.result import Result  # noqa: E402
 from tagpup.runtime import Runtime  # noqa: E402
+from tagpup.services import batches  # noqa: E402
 from tagpup.services import job_runs as runs_service  # noqa: E402
 from tagpup.services import libraries as library_actions  # noqa: E402
 from tagpup.store import db, job_runs  # noqa: E402
@@ -171,6 +172,29 @@ class ADrain(Base):
         self.assertEqual({"drained": False, "waiting_for": ["1 request(s)"], "success": True}, answer)
         self.assertEqual(200, self.client().get("/harbour/api/tags").status_code)
         self.assertEqual(["stop", "start"], self.background.calls, "the recurring jobs were not started again")
+        self.release.set()
+        writing.join(10)
+        self.assertEqual(["row"], self.written)
+
+    def test_a_request_in_flight_beside_a_batch_of_no_request_is_still_named(self):
+        """The server's settle thread carries out a batch of its own (file_changes._settle_in_turn), no request: a write
+        in flight beside it is still a request the drain waits for and names. On the code before, every batch was taken
+        for a request in flight and the write was left out: the drain answered drained with the write still running."""
+        holding, done = threading.Event(), threading.Event()
+
+        def settling():
+            with batches.claim(self.library, "add to all selected", 30):
+                holding.set()
+                done.wait(30)
+        settle = threading.Thread(target=settling, name="SettleThread harbour", daemon=True)
+        settle.start()
+        self.addCleanup(settle.join, 30)
+        self.addCleanup(done.set)
+        self.assertTrue(holding.wait(10))
+        writing, _wrote = self.in_thread(self.write)
+        self.assertTrue(self.entered.wait(10))
+        answer = self.drain(seconds=0.3).get_json()
+        self.assertEqual({"drained": False, "waiting_for": ["1 request(s)"], "success": True}, answer)
         self.release.set()
         writing.join(10)
         self.assertEqual(["row"], self.written)

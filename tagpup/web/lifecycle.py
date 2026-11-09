@@ -28,6 +28,7 @@ LEFT_DRAINED. GET /api/server says which version answers, which the gear shows, 
 response says it in X-TagPup-Version, by which a page left open learns that the server
 was replaced (web/common/api.js).
 """
+import collections
 import hmac
 import logging
 import threading
@@ -177,6 +178,9 @@ class Lifecycle:
         self._clock = clock
         self._changed = threading.Condition()
         self._in_flight = 0
+        #: The threads carrying a request in flight, by ident, each with how many: a batch claimed on one of them is
+        #: that request (the settle thread's is none).
+        self._serving = collections.Counter()
         self._closed = False
         self._drained_at = None
         #: When a request last came in (not the status or the drain): a quiet moment is
@@ -234,8 +238,8 @@ class Lifecycle:
         draining."""
         return _Gate(self, app)
 
-    def _enter(self, watching=False):
-        """Count a request in; False when it is to be refused. One that only `watching`
+    def _enter(self, watching, thread):
+        """Count a request in, carried by `thread` (an ident); False when it is to be refused. One that only `watching`
         (only_watches) is not a request somebody made: the quiet moment is not reset."""
         with self._changed:
             left = self._closed and self._drained_at is not None and self._clock() - self._drained_at > self._lease
@@ -243,16 +247,21 @@ class Lifecycle:
                 if self._closed:
                     return False
                 self._in_flight += 1
+                self._serving[thread] += 1
                 if not watching:
                     self._last_request = self._clock()
                 return True
         logger.warning("Drained %ds ago and not stopped: taking work again.", self._lease)
         self.resume()
-        return self._enter(watching)
+        return self._enter(watching, thread)
 
-    def _leave(self):
+    def _leave(self, thread):
+        """Count out a request `_enter` counted in on `thread` (whichever thread its reply ends on)."""
         with self._changed:
             self._in_flight -= 1
+            self._serving[thread] -= 1
+            if self._serving[thread] <= 0:
+                del self._serving[thread]
             self._changed.notify_all()
 
     # ---- Draining ---------------------------------------------------------------------
@@ -307,8 +316,9 @@ class Lifecycle:
                 if not self._closed:
                     # Taken back while it waited (a resume, or left drained too long).
                     return {"drained": False, "waiting_for": ["taken back"]}
-                # A batch is a request in flight too: it is named once, with its photos.
-                requests = self._in_flight - batches.running_here()
+                # A batch claimed on a request's thread is that request: it is named once, with its photos. The settle
+                # thread's batch is no request.
+                requests = self._in_flight - batches.running_here(threads=set(self._serving))
                 waiting = (["%d request(s)" % requests] if requests > 0 else []) + self.busy()
                 if not waiting:
                     self._drained_at = self._clock()
@@ -361,7 +371,8 @@ class _Gate:
     def _call(self, environ, start_response, path):
         if exempt(path):
             return self.app(environ, start_response)
-        if not self.lifecycle._enter(only_watches(environ.get("REQUEST_METHOD", "GET"), path)):
+        thread = threading.get_ident()
+        if not self.lifecycle._enter(only_watches(environ.get("REQUEST_METHOD", "GET"), path), thread):
             body = ('{"success": false, "updating": true, "error": "%s"}' % UPDATING_MESSAGE).encode("utf-8")
             start_response("503 SERVICE UNAVAILABLE", [
                 ("Content-Type", "application/json"), ("Content-Length", str(len(body))),
@@ -371,9 +382,9 @@ class _Gate:
         try:
             body = self.app(environ, start_response)
         except BaseException:
-            self.lifecycle._leave()
+            self.lifecycle._leave(thread)
             raise
-        return _Counted(body, self.lifecycle._leave)
+        return _Counted(body, lambda: self.lifecycle._leave(thread))
 
 
 class _Counted:
