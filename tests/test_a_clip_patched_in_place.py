@@ -869,11 +869,13 @@ def with_windows_tags(path, texts):
 
 
 def windows_tags_read(path):
-    """(ExifTool's XMP:Subject, its Microsoft:Category) of `path`, as the journal reads them (fields.field_values)."""
+    """(ExifTool's XMP:Subject, its Microsoft:Category) of `path`, as the journal reads them (fields.field_values). The
+    Category is looked up under the key ExifTool answers it by, spelled here rather than through fields.read_key, so a
+    journaled write that reads it by read_key is checked against ExifTool, not against itself."""
     with ExifToolSession(executable=EXIFTOOL) as session:
         held = session.get_tags([path], tags=["XMP:Subject", fields.CLIP_CATEGORY])[0]
     return (fields.field_values(held.get("XMP:Subject")),
-            fields.field_values(held.get(fields.read_key(fields.CLIP_CATEGORY))) or None)
+            fields.field_values(held.get("QuickTime:Category")) or None)
 
 
 if __name__ == "__main__":
