@@ -301,6 +301,27 @@ class TheDoctor(Library):
         self.assertNotIn("whole.jpg", listed)
         self.assertNotIn("harbour clip.mp4", listed)
 
+    def test_a_row_a_sync_removes_while_the_look_reads_is_no_crash(self):
+        """A row removed (store.photos.forget_photo, as a sync removes one) just after the look for a file that fails to
+        open read the library: the look's photos and their kind are one read, so no second read misses it."""
+        import damaged_photos
+        from tagpup.core import library as libraries
+        from tagpup.services import inspect
+        from tagpup.store import inspection
+        from tagpup.store import photos as store_photos
+        for name in ("kept.jpg", "removed.jpg"):
+            self.photo(name, on_disk=False)
+            damaged_photos.whole_jpeg(os.path.join(self.dir, name))
+        real = inspection.photo_files
+
+        def then_removed(conn, *args, **kwargs):
+            found = real(conn, *args, **kwargs)
+            store_photos.forget_photo(self.db_path, os.path.join(self.dir, "removed.jpg"))
+            return found
+        with mock.patch.object(inspection, "photo_files", then_removed):
+            opens = inspect.files_that_fail_to_open(libraries.Library(self.db_path))
+        self.assertEqual((0, 0), (opens["count"], opens["unreached"]))
+
     def test_changes_nothing(self):
         self.face(self.photo("a.jpg"), name="Wren Halloway", rebuilt=False)
         self.conn.close()

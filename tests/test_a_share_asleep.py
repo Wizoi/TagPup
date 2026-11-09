@@ -67,6 +67,7 @@ class ASleepingShare(unittest.TestCase):
         self.ids = [self.vl.photo("Coast", "p%d.jpg" % n, taken="2024:06:01 10:00:00") for n in range(3)]
         self.photo_paths = [self.vl.path_of(photo_id) for photo_id in self.ids]
         asleep, under = threading.Event(), os.path.normcase(self.vl.pictures)
+        self.asleep = asleep
         self.addCleanup(asleep.set)
         shares.forget()
         self.addCleanup(shares.forget)
@@ -141,6 +142,23 @@ class ASleepingShare(unittest.TestCase):
                       "over a minute for every thousand on a network share", said)
         opened = [line for line in said if line.startswith("photos whose file fails to open")]
         self.assertTrue(opened[0].endswith("; 3 could not be looked at"), opened)
+
+
+    def test_a_look_for_a_file_that_fails_to_open_ending_late_in_not_found_leaves_the_share_away(self):
+        """A server gone while the doctor's look waited answers "not found", late: the look's end asks whether the share
+        answers (shares.read_bounded, as a read of a clip's piece does), and the share stays away. It was taken as back
+        by the late answer, and the next photo was waited on again."""
+        with mock.patch.object(shares, "READ_WAIT", 0.05):
+            opens = inspect.files_that_fail_to_open(self.vl.library)
+        self.assertEqual(3, opens["unreached"])
+        root, real_exists = os.path.normcase(os.path.splitdrive(self.vl.pictures)[0] + os.sep), os.path.exists
+        with mock.patch.object(os.path, "exists",
+                               lambda path: os.path.normcase(str(path)) != root and real_exists(path)):
+            self.asleep.set()   # the hung look ends: "not found", and the share's root is not there
+            for look in [thread for thread in threading.enumerate() if thread.name == "ShareLook"]:
+                look.join(5)
+        self.assertIsNotNone(shares.away_since(shares.share_of(self.vl.pictures)),
+                             "the late not-found took the share as back")
 
 
 class ASyncThatCannotLookAtAFolder(unittest.TestCase):

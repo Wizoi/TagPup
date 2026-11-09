@@ -162,10 +162,13 @@ def faces_on(conn, photo_ids):
 
 # ---- Files ------------------------------------------------------------------------------
 
-def photo_files(conn):
-    """(id, native path) of every photo, by path: the files a library says it holds."""
+def photo_files(conn, kind=None):
+    """(id, native path) of every photo, by path: the files a library says it holds; with `kind` ('photo' or 'video',
+    photos.kind) those of that kind alone, in the same one statement -- a second read of the kinds could miss a row a
+    sync removed between the two."""
+    where, args = ("", ()) if kind is None else (" WHERE kind = ?", (kind,))
     return store_roots.ordered(conn, store_roots.natives(
-        conn, conn.execute("SELECT id, path FROM photos ORDER BY path").fetchall(), 1), 1)
+        conn, conn.execute("SELECT id, path FROM photos" + where + " ORDER BY path", args).fetchall(), 1), 1)
 
 
 def kinds(conn):
