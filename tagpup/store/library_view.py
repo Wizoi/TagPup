@@ -638,10 +638,9 @@ def people_counts(conn):
     found = []
     # The people the tree files: one row a photo each, by the covering index of the id; named by their node.
     for tag_id, count in conn.execute("SELECT tag_id, COUNT(*) FROM photo_people WHERE tag_id IS NOT NULL GROUP BY tag_id").fetchall():
-        name = names.get(tag_id)
-        if name is None:   # an id of a node that is gone: the rows' own name, until the next settle drops it
-            name = conn.execute("SELECT name FROM photo_people WHERE tag_id = ? LIMIT 1", (tag_id,)).fetchone()[0]
-        found.append((Ref(tag_id, name), count))
+        # No row names a node that is gone: the tree edit that removes one drops its listed people in its own
+        # transaction (person_ids.follow_tree; tests/test_person_ids.py), so every id here has its node's name.
+        found.append((Ref(tag_id, names[tag_id]), count))
     return sorted(found, key=lambda each: (-each[1], vocabulary.tag_sort_key(each[0].name)))
 
 

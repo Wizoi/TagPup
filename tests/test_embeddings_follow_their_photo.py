@@ -16,6 +16,7 @@ A clip's frames 1 to 4 beside its vector (migration 38) follow the vector: repla
 photo, and put back with the photo by an undo (AClipsFrames).
 """
 import os
+import sqlite3
 import sys
 import unittest
 from unittest import mock
@@ -27,6 +28,8 @@ import fake_exiftool  # noqa: E402
 from service_fixture import TempLibrary  # noqa: E402
 
 from tagpup.services import photos as photo_actions  # noqa: E402
+from tagpup.core import paths  # noqa: E402
+from tagpup.services import search as search_service  # noqa: E402
 from tagpup.services.search import PhotoEmbeddings, PhotoIndex  # noqa: E402
 from tagpup.store import db, embeddings, journal, photos  # noqa: E402
 from tagpup.files import shares  # noqa: E402
@@ -144,6 +147,34 @@ class Vectors(unittest.TestCase):
         with mock.patch.object(embeddings, "put", side_effect=OSError("the disk is full")), \
                 self.assertLogs("tagpup_cli.embedder", level="WARNING"):
             self.assertIs(False, PhotoEmbeddings(clip, index).keep(self.photo, [0.5] * 4))
+
+    def test_a_read_that_fails_is_not_a_photo_with_no_vector(self):
+        """A locked library or a map missing a root raised, was logged and answered "no vector": the photo was embedded
+        again and its vector written over what the library held. Now the read's sentence reaches the caller, before
+        anything is made or written (#2732)."""
+        clip = mock.Mock(settings={"model_name": "ViT-T", "pretrained": "tiny", "preserve_full_frame": True,
+                                   "max_aspect_ratio": 1.4, "force_image_size": None})
+        index = PhotoIndex(self.lib.library.path)
+        index.load()
+        self.addCleanup(index.close)
+        vectors = PhotoEmbeddings(clip, index)
+        before = self.lib.rows("SELECT COUNT(*) FROM embeddings")
+        for failure in (paths.RootsError("a root this machine has no location for"), sqlite3.OperationalError("database is locked")):
+            with mock.patch.object(embeddings, "get", side_effect=failure), \
+                    mock.patch.object(vectors, "made") as made, mock.patch.object(vectors, "keep") as keep:
+                with self.assertRaises(type(failure)) as raised:
+                    vectors.of(self.photo)
+                self.assertEqual(str(failure), str(raised.exception))
+                made.assert_not_called()
+                keep.assert_not_called()
+        self.assertEqual(before, self.lib.rows("SELECT COUNT(*) FROM embeddings"))
+
+    def test_a_photo_row_that_is_not_json_is_said_not_read_as_empty(self):
+        """A damaged row was an empty photo in a Suggest neighbour (#2732)."""
+        with self.assertRaises(ValueError) as raised:
+            search_service._record((7, "a.jpg", 1.0, 1, "[not json", "[]", "[]", "{}", 2020, 0))
+        self.assertIn("photo 7", str(raised.exception))
+        self.assertEqual(["Places/Beach"], search_service._record((7, "a.jpg", 1.0, 1, '["Places/Beach"]', "[]", "[]", "{}", 2020, 0))["tags"])
 
     def test_each_model_keeps_its_own(self):
         self.keep(OTHER, 2.0, 2)

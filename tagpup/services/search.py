@@ -86,28 +86,26 @@ class PhotoEmbeddings:
         """(vector, Stale) of what the library keeps of this file's vector under these model settings, by
         photo_fingerprints.same_picture: (the vector, None) when its stamp describes the file (nothing decoded);
         (None, Stale) when it does not and, with `compare`, the photo has a fingerprint row a decode of the file is to be
-        compared with (Stale.same); else (None, None) -- no vector, no row, no file, no library: it is worked out."""
+        compared with (Stale.same); else (None, None) -- no vector, no row, no file, no library: it is worked out. A
+        read that fails (a locked library, a map missing a root) raises: the photo is not embedded again on a guess, and
+        a caller that writes (Suggest, the index) stops at it with the sentence (#2732)."""
         file_stamp = shares.known_stamp(file_path)
         if file_stamp is None or not self._library():
             return None, None
-        try:
-            row = store_embeddings.get(self.photo_index.conn, file_path, self.model_key)
-            if row is None:
-                return None, None
-            vector_stamp = (row.mtime, row.size)
-            answer = photo_fingerprints.same_picture(vector_stamp, file_stamp)
-            if answer == photo_fingerprints.STAMPED:
-                return np.frombuffer(row.vector, dtype=np.float32).tolist(), None
-            if not compare:
-                return None, None
-            fingerprint = photo_fingerprints.of_path(self.photo_index.conn, file_path)
-            if fingerprint is None:
-                return None, None
-            return None, Stale(np.frombuffer(row.vector, dtype=np.float32).tolist(), vector_stamp, file_stamp,
-                               fingerprint)
-        except Exception as e:
-            logger.warning(f"Failed to read/validate database cache for {file_path}: {e}")
-        return None, None
+        row = store_embeddings.get(self.photo_index.conn, file_path, self.model_key)
+        if row is None:
+            return None, None
+        vector_stamp = (row.mtime, row.size)
+        answer = photo_fingerprints.same_picture(vector_stamp, file_stamp)
+        if answer == photo_fingerprints.STAMPED:
+            return np.frombuffer(row.vector, dtype=np.float32).tolist(), None
+        if not compare:
+            return None, None
+        fingerprint = photo_fingerprints.of_path(self.photo_index.conn, file_path)
+        if fingerprint is None:
+            return None, None
+        return None, Stale(np.frombuffer(row.vector, dtype=np.float32).tolist(), vector_stamp, file_stamp,
+                           fingerprint)
 
     def fingerprint_of(self, file_path):
         """The (key, hash) of the photo's fingerprint row (photo_fingerprints.of_path), or None: what a vector kept by
@@ -293,8 +291,9 @@ def _record(row, people="people"):
     try:
         tags, listed = json.loads(tags_json), json.loads(people_json)
         captions, raw_meta = json.loads(captions_json), json.loads(raw_json)
-    except Exception:
-        tags, listed, captions, raw_meta = [], [], [], {}
+    except (TypeError, ValueError) as error:
+        # Not an empty photo: a neighbour with no tags would be read as one that has none (#2732).
+        raise ValueError("photo %s: its row holds text that is not JSON (%s)" % (photo_id, error)) from error
     return {"id": photo_id, "path": path, "mtime": mtime, "size": size, "tags": tags, people: listed,
             "captions": captions, "raw_metadata": raw_meta, "year": year, "has_embedding": bool(vectored)}
 

@@ -23,7 +23,7 @@ import own_home  # noqa: E402
 from face_rows import FACE_MODEL  # noqa: E402
 import photo_rows  # noqa: E402
 
-from tagpup.store import checks, db, faces, journal, people, person_ids, schema, taxonomy  # noqa: E402
+from tagpup.store import checks, db, faces, journal, library_view, people, person_ids, schema, taxonomy  # noqa: E402
 
 WREN = "Wren Halloway"
 ODA = "Oda Castellane"
@@ -107,6 +107,17 @@ class Library(unittest.TestCase):
 class WritesKeepTheId(Library):
     def test_a_keyword_lists_the_person_with_their_node(self):
         self.assertEqual({WREN: {node_id(self.path, "People/" + WREN)}}, ids_of(self.path, "photo_people"))
+
+    def test_a_person_only_a_keyword_lists_goes_from_the_navigator_with_their_node(self):
+        """The arm of people_counts for "an id of a node that is gone" had no writer: removing a node drops the people it
+        listed in the same transaction (#2731)."""
+        write(self.path, lambda conn: taxonomy.remove_node(conn, "People/" + WREN))
+        self.assertEqual({}, ids_of(self.path, "photo_people"))
+        conn = db.connect(db.readonly_uri(self.path), uri=True)
+        try:
+            self.assertEqual([], library_view.people_counts(conn))
+        finally:
+            conn.close()
 
     def test_naming_a_face_gives_it_the_node_and_unnaming_takes_it_off(self):
         self.name([self.faces[0]], ODA)
