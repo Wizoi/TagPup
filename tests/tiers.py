@@ -46,6 +46,7 @@ SCENARIO = frozenset({
     "test_a_clip_tagged_through_the_journal",
     "test_a_clip_titled_in_quicktime",
     "test_a_clip_tag_undone",
+    "test_a_clips_windows_tags_freed",
     "test_a_tag_tree_edit_of_a_tag_a_clip_holds",
     "test_a_clip_patch_cut_short",
     "test_a_clip_dated_through_the_journal",

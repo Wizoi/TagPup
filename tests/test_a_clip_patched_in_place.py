@@ -21,6 +21,13 @@ clear frees its one title item in moov/udta/meta/ilst (four type bytes, `free`),
 undo gives it back to the one free box of that item list holding exactly its text, the clip byte for byte as before; two
 title items, one directly in udta (ffmpeg's .mov), none the walk finds (a title in an 'mdta' keys meta), a free box
 holding another text, and a give back to a clip holding a title already, are the rewrite's. A clear cut short is settled by its four bytes.
+
+A clip's Windows Tags (DECISIONS 2026-11-09; AClipsWindowsTags, by hand, and AClipSavedInPlace, a real ffmpeg clip given
+a hand-built Xtra as Windows writes one): their move into XMP frees the one moov/udta/Xtra (four type bytes, `free`) in
+the same patch that writes the XMP, and an undo gives it back to the one free box of udta holding exactly those texts,
+the clip byte for byte as before, a free box another program left in udta beside it (72+ live clips hold one) not
+taken; no Xtra, an empty one (10 live), two, one holding no WM/Category, and a give back to a clip holding an Xtra again
+are the rewrite's, nothing written, not even the XMP. A clear cut short is settled by its four bytes.
 """
 import io
 import json
@@ -108,6 +115,23 @@ def meta(*items, handler=b"mdir", full=True):
 
 def titled_moov(*in_udta):
     return box(b"moov", MVHD + TRAK + box(b"udta", b"".join(in_udta)))
+
+
+#: Windows Tags of the clips built here: fictional, in the shape the live ones have (tag paths).
+WINDOWS_TAGS = ("People/Wren Ashcombe", "Trips/Coast", "Trips/Pier")
+
+
+def xtra_entry(name, *values, kind=8):
+    """One entry of a Microsoft Xtra box: `name` and its `values`, each UTF-16LE text ended by a NUL (type 8, as every
+    live WM/Category value is)."""
+    held = b"".join(struct.pack(">IH", 6 + len(data), kind) + data
+                    for data in ((text + "\0").encode("utf-16-le") for text in values))
+    return struct.pack(">II", 12 + len(name) + len(held), len(name)) + name + struct.pack(">I", len(values)) + held
+
+
+def xtra(*texts, before=b"", kind=b"Xtra"):
+    """An Xtra box as Windows writes a clip's Tags: entries `before`, then WM/Category holding `texts`."""
+    return box(kind, before + (xtra_entry(b"WM/Category", *texts) if texts else b""))
 
 
 def kept(layout):
@@ -390,6 +414,78 @@ class AClipsQuickTimeTitle(unittest.TestCase):
         held = FTYP + titled_moov(meta(box(b"free", data_atom(TITLE)), title_item("Pier"))) + MDAT
         self.assertEqual((), clip_patch.freed_titles(layout_of(held)))
         self.assertIsNone(self.given_back(held), "a title item there already: another program wrote one")
+
+
+class AClipsWindowsTags(unittest.TestCase):
+    """A clear's and an undo's Xtra ranges (clip_patch.patch's `category`) on clips built by hand."""
+
+    def tagged(self, data, category, packet=None):
+        """The patch of `data` writing `category` (() a clear, texts an undo), its boxes read as in_place reads them
+        (clip_patch.xtra_boxes); None or the bytes after."""
+        layout = layout_of(data)
+        read = tuple((one, data[one.offset:one.end]) for one in clip_patch.xtra_boxes(layout, category))
+        found = clip_patch.patch(layout, packet, None, (), category, read)
+        return None if found is None else applied(data, found)
+
+    def test_a_clear_frees_the_xtra_with_the_xmp_and_its_undo_gives_it_back_byte_for_byte_in_each_shape(self):
+        others = xtra_entry(b"WM/EncodingTime", "x") + xtra_entry(b"WM/MediaClassPrimaryID", "y")
+        shapes = {
+            "an MP4, moov first, the Xtra last in udta (1,872 live)": FTYP + titled_moov(meta(), xtra(*WINDOWS_TAGS))
+                                                                     + MDAT,
+            "a .mov, moov last, other Windows entries first (196 live)": FTYP + MDAT + titled_moov(
+                xtra(*WINDOWS_TAGS, before=others), meta(title_item())),
+            "a free box of another program's after it in udta (14 live)": FTYP + titled_moov(
+                meta(), xtra(*WINDOWS_TAGS), box(b"free", bytes(40))) + MDAT,
+            "a free box of this clip's Tags' shape before it, holding other texts": FTYP + titled_moov(
+                xtra("Trips/Coast", kind=b"free"), xtra(*WINDOWS_TAGS)) + MDAT,
+            "an XMP box ending the file, which the packet overwrites": FTYP + MDAT + titled_moov(xtra(*WINDOWS_TAGS))
+                                                                       + xmp_box(OLD),
+        }
+        for name, data in shapes.items():
+            for packet in (None, sized(len(OLD) + 300, ("Lakes",))):
+                with self.subTest(name, packet=packet is not None):
+                    one = layout_of(data).xtra
+                    cleared = self.tagged(data, (), packet)
+                    self.assertIsNotNone(cleared)
+                    self.assertEqual(cleared[:one.offset + 4] + b"free", cleared[:one.offset + 8], "four bytes freed")
+                    self.assertEqual([each for each in kept(layout_of(data)) if each[0][-1] != "Xtra"],
+                                     kept(layout_of(cleared)), "no other box moves")
+                    self.assertEqual((None, None), (layout_of(cleared).xtra, self.tagged(cleared, WINDOWS_TAGS[:2])),
+                                     "no Xtra left, and none given back of other texts")
+                    xmp_only = data if packet is None else applied(data, clip_patch.patch(layout_of(data), packet))
+                    self.assertEqual(xmp_only, self.tagged(cleared, WINDOWS_TAGS))
+
+    def test_an_xtra_the_patch_does_not_understand_is_the_rewrites_and_nothing_is_written(self):
+        cleared = {
+            "no Xtra (76 live)": FTYP + titled_moov(meta()) + MDAT,
+            "an empty Xtra (10 live)": FTYP + titled_moov(meta(), box(b"Xtra")) + MDAT,
+            "an Xtra holding no WM/Category": FTYP + titled_moov(box(b"Xtra", xtra_entry(b"WM/EncodingTime", "x")))
+                                              + MDAT,
+            "an Xtra whose entries do not fill it": FTYP + titled_moov(box(b"Xtra", xtra_entry(b"WM/Category", "x")
+                                                                           + bytes(3))) + MDAT,
+            "two Xtra (no live clip)": FTYP + titled_moov(xtra(*WINDOWS_TAGS), xtra(*WINDOWS_TAGS)) + MDAT,
+        }
+        for name, data in cleared.items():
+            with self.subTest(name):
+                self.assertIsNone(self.tagged(data, ()))
+                self.assertIsNone(self.tagged(data, (), OLD), "nor its XMP written without it")
+        freed = {
+            "a free box of other texts": xtra("Trips/Coast", kind=b"free"),
+            "a free box of the texts in another order": xtra(*reversed(WINDOWS_TAGS), kind=b"free"),
+            "two free boxes of the texts": xtra(*WINDOWS_TAGS, kind=b"free") * 2,
+            "an Xtra there again, Windows' Tags written since": xtra(*WINDOWS_TAGS, kind=b"free") + xtra("Trips/Coast"),
+        }
+        for name, in_udta in freed.items():
+            with self.subTest(name):
+                self.assertIsNone(self.tagged(FTYP + titled_moov(in_udta) + MDAT, WINDOWS_TAGS))
+
+    def test_the_four_bytes_are_written_only_over_the_type_they_were_read_as(self):
+        """The patch reads each box whole and checks its type in the bytes it read, not only in the walk's layout."""
+        data = FTYP + titled_moov(meta(), xtra(*WINDOWS_TAGS)) + MDAT
+        layout = layout_of(data)
+        one = layout.xtra
+        moved = data[one.offset:one.offset + 4] + b"skip" + data[one.offset + 8:one.end]
+        self.assertIsNone(clip_patch.patch(layout, None, None, (), (), ((one, moved),)))
 
 
 class FfmpegClips(unittest.TestCase):
@@ -691,6 +787,95 @@ class AClipSavedInPlace(FfmpegClips):
         titled(TITLE)
         self.assertEqual((in_place.NEW, original), (in_place.held(path, *self.saved[-1]), self.bytes_of(path)),
                          "the undo gives the title back, the clip as ffmpeg made it")
+
+    def test_windows_tags_moved_into_xmp_free_the_xtra_in_one_patch_settled_by_its_bytes_and_undone(self):
+        """The one-time move (DECISIONS 2026-11-09) of a real clip's Windows Tags: its XMP appended and its Xtra freed in
+        one patch, one record; killed after its record, OLD; torn, put back; written, NEW, ExifTool reading the tags in
+        XMP and no Category; undone, the Xtra given back and the XMP emptied, Windows' Tags read again."""
+        path = with_windows_tags(self.clip("last.mp4"), WINDOWS_TAGS)
+        original = self.bytes_of(path)
+        moved = {**keywords(WINDOWS_TAGS), fields.CLIP_CATEGORY: []}
+
+        def written(values, saving=None):
+            category = tuple(values[fields.CLIP_CATEGORY])
+            with self.no_exiftool:
+                return in_place.patch_clip(path, lambda old: segment_edits.new_packet(old, values),
+                                           saving or (lambda record, before: self.saved.append((record, before))),
+                                           category=category)
+
+        def killed_after_saving(record, before):
+            self.saved.append((record, before))
+            raise Crash("killed once its record was saved")
+
+        def torn(handle, changes):
+            (at, four), *_ = changes
+            handle.seek(at)
+            handle.write(four)
+            handle.flush()
+            raise Crash("killed half way: the Xtra freed, the XMP not appended")
+
+        with self.assertRaises(Crash):
+            written(moved, killed_after_saving)
+        record, before = self.saved[-1]
+        self.assertEqual([4, len(xmp_packet.blank()) + 24], [one["len"] for one in record["ranges"]],
+                         "one record: the four bytes and the appended XMP box")
+        self.assertEqual((original, in_place.OLD), (self.bytes_of(path), in_place.held(path, record, before)))
+        with mock.patch.object(in_place, "_write", torn), self.assertRaises(Crash):
+            written(moved)
+        self.assertEqual(in_place.TORN, in_place.held(path, *self.saved[-1]))
+        in_place.put_back(path, *self.saved[-1])
+        self.assertEqual(original, self.bytes_of(path))
+        written(moved)
+        self.assertEqual(in_place.NEW, in_place.held(path, *self.saved[-1]))
+        subject = moved["XMP:Subject"]
+        self.assertEqual((subject, None), windows_tags_read(path), "the tags in XMP, Windows' Tags gone")
+        self.read_back(path, subject)
+        self.assertIsNone(written(moved), "a second move finds no Xtra: the rewrite's, nothing written")
+        written({**keywords(()), fields.CLIP_CATEGORY: list(WINDOWS_TAGS)})
+        self.assertEqual(in_place.NEW, in_place.held(path, *self.saved[-1]))
+        self.assertEqual(([], list(WINDOWS_TAGS)), windows_tags_read(path), "the undo gives Windows' Tags back")
+        self.assertEqual(original, self.bytes_of(path)[:len(original)], "every byte the clip held is as it was")
+
+    def test_a_clip_with_no_windows_tags_is_not_patched_and_nothing_is_written(self):
+        for name, texts in (("no Xtra", None), ("an empty Xtra", ())):
+            with self.subTest(name):
+                path = self.clip("last.mp4")
+                if texts is not None:
+                    with_windows_tags(path, texts)
+                before, self.saved = self.bytes_of(path), []
+                with self.no_exiftool:
+                    self.assertIsNone(in_place.patch_clip(
+                        path, lambda old: segment_edits.new_packet(old, keywords(WINDOWS_TAGS)),
+                        lambda record, held: self.saved.append((record, held)), category=()))
+                self.assertEqual(([], before), (self.saved, self.bytes_of(path)))
+
+
+def with_windows_tags(path, texts):
+    """`path`, an ffmpeg MP4 with moov last and udta last in it, given an Xtra holding `texts` as Windows' Tags (none, an
+    empty Xtra) at the end of its udta: udta and moov grow at the end of the file, so nothing else moves."""
+    with open(path, "rb") as handle:
+        layout = containers.read(handle)
+    moov = layout.moov
+    udta, = [child for child in moov.children if child.type == "udta"]
+    assert moov.end == layout.file_size == udta.end, "moov last in the file, udta last in moov"
+    added = xtra(*texts)
+    with open(path, "r+b") as handle:
+        for one in (moov, udta):
+            handle.seek(one.offset)
+            handle.write(struct.pack(">I", one.size + len(added)))
+        handle.seek(layout.file_size)
+        handle.write(added)
+    return path
+
+
+def windows_tags_read(path):
+    """(ExifTool's XMP:Subject, its Microsoft:Category) of `path`, as the journal reads them (fields.field_values). The
+    Category is looked up under the key ExifTool answers it by, spelled here rather than through fields.read_key, so a
+    journaled write that reads it by read_key is checked against ExifTool, not against itself."""
+    with ExifToolSession(executable=EXIFTOOL) as session:
+        held = session.get_tags([path], tags=["XMP:Subject", fields.CLIP_CATEGORY])[0]
+    return (fields.field_values(held.get("XMP:Subject")),
+            fields.field_values(held.get("QuickTime:Category")) or None)
 
 
 if __name__ == "__main__":
