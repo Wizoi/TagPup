@@ -16,6 +16,7 @@ when the caller passes `reveal=True`.
 A read returns what it read, and raises NotFound for a photo that is not there and
 Refused for a question it will not answer (docs/ARCHITECTURE.md, Decisions, 2026-09-24).
 """
+import functools
 import json
 import os
 from contextlib import closing
@@ -314,29 +315,44 @@ def _people_at_the_top(conn, reveal=False):
 def files_that_fail_to_open(library):
     """The photos whose file is there and does not open: empty, ending in zero bytes as an interrupted copy leaves
     a file (images.ZERO_TAIL), or not a picture Pillow can identify -- the end of each file and its header are
-    read, and no picture is decoded (about a millisecond a photo; a whole decode is thirty). A JPEG cut short in the
-    middle of its picture is not found here, and takes a write of its tags (DECISIONS 2026-10-15). {"count", "unreached": photos whose file could not be looked at (a share, a lock), not counted, and
-    not the missing ones (`missing_files`), "files": [(id, path, why)] by path}. Reported, not broken. Nothing is
+    read, and no picture is decoded (about a millisecond a photo on this PC's disk, where a whole decode is thirty; some
+    seventy-five on a network share). A JPEG cut short in the middle of its picture is not found here, and takes a
+    write of its tags (DECISIONS 2026-10-15). Each photo's look is given shares.READ_WAIT (shares.bounded): a share that
+    does not answer within it is taken as away, and its photos after it are not looked at, at once, rather than each
+    holding the run for as long as Windows waits (#2753; shares.read_bounded, which asks the share again of a late
+    "not found"). A clip (photos.kind 'video') is not looked at: it is no
+    picture Pillow identifies, and every one was counted as failing to open. {"count", "unreached": photos whose file could not be looked
+    at (a share that did not answer, a lock), not counted, and not the missing ones (`missing_files`'s; a file removed
+    while the run reads it is one of them), "files": [(id, path, why)] by path}. Reported, not broken. Nothing is
     written; the paths are for a caller that reveals them."""
     with _reading(library) as conn:
-        held = inspection.photo_files(conn)
+        held = inspection.photo_files(conn, "photo")
     failed, unreached = [], 0
     for photo_id, path in held:
-        try:
-            if images.tail_check(path) >= images.ZERO_TAIL:
-                failed.append((photo_id, path, images.DAMAGE["zero-filled"]))
-                continue
-            images.shown_shape(path)
-        except images.Unreadable as damage:
-            failed.append((photo_id, path, images.DAMAGE.get(damage.kind, damage.kind)))
-        except FileNotFoundError:
-            continue
-        except OSError as problem:
-            if images.is_damage(problem):
-                failed.append((photo_id, path, images.DAMAGE["not an image"]))
-            else:
-                unreached += 1
+        state, found = shares.read_bounded(path, functools.partial(_fails_to_open, path))
+        if state == "ok":
+            if found:
+                failed.append((photo_id, path, found))
+        elif shares.why_not_read(path, found if state == "error" else None) != shares.GONE:
+            unreached += 1
     return {"count": len(failed), "unreached": unreached, "files": failed}
+
+
+def _fails_to_open(path):
+    """Why the file at `path` does not open (images.DAMAGE's words), or None when it does: its end and its header read,
+    nothing decoded. Raises the OSError of a file that could not be read -- gone, locked, a share that dropped --: no
+    reason to call a photo damaged."""
+    try:
+        if images.tail_check(path) >= images.ZERO_TAIL:
+            return images.DAMAGE["zero-filled"]
+        images.shown_shape(path)
+    except images.Unreadable as damage:
+        return images.DAMAGE.get(damage.kind, damage.kind)
+    except OSError as problem:
+        if images.is_damage(problem):
+            return images.DAMAGE["not an image"]
+        raise
+    return None
 
 
 # ---- Rows whose file is gone ------------------------------------------------------------

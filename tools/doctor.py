@@ -9,7 +9,9 @@ under a root -- then how many photos have no CLIP vector for the model the confi
 then the photos that list a person from a face alone (a face was named and no keyword says so: reported, not broken),
 then the rows whose file is not on disk, by folder (inspect.missing_files: a drive or share that does not answer is
 not looked at, never "gone"), how many photos' files fail to open (empty, ending in zero bytes, not a
-picture: the end of each file is read, no picture decoded), and the photos under no root, by folder.
+picture: the end of each photo's file is read, no picture decoded, no clip looked at; over a
+minute a thousand photos on a network share, and a share that stops answering is not waited for),
+and the photos under no root, by folder.
 Counts only, unless --show asks for examples: they are paths and tags, and paths name
 people. Then the keywords photos carry that the tag tree has no node for, which is reported, not
 broken (the tree is the owner's, and indexing never adds to it).
@@ -126,6 +128,8 @@ def report(db_path, show=0, out=print):
             % (missing["rows"], missing["folders"], missing["folders_gone"], missing["not_looked_at"]))
         for entry in missing["by_folder"][:show]:
             out("    %6d  %s%s" % (entry["rows"], entry["path"], "  (folder gone)" if entry["folder_gone"] else ""))
+        out("looking at the end and the header of each photo's file (not the clips') for one that fails to open: over a "
+            "minute for every thousand on a network share")
         opens = inspect.files_that_fail_to_open(Library(db_path))
         out("photos whose file fails to open: %d (reported, not broken: empty, ending in zero bytes as an interrupted copy "
             "leaves a file, or not a picture; a JPEG cut short inside its picture is not looked for)%s"

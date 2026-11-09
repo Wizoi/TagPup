@@ -67,6 +67,7 @@ class ASleepingShare(unittest.TestCase):
         self.ids = [self.vl.photo("Coast", "p%d.jpg" % n, taken="2024:06:01 10:00:00") for n in range(3)]
         self.photo_paths = [self.vl.path_of(photo_id) for photo_id in self.ids]
         asleep, under = threading.Event(), os.path.normcase(self.vl.pictures)
+        self.asleep = asleep
         self.addCleanup(asleep.set)
         shares.forget()
         self.addCleanup(shares.forget)
@@ -119,13 +120,45 @@ class ASleepingShare(unittest.TestCase):
 
     def test_the_rows_whose_file_is_gone_leave_out_the_photos_on_it_and_name_no_folder_gone(self):
         """The MCP tool's answer (inspect.missing_files): a photo on the share asleep is not looked at, not gone. The
-        doctor says the same: it called all of them missing with a bare os.path.exists (#1388)."""
+        doctor says the same: it called all of them missing with a bare os.path.exists (#1388).
+
+        The doctor's look for a file that fails to open, run first so that the share falls asleep under it: it waits
+        READ_WAIT for the first photo, then takes the share as away and counts the others not looked at at once -- it
+        read each file with no deadline, a share asleep held it for as long as Windows waited on every photo, and the
+        "not found" it then said skipped the photo uncounted (#2753)."""
+        with mock.patch.object(shares, "READ_WAIT", 0.05):
+            started = time.monotonic()
+            opens = inspect.files_that_fail_to_open(self.vl.library)
+            took = time.monotonic() - started
+        self.assertEqual((0, 3, []), (opens["count"], opens["unreached"], opens["files"]))
+        self.assertLess(took, 1.0, "the share was waited for on more than one photo")
         found = inspect.missing_files(self.vl.library)
         self.assertEqual((0, 0, 0, 3), (found["rows"], found["folders"], found["folders_gone"], found["not_looked_at"]))
         said = []
         doctor.report(self.vl.path, out=said.append)
         self.assertIn("rows whose file is not on disk: 0, in 0 folder(s); 0 folder(s) are gone entirely; 3 row(s) not "
                       "looked at (their share did not answer, or the file could not be read)", said)
+        self.assertIn("looking at the end and the header of each photo's file (not the clips') for one that fails to open: "
+                      "over a minute for every thousand on a network share", said)
+        opened = [line for line in said if line.startswith("photos whose file fails to open")]
+        self.assertTrue(opened[0].endswith("; 3 could not be looked at"), opened)
+
+
+    def test_a_look_for_a_file_that_fails_to_open_ending_late_in_not_found_leaves_the_share_away(self):
+        """A server gone while the doctor's look waited answers "not found", late: the look's end asks whether the share
+        answers (shares.read_bounded, as a read of a clip's piece does), and the share stays away. It was taken as back
+        by the late answer, and the next photo was waited on again."""
+        with mock.patch.object(shares, "READ_WAIT", 0.05):
+            opens = inspect.files_that_fail_to_open(self.vl.library)
+        self.assertEqual(3, opens["unreached"])
+        root, real_exists = os.path.normcase(os.path.splitdrive(self.vl.pictures)[0] + os.sep), os.path.exists
+        with mock.patch.object(os.path, "exists",
+                               lambda path: os.path.normcase(str(path)) != root and real_exists(path)):
+            self.asleep.set()   # the hung look ends: "not found", and the share's root is not there
+            for look in [thread for thread in threading.enumerate() if thread.name == "ShareLook"]:
+                look.join(5)
+        self.assertIsNotNone(shares.away_since(shares.share_of(self.vl.pictures)),
+                             "the late not-found took the share as back")
 
 
 class ASyncThatCannotLookAtAFolder(unittest.TestCase):

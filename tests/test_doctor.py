@@ -281,16 +281,46 @@ class TheDoctor(Library):
             self.photo(name, on_disk=False)
             make(os.path.join(self.dir, name))
         self.photo("gone.jpg", on_disk=False)
+        # A clip, as the indexer records one (kind 'video'): its file is no picture Pillow can identify, and is not one
+        # that fails to open -- every clip of a library was counted (2,179 in photo_index, 5 in kr-track).
+        clip = os.path.join(self.dir, "harbour clip.mp4")
+        with open(clip, "wb") as handle:
+            handle.write(b"\x00\x00\x00\x18ftypmp42\x00\x00\x00\x00mp42isom" + bytes(range(1, 256)) * 400)
+        photo_rows.add_read(self.conn, clip, {})
+        self.conn.commit()
         _broken, lines = self.run_doctor()
         said = [line for line in lines if line.startswith("photos whose file fails to open")]
         self.assertEqual(1, len(said), lines)
         self.assertIn("fails to open: 3 ", said[0])   # the copy that stops in zeros, the empty file, the file of zeros
+        self.assertNotIn("could not be looked at", said[0], "the row whose file is gone is missing_files', not unreached")
         self.assertNotIn("incomplete copy", "\n".join(lines))
         _broken, shown = self.run_doctor(5)
         listed = "\n".join(shown)
         for name in ("incomplete copy.jpg", "nothing.jpg", "zeros.jpg"):
             self.assertIn(name, listed)
         self.assertNotIn("whole.jpg", listed)
+        self.assertNotIn("harbour clip.mp4", listed)
+
+    def test_a_row_a_sync_removes_while_the_look_reads_is_no_crash(self):
+        """A row removed (store.photos.forget_photo, as a sync removes one) just after the look for a file that fails to
+        open read the library: the look's photos and their kind are one read, so no second read misses it."""
+        import damaged_photos
+        from tagpup.core import library as libraries
+        from tagpup.services import inspect
+        from tagpup.store import inspection
+        from tagpup.store import photos as store_photos
+        for name in ("kept.jpg", "removed.jpg"):
+            self.photo(name, on_disk=False)
+            damaged_photos.whole_jpeg(os.path.join(self.dir, name))
+        real = inspection.photo_files
+
+        def then_removed(conn, *args, **kwargs):
+            found = real(conn, *args, **kwargs)
+            store_photos.forget_photo(self.db_path, os.path.join(self.dir, "removed.jpg"))
+            return found
+        with mock.patch.object(inspection, "photo_files", then_removed):
+            opens = inspect.files_that_fail_to_open(libraries.Library(self.db_path))
+        self.assertEqual((0, 0), (opens["count"], opens["unreached"]))
 
     def test_changes_nothing(self):
         self.face(self.photo("a.jpg"), name="Wren Halloway", rebuilt=False)

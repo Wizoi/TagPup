@@ -403,6 +403,22 @@ def _read_span(path, start, length, stamp, on_a_share=False):
         return handle.read(length)
 
 
+def read_bounded(path, read):
+    """("ok", what `read()` returned) | ("error", the OSError it raised) | ("away", None): `read()` of the file at `path`
+    given READ_WAIT (bounded). A "not found" of a file on a network share asks whether the share answers (_share_answers),
+    as _read_span's does: a server gone while the read waited says "not found", late, and the look's end then does not
+    take the share as back, so the next file is not waited on again. What a run over a library's files reads each one by
+    (tagpup.services.inspect.files_that_fail_to_open, segment_census); why_not_read says why one was not read."""
+    def look():
+        try:
+            return read()
+        except (FileNotFoundError, NotADirectoryError):
+            if on_a_network_drive(path):
+                _share_answers(path)
+            raise
+    return bounded(path, look, READ_WAIT)
+
+
 def read_span(path, start, length, stamp):
     """`length` bytes of the file at `path` from `start` (fewer at its end), read only while the file is the one stamped
     `stamp` (mtime, size, as reachable_stamp gave it; the open handle's own stamp is compared, so a file replaced between
