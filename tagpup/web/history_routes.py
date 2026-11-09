@@ -19,7 +19,6 @@ import logging
 
 from flask import Blueprint, jsonify, request
 
-from tagpup.core.result import NotFound
 from tagpup.services import journal as journal_service
 from tagpup.web import responses, state
 
@@ -77,8 +76,8 @@ def undo_change(change_id):
     apply = body.get("apply") is True
     try:
         result = journal_service.undo(library, change_id, apply=apply, exiftool_path=state.exiftool(library))
-    except NotFound as e:
-        return responses.error(404, str(e))
+    except responses.ANSWERED as why:
+        return responses.of(why)
     except Exception as e:
         logger.error("Could not undo change %d of %s: %s", change_id, library.name, e, exc_info=True)
         return responses.error(500, str(e))

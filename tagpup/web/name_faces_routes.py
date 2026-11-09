@@ -13,8 +13,7 @@ import logging
 
 from flask import Blueprint, jsonify, request
 
-from tagpup.core import paths
-from tagpup.core.result import Conflict, NotFound, Refused
+from tagpup.core.result import NotFound
 from tagpup.jobs import naming_faces
 from tagpup.web import lifecycle as lifecycles
 from tagpup.web import responses, security, state, tuner_routes
@@ -73,17 +72,17 @@ def _busy(library):
 
 
 def _reply(call):
-    """`call()`'s Job as the page reads it, or its refusal as the JSON error."""
+    """`call()`'s Job as the page reads it, or its refusal as the JSON error: a job number that is not one, or a root not
+    placed (paths.RootsError: the gate, tagpup.web.roots_gate, answers it before a route runs), 400; what the service
+    refused as every route answers it (tagpup.web.responses.of), a job already working with that job in `job`."""
     try:
         return call()
-    except NotFound as why:
-        return responses.error(404, str(why))
-    except naming_faces.AlreadyWorking as why:
-        return responses.error(409, str(why), job=why.job)
-    except Conflict as why:
-        return responses.error(409, str(why))
-    except (Refused, ValueError, paths.RootsError) as why:
+    except ValueError as why:
         return responses.error(400, str(why))
+    except naming_faces.AlreadyWorking as why:
+        return responses.of(why, job=why.job)
+    except responses.ANSWERED as why:
+        return responses.of(why)
     except Exception as why:
         logger.error("Name faces from tags: %s", why, exc_info=True)
         return responses.error(500, "Naming faces could not be started or read; the server's log says why.")

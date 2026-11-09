@@ -463,5 +463,69 @@ class AFaceModelKeyIsReadOnceAndTravelsWithItsVectors(unittest.TestCase):
         self.assertEqual([], problems)
 
 
+#: The exceptions a service raises that a route answers (tagpup.web.responses.ANSWERS), by name.
+ANSWERED = ("NotFound", "Conflict", "Refused", "Unavailable", "RootsError")
+
+
+def answered_names():
+    """ANSWERED and every class of the package that derives from one of them (NotHeld, AlreadyWorking, UnmappedRoot...),
+    by the last part of each base's name."""
+    classes = [(node.name, {getattr(base, "attr", getattr(base, "id", None)) for base in node.bases})
+               for relative in python_sources() if relative.startswith("tagpup")
+               for node in ast.walk(ast.parse(read(relative))) if isinstance(node, ast.ClassDef)]
+    names, grown = set(ANSWERED), True
+    while grown:
+        more = {name for name, bases in classes if bases & names} - names
+        names |= more
+        grown = bool(more)
+    return names
+
+
+def own_statuses(source, answered):
+    """(line, what) for each place in `source` that answers a service's exception with a status of its own: an `except`
+    naming one of `answered` whose arm spells a status number, or an isinstance test against one."""
+    def named(node):
+        return {getattr(each, "attr", getattr(each, "id", None))
+                for each in (node.elts if isinstance(node, ast.Tuple) else [node])}
+    found = []
+    for node in ast.walk(ast.parse(source)):
+        if isinstance(node, ast.ExceptHandler) and node.type is not None and named(node.type) & (answered | {"ANSWERED"}):
+            if any(isinstance(each, ast.Constant) and type(each.value) is int and 400 <= each.value < 600
+                   for line in node.body for each in ast.walk(line)):
+                found.append((node.lineno, "except %s" % ", ".join(sorted(named(node.type) & answered))))
+        elif (isinstance(node, ast.Call) and getattr(node.func, "id", None) == "isinstance" and len(node.args) == 2
+              and named(node.args[1]) & answered):
+            found.append((node.lineno, "isinstance %s" % ", ".join(sorted(named(node.args[1]) & answered))))
+    return found
+
+
+class ARouteAnswersWhatAServiceRaisedThroughTheOneMapper(unittest.TestCase):
+    """Conflict was answered 409 by hand at nine sites, NotFound and Refused at a dozen more, a NotFound as Flask's HTML
+    page at some: a route catching fewer than its service raised answered 500, and the pages read two shapes (#2743).
+    tagpup.web.responses owns the mapping (ANSWERS, of, abort_with); a route catches responses.ANSWERED."""
+
+    def test_a_route_that_spells_its_own_status_is_found(self):
+        answered = answered_names()
+        self.assertTrue({"NotHeld", "AlreadyWorking", "UnmappedRoot", "SandboxError"} <= answered, answered)
+        planted = ("def a():\n    try:\n        f()\n    except Conflict as why:\n        return responses.error(409, str(why))\n"
+                   "def b():\n    try:\n        f()\n    except (Refused, paths.RootsError):\n        abort(400)\n"
+                   "def c(why):\n    if isinstance(why, NotFound):\n        return 404\n"
+                   "def d():\n    try:\n        f()\n    except naming_faces.AlreadyWorking as why:\n"
+                   "        return responses.error(409, str(why), job=why.job)\n"
+                   "def e():\n    try:\n        f()\n    except responses.ANSWERED as why:\n        return responses.error(409, str(why))\n")
+        self.assertEqual([4, 9, 12, 17, 22],[line for line, _what in own_statuses(planted, answered)])
+        mapped = ("def a():\n    try:\n        f()\n    except ValueError as why:\n        return responses.error(400, str(why))\n"
+                  "    except responses.ANSWERED as why:\n        return responses.of(why)\n")
+        self.assertEqual([], own_statuses(mapped, answered))
+
+    def test_no_route_module_maps_one_itself(self):
+        answered = answered_names()
+        web = os.path.join("tagpup", "web")
+        problems = ["%s:%d: %s" % (relative, line, what) for relative in python_sources()
+                    if relative.startswith(web) and relative != os.path.join(web, "responses.py")
+                    for line, what in own_statuses(read(relative), answered)]
+        self.assertEqual([], problems)
+
+
 if __name__ == "__main__":
     unittest.main()

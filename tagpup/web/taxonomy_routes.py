@@ -15,7 +15,6 @@ port; they ask the same guard now (tagpup.web.tuner_routes.naming_refusal).
 """
 from flask import Blueprint, jsonify, request
 
-from tagpup.core.result import NotFound
 from tagpup.services import tags as tags_service
 from tagpup.web import responses, state, tuner_routes
 
@@ -36,8 +35,8 @@ def _tree_edit(edit):
     400 for a request refused, 500 for anything else. The one place a tree edit forgets the cached scans."""
     try:
         result = edit(state.require())
-    except NotFound as missing:
-        return None, responses.error(404, str(missing))
+    except responses.ANSWERED as why:
+        return None, responses.of(why)
     except Exception as e:
         return None, responses.error(500, str(e))
     if result.refused:
@@ -76,8 +75,8 @@ def taxonomy_delete_check():
         return responses.error(400, "Missing 'tag_id' parameter")
     try:
         usage = tags_service.usage(state.require(), tag_id)
-    except NotFound as missing:
-        return responses.error(404, str(missing))
+    except responses.ANSWERED as why:
+        return responses.of(why)
     except Exception as e:
         return responses.error(500, str(e))
     return jsonify(dict(usage, success=True))

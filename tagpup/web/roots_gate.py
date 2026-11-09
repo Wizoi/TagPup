@@ -22,6 +22,7 @@ import time
 
 from flask import make_response, request
 
+from tagpup.core import paths
 from tagpup.services import roots as roots_service
 from tagpup.web import responses, state
 
@@ -74,6 +75,6 @@ def guard():
     said = problem_of(library)
     if said is None:
         return None
-    reply = make_response(responses.error(409, said, roots_problem=True))
+    reply = make_response(responses.of(paths.RootsError(said)))   # answered as a root not placed is
     reply.headers[HEADER] = "1"
     return reply

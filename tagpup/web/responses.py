@@ -6,10 +6,11 @@ of the photo route for both. The shapes are kept exactly: the pages read them.
 """
 import logging
 
-from flask import Response, abort, jsonify
+from flask import Response, abort, jsonify, make_response
 from werkzeug.datastructures import Range
 
-from tagpup.core.result import CHANGED_ON_DISK, SHARE_AWAY, NotFound, Refused
+from tagpup.core import paths
+from tagpup.core.result import CHANGED_ON_DISK, REFUSED, SHARE_AWAY, Conflict, NotFound, Refused, Unavailable
 from tagpup.services import photos as photo_actions
 
 logger = logging.getLogger(__name__)
@@ -25,25 +26,51 @@ def error(status, message, **extra):
 
 #: How a refused Result is answered, by its kind (Result.refused_kind): (status, what the reply says beside the error).
 #: 409 when the file is no longer the one the page built its record from, `changed_on_disk` telling the page to read it
-#: again; 503 when a folder's network share did not answer (try again later); any other, REFUSED, 400.
-STATUS = {CHANGED_ON_DISK: (409, {"changed_on_disk": True}), SHARE_AWAY: (503, {})}
+#: again; 503 when a folder's network share did not answer (try again later); REFUSED, the request is not one that is
+#: made, 400.
+STATUS = {REFUSED: (400, {}), CHANGED_ON_DISK: (409, {"changed_on_disk": True}), SHARE_AWAY: (503, {})}
+
+#: What a service raises that a route answers with the exception's own sentence (tagpup.core.result; a root this machine
+#: does not place, tagpup.core.paths), and how: (status, what the reply says beside the error). NotFound 404; Conflict 409
+#: (too many batches wait ahead, a face that cannot be named as things stand, a video being deleted); Refused as a
+#: refused Result is (STATUS, 400); a root not placed 409 with `roots_problem`, which raises the pages' banner
+#: (web/common/api.js); Unavailable as a share away is, 503, with Retry-After. The one mapping (of): a route catches
+#: ANSWERED and answers of(it); anything else it raised is its own 500 with a sentence, never swallowed here.
+ANSWERS = ((NotFound, (404, {})), (Conflict, (409, {})), (Refused, STATUS[REFUSED]),
+           (paths.RootsError, (409, {"roots_problem": True})), (Unavailable, STATUS[SHARE_AWAY]))
+ANSWERED = tuple(kind for kind, _answer in ANSWERS)
 
 #: Seconds a 503 tells the page to wait before it asks again (Retry-After): a file that cannot be reached just now
 #: (unavailable), and a server or a library being brought up to date (tagpup.web.lifecycle, tagpup.web.libraries).
 RETRY_AFTER_SECONDS = 2
 
 
-def unavailable(why):
-    """The reply for a read that cannot be answered just now (tagpup.core.result.Unavailable: the file's share is away,
-    or the file refuses to be read): its sentence, answered as a share away is (STATUS, 503), with Retry-After."""
-    reply = error(STATUS[SHARE_AWAY][0], str(why))
-    reply[0].headers["Retry-After"] = str(RETRY_AFTER_SECONDS)
+def _answer(why):
+    """(status, what the reply says beside the error) for `why`, one of ANSWERED: its one row of ANSWERS (no exception is
+    two kinds of them; one that is none fails here, loudly)."""
+    (answer,) = [answer for kind, answer in ANSWERS if isinstance(why, kind)]
+    return answer
+
+
+def of(why, **extra):
+    """The JSON error for what a service raised, `why`, one of ANSWERED (ANSWERS): its own sentence, never a traceback.
+    An Unavailable carries Retry-After: the page asks again in a moment. `extra` goes in beside (a job already working,
+    `job`). From inside a helper that cannot return a reply: abort_with."""
+    status, said = _answer(why)
+    reply = error(status, str(why), **said, **extra)
+    if isinstance(why, Unavailable):
+        reply[0].headers["Retry-After"] = str(RETRY_AFTER_SECONDS)
     return reply
+
+
+def abort_with(why):
+    """End the request with of(why), from wherever it was caught, helpers included."""
+    abort(make_response(of(why)))
 
 
 def refused(result, **extra):
     """A refused Result's JSON error, as its kind is answered (STATUS)."""
-    status, said = STATUS.get(result.refused_kind, (400, {}))
+    status, said = STATUS[result.refused_kind]
     return error(status, result.refused, **said, **extra)
 
 
@@ -112,10 +139,8 @@ def photo(wanted, size, upright, cache_seconds=None):
         max_size = None   # a size that is not a number gets the photo itself, as it always did
     try:
         content, content_type = photo_actions.page_copy(photo_path, max_size, upright)
-    except Refused as refused:
-        abort(400, description=str(refused))
-    except NotFound as missing:
-        abort(404, description=str(missing))
+    except (Refused, NotFound) as why:
+        abort(_answer(why)[0], description=str(why))   # a plain error page, as ANSWERS has its status
     except Exception as e:
         logger.error("Error serving %s: %s", photo_path, e)
         abort(500, description="Error serving file: %s" % e)

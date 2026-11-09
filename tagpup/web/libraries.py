@@ -26,7 +26,7 @@ from tagpup.core import library as libraries
 from tagpup.core import validation
 from tagpup.core.library import Library
 from tagpup.services import libraries as library_actions
-from tagpup.web import responses
+from tagpup.web import lifecycle, responses
 
 logger = logging.getLogger(__name__)
 
@@ -119,7 +119,7 @@ class LibraryFromUrl:
     def _refuse_updating(environ, start_response):
         """503 with Retry-After and X-TagPup-Updating, as a drain answers (tagpup.web.lifecycle): the API's JSON is
         waited out and sent again by the pages; a browser shown a page gets a short text that asks again by itself."""
-        headers = [("Retry-After", str(responses.RETRY_AFTER_SECONDS)), ("X-TagPup-Updating", "1"), ("Cache-Control", "no-store")]
+        headers = [("Retry-After", str(responses.RETRY_AFTER_SECONDS)), (lifecycle.UPDATING_HEADER, "1"), ("Cache-Control", "no-store")]
         if "/api/" in (environ.get("PATH_INFO") or "") + "/":
             body = json.dumps({"success": False, "updating": True, "error": UPDATING_SENTENCE}).encode("utf-8")
             kind = "application/json"
