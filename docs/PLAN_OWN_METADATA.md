@@ -95,6 +95,6 @@ fault behind #2377 is addressed by neither writer; the picture check stays.
 
 ## Open for the owner
 
-Rewrites grow each file about 2 KB (M5); whether bakes move off ExifTool; the IPTCDigest refresh (new behaviour); the
-SmugMug round trip; extended-XMP scope after the census; do stale EXIF/IPTC keyword copies matter (owner 2026-11-03: no,
-so an XMP-only keyword write stays an open option).
+Rewrites grow each file about 2 KB (M5); whether bakes move off ExifTool; the SmugMug round trip; extended-XMP scope after the census; do stale EXIF/IPTC keyword copies matter (owner 2026-11-03: no,
+so an XMP-only keyword write stays an open option). Answered: the IPTCDigest is left alone, not refreshed (owner
+2026-11-03, DECISIONS; revisit only with a WLPG test on copies showing a stale digest costs something).

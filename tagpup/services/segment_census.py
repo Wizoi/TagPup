@@ -10,8 +10,12 @@ written: the library is opened read-only (db.readonly_uri), a photo only to read
 tag and no value of a file (the photos are of real people, many of them minors): only counts, a camera maker's bucket
 (VENDORS) and the order of the segments by kind.
 
-A MakerNote's offsets are told apart by `containers.maker_note`, which the EXIF block editor reads them by too (its
-classes, in its docstring); the Exif IFD's OffsetSchema (0xEA1D) is only counted against a Canon footer.
+An EXIF block is walked as the EXIF block editor walks it (`containers.exif_tiff`: a block it cannot follow is counted
+so, not read some other way) and its Orientation counted in either type the libraries hold it in (SHORT, or LONG as 2 of
+photo_index's 1,064 sampled are), as the editor reads it; the census imports no editor (only segment_edits does,
+tests/test_the_block_editors_have_one_caller.py). A MakerNote's offsets are told apart by `containers.maker_note`, which the
+editor reads them by too (its classes, in its docstring); the Exif IFD's OffsetSchema (0xEA1D) is only counted against
+a Canon footer.
 """
 import collections
 import datetime
@@ -145,54 +149,43 @@ def _shape(layout, header, tail, counts, makers, toolkits, orders):
 # --- EXIF ---------------------------------------------------------------------------------------------------------
 
 
-def _ifd(tiff, at, order):
-    """({tag: (type, count, the four value bytes, the value as an offset)}, next IFD) of the IFD at `at`, or None."""
-    found = containers.ifd(tiff, at, order) if at >= 8 else None
-    if found is None or found[1] is None or not 1 <= len(found[0]) <= 1000:
-        return None
-    return {entry[0]: entry[1:] for entry in found[0]}, found[1]
-
-
-def _vendor(tiff, entries):
-    found = entries.get(0x010F)
-    if found is None or found[0] != 2:
+def _vendor(tiff, ifd0):
+    found = next((entry for entry in ifd0.entries if entry[0] == 0x010F), None)
+    if found is None or found[1] != 2:
         return "(no Make)"
-    return VENDORS.get(containers.make_word(tiff, (0x010F,) + found), "other")
+    return VENDORS.get(containers.make_word(tiff, found), "other")
 
 
 def _exif(tiff, counts, makers):
-    if len(tiff) < 8 or tiff[:2] not in (b"II", b"MM"):
-        counts["EXIF not a TIFF structure"] += 1
+    layout = containers.exif_tiff(tiff)
+    if layout is None or "ifd0" not in layout.named:
+        counts["EXIF structure not followed"] += 1
         return
-    order = "<" if tiff[:2] == b"II" else ">"
-    ifd0 = _ifd(tiff, struct.unpack(order + "I", tiff[4:8])[0], order)
-    if ifd0 is None:
-        counts["EXIF IFD0 not followed"] += 1
-        return
-    entries, next_ifd = ifd0
-    ifd1 = _ifd(tiff, next_ifd, order) if next_ifd else None
-    counts["IFD1 thumbnail"] += bool(ifd1 and 0x0201 in ifd1[0] and 0x0202 in ifd1[0])
-    turned = entries.get(0x0112)
-    counts["EXIF Orientation " + (str(struct.unpack(order + "H", turned[2][:2])[0]) if turned and turned[0] == 3
-                                  else "absent")] += 1
-    sub = entries.get(0x8769)
-    exif_ifd = _ifd(tiff, sub[3], order) if sub else None
-    note = exif_ifd[0].get(0x927C) if exif_ifd else None
-    vendor = _vendor(tiff, entries)
+    order, named = layout.order, layout.named
+    ifd1 = {entry[0] for entry in named["ifd1"].entries} if "ifd1" in named else set()
+    counts["IFD1 thumbnail"] += {0x0201, 0x0202} <= ifd1
+    turned = next((entry for entry in named["ifd0"].entries if entry[0] == 0x0112), None)
+    shape = {3: "H", 4: "I"}.get(turned[1]) if turned and turned[2] == 1 else None
+    counts["EXIF Orientation " + (str(struct.unpack(order + shape, turned[3][:struct.calcsize(shape)])[0]) if shape
+                                  else "absent" if turned is None else "of another type")] += 1
+    exif_ifd = {entry[0]: entry for entry in named["exif"].entries} if "exif" in named else {}
+    note = exif_ifd.get(0x927C)
+    vendor = _vendor(tiff, named["ifd0"])
     if note is None:
         makers[vendor]["no MakerNote"] += 1
-    else:
-        counts["MakerNote"] += 1
-        if note[1] <= 4:
-            makers[vendor]["inline"] += 1
-            return
-        label, bad, footer = containers.maker_note(tiff, note[3], note[1], order, canon=vendor == "Canon")
-        makers[vendor][label] += 1
-        counts["MakerNote with entries skipped"] += bad > 0
-        schema = exif_ifd[0].get(0xEA1D)
-        if footer is not None and schema is not None:
-            said = struct.unpack(order + "i", schema[2])[0] if schema[0] == 9 else None
-            counts["MakerNote OffsetSchema %s the Canon footer" % ("equals" if said == footer else "differs from")] += 1
+        return
+    counts["MakerNote"] += 1
+    length = containers.TIFF_TYPE_SIZES[note[1]] * note[2]
+    if length <= 4:
+        makers[vendor]["inline"] += 1
+        return
+    label, bad, footer = containers.maker_note(tiff, note[4], length, order, canon=vendor == "Canon")
+    makers[vendor][label] += 1
+    counts["MakerNote with entries skipped"] += bad > 0
+    schema = exif_ifd.get(0xEA1D)
+    if footer is not None and schema is not None:
+        said = struct.unpack(order + "i", schema[3])[0] if schema[1] == 9 else None
+        counts["MakerNote OffsetSchema %s the Canon footer" % ("equals" if said == footer else "differs from")] += 1
 
 
 # --- XMP ----------------------------------------------------------------------------------------------------------
