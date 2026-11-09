@@ -155,6 +155,7 @@ class TestAStalledCommandFailsLoudly(unittest.TestCase):
 _KILLED_WRITER = r'''
 import os, sys
 sys.path.insert(0, %r)
+from tagpup.core import processes
 from tagpup.files.exiftool_session import ExifToolSession, ExifToolTimeout
 et = ExifToolSession(executable=%r, timeout=45)
 et.execute("-ver")
@@ -166,7 +167,7 @@ if %r:
         pass
     et.timeout = 45
     et.execute("-ver")
-print(et._process.pid, flush=True)
+print(et._process.pid, processes.started(et._process.pid), flush=True)
 os._exit(3)
 '''
 
@@ -182,19 +183,22 @@ class TestAWriterKilledHardTakesItsExifToolWithIt(unittest.TestCase):
                                 stdout=-1, stderr=-1, text=True)
         out, err = child.communicate(timeout=WATCHDOG)
         self.assertEqual(child.returncode, 3, err)
-        pid = int(out.strip())
-        self.addCleanup(lambda: processes.is_alive(pid) and processes.kill_tree(pid))
-        deadline = time.monotonic() + 10
-        while processes.is_alive(pid) and time.monotonic() < deadline:
+        # By its id and when it started: tasklist answers "alive" when it is slow on a busy machine, and Windows soon gives
+        # an ended process's id to another.
+        pid, started = (int(word) for word in out.split())
+        exiftool = {"pid": pid, "started": started}
+        self.addCleanup(lambda: processes.recorded_alive(exiftool) and processes.kill_tree(pid))
+        deadline = time.monotonic() + 20
+        while processes.recorded_alive(exiftool) and time.monotonic() < deadline:
             time.sleep(0.25)
-        return pid
+        return exiftool
 
     def test_its_exiftool_ends_with_it(self):
-        self.assertFalse(processes.is_alive(self._killed_writer(stall=False)),
+        self.assertFalse(processes.recorded_alive(self._killed_writer(stall=False)),
                          "ExifTool outlived the TagPup process that started it")
 
     def test_an_exiftool_started_again_after_a_timeout_ends_with_it(self):
-        self.assertFalse(processes.is_alive(self._killed_writer(stall=True)),
+        self.assertFalse(processes.recorded_alive(self._killed_writer(stall=True)),
                          "the ExifTool started again after a timeout outlived the TagPup process")
 
 
