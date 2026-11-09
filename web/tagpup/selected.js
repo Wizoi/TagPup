@@ -119,6 +119,23 @@ export function selectionCount() {
     return lib.sel.mode === 'ids' ? lib.sel.ids.size : Math.max(0, lib.total - lib.sel.excluded.size);
 }
 
+/**
+ * A library view's selection by kind, `{ photos, videos }`, as kindsSaid spells one (#2645): its clips are the view's clips
+ * (`lib.videos`, the ids the server answered as videos) it holds -- under a Select all, every one less the excluded.
+ */
+export function selectionKinds() {
+    const lib = state.library;
+    const sel = lib.sel;
+    let videos = 0;
+    if (sel.mode === 'ids') {
+        for (const id of sel.ids) if (lib.videos.has(id)) videos += 1;
+    } else {
+        videos = lib.videos.size;
+        for (const id of sel.excluded) if (lib.videos.has(id)) videos -= 1;
+    }
+    return { photos: Math.max(0, selectionCount() - videos), videos };
+}
+
 /** Select, or deselect, the photo with this id. */
 export function setIdSelected(id, on) {
     const lib = state.library;

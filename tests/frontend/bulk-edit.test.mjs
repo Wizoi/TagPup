@@ -196,7 +196,22 @@ describe("while it is written, and when it is done", () => {
     el(ctx, "btn-select-all-thumbnails").click();
     await addTag(ctx);
     assert.equal(sentence(ctx),
-      "Added Trips/Lighthouse to 403 photos; 0 errors. TagPup took 403 photos but 400 were selected: 3 more came into this view since it was read.");
+      "Added Trips/Lighthouse to 403 photos; 0 errors. TagPup took 403 but 400 photos were selected: 3 more came into this view since it was read.");
+  });
+
+  test("a selection holding clips is said by kind: the question, the status, what was done, and what more was taken (#2645)", async (t) => {
+    const ctx = await view(t, 400, { onIds: () => ({ source: {}, total: 400, ids: range(400), videos: [1, 2], complete: true }),
+      cardExtra: (id) => ({ media: id <= 2 ? "video" : "photo" }) });
+    ctx.hold.bulkEdit = true;
+    ctx.bulk.edit = { total: 403, changed: 403 };
+    el(ctx, "btn-select-all-thumbnails").click();
+    await addTag(ctx);
+    assert.match(ctx.questions[0], /^Add Trips\/Lighthouse to 398 photos, 2 videos\?/);
+    assert.equal(status(ctx), "Add Trips/Lighthouse to 398 photos, 2 videos...");
+    ctx.held.splice(0).forEach((each) => each.release());
+    await ctx.settle(60);
+    assert.equal(sentence(ctx), "Added Trips/Lighthouse to 403 photos and videos; 0 errors. "
+      + "TagPup took 403 but 398 photos, 2 videos were selected: 3 more came into this view since it was read.");
   });
 
   test("an answer that does not come is said, with what to do, and nothing is sent again", async (t) => {

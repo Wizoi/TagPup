@@ -11,13 +11,15 @@ import { state } from './state.js';
 import { bulkAddPeopleInput, bulkAddTagsInput } from './elements.js';
 import { setStatus } from './status.js';
 import { resolveTagOrPerson, updatePeopleDatalist, updateTagsDatalist } from './tags.js';
-import { isIdSelected, selectionCount, selectionRequest } from './selected.js';
+import { isIdSelected, selectionCount, selectionKinds, selectionRequest } from './selected.js';
 import { BUSY_SENTENCE, bulkBusy, runBulk } from './bulk-run.js';
-import { photosOf } from './common/batch-strip.js';
-import { confirmSentence, deleteQuestion, describeDelete, describeTags, forGoodQuestion } from './bulk-words.js';
+import { confirmSentence, deleteQuestion, describeDelete, describeTags, forGoodQuestion, itemsOf } from './bulk-words.js';
 import { isVideo, showMedia, stopVideo } from './media.js';
 
-/** The selection, as a request, and how many photos it is; or null, the owner told why not (nothing is asked of the server). */
+/**
+ * The selection, as a request, how many photos and clips it is and of which kind (`kinds`, what its sentences say); or null, the
+ * owner told why not (nothing is asked of the server).
+ */
 function readSelection() {
     if (!state.library) return null;
     if (bulkBusy()) {
@@ -30,7 +32,7 @@ function readSelection() {
         else alert(asked.sentence);
         return null;
     }
-    return { selection: asked.body, count: selectionCount() };
+    return { selection: asked.body, count: selectionCount(), kinds: selectionKinds() };
 }
 
 /** The question before a write: it names the edit, the count and how long it takes. */
@@ -62,7 +64,7 @@ export async function addTypedToSelection(isPeople) {
     state.bulk.asking = true;
     let started;
     try {
-        if (!confirmed(describeTags({ op, add: names }), picked.count)) return false;
+        if (!confirmed(describeTags({ op, add: names, kinds: picked.kinds }), picked.count)) return false;
         const resolved = [];
         for (const name of names) {
             const found = await resolveTagOrPerson(name, isPeople);
@@ -70,7 +72,7 @@ export async function addTypedToSelection(isPeople) {
         }
         if (!resolved.length) return false;
         started = await runBulk({ op, selection: picked.selection, params: { add: resolved, remove: [] },
-            desc: describeTags({ op, add: resolved }), picked: picked.count });
+            desc: describeTags({ op, add: resolved, kinds: picked.kinds }), picked: picked.count });
     } finally {
         state.bulk.asking = false;
     }
@@ -93,7 +95,7 @@ export async function editByPill({ kind, name, remove, person = null }) {
     // A person the server told by id is edited by that id: the name may be another person's too.
     const byId = kind === 'person' && person && person.id !== null && person.id !== undefined;
     const shown = byId ? person.name : name;
-    const desc = describeTags({ op, add: remove ? [] : [shown], remove: remove ? [shown] : [] });
+    const desc = describeTags({ op, add: remove ? [] : [shown], remove: remove ? [shown] : [], kinds: picked.kinds });
     const params = byId
         ? { add: [], remove: [], ...(remove ? { remove_ids: [person.id] } : { add_ids: [person.id] }) }
         : (remove ? { add: [], remove: [name] } : { add: [name], remove: [] });
@@ -143,7 +145,7 @@ export async function deleteSelection() {
     if (!picked) return false;
     state.bulk.asking = true;
     try {
-        setStatus('busy', `Looking where the files of ${photosOf(picked.count)} are...`);
+        setStatus('busy', `Looking where the files of ${itemsOf(picked.count, picked.kinds)} are...`);
         let where;
         try {
             const res = await api.fetch('/api/library/selection/delete-check', {
@@ -169,12 +171,12 @@ export async function deleteSelection() {
             setStatus('ready', 'Nothing to delete: none of these photos is in the library any more.', { transient: false });
             return false;
         }
-        if (!confirm(deleteQuestion(where, count))) return false;
+        if (!confirm(deleteQuestion(where, count, picked.kinds))) return false;
         // Files whose drive's Recycle Bin would not keep them are named, and deleted for good only on OK; the token is of that
         // answer, so a start that did not ask is refused by the server.
         const forGood = (where.for_good && where.for_good.count) || 0;
         if (forGood && !confirm(forGoodQuestion(where.for_good.names, forGood))) return false;
-        const desc = describeDelete(where, count);
+        const desc = describeDelete(where, count, picked.kinds);
         const params = forGood ? { token: where.token, for_good: true } : { token: where.token };
         const clip = panelClipDeleted();
         if (clip) stopVideo();
