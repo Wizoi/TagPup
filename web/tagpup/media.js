@@ -112,7 +112,7 @@ function videoFailed() {
     const say = (sentence) => sayOf(route, sentence);
     api.fetch(route, { headers: { Range: 'bytes=0-0' } }).then(
         res => {
-            if (res.ok) return sayWhatItNeeds(route, clip, code === 4 ? FORMAT : UNREAD);
+            if (res.ok) return code === 3 || code === 4 ? sayWhatItNeeds(route, clip, code === 4 ? FORMAT : UNREAD) : say(UNREAD);   // a stream that broke (2) is no verdict on the format
             if (res.status === 404) return say(GONE);
             if (res.status === 409) return res.json().then(body => say(body.error || AWAY), () => say(AWAY));
             return say(AWAY);

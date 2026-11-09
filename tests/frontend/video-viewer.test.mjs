@@ -386,6 +386,18 @@ describe("a video the browser cannot play says why", () => {
     });
   }
 
+  test("a stream that broke (error 2) on a clip that plays is not called damaged: the plan is not asked", async (t) => {
+    const ctx = await viewWithAVideo(t);
+    ctx.server.first("/api/video-file", {}, { status: 206 });
+    ctx.server.first("/api/clip/convert-plan", { success: true, plan: "NOTHING", sentence: "its file may be damaged." });
+    await open(ctx, VIDEO);
+    fail(ctx, 2);
+    await ctx.settle(60);
+    assert.match(status(ctx), /could not be read\.$/);
+    assert.doesNotMatch(status(ctx), /damaged/);
+    assert.equal(ctx.server.calls.filter((call) => call.url.includes("/api/clip/convert-plan")).length, 0, "a network error asks nothing of ffprobe");
+  });
+
   const PLAN = "This video's picture is mpeg4, a format browsers do not play (its sound may play without it): it plays here once it is converted (Convert to play).";
   const loaded = (ctx, width) => {
     Object.defineProperty(video(ctx), "videoWidth", { value: width, configurable: true });
