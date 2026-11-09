@@ -369,7 +369,7 @@ def between_chunks(batch):
 @roots_service.canonical_args("photo_paths")
 def write_fields(library, operation, exiftool_path, photo_paths, read, plan_one, summary=None,
                  unreadable="fail", stop_at_first_error=False, et=None, held=None, whole=False, on_planned=None,
-                 uncapped=False, alongside=None, on_chunk=None):
+                 uncapped=False, alongside=None, on_chunk=None, patient=False):
     """Write fields into many photos as one change named `operation` (see the module's
     docstring). `read` is the fields read from each file; `plan_one(path, held)` says
     what one file is to hold (a Plan) from what it holds, {field: [texts]}.
@@ -405,8 +405,9 @@ def write_fields(library, operation, exiftool_path, photo_paths, read, plan_one,
     file holds what it is to hold already, and then only its rows are written.
 
     More than batches.MAX_BATCH photos are refused (too_many), nothing read, unless `uncapped` (the tag tree's rewrites, and
-    the one-off sweep of captions repeating the title, tagging.clear_duplicate_captions), which gives a photo on a share
-    found away one more look once the share's window is over (_looked_at_again); more than
+    the one-off sweep of captions repeating the title, tagging.clear_duplicate_captions). A photo on a share found away is
+    its error at once, unless `patient` (the sweep alone; the tag tree's rewrites answer at once, owner 2026-11-08), which
+    gives it one more look once the share's window is over (_looked_at_again); more than
     batches.CHUNK are a batch (the module's docstring): refused, nothing read, when batches.MOST_WAITING wait already, or when it
     is cancelled before its turn.
     """
@@ -423,7 +424,7 @@ def write_fields(library, operation, exiftool_path, photo_paths, read, plan_one,
                 refused.details["cancelled"] = isinstance(why, Refused)     # cancelled while it waited, not a queue that is full
                 return refused
         return _write_session(library, operation, exiftool_path, photo_paths, read, plan_one, summary, unreadable,
-                              stop_at_first_error, et, held, whole, on_planned, alongside, on_chunk, patient=uncapped)
+                              stop_at_first_error, et, held, whole, on_planned, alongside, on_chunk, patient=patient)
 
 
 def _holds_already(path, before, after):
@@ -460,7 +461,7 @@ def _write_session(library, operation, exiftool_path, photo_paths, read, plan_on
 
 def _looked_at_again(stored, away, batch):
     """The keys of `away` (photos of `stored` on a share found away) still away after one more look, once each share's
-    window is over (shares.wait_back: at most AWAY_SECONDS, sooner when the look that timed out answers): an uncapped
+    window is over (shares.wait_back: at most AWAY_SECONDS, sooner when the look that timed out answers): a `patient`
     write's first look at an idle share is slow, and every photo looked at in the 30 s it is then taken as away was
     left out (#2622: a sweep of 43,754 photos skipped all of them). A batch asked to stop waits no longer."""
     for share in {shares.share_of(path) for path in stored if paths.key(path) in away}:
@@ -488,7 +489,7 @@ def _write_fields(et, library, operation, exiftool_path, photo_paths, read, plan
     batch = batches.current()
     if fresh is None:
         # A photo on a share that does not answer is its error, at once in a capped write: read, it would cost ExifTool's
-        # whole deadline (five minutes) and hold the lock and the request that long (#1492). An uncapped (`patient`) write
+        # whole deadline (five minutes) and hold the lock and the request that long (#1492). A `patient` write
         # looks once more after the share's window, up to shares.AWAY_SECONDS (_looked_at_again). What the caller read just
         # now answered.
         away = {paths.key(path) for path, state in file_states(stored) if state == AWAY}

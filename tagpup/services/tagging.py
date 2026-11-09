@@ -187,7 +187,7 @@ def clear_duplicate_captions(library, exiftool_path, apply=False, on_planned=Non
             return file_changes.Plan(after={field: "" for field in repeated}, detail=repeated)
 
         result = file_changes.write_fields(library, CLEAR_DUPLICATES, exiftool_path, found, list(DUPLICATE_READ), plan_one,
-                                           summary={"photos": len(found)}, unreadable="skip", uncapped=True,
+                                           summary={"photos": len(found)}, unreadable="skip", uncapped=True, patient=True,
                                            on_planned=on_planned, on_chunk=on_chunk)
     # Why each photo was left alone: a share that did not answer is not "nothing to clear" (#2622).
     away = {paths.key(path) for path in result.details.get("not_answered", [])}
@@ -410,7 +410,7 @@ def leave_out_missing(photo_paths):
     skips them and writes the rest: the library still holds the row of a missing photo and a view shows it
     (phase 9c), so a selection can name one. A file that cannot be read, or on a share that does not answer, is NOT
     missing: the write meets it (file_changes.write_fields makes a photo on a share asleep its error: at once in a capped
-    write, after one more look once the share's window is over in an uncapped one), and stops at it as for any read or
+    write, after one more look once the share's window is over in a patient one, the caption sweep's), and stops at it as for any read or
     write error of a present file."""
     states = file_changes.file_states(photo_paths)
     return ([path for path, state in states if state != file_changes.GONE],
