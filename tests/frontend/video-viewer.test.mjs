@@ -3,7 +3,10 @@
  * from /api/video-file through the library (the image hidden, so the zoom and the face boxes stand down), and it stops --
  * no src, the stream let go -- when another photo is shown, on Back and on Escape. How it fails: rapid stepping between
  * a video and photos, the same video shown again (it plays on), a record with no `media` (a photo), and the video's
- * error event: a format the browser cannot play, a file gone, a share away, and an error of a video already left.
+ * error event: a format the browser cannot play, a file gone, a share away, and an error of a video already left. What a
+ * clip needs to play is the server's sentence (/api/clip/convert-plan, tagpup.files.convertible), asked on a format error
+ * and when the browser plays the sound and shows no picture with no error at all (Chrome and an MPEG-4 Part 2 clip:
+ * videoWidth 0 once its first data is loaded); a late answer about a clip stepped past says nothing.
  * Switching library is another page (web/common/library.js): nothing of the video outlives it. A video offers the
  * edits its record's `writes` names (its title, people, keywords, name and Date Taken: DECISIONS 2026-11-08, A5 (D)
  * REVISED): Rotate is inert with a sentence naming it, a photo stepped to after it has every control back, and a missing one has none (stale.js
@@ -382,6 +385,71 @@ describe("a video the browser cannot play says why", () => {
       assert.doesNotMatch(status(ctx), /format/, "a refused request is not blamed on the format");
     });
   }
+
+  const PLAN = "This video's picture is mpeg4, a format browsers do not play (its sound may play without it): it plays here once it is converted (Convert to play).";
+  const loaded = (ctx, width) => {
+    Object.defineProperty(video(ctx), "videoWidth", { value: width, configurable: true });
+    video(ctx).dispatchEvent(new ctx.window.Event("loadeddata"));
+  };
+  const plansAsked = (ctx) => ctx.server.calls.filter((call) => call.url.includes("/api/clip/convert-plan"));
+
+  test("a format it cannot play: the server's sentence of what it needs is said, asked of the clip's library by its id", async (t) => {
+    const ctx = await viewWithAVideo(t);
+    ctx.server.first("/api/video-file", {}, { status: 206 });
+    ctx.server.first("/api/clip/convert-plan", { action: "REENCODE", sentence: PLAN });
+    await open(ctx, VIDEO);
+    fail(ctx, 4);
+    await ctx.settle(40);
+    assert.equal(status(ctx), PLAN);
+    assert.deepEqual(plansAsked(ctx).map((call) => call.url), [`/photo_index/api/clip/convert-plan?id=${VIDEO}`]);
+  });
+
+  test("sound and no picture, with no error (videoWidth 0): the server is asked what it needs, and its sentence said", async (t) => {
+    const ctx = await viewWithAVideo(t);
+    ctx.server.first("/api/clip/convert-plan", { action: "REENCODE", sentence: PLAN });
+    await open(ctx, VIDEO);
+    loaded(ctx, 0);
+    await ctx.settle(40);
+    assert.equal(status(ctx), PLAN, "the panel says why there is no picture, never nothing");
+  });
+
+  test("a picture shown (videoWidth above 0) asks nothing and says nothing", async (t) => {
+    const ctx = await viewWithAVideo(t);
+    await open(ctx, VIDEO);
+    loaded(ctx, 160);
+    await ctx.settle(40);
+    assert.deepEqual(plansAsked(ctx), []);
+    assert.doesNotMatch(status(ctx), /video/);
+  });
+
+  for (const [what, reply, said] of [
+    ["the server cannot say (a reply that is no plan)", [{}, { status: 500 }], /format cannot be played in this browser/],
+    ["the share is away (503 with its sentence)", [{ success: false, error: "The share the video is on did not answer." }, { status: 503 }], /share the video is on did not answer/],
+  ]) {
+    test(`no picture and ${what}: the page says ${said}`, async (t) => {
+      const ctx = await viewWithAVideo(t);
+      ctx.server.first("/api/clip/convert-plan", ...reply);
+      await open(ctx, VIDEO);
+      loaded(ctx, 0);
+      await ctx.settle(40);
+      assert.match(status(ctx), said);
+    });
+  }
+
+  test("stepped on while the plan is asked: the late answer says nothing of the photo shown now", async (t) => {
+    const ctx = await viewWithAVideo(t);
+    let answer;
+    ctx.server.first("/api/clip/convert-plan", () => new Promise((resolve) => { answer = resolve; }));
+    await open(ctx, VIDEO);
+    loaded(ctx, 0);
+    await ctx.settle(20);
+    press(ctx, "ArrowRight");
+    await ctx.settle(120);
+    assertStopped(ctx, "stepped on");
+    answer({ action: "REENCODE", sentence: PLAN });
+    await ctx.settle(40);
+    assert.doesNotMatch(status(ctx), /video/, "the photo shown now is not said to need converting");
+  });
 
   test("an error of a video already left says nothing, however late the server answers", async (t) => {
     const ctx = await viewWithAVideo(t);

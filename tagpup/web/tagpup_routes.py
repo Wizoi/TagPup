@@ -815,6 +815,27 @@ def video_file():
     return reply
 
 
+@routes.get("/api/clip/convert-plan")
+def clip_convert_plan():
+    """What a clip needs before a browser plays it (tagpup.services.photos.clip_plan, tagpup.files.convertible):
+    {"action": "NOTHING" | "REMUX_AUDIO" | "REENCODE", "sentence"}, asked by the photo panel when the browser did not
+    play it (web/tagpup/media.js). Errors as /api/video-file's (404, 400, 409, 503 with Retry-After), and 503 with
+    ffprobe's sentence when it could not read the file just now, 400 with it when it cannot read it as a video. Reads
+    the file's header through ffprobe, bounded; writes nothing. To this PC only (403)."""
+    library = state.require()
+    photo_id, refusal = _id_asked()
+    if refusal is not None:
+        return refusal
+    try:
+        return jsonify(photo_actions.clip_plan(library, photo_id, config.locate_ffmpeg))
+    except responses.ANSWERED as why:
+        return responses.of(why)
+    except Exception as e:
+        logger.error("Error asking what video %s needs to play: %s", photo_id, e, exc_info=True)
+        return responses.error(500, "What the video needs to play could not be read (%s); the server's log says why."
+                               % type(e).__name__)
+
+
 @routes.post("/api/photo/open-explorer")
 def photo_open_explorer():
     body = request.get_json(silent=True) or {}
