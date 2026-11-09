@@ -33,7 +33,6 @@ from tagpup.store import file_journal, job_runs, snapshots  # noqa: E402
 from tagpup.web import app as web  # noqa: E402
 from tagpup.web.lifecycle import Lifecycle  # noqa: E402
 
-ELSEWHERE = {"REMOTE_ADDR": "192.168.1.20"}
 PORTS = {"tagpup": 8090, "tuner": 8080}
 
 
@@ -85,20 +84,8 @@ class Base(unittest.TestCase):
 
 
 class ThisPcOnly(Base):
-    """The page and its routes answer this PC alone, whatever the server listens on."""
-
-    def test_a_request_from_another_address_is_refused(self):
-        client = self.client()
-        for url in ("/api/activity/now", "/api/activity/jobs", "/api/activity/logs", "/activity/",
-                    "/api/activity/logs/tagpup_web.log/download"):
-            self.assertEqual(403, client.get(url, environ_base=ELSEWHERE).status_code, url)
-        self.assertEqual(403, client.post("/api/activity/jobs/run", json={"job": "sync", "library": "harbour"},
-                                          environ_base=ELSEWHERE).status_code)
-
-    def test_this_pc_by_either_address_is_answered(self):
-        client = self.client()
-        for address in ("127.0.0.1", "::1"):
-            self.assertEqual(200, client.get("/api/activity/now", environ_base={"REMOTE_ADDR": address}).status_code)
+    """The page and its routes answer this PC alone, whatever the server listens on: another address is refused by
+    tagpup.web.security.THIS_PC_ONLY (tests/test_every_route_answers_this_pc_or_says_why.py)."""
 
     def test_both_apps_serve_it_under_no_library(self):
         for kind in ("tagpup", "tuner"):

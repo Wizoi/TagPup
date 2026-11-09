@@ -494,7 +494,7 @@ matching can still read its name.
 
 ## Backend APIs
 
-**Who can reach it.** The server listens on this PC only: 127.0.0.1 and ::1, one socket each, so `localhost` answers at once whichever address the browser tries first (`tagpup.web.app.bind`) *(owner, 2026-09-26)*. `tagpup_web.py --listen lan` binds every interface instead; it is for phase 10, when the apps have logins, and off by default. Every request must also name this machine in its Host header and, when it has one, its Origin (`tagpup.web.security`), else 403.
+**Who can reach it.** The server listens on this PC only: 127.0.0.1 and ::1, one socket each, so `localhost` answers at once whichever address the browser tries first (`tagpup.web.app.bind`) *(owner, 2026-09-26)*. `tagpup_web.py --listen lan` binds every interface instead; it is for phase 10, when the apps have logins, and off by default. Every request must also name this machine in its Host header and, when it has one, its Origin (`tagpup.web.security`), else 403. What is this PC's alone -- the library views, Name faces from tags, the Activity page, the roots and a drain -- is refused to any other address whatever the server listens on, `403` with the JSON error and its sentence, before any route runs (`tagpup.web.security.THIS_PC_ONLY`, one list; every other route is listed with why in `tests/test_every_route_answers_this_pc_or_says_why.py`).
 
 ### `GET` Endpoints
 - `/api/databases`: Returns `{"databases": list}` — the selectable database names (without the `.db` suffix). Which one was opened last is the browser's to remember.

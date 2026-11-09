@@ -4,7 +4,7 @@ TagTuner's Folder Matches header and gear, and TagPup's Organize folder view, st
 (tagpup.jobs.naming_faces): its plan is read first and shown as a question, and only the answer Yes writes. The page polls
 `status`; a job it did not start (another page, another tab, a page that was reloaded) is found by `current`. The job works on the
 whole library, or, when the page asks (`only_folder`), on the folder it has open and its subfolders (#994); `scope` gives the
-counts the dialog's choice between the two shows. Either way it answers this PC only, as the library's views do.
+counts the dialog's choice between the two shows. Either way it answers this PC only, as the library's views do (tagpup.web.security.THIS_PC_ONLY).
 
 Every reply is `{"success": true, ...}` or the JSON error both pages read. A job that is already working answers 409 with its
 status in `job`, so a page that asked again shows it instead.
@@ -16,18 +16,11 @@ from flask import Blueprint, jsonify, request
 from tagpup.core.result import NotFound
 from tagpup.jobs import naming_faces
 from tagpup.web import lifecycle as lifecycles
-from tagpup.web import responses, security, state, tuner_routes
+from tagpup.web import responses, state, tuner_routes
 
 logger = logging.getLogger(__name__)
 
 routes = Blueprint("name_faces", __name__)
-
-
-@routes.before_request
-def _this_pc_only():
-    if request.path.startswith("/api/name-faces") and not security.from_this_pc(request.remote_addr):
-        return responses.error(403, "Naming faces works on the whole library and answers this PC only")
-    return None
 
 
 #: The writes the job's plan must not be written over (#871): adding or indexing folders, a sync's apply, a bulk edit,

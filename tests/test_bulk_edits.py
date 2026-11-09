@@ -28,7 +28,6 @@ from tagpup.store import db, job_runs  # noqa: E402
 from test_file_journal import Crash as StoppedAt, crash_at  # noqa: E402
 from tagpup.web import tagpup_routes  # noqa: E402
 
-REMOTE = {"REMOTE_ADDR": "10.0.0.7"}
 ALL = {"source": {"kind": "all"}}
 GHOST = "%s:4000000:1" % socket.gethostname()   # a process that ended: no such id
 
@@ -437,11 +436,6 @@ class WhatGoesWrong(Bulk):
         with mock.patch("tagpup.web.roots_gate.problem_of", return_value="This machine does not place the root pictures."):
             reply = self.post({"op": "tags", "selection": ALL, "params": {"add": ["A"]}})
         self.assertEqual((409, True), (reply.status_code, reply.get_json()["roots_problem"]))
-        self.assertEqual(0, self.files.writes)
-
-    def test_the_route_answers_this_pc_only(self):
-        reply = self.post({"op": "tags", "selection": ALL, "params": {"add": ["A"]}}, environ_overrides=REMOTE)
-        self.assertEqual(403, reply.status_code)
         self.assertEqual(0, self.files.writes)
 
 

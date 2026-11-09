@@ -111,11 +111,6 @@ class StartingAndAnswering(RoutesCase):
         self.assertEqual(400, self.apps["tuner"].post(CONFIRM, json={"job": "x"}).status_code)
         self.assertEqual(404, self.apps["tuner"].get(STATUS, query_string={"job": 9999}).status_code)
 
-    def test_a_remote_address_is_turned_away_it_works_on_the_whole_library(self):
-        answer = self.apps["tuner"].post(START, json={}, environ_overrides={"REMOTE_ADDR": "192.168.1.9"})
-        self.assertEqual(403, answer.status_code)
-        self.assertEqual({}, naming_faces._held(self.library))
-
 
 class TwoClicksAndBusyLibraries(RoutesCase):
     def test_a_second_start_while_one_plans_is_a_409_naming_the_running_job(self):
@@ -324,10 +319,6 @@ class TheChoicesCounts(FolderRoutes):
         status = self.asking("tuner", folder=self.run, only_folder=True)
         found = self.apps["tagpup"].get(SCOPE, query_string={"folder": self.run}).get_json()
         self.assertEqual(status["job"], found["job"]["job"])
-
-    def test_only_this_pc_may_ask(self):
-        answer = self.apps["tuner"].get(SCOPE, environ_overrides={"REMOTE_ADDR": "203.0.113.9"})
-        self.assertEqual(403, answer.status_code)
 
 
 if __name__ == "__main__":

@@ -32,7 +32,7 @@ from tagpup.services import photos as photo_actions
 from tagpup.services import roots as roots_service
 from tagpup.services import roots_location
 from tagpup.services import tags as tags_service
-from tagpup.web import desktop, face_routes, responses, roots_gate, roots_ingress, security, state
+from tagpup.web import desktop, face_routes, responses, roots_gate, roots_ingress, state
 from tagpup.web import lifecycle as lifecycles
 from tagpup.web import libraries as web_libraries
 
@@ -639,13 +639,7 @@ def browse_folder():
 # The library's rows say `@pictures/2024/a.jpg`; this machine's map (machine_roots.json) says where
 # `pictures` is. These routes show each root and move a root: the map is edited, never
 # a row (tagpup.services.roots_location; docs/ARCHITECTURE.md, "Roots and machines"). They answer this
-# PC only, as the Activity page does.
-
-@routes.before_request
-def _roots_from_this_pc():
-    if request.path.startswith("/api/roots") and not security.from_this_pc(request.remote_addr):
-        abort(403, description="Roots are shown and changed from this PC only")
-
+# PC only, as the Activity page does (tagpup.web.security.THIS_PC_ONLY).
 
 def _machine():
     """This machine's map, handed to the services (they do not import tagpup.config)."""

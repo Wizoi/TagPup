@@ -29,7 +29,8 @@ raw, downloaded) show background work. What it asks:
   (tagpup.logs.read).
 
 It answers this PC alone: a request from any other address is refused 403 whatever
-address the server listens on (it listens on loopback: tagpup.web.app.bind). What it
+address the server listens on (it listens on loopback: tagpup.web.app.bind; the refusal is
+tagpup.web.security.THIS_PC_ONLY's). What it
 shows names folders -- the watched roots, the log lines, a failed run's error -- as
 TagTuner's own dialogs do.
 """
@@ -50,7 +51,7 @@ from tagpup.services import activity, batches
 from tagpup.services import indexing
 from tagpup.services import job_runs
 from tagpup.web import lifecycle as lifecycles
-from tagpup.web import responses, security
+from tagpup.web import responses
 
 logger = logging.getLogger(__name__)
 
@@ -66,13 +67,6 @@ RUNS, MOST_RUNS = 10, 50
 TIMELINE, MOST_TIMELINE = 50, 500
 #: Log records when the page asks for no number, and the most.
 LINES, MOST_LINES = 200, 1000
-
-
-@routes.before_request
-def only_this_pc():
-    """Refuse, 403, a request from anywhere but this PC."""
-    if not security.from_this_pc(request.remote_addr):
-        abort(403, description="The Activity page answers this PC only")
 
 
 # ---- The page ------------------------------------------------------------------------------
