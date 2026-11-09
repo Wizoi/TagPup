@@ -1,4 +1,4 @@
-"""A clip is deleted as a photo is (F12; DECISIONS 2026-11-08, A5, cut B): a clip of up to recycle_bin.MOST_CLIP_BYTES
+"""A clip is deleted as a photo is (F15; DECISIONS 2026-11-08, A5, cut B): a clip of up to recycle_bin.MOST_CLIP_BYTES
 goes to the Recycle Bin -- from a share, through this PC: copied under the Downloads mirror, the copy checked and recycled,
 then the original deleted -- and leaves the library with everything it had: its row, its vector and frames, its poster. A
 larger clip is deleted for good, on any drive, only once the owner confirmed a warning naming it (DECISIONS 2026-11-02 item

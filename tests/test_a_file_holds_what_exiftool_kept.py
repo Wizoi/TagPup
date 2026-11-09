@@ -11,7 +11,8 @@ is a BaseException at a step of the write (file_changes.STEPS).
 
 Lifted: test_a_number_compares_as_read (#264), test_a_boolean_compares_as_read (#264 #278), test_settling_compares_as_read
 (#277), test_a_write_records_what_the_file_holds (#273), test_a_crash_reads_back_what_it_wrote (#273 #286),
-test_changed_counts_what_changed (#276). Mutations, each in a scratch copy of the code, each failing the test named:
+test_changed_counts_what_changed (#276), test_a_cut_keyword_is_not_planned_again (#278; its test of
+vocabulary.extract_tags alone is the XMP-first rule, tests/test_tag_writes_keep_the_index_true.py's XmpIsTheCopyRead). Mutations, each in a scratch copy of the code, each failing the test named:
 core/fields.py `_as_read` without the IPTC cut, or with a letter dropped and not "?" -> test_a_crash_after_the_write_settles_done;
 without the number arm (`if _JSON_NUMBER.fullmatch(text)` -> `if False`) -> the same test and
 test_a_file_already_holding_it_is_not_written_again; without the boolean arm -> the latter; services/file_changes.py `_carry`
@@ -156,6 +157,19 @@ class WhatTheFileKept(KeptCase):
                 again = self.caption([a], text)
                 self.assertEqual((0, None), (again.changed, again.details["change"]))
                 self.assertEqual(written, os.stat(a).st_mtime_ns)
+
+    def test_a_keyword_iptc_cut_is_no_tag_of_its_own_and_no_later_edit_writes_it_again(self):
+        # The cut copy was read as a tag of its own, so every later edit planned it into every field and wrote again a
+        # file already holding what the edit asked for (#278).
+        a = self.make_read("a.jpg")
+        self.assertEqual(1, self.add([a], [LONG]).changed)
+        self.assertEqual(["Beach", LONG], self.indexed(a))
+        written = os.stat(a).st_mtime_ns
+        again = self.add([a], ["Beach"])
+        self.assertEqual((0, None), (again.changed, again.details["change"]))
+        self.assertEqual(written, os.stat(a).st_mtime_ns)
+        self.add([a], ["Relay"])
+        self.assertEqual((["Beach", LONG, "Relay"],) * 2, (keywords_of(a), self.indexed(a)))
 
     def test_a_change_stopped_part_way_reads_back_the_files_it_recorded(self):
         photos = [self.make_read(name) for name in ("a.jpg", "b.jpg", "c.jpg")]

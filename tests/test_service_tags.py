@@ -1,7 +1,7 @@
 """tagpup.services.tags: the tag tree's edits.
 
 Rewriting the photo files is tagpup.services.tagging.replace_tag's, tested with real
-files in test_service_replace_tag.py and, through the routes, test_taxonomy_lifecycle.py.
+files in test_tag_writes_keep_the_index_true.py and, through the routes, test_taxonomy_lifecycle.py.
 It is stood in for here: what is checked is what each edit does to the tree, the faces
 and the people lists, and what it asks to have rewritten.
 """

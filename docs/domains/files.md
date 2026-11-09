@@ -1,7 +1,7 @@
 # Files and sync: the state of the domain
 
 The domain's charter is `.claude/agents/tagpup-owner-files.md`: its Scope, the contract the other domains rely on, its
-invariants and guards, and its scenarios F1 to F12. This page states each of the seven conditions of health
+invariants and guards, and its scenarios F1 to F17. This page states each of the seven conditions of health
 (docs/OWNERS.md) with its evidence and date. A condition not met is the domain's queue.
 
 ## What the domain holds (counted 2026-11-08, read-only)
@@ -68,13 +68,13 @@ editors) are the evidence those scenario tests cite.
      - a stop during the planning read: Cancel or a hand-over;
      - a Ctrl+C part-way.
    - `tests/photo_rows.stamp_of`'s (0.0, 0) is a fixture's, by design (its docstring).
-6. **Scenario tests, each file owned and mapped.** Met, with one open low. F1 to F12 each have files in `tests/owners.py`
+6. **Scenario tests, each file owned and mapped.** Met. F1 to F17 each have files in `tests/owners.py`
    (Files' test files, counted 2026-11-08: 61 scenario, 53 unit, 2 guard), and `test_bulk_delete` is F8.
    `test_service_save_photo` and `test_save_reply_says_rename_failed` were lifted into F1
-   (`tests/test_tag_a_photo_read_it_back_and_undo.py`) with mutation proofs, and the restatements deleted. F12 (clips)
-   has grown into one id over many clauses and test files: open as #2736, to be split.
+   (`tests/test_tag_a_photo_read_it_back_and_undo.py`) with mutation proofs, and the restatements deleted. F12 to F17 are the
+   clip flows (indexed, written, renamed, deleted, dated, tree edit), one id each (#2736).
 7. **No open data or wrong finding, and every low fixed or by design.** Met for data and wrong
-   (`tools/add_findings.py --open`, 2026-11-08: 20 open, all low). Files' open lows are #2736 (F12's size), #2754 and
+   (`tools/add_findings.py --open`, 2026-11-08: 20 open, all low). Files' open lows are #2754 and
    #2755 (the watcher), #2756 (an unreachable arm of the bulk edit) and #2735 (this page, closed by this restatement).
    Closed: #1490 (wrong), #1491 to #1496, and the lows below, by design.
 
@@ -293,7 +293,7 @@ refused. Each was edited in memory (a caption, a keyword added, an Orientation),
   first (`dates.CLIP_XMP_DATE_FIELDS`), then its QuickTime ones. The rows dated before that rule (photo_index 80
   of its 2,179 clips, none by its year; kr-track and renton_parkrun none) were dated again from their own raw_metadata
   by a one-off, applied on photo_index as the journal's "rederive clip dates" (undone from History as any change of
-  rows: `journal.RETIRED`) and deleted once no clip was apart (#2734). F12:
+  rows: `journal.RETIRED`) and deleted once no clip was apart (#2734). F16:
   `tests/test_a_clip_dated_through_the_journal.py`.
 
 ## The EXIF block editor

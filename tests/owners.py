@@ -60,7 +60,12 @@ SCENARIOS = {
     "F9": ("files", "A run holds one map of the roots; a root moved meanwhile stops a write with a sentence."),
     "F10": ("files", "One photo whatever its path's spelling."),
     "F11": ("files", "Add a folder: it is queued, indexed by the CLI with progress, its photos' bakes read from their files under the library's keys, followed from every entry point, when it recorded a photo, by a matching of the faces it made that writes nothing, and a second run reads nothing."),
-    "F12": ("files", "A clip in a folder is indexed as a row of kind video, dated by its XMP dates first, then its QuickTime ones, with no vector; the owed scan never queues it again, the folder view and a time shift leave it out, and the photos beside it are indexed as before; sync follows a clip moved or renamed, reads again one whose copy went on, a clip cut short is a row never decoded, and two libraries holding one folder of clips keep their own rows; a clip's tags and title are written in place into its XMP, a cleared clip title frees its QuickTime title and its undo gives it back, its Date Taken is written into its XMP dates (xmp:CreateDate only where it holds one), its QuickTime dates left byte for byte, undone from History, refused outside the library and settled when cut short, and the clips stored before that rule are dated again from their rows (a dry run that writes nothing, one change, a clip saved meanwhile skipped); a turn naming a clip leaves its file as it was with a sentence, the photos beside it written; a clip of up to 2 GiB is deleted as a photo is (from a share through this PC, its copy whole, its vector, frames and poster with it, the lock let go of after each clip of a bulk delete), a larger one, on any drive, deleted for good only once the owner confirmed the warning naming it, never copied and counted in no copy (unconfirmed, refused untouched with its size; a question that did not name it never deletes it for good; one held open is left with its row), the photos and smaller clips beside it to the Bin; a file its own drive's Recycle Bin would not keep is deleted for good only when the owner confirmed a warning naming it (the delete-check counts and names it, its token covers the warning, an unconfirmed start refused with nothing touched) and the reply says for good, never the Recycle Bin; a clip of a folder the library holds is Smart Renamed (a day's selection, its button, a Save after its title) with the photos, the name it had kept first in its XMP, undone from History, a clip the patch cannot place refused before anything is renamed, and a clip of a folder it does not hold keeps its name; a clip's tag save undone puts its XMP back, and while writing clips is off its undo is refused whole, the change still applied; a clip's write cut short is settled by its bytes at the next start (written again, cut back, recorded, or a conflict), two writes of it run one after the other, and the player streams it at its new size; a tag-tree rename, merge or retire rewrites a clip that holds the tag, and one it could not rewrite (writing clips off, the last keyword of a clip kept in QuickTime) is named with why and the tree keeps the node."),
+    "F12": ("files", "A clip in a folder is indexed as a row of kind video, dated by its XMP dates first, then its QuickTime ones, its vector made of its frames after the photos; the owed scan never queues it again, the folder view lists it beside its photos, and the photos beside it are indexed as before; sync follows a clip moved or renamed and reads again one whose copy went on; a clip cut short is a row never decoded, tried again by every index; an index stopped part-way makes the rest next time; two libraries holding one folder of clips keep their own rows."),
+    "F13": ("files", "A clip's tags and title are written in place into its XMP, never by ExifTool's rewrite: a selection of photos and clips tagged writes both, a clip the patch cannot place is refused before anything is written, a cleared title frees its QuickTime title and its undo gives it back, a tag save undone from History puts its XMP back; a write cut short is settled by its bytes at the next start (written again, cut back, recorded, or a conflict), two writes of one clip run one after the other, and the player streams it at its new size; a turn naming a clip, or a time shift over its folder, leaves its file as it was with a sentence, the photos beside it written."),
+    "F14": ("files", "A clip of a folder the library holds is Smart Renamed with the photos (a day's selection, its button, a Save after its title), the name it had kept first in its XMP, undone from History; a clip the patch cannot place keeps its name with a sentence while the photos beside it are renamed, a rename stopped part-way and run again renames with the names kept, a second library finds it by the name it kept, and a clip of a folder the library does not hold keeps its name."),
+    "F15": ("files", "A clip of up to 2 GiB is deleted as a photo is (from a share through this PC, its copy whole, its vector, frames and poster with it, other writers let in after each clip of a bulk delete, its stream refused while it is deleted); a larger one, or a file its own drive's Recycle Bin would not keep, is deleted for good only once the owner confirmed the warning naming it (no copy made or counted; unconfirmed, or a question that did not name it, nothing touched), the reply saying for good; one held open, or whose size cannot be read, is left with its row and a sentence."),
+    "F16": ("files", "A clip's Date Taken is written into its XMP dates (xmp:CreateDate only where it holds one), its QuickTime dates left byte for byte, its row and the library's order following; undone from History, the old xmp:CreateDate given back; refused outside the library while the held clip is dated; a date save cut short settled by its bytes at the next start."),
+    "F17": ("files", "A tag-tree rename, merge or retire of a tag a clip holds rewrites the clip's XMP with the photos, its row following, and the tree moves once every file is rewritten."),
     "V1": ("views", "A view lists each photo once, in the owner's order, with its count; a clip by its XMP date first, then its QuickTime one, a date of zeros no date."),
     "V2": ("views", "A typed search ANDs its words and ranks nothing."),
     "V3": ("views", "Suggest, and the analyse-only run, from start to end."),
@@ -118,7 +123,7 @@ _SCENARIO_FILES = {
         "test_tag_a_photo_read_it_back_and_undo test_time_shift test_xmp_packet_edits_what_it_owns "
         "test_iptc_block_edits_what_it_owns test_exif_block_edits_what_it_owns test_segment_edits_choose_what_to_write "
         "test_a_photo_written_by_its_own_editors test_the_two_writers_compared_on_copies "
-        "test_a_photos_title_and_caption"
+        "test_a_photos_title_and_caption test_tag_writes_keep_the_index_true"
     ),
     "F2": "test_no_writes_to_damaged_photos test_rows_only_in_folders_added test_an_index_reads_the_next_photos_ahead",
     "F3": (
@@ -142,11 +147,15 @@ _SCENARIO_FILES = {
         "test_an_index_is_one_run_under_its_sync test_index_progress_end_to_end test_new_faces_are_matched_after_an_index test_an_index_reads_the_next_photos_ahead "
         "test_an_index_reads_a_bake test_a_machine_without_a_card"
     ),
-    "F12": (
-        "test_a_clip_is_indexed_as_a_video test_a_clip_is_not_turned test_a_clip_tagged_through_the_journal "
-        "test_a_clip_tag_undone test_a_clip_patch_cut_short test_a_tag_tree_edit_of_a_tag_a_clip_holds "
-        "test_a_clip_titled_in_quicktime test_a_clip_renamed test_a_clip_deleted test_a_clip_dated_through_the_journal"
+    "F12": "test_a_clip_is_indexed_as_a_video",
+    "F13": (
+        "test_a_clip_tagged_through_the_journal test_a_clip_titled_in_quicktime test_a_clip_tag_undone "
+        "test_a_clip_patch_cut_short test_a_clip_is_not_turned"
     ),
+    "F14": "test_a_clip_renamed",
+    "F15": "test_a_clip_deleted",
+    "F16": "test_a_clip_dated_through_the_journal",
+    "F17": "test_a_tag_tree_edit_of_a_tag_a_clip_holds",
     "I1": "scenario-switching-library-mid-folder",
     "I2": "scenario-write-through-a-server-update test_server_drain",
     "I3": "test_install_app test_install_hands_over test_launcher_hands_over",
@@ -215,10 +224,10 @@ _FILES = {
     },
     "people": {
         "unit": (
-            "face-strip grid-build-progress identify-faces identify-faces-cluster-buttons identify-faces-counts "
+            "face-strip faces-say-they-are-loading grid-build-progress identify-faces identify-faces-cluster-buttons identify-faces-counts "
             "identify-faces-in-place-removal library-sort-and-organize-header name-faces organize-faces person-directory "
             "person-faces person-filing-table person-names person-tag-form review-dialog review-from-activity "
-            "show-matched-toggle tag-editor-in-place tag-order tag-view tag-vocabulary tagpup-people-by-id "
+            "selection-suggests-who-the-faces-look-like show-matched-toggle tag-editor-in-place tag-order tag-view tag-vocabulary tagpup-people-by-id "
             "tagpup-people-lists-by-id tags-shown-alphabetical "
             "test_answers_carry_their_person test_automatch_references test_automatch_writes_once test_cluster_candidates "
             "test_clustering_evidence test_every_tag_has_an_id "
@@ -252,7 +261,7 @@ _FILES = {
         "unit": (
             "bulk-edit bulk-writes-queue just-look-edits path-helpers photo-write-queue picture-check-says-so rename-failed retried-save "
             "rotate-refreshes-thumbnails smart-rename-count "
-            "test_a_bake_is_used_only_whole test_a_cut_keyword_is_not_planned_again test_a_face_box_turned_upright_and_back "
+            "test_a_bake_is_used_only_whole test_a_face_box_turned_upright_and_back "
             "test_a_photo_is_known_by_its_picture "
             "test_a_row_describes_its_file_one_way "
             "test_batches_go_through_the_model "
@@ -269,24 +278,22 @@ _FILES = {
             "test_paths_roots test_photo_identity test_photo_meta "
             "test_relink_checks_the_destination test_remove_folder_lists_the_library "
             "test_renaming "
-            "test_service_change_tags "
-            "test_service_indexing test_service_page_images test_service_replace_tag "
+            "test_service_indexing test_service_page_images "
             "test_service_smart_rename "
             "test_settling_carries_vectors "
-            "test_tag_writes_keep_the_index_true "
             "test_thumbnails "
             "test_what_counts_as_a_photo "
-            "test_when_a_photo_was_taken_is_kept tuner-picker-and-queue "
+            "tuner-picker-and-queue "
             "tuner-remove-folder unsaved-edits write-queue-status"
         ),
         "guard": "test_photo_looks_have_one_owner test_the_block_editors_have_one_caller",
     },
     "views": {
         "unit": (
-            "details-panel faces-say-they-are-loading folder-view-clips grid-keys grid-window library-header-strip-toolbar library-moves library-photo-back "
+            "details-panel folder-view-clips grid-keys grid-window library-header-strip-toolbar library-moves library-photo-back "
             "library-selection library-selection-jumps library-tally library-view looking-suggestions navigator "
             "navigator-multi photo-camera photo-details-layout photo-position photo-suggestions-panel search-page selection "
-            "selection-follows-the-photo selection-panel selection-suggestions selection-suggests-who-the-faces-look-like stale-cards suggest-cancel suggestions-follow-a-saved-photo tagging-flow "
+            "selection-follows-the-photo selection-panel selection-suggestions stale-cards suggest-cancel suggestions-follow-a-saved-photo tagging-flow "
             "test_a_search_keeps_no_thread_buffers "
             "test_camera_words test_caption_order test_chip_keys_follow_the_server test_view_rules_follow_the_server "
             "test_clip_sees_photos_upright test_embeddings_follow_their_photo "

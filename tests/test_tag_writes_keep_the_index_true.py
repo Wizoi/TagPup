@@ -18,6 +18,13 @@ test_a_keyword_left_only_in_iptc_is_no_tag_and_a_rename_does_not_bring_it_back a
 test_the_caption_shown_is_xmps_and_a_save_from_it_is_not_refused; preferring an XMP packet over IPTC whatever it holds
 fails test_a_photo_with_iptc_keywords_and_no_xmp_keywords_keeps_its_tags.
 
+And a rename of a tag starts from the file, not the row (#30), and stops at a photo it cannot write, the photo keeping
+its tag in its file and its row (XmpIsTheCopyRead). Lifted: test_service_replace_tag and test_service_change_tags,
+whose stand-in ExifTool restated tagging.replace_tag and change_tags; their other cases are held through the routes
+by tests/test_bulk_writes_start_from_the_file.py (a bulk add, a remove, Apply All, the run stopped at a photo ExifTool
+refuses, #878), tests/test_taxonomy_lifecycle.py (a tag removed from the tree comes off its photos) and
+tests/test_taxonomy_edits_report_what_they_wrote.py (a rename or delete that could not rewrite a photo keeps the node).
+
 Rows are seeded the way the indexer writes them -- native paths, and raw_metadata in
 the shape real rows have, bare aliases and all -- never through the code under test.
 ExifTool is replaced by a stand-in that changes the file the way a real write does.
@@ -38,6 +45,7 @@ from test_file_journal import EXIFTOOL, FilesCase, field_of, keywords_of, requir
 
 from tagpup.core.fields import keyword_fields  # noqa: E402
 from tagpup.core.vocabulary import extract_tags  # noqa: E402
+from tagpup.files import exiftool_session  # noqa: E402
 from tagpup.services import photos as photo_actions, tagging  # noqa: E402
 from tagpup.store import db as tagpup_db  # noqa: E402
 
@@ -286,6 +294,28 @@ class XmpIsTheCopyRead(FilesCase):
         b = self.made("b.jpg", {"IPTC:Caption-Abstract": "Relay at dusk"},
                       {"XMP:Description": "", "IPTC:Caption-Abstract": "Relay at dusk"})
         self.assertEqual(["Relay at dusk"], self.captions(b))
+
+    def test_a_rename_starts_from_what_the_file_holds_not_the_row(self):
+        # #30: the write started from the index's copy of the tags. A keyword another program wrote since the read is
+        # kept; a tag another program took off is not put back, its file not written, and its row says what the file holds.
+        a = self.made("a.jpg", {"XMP:Subject": ["Beach", "Written Elsewhere"]}, {"XMP:Subject": ["Beach"]})
+        b = self.made("b.jpg", {"XMP:Subject": ["Relay"]}, {"XMP:Subject": ["Beach", "Relay"]})
+        before = os.stat(b).st_mtime_ns
+        result = tagging.replace_tag(self.library, [a, b], "Beach", "Shore", EXIFTOOL)
+        self.assertEqual((1, [], ["does not carry the tag"]),
+                         (result.changed, result.errors, [why for _path, why in result.skipped]))
+        self.assertEqual((["Shore", "Written Elsewhere"],) * 2, (keywords_of(a), self.indexed(a)))
+        self.assertEqual((["Relay"], ["Relay"], before), (keywords_of(b), self.indexed(b), os.stat(b).st_mtime_ns))
+
+    def test_a_photo_a_rename_cannot_write_is_an_error_and_keeps_its_tag_in_its_file_and_row(self):
+        # ExifTool refuses the write for a scratch file in its way, which another write may own
+        # (file_changes._removed_scratch).
+        a = self.made("a.jpg", {"XMP:Subject": ["Beach"]})
+        with open(exiftool_session.scratch_of(a), "wb") as handle:
+            handle.write(b"left by another write")
+        result = tagging.replace_tag(self.library, [a], "Beach", "Shore", EXIFTOOL)
+        self.assertEqual((0, 1), (result.changed, len(result.errors)))
+        self.assertEqual((["Beach"], ["Beach"]), (keywords_of(a), self.indexed(a)))
 
     def test_a_photo_with_iptc_keywords_and_no_xmp_keywords_keeps_its_tags(self):
         # 151 photo_index photos hold IPTC keywords and no XMP ones, 4 of them in a file with an XMP packet (2026-11-03).

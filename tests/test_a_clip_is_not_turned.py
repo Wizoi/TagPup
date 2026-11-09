@@ -1,4 +1,4 @@
-"""A clip in the library is not turned by TagPup, nor moved by a Camera Time Shift (F12): a turn that names a clip leaves
+"""A clip in the library is not turned by TagPup, nor moved by a Camera Time Shift (F13): a turn that names a clip leaves
 its file byte for byte as it was, journals nothing for it, and says so in a plain sentence
 (tagpup.files.images.CLIP_NOT_EDITED); a time shift over a folder of photos and clips moves the photos' dates and leaves
 each clip's file as it was. A clip is deleted as a photo is (DECISIONS 2026-11-08, A5, cut B). A tag, title or Date

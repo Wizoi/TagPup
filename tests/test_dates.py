@@ -17,7 +17,10 @@ sys.path.insert(0, WORKSPACE_DIR)
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(WORKSPACE_DIR, "scripts"))
 
+import photo_rows  # noqa: E402
+from service_fixture import TempLibrary  # noqa: E402
 from tagpup.core import dates  # noqa: E402
+from tagpup.store import db, photos as store_photos  # noqa: E402
 from shipped_sources import ROOT, page_source, python_sources  # noqa: E402
 
 
@@ -144,8 +147,31 @@ class OneReadingOfTheDate(unittest.TestCase):
             self.assertTrue(list(date_rule_lists(handle.read())), "the owner stopped matching")
 
 
-if __name__ == "__main__":
-    unittest.main()
+class TheLibraryKeepsIt(unittest.TestCase):
+    """When a photo was taken is kept in the library, in photos.taken and photos.year, by store.photos.date_photos at
+    every write of the photo's metadata or path; readers read the columns rather than parse the metadata each for
+    themselves (#67). Lifted: test_when_a_photo_was_taken_is_kept, its three tests."""
+
+    def test_an_index_records_it_none_is_none_and_a_rename_to_a_dated_name_gives_a_year(self):
+        lib = TempLibrary(self)
+        dated, undated = lib.photo("a.jpg"), lib.photo("b.jpg")
+        for path in (dated, undated):
+            lib.add_row(path)
+        conn = db.connect(lib.library.path)
+        try:
+            store_photos.record_indexed(conn, dated, {"mtime": 1.0, "size": 1, "tags": [], "captions": [],
+                                                      "raw_metadata": {"XMP:CreateDate": "2015:01:02 03:04:05"}})
+            conn.commit()
+        finally:
+            conn.close()
+
+        def kept(path):
+            return lib.rows("SELECT taken, year FROM photos WHERE path = ?", (path,))[0]
+
+        self.assertEqual([("2015:01:02 03:04:05", 2015), (None, None)], [kept(dated), kept(undated)])
+        renamed = os.path.join(lib.photos, "2018 Heats.jpg")
+        photo_rows.move(lib.library.path, {undated: renamed})
+        self.assertEqual((None, 2018), kept(renamed))
 
 
 class TheYearOfARecord(unittest.TestCase):
@@ -158,3 +184,7 @@ class TheYearOfARecord(unittest.TestCase):
         self.assertEqual(2020, dates.record_year({"year": " 2020 "}))
         for missing in ("Unknown", "", None, "20x0"):
             self.assertIsNone(dates.record_year({"year": missing}), missing)
+
+
+if __name__ == "__main__":
+    unittest.main()
