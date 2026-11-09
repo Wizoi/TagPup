@@ -14,8 +14,8 @@ the time does; a few rows hold a date written with dashes, which sort apart from
 all the same. The plans are SEARCHes, never a SCAN of photos, on a library of photo_index's scale
 (tests/test_library_view_plans.py): `idx_photos_taken` and `idx_photos_year` (migration 20) for the whole
 library, a year and a month; the path index for a folder and its subfolders; `photo_folder` for a folder
-alone; `photo_tags` through the tag tree's unique index for a keyword; `photo_people`'s name index for a
-person. A source whose photos are not in date order in an index is sorted -- a folder of 20,000 photos is
+alone; `photo_tags` through the tag tree's unique index for a keyword; `photo_people`'s tag index
+(`idx_photo_people_tag`) for a person. A source whose photos are not in date order in an index is sorted -- a folder of 20,000 photos is
 7 ms.
 
 Reads only. Every function does nothing useful on a library that has not had migrations 19 and 20 (`ready`
