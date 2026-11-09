@@ -1,5 +1,5 @@
 """A clip's Date Taken saved through the journal into its XMP, and read first (DECISIONS 2026-11-08, A5 (D) REVISED;
-scenario F12).
+scenario F16).
 
 What the owner lives through: a clip's card opens the photo panel and its Date Taken is set. The save patches the clip's
 XMP in place (in_place.patch_clip, the patcher a tag save uses): XMP:DateTimeOriginal always, xmp:CreateDate refreshed
