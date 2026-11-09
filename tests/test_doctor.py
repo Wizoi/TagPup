@@ -281,6 +281,13 @@ class TheDoctor(Library):
             self.photo(name, on_disk=False)
             make(os.path.join(self.dir, name))
         self.photo("gone.jpg", on_disk=False)
+        # A clip, as the indexer records one (kind 'video'): its file is no picture Pillow can identify, and is not one
+        # that fails to open -- every clip of a library was counted (2,179 in photo_index, 5 in kr-track).
+        clip = os.path.join(self.dir, "harbour clip.mp4")
+        with open(clip, "wb") as handle:
+            handle.write(b"\x00\x00\x00\x18ftypmp42\x00\x00\x00\x00mp42isom" + bytes(range(1, 256)) * 400)
+        photo_rows.add_read(self.conn, clip, {})
+        self.conn.commit()
         _broken, lines = self.run_doctor()
         said = [line for line in lines if line.startswith("photos whose file fails to open")]
         self.assertEqual(1, len(said), lines)
@@ -292,6 +299,7 @@ class TheDoctor(Library):
         for name in ("incomplete copy.jpg", "nothing.jpg", "zeros.jpg"):
             self.assertIn(name, listed)
         self.assertNotIn("whole.jpg", listed)
+        self.assertNotIn("harbour clip.mp4", listed)
 
     def test_changes_nothing(self):
         self.face(self.photo("a.jpg"), name="Wren Halloway", rebuilt=False)

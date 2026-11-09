@@ -137,8 +137,8 @@ class ASleepingShare(unittest.TestCase):
         doctor.report(self.vl.path, out=said.append)
         self.assertIn("rows whose file is not on disk: 0, in 0 folder(s); 0 folder(s) are gone entirely; 3 row(s) not "
                       "looked at (their share did not answer, or the file could not be read)", said)
-        self.assertIn("looking at the end and the header of each of the 3 photos' files for one that fails to open: over "
-                      "a minute for every thousand on a network share", said)
+        self.assertIn("looking at the end and the header of each photo's file (not the clips') for one that fails to open: "
+                      "over a minute for every thousand on a network share", said)
         opened = [line for line in said if line.startswith("photos whose file fails to open")]
         self.assertTrue(opened[0].endswith("; 3 could not be looked at"), opened)
 
