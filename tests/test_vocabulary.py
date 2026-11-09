@@ -98,11 +98,6 @@ class WhatAPhotosMetadataSays(unittest.TestCase):
                 "XMP:HierarchicalSubject": "Family/Immediate/Cora Ingersoll"}
         self.assertEqual(vocabulary.extract_tags(meta), ["Beach", "Family/Immediate/Cora Ingersoll"])
 
-    def test_a_caption_written_to_several_fields_is_one_caption(self):
-        meta = {"XMP:Description": "Harbour at dusk", "Description": "Harbour at dusk",
-                "XMP:Title": ["Harbour at dusk", "Boats"]}
-        self.assertEqual(vocabulary.extract_captions(meta), ["Harbour at dusk", "Boats"])
-
     def test_without_a_library_the_usual_roots_name_people(self):
         tags = ["People/Rowan Thackeray", "Pets/Biscuit", "Hazel Brookmire"]
         self.assertEqual(vocabulary.extract_people(tags), ["Rowan Thackeray"])

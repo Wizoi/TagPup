@@ -166,7 +166,7 @@ class MetadataExtractor:
             "size": size,
             "tags": tags,
             "people": vocabulary.extract_people(tags, people),
-            "captions": vocabulary.extract_captions(cleaned),
+            "captions": fields.extract_captions(cleaned),
             "raw_metadata": cleaned,
             "document_id": fields.read_document_id(cleaned),
         }

@@ -26,7 +26,8 @@ import photo_rows  # noqa: E402
 
 from tagpup.core.dates import record_year
 from tagpup.core.suggesting import caption_from_tags as _derive_caption
-from tagpup.core.vocabulary import extract_captions, extract_people, extract_tags
+from tagpup.core.fields import extract_captions
+from tagpup.core.vocabulary import extract_people, extract_tags
 from tagpup.files.metadata import clean_metadata_value, sanitize_filename
 from tagpup.services.photos import page_record
 from tagpup.store.taxonomy import people_vocabulary
@@ -314,7 +315,7 @@ class TestBuildPhotoUIRecord(unittest.TestCase):
             "tags": ["Trips/Texas"],
             "people": ["Jane Doe"],
             "captions": ["A trip"],
-            # The title is read from what the file holds (vocabulary.title_of), as the save compares it (#2582).
+            # The title is read from what the file holds (fields.title_of), as the save compares it (#2582).
             "raw_metadata": {"EXIF:DateTimeOriginal": "2014:07:04 10:00:00", "XMP:Title": "A trip"},
         }
         rec = page_record(r"D:\Library\a.jpg", meta, mtime=123.0, size=456)

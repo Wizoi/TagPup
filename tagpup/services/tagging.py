@@ -41,18 +41,18 @@ def refuse_under_people(library, tags):
 
 
 def _held_title(now):
-    """The title the file holds, as the page shows it (vocabulary.title_of: its Title, else its Description)."""
-    return vocabulary.title_of({field: now.get(field) for field in vocabulary.CAPTION_FIELDS})
+    """The title the file holds, as the page shows it (fields.title_of: its Title, else its Description)."""
+    return fields.title_of({field: now.get(field) for field in fields.CAPTION_FIELDS})
 
 
 #: Every field _differs_from_base reads of the file: the fields its tags come from and every field its title is
 #: shown from -- XMP:Title, else a clip's QuickTime Title, else IPTC:ObjectName, else the Description a photo with no
-#: title shows as its title (vocabulary.CAPTION_FIELDS). The save once read the description fields alone, found no title on a photo titled only,
+#: title shows as its title (fields.CAPTION_FIELDS). The save once read the description fields alone, found no title on a photo titled only,
 #: and refused every save from the page of it as changed on disk (6,123 photos of one library, 2026-11-06). The
 #: prefixed names alone, as _caption_problem asks: a read answers a field under its group's name (field_values), so a
 #: bare name holds nothing, and a bare key in what the file holds broke the recording of a file that held the save
 #: already (store.photos.follow_fields reads each key as group:name).
-BASE_READ = tuple(dict.fromkeys(fields.TAG_SOURCE_FIELDS + tuple(name for name in vocabulary.CAPTION_FIELDS
+BASE_READ = tuple(dict.fromkeys(fields.TAG_SOURCE_FIELDS + tuple(name for name in fields.CAPTION_FIELDS
                                                                   if ":" in name)))
 
 
@@ -60,7 +60,7 @@ def _differs_from_base(now, base):
     """Does the file hold other tags or another title than the page read (`base`, {"tags", "title"})? The tags
     as a SET of keyword paths, the title trimmed: the two things a save writes over. `now` holds BASE_READ."""
     return (set(_tags_held(now)) != set(base.get("tags") or [])
-            or _held_title(now) != vocabulary.trimmed(base.get("title") or ""))
+            or _held_title(now) != fields.trimmed(base.get("title") or ""))
 
 
 def _title_written(path, now, wanted):
@@ -69,8 +69,8 @@ def _title_written(path, now, wanted):
     one, counted 2026-11-08) and the save keeps that title, so a tag save of one makes no XMP copy of it; a title changed is written to XMP:Title
     (the writer patches a clip's XMP alone), the QuickTime Title left as it was; a title cleared clears XMP:Title and a
     clip's QuickTime Title too, so no title comes back (DECISIONS 2026-11-08, #2652, #2657). `now` holds BASE_READ."""
-    title = vocabulary.trimmed(wanted.get("XMP:Title") or "")
-    in_xmp = any(vocabulary.trimmed(held) for held in fields.field_values(now.get("XMP:Title")))
+    title = fields.trimmed(wanted.get("XMP:Title") or "")
+    in_xmp = any(fields.trimmed(held) for held in fields.field_values(now.get("XMP:Title")))
     if not in_xmp and _holds_text(now, fields.CLIP_TITLE, title):
         return {name: value for name, value in wanted.items() if name not in fields.title_fields("")}
     if not title and images.is_clip(path) and fields.field_values(now.get(fields.CLIP_TITLE)):
@@ -89,7 +89,7 @@ def _caption_moved(path, now):
     admitted with (file_changes.leave_out_clips) and is never refused at its write for a field it did not ask (#2663).
     `now` holds BASE_READ and the caption fields."""
     shown = _held_title(now)
-    if not shown or vocabulary.holds_title(now) or images.is_clip(path):
+    if not shown or fields.holds_title(now) or images.is_clip(path):
         return {}
     return {field: "" for field in fields.caption_fields("") if _holds_text(now, field, shown)}
 
@@ -97,7 +97,7 @@ def _caption_moved(path, now):
 def _holds_text(now, field, text):
     """Does `field` of `now` (what a file holds, or a row's raw_metadata) hold `text`, trimmed as the reader trims it?
     The one test of a caption field holding the title: a save's (_caption_moved) and the sweep's (duplicate_captions)."""
-    return text in (vocabulary.trimmed(held) for held in fields.field_values(now.get(field)))
+    return text in (fields.trimmed(held) for held in fields.field_values(now.get(field)))
 
 
 # ---- The one-off sweep of captions that repeat the title -------------------------------------------------------------
@@ -115,9 +115,9 @@ NO_DUPLICATE = "no caption field holds its title"
 
 def duplicate_captions(meta):
     """The DUPLICATE_FIELDS of `meta` (what a file holds, or a row's raw_metadata) holding the photo's own title exactly,
-    trimmed (vocabulary.own_title: XMP:Title, else a clip's QuickTime Title, else IPTC:ObjectName); [] for a photo with no title of its own. A caption
+    trimmed (fields.own_title: XMP:Title, else a clip's QuickTime Title, else IPTC:ObjectName); [] for a photo with no title of its own. A caption
     holding the title and more ("Relay at the lake" beside the title "Relay") is not one."""
-    title = vocabulary.own_title(meta)
+    title = fields.own_title(meta)
     return [field for field in DUPLICATE_FIELDS if _holds_text(meta, field, title)] if title else []
 
 
@@ -140,16 +140,16 @@ def duplicate_candidates(library):
                 counts["clips left alone"] += bool(repeated)
                 continue
             counts["photos"] += 1
-            title = vocabulary.own_title(raw)
+            title = fields.own_title(raw)
             if title and any(text != title for field in DUPLICATE_FIELDS
-                             for text in (vocabulary.trimmed(held) for held in fields.field_values(raw.get(field)))):
+                             for text in (fields.trimmed(held) for held in fields.field_values(raw.get(field)))):
                 counts["captions kept"] += 1
             if repeated:
                 found.append(path)
                 # XMP's Description (the caption shown first) cleared while a different IPTC caption stays: the photo
                 # shows that one from now on (104 in photo_index, 2026-11-06).
                 if "XMP:Description" in repeated and any(
-                        text and text != title for text in (vocabulary.trimmed(held) for held in
+                        text and text != title for text in (fields.trimmed(held) for held in
                                                             fields.field_values(raw.get("IPTC:Caption-Abstract")))):
                     counts["newly shown IPTC captions"] += 1
                 for field in repeated:
@@ -393,9 +393,9 @@ def _caption_problem(et, photo_path, caption):
     problem = validation.problem("caption", caption or "")
     if not problem:
         return None
-    found = et.get_tags([photo_path], tags=[field for field in vocabulary.HELD_CAPTION_FIELDS if ":" in field])
-    held = vocabulary.captions_held(found[0] if found else {})
-    return None if vocabulary.trimmed(caption) in held else problem
+    found = et.get_tags([photo_path], tags=[field for field in fields.HELD_CAPTION_FIELDS if ":" in field])
+    held = fields.captions_held(found[0] if found else {})
+    return None if fields.trimmed(caption) in held else problem
 
 
 #: What a bulk write says of a photo whose file is gone (the page starts the reason with "missing, ").

@@ -87,7 +87,7 @@ def name_sql(column="path"):
 
 def caption_sql(column="captions"):
     """The caption an order by caption reads of the captions JSON in `column`, in SQL: the first of the list (the one the
-    page shows, vocabulary.extract_captions), its first CAPTION_KEY characters, NULL for a photo with none (an empty
+    page shows, tagpup.core.fields.extract_captions), its first CAPTION_KEY characters, NULL for a photo with none (an empty
     list, an empty text). Text that is not JSON is NULL too, never an error -- an index of an expression that raised would
     refuse the write of that row. Built-in, deterministic functions only, so that it can be indexed (CAPTION_INDEX), as
     name_sql is: nothing writes the index but SQLite and no writer of a caption has to know of it."""

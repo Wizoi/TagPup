@@ -4,7 +4,7 @@ import logging
 import os
 import time
 
-from tagpup.core import fields, paths, vocabulary
+from tagpup.core import fields, paths
 # Looked up at call time, as exiftool_session.ExifToolSession, so a test standing in for
 # ExifTool there reaches this too.
 from tagpup.files import exiftool_session, lock_owners
@@ -12,8 +12,8 @@ from tagpup.files import exiftool_session, lock_owners
 logger = logging.getLogger(__name__)
 
 #: What Smart Rename reads from each photo: the name it had before it was first renamed,
-#: and every field its title is read from (vocabulary.CAPTION_FIELDS: the title, else the description).
-RENAME_FIELDS = [fields.PRESERVED_NAME, "XMP:PreservedFileName", *vocabulary.CAPTION_FIELDS]
+#: and every field its title is read from (fields.CAPTION_FIELDS: the title, else the description).
+RENAME_FIELDS = [fields.PRESERVED_NAME, "XMP:PreservedFileName", *fields.CAPTION_FIELDS]
 
 
 def _field(meta, *names):
@@ -36,9 +36,9 @@ def preserved_name(meta):
 
 
 def caption_for_name(meta):
-    """The text a photo's new name carries: its title as the page shows it (vocabulary.title_of: XMP's Title, else a
+    """The text a photo's new name carries: its title as the page shows it (fields.title_of: XMP's Title, else a
     clip's QuickTime Title, else IPTC's ObjectName, else the description); "" for none."""
-    return vocabulary.title_of(meta)
+    return fields.title_of(meta)
 
 
 def read_for_renaming(exiftool_path, photo_paths):

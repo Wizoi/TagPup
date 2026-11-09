@@ -1,4 +1,4 @@
-"""The fields a keyword or caption write sets, listed once (tagpup.core.fields).
+"""The fields a keyword or caption write sets, listed once, and the copy a read takes (tagpup.core.fields).
 
 Saving a photo and the CLI's writer each kept their own list of the caption fields;
 now both take caption_fields(). The guard below fails on a third copy.
@@ -13,6 +13,15 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from tagpup.core import fields  # noqa: E402
 from shipped_sources import ROOT, python_sources  # noqa: E402
+
+
+class WhatAReadTakes(unittest.TestCase):
+    """Which copy of a title or caption a read takes, and each text once: the rules alone, milliseconds."""
+
+    def test_a_caption_written_to_several_fields_is_one_caption(self):
+        meta = {"XMP:Description": "Harbour at dusk", "Description": "Harbour at dusk",
+                "XMP:Title": ["Harbour at dusk", "Boats"]}
+        self.assertEqual(fields.extract_captions(meta), ["Harbour at dusk", "Boats"])
 
 
 class CaptionFields(unittest.TestCase):
