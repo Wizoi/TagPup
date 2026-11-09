@@ -44,7 +44,7 @@ from tagpup import runtime as runtimes
 from tagpup.services import batches
 from tagpup.services import job_runs
 from tagpup.services import libraries as library_actions
-from tagpup.web import responses, security
+from tagpup.web import responses
 
 logger = logging.getLogger(__name__)
 
@@ -220,16 +220,15 @@ class Lifecycle:
         return {"version": self.version, "taking_work": not closed,
                 "requests": in_flight, "busy": self.busy()}
 
-    def allows_launcher(self, token, remote):
-        """Is `token` the one in this server's record, sent from this machine (`remote`, the
-        request's address)? Another machine is refused whatever it sends."""
-        return (self._launcher_token is not None and security.from_this_pc(remote) and isinstance(token, str)
+    def allows_launcher(self, token):
+        """Is `token` the one in this server's record? Another machine is refused whatever it sends before
+        it is asked (tagpup.web.security.THIS_PC_ONLY)."""
+        return (self._launcher_token is not None and isinstance(token, str)
                 and hmac.compare_digest(token, self._launcher_token))
 
-    def authorizes(self, headers, remote):
-        """May a request with `headers` from `remote` drain this server: a launcher's token,
-        from this machine?"""
-        return self.allows_launcher(headers.get(launcher.HEADER), remote)
+    def authorizes(self, headers):
+        """May a request with `headers` drain this server: a launcher's token?"""
+        return self.allows_launcher(headers.get(launcher.HEADER))
 
     # ---- The gate every request passes ------------------------------------------------
 
@@ -438,7 +437,7 @@ def drain():
     """Stop taking new work and let what is under way finish (Lifecycle.drain): a launcher's or an install's on this
     machine, before it serves another version in its place (tagpup.launcher)."""
     lifecycle = _lifecycle()
-    if not lifecycle.authorizes(request.headers, request.remote_addr):
+    if not lifecycle.authorizes(request.headers):
         return responses.error(403, "Only a launch or an install on this machine may drain this server")
     body = request.get_json(silent=True) or {}
     seconds = body.get("seconds", DRAIN_SECONDS)

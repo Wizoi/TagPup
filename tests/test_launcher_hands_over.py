@@ -282,7 +282,7 @@ class TheLaunchersMain(unittest.TestCase):
         bound.assert_called_once_with([7, 8], "local")
         self.assertEqual([], seen[0], "served on the sockets it bound")
         lifecycle = served.call_args[0][0][7].config["LIFECYCLE"]
-        self.assertTrue(lifecycle.allows_launcher(seen[1]["token"], "127.0.0.1"))
+        self.assertTrue(lifecycle.allows_launcher(seen[1]["token"]))
         self.assertIsNone(launcher.record(7), "the record outlived the server")
         opened.assert_called_once_with("http://localhost:7/")
 

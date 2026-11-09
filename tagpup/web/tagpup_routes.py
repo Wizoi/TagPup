@@ -36,7 +36,7 @@ from tagpup.services import selection as selection_service
 from tagpup.services import tagging as tagging_actions
 from tagpup.services import tags as tags_service
 from tagpup.services import thumbnails
-from tagpup.web import desktop, responses, security, state
+from tagpup.web import desktop, responses, state
 
 logger = logging.getLogger(__name__)
 
@@ -583,14 +583,6 @@ def photo_file():
                            upright=True, cache_seconds=PHOTO_CACHE_SECONDS)
 
 
-def _this_pc_only():
-    """The 403 reply for a request from any other address than this PC's, else None: the library's views carry
-    photo paths and names, and the pictures themselves are of people."""
-    if not security.from_this_pc(request.remote_addr):
-        return responses.error(403, "The library's views answer this PC only")
-    return None
-
-
 def _view_error(why):
     """The reply for what a view's service refused or could not read: its own sentence, never a traceback."""
     if isinstance(why, Refused):
@@ -608,8 +600,6 @@ def _view_error(why):
 @routes.get("/api/library/navigator")
 def library_navigator():
     """The counts of one section of the navigator (tagpup.services.library_view.navigator)."""
-    if (refusal := _this_pc_only()) is not None:
-        return refusal
     library = state.require()
     try:
         return jsonify(library_view.navigator(library, request.args.get("section")))
@@ -641,8 +631,6 @@ def _source_asked():
 def library_ids():
     """The whole ordered id list of a source, for a grid that jumps to the middle of it
     (tagpup.services.library_view.ids)."""
-    if (refusal := _this_pc_only()) is not None:
-        return refusal
     library = state.require()
     kind, value, recursive, order = _source_asked()
     try:
@@ -659,8 +647,6 @@ def library_cards():
     """The cards of the photos named by `ids` (at most 200), in that order; an id the library has no photo of is
     left out (tagpup.services.library_view.cards). Each card's file is looked at, once (`stale`: changed on disk, or
     missing), which the page marks on the card."""
-    if (refusal := _this_pc_only()) is not None:
-        return refusal
     library = state.require()
     try:
         return jsonify({"cards": library_view.cards(library, library_view.read_ids(request.args.get("ids")),
@@ -676,8 +662,6 @@ def library_cards():
 def library_photo():
     """One photo of the library, by id, as a folder's scan describes it -- tags, people, title, raw metadata -- from the
     library's row (tagpup.services.library_view.photo): what the details panel opens a card in a library view with."""
-    if (refusal := _this_pc_only()) is not None:
-        return refusal
     library = state.require()
     wanted = request.args.get("id") or ""
     if not (wanted.isascii() and wanted.isdigit()):
@@ -697,8 +681,6 @@ def library_photo():
 def library_find():
     """The id of the photo at `path`, to land on it in a library view when the move is made from the folder it is in
     (tagpup.services.library_view.find); `id` null when the library holds no photo there."""
-    if (refusal := _this_pc_only()) is not None:
-        return refusal
     library = state.require()
     try:
         return jsonify({"id": library_view.find(library, request.args.get("path"))})
@@ -713,8 +695,6 @@ def library_find():
 def library_selection_tally():
     """The tags and people a selection of photos carries, with how many photos carry each (phase 9d-1,
     tagpup.services.selection.tally): `selection` is a list of ids or a source minus the ids excluded."""
-    if (refusal := _this_pc_only()) is not None:
-        return refusal
     library = state.require()
     body = request.get_json(silent=True)
     try:
@@ -732,8 +712,6 @@ def library_selection_delete_check():
     """Where a Delete of a selection would send its files (#674, tagpup.services.selection.where_deleted): how many photos,
     and how many of them are in folders with no Recycle Bin and would be deleted for good -- what the question before a Delete
     says. Nothing is deleted."""
-    if (refusal := _this_pc_only()) is not None:
-        return refusal
     library = state.require()
     body = request.get_json(silent=True)
     try:
@@ -761,8 +739,6 @@ def library_bulk_edit():
     is refused, nothing read); about a twentieth of a second each, so a large one takes minutes and the page says so.
     The edit is read and checked first (a tag the rules refuse, a name two people have), then the selection is resolved
     on the server, then written as one journaled change; it goes on to its end if the page stops waiting."""
-    if (refusal := _this_pc_only()) is not None:
-        return refusal
     library = state.require()
     body = request.get_json(silent=True)
     body = body if isinstance(body, dict) else {}
@@ -802,8 +778,6 @@ def photo_thumb():
     (`v`, the modified time the card holds), so a thumbnail whose `v` is the file's is kept by the browser for a
     year; any other is revalidated by its ETag. A clip's is its poster frame. A photo that cannot be shown is a small placeholder (header
     X-TagPup-Thumb says which: damaged, unreadable, last known); an id with no photo is a 404 sentence."""
-    if (refusal := _this_pc_only()) is not None:
-        return refusal
     library = state.require()
     photo_id, refusal = _id_asked()
     if refusal is not None:
@@ -840,8 +814,6 @@ def video_file():
     one, 503 with Retry-After when the file cannot be reached just now (a share away), 409 "This video is being deleted."
     while a delete of its file is under way (tagpup.files.recycle_bin.being_deleted). A stream that cannot go on (the
     file changed, the share stopped answering, its delete began) ends short, and the browser asks again. To this PC only (403)."""
-    if (refusal := _this_pc_only()) is not None:
-        return refusal
     library = state.require()
     photo_id, refusal = _id_asked()
     if refusal is not None:
