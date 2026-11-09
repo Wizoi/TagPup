@@ -517,21 +517,6 @@ def is_big_enough(box):
     return min(box[2] - box[0], box[3] - box[1]) >= NEW_FACE_FLOOR
 
 
-#: The share of the picture's shorter side under which an unnamed face is background, not shown on TagPup's photo (owner,
-#: 2026-11-02, from the counts in kr-track: 13% of its faces, 39 of its 2,574 named). Relative, since the photos are exports of
-#: every size: the 40 px floor above keeps what cannot be recognised out of the library, this keeps the people behind the
-#: subject off the page.
-BACKGROUND_SHARE = 0.02
-
-
-def is_background(box, size):
-    """Whether a face in `box` is under BACKGROUND_SHARE of the picture's shorter side; `size` is [width, height] of the
-    picture the box is in (as stored). False for a picture of no known size."""
-    if not size or len(box) < 4 or not min(size):
-        return False
-    return min(box[2] - box[0], box[3] - box[1]) < BACKGROUND_SHARE * min(size)
-
-
 def face_crop(photo_path, box):
     """The face in `box` (in the picture as stored) cut from its photo as a person sees it, as a JPEG no larger than
     CROP_SIZE on a side (face_crop_of of the photo opened upright)."""
