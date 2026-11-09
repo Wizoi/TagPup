@@ -257,6 +257,14 @@ class OwnerCharters(unittest.TestCase):
                 self.assertEqual(model, checklist(read(charter_path(owner))),
                                  "the charter's checklist differs from docs/OWNERS.md: change all six together")
 
+    def test_every_test_the_architecture_and_the_invariants_name_exists(self):
+        # A guard named in INVARIANTS.md that is not there is a rule with no guard (#2749).
+        for doc in ("INVARIANTS.md", "ARCHITECTURE.md"):
+            for token in paths_in(read(os.path.join(ROOT, "docs", doc))):
+                if token.startswith("tests/"):
+                    with self.subTest(doc=doc, path=token):
+                        self.assertTrue(exists(token), "docs/%s names %s, which is not there" % (doc, token))
+
     def test_the_check_would_notice_a_missing_path(self):
         self.assertEqual(paths_in("`tagpup/store/db.py` and `tagpup.store.db` and `no/such.py`"), ["tagpup/store/db.py"])
         self.assertFalse(exists("tagpup/store/not_a_module.py"))
