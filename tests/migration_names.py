@@ -25,8 +25,10 @@ REAL = schema.MIGRATIONS
 BASE = REAL[-1].version
 
 #: The tables the journal keys that a real migration made, by its version: the app before it neither keys nor cascades to
-#: them (`up_to`), so a journaled delete on a library without the table plans no read of it.
-JOURNALED_SINCE = {38: ("embedding_frames",)}
+#: them (`up_to`), so a journaled delete on a library without the table plans no read of it. Kept by hand: a migration
+#: that makes a table it adds to `journal.KEYS` adds it here too, which
+#: test_migrations.TheRealMigrations.test_the_app_before_each_one_keys_only_the_tables_its_library_has holds.
+JOURNALED_SINCE = {33: ("face_embeddings",), 38: ("embedding_frames",)}
 
 #: The table the default step makes (and touches): one of its own, no table the journal keys.
 STEP_TABLE = "tagpup_test_step"

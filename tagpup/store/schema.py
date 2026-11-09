@@ -49,9 +49,17 @@ ADDITIVE, DESTRUCTIVE = "additive", "destructive"
 KINDS = (ADDITIVE, DESTRUCTIVE)
 
 #: One step: its number and name, the function that makes it, its kind and why it is
-#: that kind (one line), the tables it writes or reshapes (`touches`, which the checks
-#: look at), and the checks that must pass before it commits. Every field is required:
-#: a migration that does not say what it is cannot be declared.
+#: that kind (one line), `touches`, and the checks that must pass before it commits. Every
+#: field is required: a migration that does not say what it is cannot be declared.
+#:
+#: `touches` answers one question, which two readers ask: the tables whose rows the step
+#: may write or move (an UPDATE, a delete, a DROP COLUMN's rewrite). The checks look at
+#: them (an additive step's RowsKept without names, ForeignKeys, Integrity), and a table
+#: the journal keys among them refuses the undo of every change made before the step
+#: (journal.schema_gap_blocker). A table that only gains an index, a trigger or a column
+#: whose default is, in every row there was, what that row means (an undo putting one back
+#: gets the default), or a table that is new and empty, has no row moved: it is not named,
+#: and a RowsKept check counts it by name.
 Migration = collections.namedtuple("Migration", "version name apply kind why touches checks")
 
 
@@ -736,8 +744,7 @@ MIGRATIONS = (
               "no backup",
               ("photo_fingerprints",),
               (RowsKept(but=("photo_fingerprints",)),) + STANDARD),
-    # It touches no table: an index writes no row, and `touches` naming `embeddings`, a table the journal keys, would refuse
-    # the undo of every change of rows made at 34 (journal.schema_gap_blocker). The watch holds every row as it was, and
+    # It touches no table (Migration, `touches`): an index moves no row. The watch holds every row as it was, and
     # `embeddings` is counted by name.
     Migration(35, "the vector stamps in an index", _vector_stamps_covered, ADDITIVE,
               "adds idx_embeddings_stamp on embeddings (photo_id, model, mtime, size), so a sync reads no vector; nothing "
@@ -751,9 +758,8 @@ MIGRATIONS = (
               "that was there changes, so no backup",
               ("job_runs",),
               (RowsKept(),) + STANDARD),
-    # It names `change_files`, which the journal does not key, and not `photos`, which it does: naming it would refuse the
-    # undo of every change of rows made at 36 (journal.schema_gap_blocker), and the column changes nothing such a change
-    # means: every photo row there was is a photo (no path of the three libraries has a video's extension, counted
+    # It names `change_files`, which the journal does not key, and not `photos` (Migration, `touches`), whose rows it does
+    # not move: every photo row there was is a photo (no path of the three libraries had a video's extension, counted
     # 2026-11-02), so a row an undo puts back without the column is one, as the default says. The watch holds every row as
     # it was; `photos` is counted by name.
     Migration(37, "photos know their kind; a patch is recorded before it is written", _photos_know_their_kind_and_a_patch_is_recorded,
@@ -762,10 +768,9 @@ MIGRATIONS = (
               "there was); nothing that was there changes, so no backup",
               ("change_files",),
               (RowsKept("photos", "change_files"),) + STANDARD),
-    # It touches no table: `embedding_frames` is new and empty, and naming it, a table the journal keys, would refuse the
-    # undo of every change of rows made at 37 (journal.schema_gap_blocker), though no such change can name a frame: one
-    # that put back a clip's vector made at 37 puts it back with no frames, as it was. The watch holds every row as it
-    # was, and `embeddings` is counted by name.
+    # It touches no table (Migration, `touches`): `embedding_frames` is new and empty, and its triggers move no row; a
+    # change made at 37 that put back a clip's vector puts it back with no frames, as it was. The watch holds every row as
+    # it was, and `embeddings` is counted by name.
     Migration(38, "a clip's frames beside its vector", _a_clips_frames_beside_its_vector, ADDITIVE,
               "adds the empty table embedding_frames, a clip's frames 1 to 4 beside its vector, and the triggers that take "
               "them with the photo or the vector; nothing that was there changes, so no backup",

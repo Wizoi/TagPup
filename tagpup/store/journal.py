@@ -1079,7 +1079,9 @@ def schema_gap_blocker(version, current):
     """Why a change made at schema `version` may not mean what it did in a library at `current`:
     a sentence naming the first migration in between that could have changed it, or None when none
     could. A migration cannot have if it is ADDITIVE and touches no table a change can name or the
-    journal keys (KEYS): adding a table, an index or a trigger moves no row a journaled change recorded.
+    journal keys (KEYS): `touches` is the tables whose rows it may move (schema.Migration), which the
+    runner's checks look at too, so adding a table, an index, a trigger or a column with a default
+    moves no row a journaled change recorded.
     Every other migration blocks, and so does one that is not in the list: what cannot be classified is
     never exempt. A change made at a schema NEWER than the library's blocks too (an older version of the
     app opened it), and so does one made BELOW the baseline (schema.BASELINE): its steps are gone."""
