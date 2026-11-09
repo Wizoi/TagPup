@@ -20,7 +20,6 @@ from flask import Blueprint, abort, jsonify, request
 from tagpup import config as tagpup_config
 from tagpup import runtime as runtimes
 from tagpup.core import paths
-from tagpup.core.result import Conflict, NotFound, Refused
 from tagpup.jobs import identify as identify_jobs
 from tagpup.jobs import naming_faces
 from tagpup.jobs import suggestions as suggestion_jobs
@@ -158,8 +157,8 @@ def face_crop():
     face_id = _int_arg("id", "id")
     try:
         crop = photo_actions.face_crop(library, face_id)
-    except NotFound as missing:
-        abort(404, description=str(missing))
+    except responses.ANSWERED as why:
+        return responses.of(why)
     except Exception as e:
         logger.error("Error serving face crop for ID %s: %s", face_id, e)
         abort(500, description="Error cropping face: %s" % e)
@@ -252,10 +251,8 @@ def person_rename():
     try:
         result = tags_service.rename_person(library, face_routes.person_arg(body.get("person_id"), body.get("old_name")),
                                             body.get("new_name"), state.exiftool(library))
-    except NotFound as missing:
-        abort(404, description=str(missing))
-    except Refused as why:
-        _refuse(400, str(why))
+    except responses.ANSWERED as why:
+        return responses.of(why)
     except Exception as e:
         logger.error("Error renaming a person: %s", e)
         abort(500, description="Internal error: %s" % e)
@@ -283,8 +280,8 @@ def face_matches_unmatched():
         _used(POOL)
         return jsonify(identify_service.unnamed_like(
             library, face_id, lambda: identify_jobs.unnamed_faces(library, identify_cache.of(library)), named=_named(library)))
-    except NotFound:
-        abort(404, description="Face not found")
+    except responses.ANSWERED as why:
+        return responses.of(why)
 
 
 @routes.get("/api/person-faces")
@@ -313,10 +310,8 @@ def person_faces():
         if person is None:
             return jsonify({"faces": [], "total_count": 0, "has_more": False})
         return jsonify(identify_service.person_faces(library, person, limit, page))
-    except NotFound as missing:
-        abort(404, description=str(missing))
-    except Refused as why:
-        _refuse(400, str(why))
+    except responses.ANSWERED as why:
+        return responses.of(why)
 
 
 @routes.get("/api/faces/excluded")
@@ -359,10 +354,8 @@ def unmatched_faces_person_matches():
         # A read: the person by their id, a name one person has as that person (an old page; typed or external), a name two
         # people have refused naming their paths, a name nobody is called holds nothing.
         person = people_service.for_reading(library, person)
-    except NotFound as missing:
-        abort(404, description=str(missing))
-    except Refused as why:
-        _refuse(400, str(why))
+    except responses.ANSWERED as why:
+        return responses.of(why)
     if person is None:
         return jsonify({"faces": [], "total_count": 0, "has_more": False})
     return jsonify(identify_jobs.grid(library, identify_cache.of(library),
@@ -405,10 +398,8 @@ def faces_match_bulk():
         abort(400, description="Invalid parameters format")
     try:
         plan = face_assignment.plan_name(library, face_ids, person)
-    except Refused as why:
-        _refuse(400, str(why))
-    except NotFound as missing:
-        abort(404, description=str(missing))
+    except responses.ANSWERED as why:
+        return responses.of(why)
     outcome = face_routes.assigned(library, plan)
     return face_routes.with_warning(
         {"success": True,
@@ -673,16 +664,15 @@ def _busy(library, name=None):
 
 
 def _roots_answer(call):
-    """`call()`, its refusals as the page reads them: NotFound 404, Refused or a map that cannot
-    be used 400, Conflict 409."""
+    """`call()`, its refusals as the page reads them: a map that cannot be used (config.MachineMapError) or a root it does
+    not place (paths.RootsError) 400 -- this dialog is where they are put right, so no banner is raised -- and what the
+    service refused as every route answers it (tagpup.web.responses.of)."""
     try:
         return call()
-    except NotFound as e:
-        _refuse(404, str(e))
-    except Conflict as e:
-        _refuse(409, str(e))
-    except (Refused, ValueError) as e:
+    except ValueError as e:
         _refuse(400, str(e))
+    except responses.ANSWERED as why:
+        responses.abort_with(why)
 
 
 def _root_named(body):

@@ -14,7 +14,6 @@ import os
 
 from flask import Blueprint, abort, jsonify, make_response, request
 
-from tagpup.core.result import Conflict, NotFound, Refused
 from tagpup.jobs import identify as identify_jobs
 from tagpup.services import face_assignment, face_people
 from tagpup.services import identify as identify_service
@@ -88,8 +87,8 @@ def face_matches():
         return jsonify([])
     try:
         return jsonify(identify_service.face_matches(library, face_id, named(library)))
-    except NotFound:
-        abort(404, description="Face not found")
+    except responses.ANSWERED as why:
+        return responses.of(why)
 
 
 @routes.get("/api/people-faces")
@@ -134,12 +133,8 @@ def faces_write(library, action):
     """
     try:
         result = action(library)
-    except NotFound as missing:
-        abort(404, description=str(missing))
-    except Conflict as conflict:
-        refuse(409, str(conflict))
-    except Refused as why:
-        refuse(400, str(why))
+    except responses.ANSWERED as why:
+        responses.abort_with(why)
     except Exception as e:
         logger.error("Error in a face action: %s", e)
         abort(500, description="Internal error: %s" % e)
@@ -161,10 +156,8 @@ def assigned(library, plan):
     try:
         outcome = face_assignment.run(library, plan, state.exiftool(library),
                                       told=lambda done: tagpup_routes.records_written(library, done))
-    except Refused as why:
-        refuse(400, str(why))
-    except Conflict as why:
-        refuse(409, str(why))
+    except responses.ANSWERED as why:
+        responses.abort_with(why)
     for face_ids, before, after in outcome.runs:
         identify_cache.of(library).forget_faces(face_ids, before, after)
     return outcome
@@ -258,8 +251,8 @@ def _exclude_bulk(library, face_ids, reason):
     photos unless another face carries them (tagpup.services.face_assignment)."""
     try:
         plan = face_assignment.plan_exclude(library, face_ids, reason)
-    except Refused as why:
-        refuse(400, str(why))
+    except responses.ANSWERED as why:
+        responses.abort_with(why)
     outcome = assigned(library, plan)
     return with_warning({"success": True, "excluded": len(outcome.applied) + outcome.plain, "tags_removed": outcome.files,
                          "change": outcome.change, "left": outcome.left, "plain": outcome.plain_ids}, outcome)

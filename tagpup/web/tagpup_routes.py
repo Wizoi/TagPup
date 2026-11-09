@@ -24,7 +24,6 @@ from tagpup import config
 from tagpup import runtime as runtimes
 from tagpup.core import fields, paths, renaming, vocabulary
 from tagpup.core.library import picker_name
-from tagpup.core.result import Conflict, NotFound, Refused, Unavailable
 from tagpup.jobs import suggestions as suggestion_jobs
 from tagpup.services import bulk_edit
 from tagpup.services import file_changes, file_only
@@ -422,8 +421,10 @@ def folder_auto_apply():
             if result.refused:
                 return _refused_after_writing(library, result)
             records_written(library, result)
-    except (Conflict, Refused) as why:
-        return responses.error(409, str(why))      # too many batches wait ahead (tagpup.services.batches)
+    except responses.ANSWERED as why:
+        # Conflict: too many batches wait ahead (tagpup.services.batches); Refused: more photos than a write may name
+        # (file_changes.too_many), or cancelled before its turn. Nothing was written.
+        return responses.of(why)
     except Exception as e:
         logger.error("Error auto-applying suggestions: %s", e)
         return responses.error(500, str(e))
@@ -568,8 +569,8 @@ def face_crop():
         return responses.error(400, "Invalid 'id' parameter")
     try:
         crop = photo_actions.face_crop(library, face_id)
-    except NotFound as missing:
-        return responses.error(404, str(missing))
+    except responses.ANSWERED as why:
+        return responses.of(why)
     except Exception as e:
         logger.error("Error serving face crop %s: %s", face_id, e)
         return responses.error(500, str(e))
@@ -591,20 +592,6 @@ def _this_pc_only():
     return None
 
 
-def _view_error(why):
-    """The reply for what a view's service refused or could not read: its own sentence, never a traceback."""
-    if isinstance(why, Refused):
-        return responses.error(400, str(why))
-    if isinstance(why, NotFound):
-        return responses.error(404, str(why))
-    if isinstance(why, paths.RootsError):
-        # The gate (tagpup.web.roots_gate) answers this before a route runs; this is for what it could not see.
-        return responses.error(409, str(why), roots_problem=True)
-    if isinstance(why, Unavailable):
-        return responses.unavailable(why)
-    return None
-
-
 @routes.get("/api/library/navigator")
 def library_navigator():
     """The counts of one section of the navigator (tagpup.services.library_view.navigator)."""
@@ -613,8 +600,8 @@ def library_navigator():
     library = state.require()
     try:
         return jsonify(library_view.navigator(library, request.args.get("section")))
-    except (Refused, NotFound, paths.RootsError) as why:
-        return _view_error(why)
+    except responses.ANSWERED as why:
+        return responses.of(why)
     except Exception as e:
         logger.error("Error reading the navigator: %s", e, exc_info=True)
         return responses.error(500, str(e))
@@ -647,8 +634,8 @@ def library_ids():
     kind, value, recursive, order = _source_asked()
     try:
         return jsonify(library_view.ids(library, kind, value, recursive, order=order))
-    except (Refused, NotFound, paths.RootsError) as why:
-        return _view_error(why)
+    except responses.ANSWERED as why:
+        return responses.of(why)
     except Exception as e:
         logger.error("Error reading the ids of a source: %s", e, exc_info=True)
         return responses.error(500, str(e))
@@ -665,8 +652,8 @@ def library_cards():
     try:
         return jsonify({"cards": library_view.cards(library, library_view.read_ids(request.args.get("ids")),
                                                      check_disk=True)})
-    except (Refused, NotFound, paths.RootsError) as why:
-        return _view_error(why)
+    except responses.ANSWERED as why:
+        return responses.of(why)
     except Exception as e:
         logger.error("Error reading cards of the library: %s", e, exc_info=True)
         return responses.error(500, str(e))
@@ -686,8 +673,8 @@ def library_photo():
     photo_id = int(wanted)
     try:
         return jsonify({"photo": library_view.photo(library, photo_id, lambda: state.exiftool(library))})
-    except (Refused, NotFound, paths.RootsError) as why:
-        return _view_error(why)
+    except responses.ANSWERED as why:
+        return responses.of(why)
     except Exception as e:
         logger.error("Error reading photo %s of the library: %s", photo_id, e, exc_info=True)
         return responses.error(500, str(e))
@@ -702,8 +689,8 @@ def library_find():
     library = state.require()
     try:
         return jsonify({"id": library_view.find(library, request.args.get("path"))})
-    except (Refused, NotFound, paths.RootsError) as why:
-        return _view_error(why)
+    except responses.ANSWERED as why:
+        return responses.of(why)
     except Exception as e:
         logger.error("Error finding a photo of the library: %s", e, exc_info=True)
         return responses.error(500, str(e))
@@ -720,8 +707,8 @@ def library_selection_tally():
     try:
         return jsonify(selection_service.tally(library, selection_service.read(
             library, body.get("selection") if isinstance(body, dict) else None)))
-    except (Refused, NotFound, paths.RootsError) as why:
-        return _view_error(why)
+    except responses.ANSWERED as why:
+        return responses.of(why)
     except Exception as e:
         logger.error("Error tallying a selection: %s", e, exc_info=True)
         return responses.error(500, str(e))
@@ -739,18 +726,11 @@ def library_selection_delete_check():
     try:
         return jsonify(selection_service.where_deleted(library, selection_service.read(
             library, body.get("selection") if isinstance(body, dict) else None)))
-    except (Refused, NotFound, paths.RootsError) as why:
-        return _view_error(why)
+    except responses.ANSWERED as why:
+        return responses.of(why)
     except Exception as e:
         logger.error("Error checking where a delete would go: %s", e, exc_info=True)
         return responses.error(500, str(e))
-
-
-def _bulk_reply(why):
-    """The reply for what a bulk route's service refused: a sentence, never a traceback; None for anything else."""
-    if isinstance(why, Conflict):
-        return responses.error(409, str(why))
-    return _view_error(why)
 
 
 @routes.post("/api/library/bulk-edit")
@@ -773,8 +753,8 @@ def library_bulk_edit():
         bulk_edit.refuse_if_changed(edit, resolved.ids, selection_service.token_of,
                                     lambda ids: selection_service.deleted_for_good(library, ids))
         out = bulk_edit.run(library, edit, resolved.ids, state.exiftool(library))
-    except (Refused, NotFound, Conflict, paths.RootsError) as why:
-        return _bulk_reply(why)
+    except responses.ANSWERED as why:
+        return responses.of(why)
     except Exception as e:
         # Not the text of the exception: it can name a path. The photos written before it keep the edit (History lists them).
         logger.error("Error in a bulk edit: %s", e, exc_info=True)
@@ -810,8 +790,8 @@ def photo_thumb():
         return refusal
     try:
         thumb = thumbnails.serve(library, photo_id, config.locate_ffmpeg)
-    except (NotFound, paths.RootsError, Unavailable) as why:
-        return _view_error(why)
+    except responses.ANSWERED as why:
+        return responses.of(why)
     except Exception as e:
         logger.error("Error serving the thumbnail of photo %s: %s", photo_id, e, exc_info=True)
         return responses.error(500, "The thumbnail could not be made: %s" % e)
@@ -848,10 +828,8 @@ def video_file():
         return refusal
     try:
         video = photo_actions.video(library, photo_id)
-    except Conflict as why:
-        return responses.error(409, str(why))
-    except (NotFound, paths.RootsError, Unavailable) as why:
-        return _view_error(why)
+    except responses.ANSWERED as why:
+        return responses.of(why)
     except Exception as e:
         logger.error("Error reading video %s: %s", photo_id, e, exc_info=True)
         return responses.error(500, "The video could not be read (%s); the server's log says why." % type(e).__name__)
@@ -1128,11 +1106,10 @@ def photos_bulk_tags():
             if result.refused:
                 return _refused_after_writing(library, result)
             records_written(library, result)
-    except Conflict as why:
-        return responses.error(409, str(why))      # too many batches wait ahead (tagpup.services.batches)
-    except Refused as why:
-        # More photos than a write may name (file_changes.too_many), or cancelled before its turn: nothing was written.
-        return responses.error(400, str(why))
+    except responses.ANSWERED as why:
+        # Conflict: too many batches wait ahead (tagpup.services.batches); Refused: more photos than a write may name
+        # (file_changes.too_many), or cancelled before its turn. Nothing was written.
+        return responses.of(why)
     except Exception as e:
         logger.error("Error in bulk tags write: %s", e)
         return responses.error(500, str(e))

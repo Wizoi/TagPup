@@ -268,5 +268,43 @@ class TestFaceRoutes(TagPupAPITestBase):
             self.assertEqual(status, self.lib.client.get("/api/face-crop", query_string={"id": asked}).status_code)
 
 
+class WhatAServiceRaisedIsAnsweredOneWay(TagPupAPITestBase):
+    """Each route mapped a service's exception to a status by hand, nine sites for Conflict alone, and a route that caught
+    fewer than its service raised answered 500 (#2743). One mapper now (tagpup.web.responses.of): the exception's own
+    sentence, the status its kind has, and anything no mapper knows still a 500 with its sentence, never swallowed."""
+
+    def ask_the_navigator_raising(self, raised):
+        with patch("tagpup.web.tagpup_routes.library_view.navigator", side_effect=raised):
+            return self.lib.client.get("/api/library/navigator", query_string={"section": "folders"})
+
+    def test_each_kind_has_its_status_and_its_sentence_and_an_unknown_one_is_a_500(self):
+        from tagpup.core import paths
+        from tagpup.core.result import Conflict, NotFound, Refused, Unavailable
+        for raised, status, beside in ((NotFound("No such folder."), 404, {}),
+                                       (Conflict("Three batches wait ahead."), 409, {}),
+                                       (Refused("kind must be one of folder, month."), 400, {}),
+                                       (paths.UnmappedRoot("Root pictures is not placed here."), 409, {"roots_problem": True}),
+                                       (Unavailable("The share is not answering just now."), 503, {}),
+                                       (RuntimeError("The disk said no."), 500, {})):
+            with self.subTest(type(raised).__name__):
+                reply = self.ask_the_navigator_raising(raised)
+                self.assertEqual(status, reply.status_code)
+                self.assertEqual({"success": False, "error": str(raised), **beside}, reply.get_json())
+                # An update while working: a share away is waited out by the page, as a library being updated is.
+                self.assertEqual("2" if status == 503 else None, reply.headers.get("Retry-After"))
+
+    def test_rapid_clicks_past_the_cap_are_refused_400_with_the_sentence_and_nothing_is_claimed(self):
+        too_many = ["C:/nowhere/%05d.jpg" % n for n in range(5001)]
+        status, reply = self.post("/api/photos/bulk-tags", {"paths": too_many, "add_tags": ["Sunset"], "remove_tags": []})
+        self.assertEqual(400, status)
+        self.assertEqual({"success": False, "error": "Select up to 5,000 photos at a time (5,001 were named)."}, reply)
+
+    def test_a_face_that_is_not_there_is_the_json_error_the_pages_read(self):
+        # Was Flask's HTML page, which api.json could not read.
+        reply = self.lib.client.get("/api/face-matches", query_string={"id": 999999})
+        self.assertEqual(404, reply.status_code)
+        self.assertEqual({"success": False, "error": "Face not found"}, reply.get_json())
+
+
 if __name__ == "__main__":
     unittest.main()
