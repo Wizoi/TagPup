@@ -34,6 +34,9 @@ pyexiftool sends ExifTool one argument a line, so a value holding a line break -
 two lines -- was written as its first line, and its second read as a file name ("File not found"). Such an argument is
 sent as a C string (`#[CSTR]`, ExifTool 11.08 or later: see CSTR); every other goes as it is.
 
+Its ExifTool ends with the TagPup process that started it, however that ends (processes.end_with_this_process): a
+writer killed hard left its ExifTool running for weeks (#2660).
+
 Everything else -- get_tags, set_tags, check_execute, auto-start -- is ExifToolHelper's.
 """
 import logging
@@ -45,6 +48,8 @@ import time
 
 import exiftool
 from exiftool.exceptions import ExifToolExecuteError, ExifToolNotRunning, ExifToolVersionError
+
+from tagpup.core import processes
 
 __all__ = ["ExifToolSession", "ExifToolTimeout", "ExifToolFailed", "StaysDead", "DEFAULT_TIMEOUT"]
 
@@ -362,6 +367,14 @@ class ExifToolSession(exiftool.ExifToolHelper, _DrainingExifTool):
         if not any(str(a).lower().startswith("filename=") for a in common_args):
             common_args += ["-charset", "filename=utf8"]
         super().__init__(*args, encoding=encoding, common_args=common_args, **kwargs)
+
+    def run(self):
+        """ExifToolHelper's, its ExifTool then ending with this process (processes.end_with_this_process); every
+        start goes through here, the one after a timeout too (ExifToolHelper.execute's auto-start)."""
+        if self.running:
+            return
+        super().run()
+        processes.end_with_this_process(self._process.pid)
 
     def execute(self, *params, **kwargs):
         """ExifToolHelper's, raising ExifToolFailed, which says what ExifTool said, for a
