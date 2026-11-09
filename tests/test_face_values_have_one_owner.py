@@ -131,6 +131,33 @@ READS_CLUSTERING = re.compile(r"from tagpup\.core import [^\n]*\bclustering\b|\b
                               r"|from tagpup\.core\.clustering import|import tagpup\.core\.clustering\b")
 
 
+#: A value or test of a face "in the background", wherever it is defined (a background task is another thing).
+BACKGROUND_RULE = re.compile(r"^(?:BACKGROUND_\w*\s*=|def is_background\w*\(|def background_faces\()", re.MULTILINE)
+
+
+class AFaceInTheBackgroundIsClusterings(unittest.TestCase):
+    """Whether a face is in the background is a face value, clustering's: the 2% share of the picture's shorter side was
+    images.BACKGROUND_SHARE while the job that names faces from tags asked clustering's 2,000 px, so a 50 x 50 face on a
+    4000 x 3000 photo was hidden on the photo yet named by the job (docs/findings.md, #2738). Mutation: BACKGROUND_SHARE
+    and is_background back in tagpup/files/images.py."""
+
+    def test_no_shipped_file_but_clustering_defines_a_background_rule(self):
+        owner = os.path.normcase(os.path.join("tagpup", "core", "clustering.py"))
+        found = []
+        for path in python_sources():
+            if os.path.normcase(path) != owner:
+                with open(os.path.join(ROOT, path), encoding="utf-8") as handle:
+                    found += [(path, match) for match in BACKGROUND_RULE.findall(handle.read())]
+        self.assertEqual([], found)
+
+    def test_the_share_is_of_the_shorter_side_of_the_picture(self):
+        self.assertTrue(clustering.is_background([0, 0, 50, 50], [4000, 3000]))   # 50 < 60: 2% of 3,000
+        self.assertFalse(clustering.is_background([0, 0, 60, 60], [4000, 3000]))
+        self.assertFalse(clustering.is_background([0, 0, 50, 50], None))   # no known size: never hidden
+        self.assertTrue(BACKGROUND_RULE.search("BACKGROUND_SHARE = 0.02"))
+        self.assertTrue(BACKGROUND_RULE.search("def is_background(box, size):"))
+
+
 class TheMarginIsWorkedOutOnce(unittest.TestCase):
     """The best person of a face, and its margin over the next, are clustering's (margins, ranked, best_of, FacesByPerson): a
     service that took the top of a row itself (an argmax, a sort, a partition, a reduceat over people) would have a margin of

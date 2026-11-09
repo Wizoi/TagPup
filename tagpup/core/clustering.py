@@ -505,6 +505,21 @@ def singled_out(votes):
 
 # ---- Faces in the background ---------------------------------------------------------
 
+#: The share of the picture's shorter side under which an unnamed face is background, not shown on TagPup's photo (owner,
+#: 2026-11-02, from the counts in kr-track: 13% of its faces, 39 of its 2,574 named). Relative, since the photos are exports of
+#: every size: the 40 px floor of a new face (images.NEW_FACE_FLOOR) keeps what cannot be recognised out of the library, this
+#: keeps the people behind the subject off the page.
+BACKGROUND_SHARE = 0.02
+
+
+def is_background(box, size):
+    """Whether a face in `box` ([x1, y1, x2, y2]) is under BACKGROUND_SHARE of the picture's shorter side; `size` is
+    [width, height] of the picture the box is in (as stored). False for a picture of no known size."""
+    if not size or len(box) < 4 or not min(size):
+        return False
+    return min(box[2] - box[0], box[3] - box[1]) < BACKGROUND_SHARE * min(size)
+
+
 #: A face smaller than this many square pixels is a speck in the background: not named by the tag alone,
 #: and clustering names none of those a tenth of the largest's (background_faces).
 BACKGROUND_AREA = 2000
