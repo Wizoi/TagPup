@@ -489,7 +489,7 @@ def own_statuses(source, answered):
                 for each in (node.elts if isinstance(node, ast.Tuple) else [node])}
     found = []
     for node in ast.walk(ast.parse(source)):
-        if isinstance(node, ast.ExceptHandler) and node.type is not None and named(node.type) & answered:
+        if isinstance(node, ast.ExceptHandler) and node.type is not None and named(node.type) & (answered | {"ANSWERED"}):
             if any(isinstance(each, ast.Constant) and type(each.value) is int and 400 <= each.value < 600
                    for line in node.body for each in ast.walk(line)):
                 found.append((node.lineno, "except %s" % ", ".join(sorted(named(node.type) & answered))))
@@ -511,8 +511,9 @@ class ARouteAnswersWhatAServiceRaisedThroughTheOneMapper(unittest.TestCase):
                    "def b():\n    try:\n        f()\n    except (Refused, paths.RootsError):\n        abort(400)\n"
                    "def c(why):\n    if isinstance(why, NotFound):\n        return 404\n"
                    "def d():\n    try:\n        f()\n    except naming_faces.AlreadyWorking as why:\n"
-                   "        return responses.error(409, str(why), job=why.job)\n")
-        self.assertEqual([4, 9, 12, 17], [line for line, _what in own_statuses(planted, answered)])
+                   "        return responses.error(409, str(why), job=why.job)\n"
+                   "def e():\n    try:\n        f()\n    except responses.ANSWERED as why:\n        return responses.error(409, str(why))\n")
+        self.assertEqual([4, 9, 12, 17, 22],[line for line, _what in own_statuses(planted, answered)])
         mapped = ("def a():\n    try:\n        f()\n    except ValueError as why:\n        return responses.error(400, str(why))\n"
                   "    except responses.ANSWERED as why:\n        return responses.of(why)\n")
         self.assertEqual([], own_statuses(mapped, answered))
