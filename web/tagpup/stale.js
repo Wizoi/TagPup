@@ -13,7 +13,7 @@
 // Any other photo offers the edits its record's `writes` names (tagpup.files.field_values.writes, the one statement of
 // what a save may change): each control's `data-writes` names the field it changes, and a control whose field is not
 // named is inert, with a sentence naming what is not edited. A photo's record names all five; a clip's its tags, title,
-// name and date (fields.CLIP_WRITES), so its turn is inert. The delete (`data-deletes`) is no write of a field: a
+// name and date (fields.CLIP_WRITES), so its turn is not offered (the rotate buttons are hidden). The delete (`data-deletes`) is no write of a field: a
 // clip is deleted as a photo is (recycle_bin, up to its MOST_CLIP_BYTES, a larger one for good once confirmed), and the
 // button is inert only while the file is missing.
 import { buildElement } from './common/dom.js';
@@ -45,14 +45,15 @@ export function markStale(card, photo) {
 }
 
 // What the sentence calls each field a control's `data-writes` names, in the order it names them.
-const FIELD_WORDS = { date: 'date', rotate: 'turn', title: 'title', tags: 'people and keywords' };
+// The turn is not among them: a record that leaves it out has its rotate controls hidden (applyPhotoStale), not explained.
+const FIELD_WORDS = { date: 'date', title: 'title', tags: 'people and keywords' };
 
 /** The sentence of a photo whose record's `writes` leaves out `held` (fields of FIELD_WORDS), or '' when none is. */
 function heldSentence(held) {
     const words = Object.keys(FIELD_WORDS).filter((field) => held.has(field)).map((field) => FIELD_WORDS[field]);
     if (!words.length) return '';
     const listed = words.length === 1 ? words[0] : `${words.slice(0, -1).join(', ')} and ${words[words.length - 1]}`;
-    return `This is a video: its ${listed} ${words.length === 1 ? 'is' : 'are'} not edited here.`;
+    return `Not edited here: ${listed}.`;
 }
 
 /**
@@ -87,7 +88,10 @@ function inertUnless(el, offered) {
 
 export function applyPhotoStale(photo) {
     const missing = Boolean(photo && photo.missing);
-    const writes = photo && !missing ? photo.writes : [];
+    const writes = (photo && !missing && photo.writes) || [];
+    // A clip cannot be turned: when its record names its writes and leaves the turn out, the rotate controls are not
+    // offered at all (a missing file, no photo, or a record naming no writes shows them inert, as every control is).
+    const turnless = Boolean(photo) && !missing && Array.isArray(photo.writes) && !photo.writes.includes('rotate');
     const controls = [...document.querySelectorAll('[data-writes]')];
     const held = new Set(controls.map((el) => el.dataset.writes).filter((field) => !writes.includes(field)));
     const sentence = missing
@@ -99,6 +103,9 @@ export function applyPhotoStale(photo) {
     // No picture to show, and no broken-image icon in its place.
     mainImage.classList.toggle('hidden', missing);
     const deletes = [...document.querySelectorAll('[data-deletes]')];
+    for (const el of controls) {
+        if (el.dataset.writes === 'rotate') el.classList.toggle('hidden', turnless);
+    }
     for (const el of controls.concat(deletes)) {
         inertUnless(el, !(el.hasAttribute('data-deletes') ? deletesHeld(photo) : held.has(el.dataset.writes)));
     }

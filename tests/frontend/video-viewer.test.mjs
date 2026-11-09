@@ -146,22 +146,21 @@ describe("leaving a video while it plays", () => {
   });
 });
 
-describe("a video's title, keywords, name and date are edited, not its turn", () => {
+describe("a video's title, keywords, name and date are edited, and its turn is not offered", () => {
   const writers = (ctx) => [...ctx.document.querySelectorAll("[data-writes]")];
   const inert = (ctx) => writers(ctx).filter((node) => node.hasAttribute("inert"));
   const note = (ctx) => el(ctx, "photo-missing-note");
   const held = (ctx, id) => Boolean(el(ctx, id).closest("[inert]"));
   const LIVE = ["input-photo-title", "btn-save-title", "btn-edit-people", "input-add-person", "btn-add-person",
     "btn-edit-tags", "input-add-tag", "btn-add-tag", "input-smart-rename-one", "btn-delete-photo", "btn-edit-date-taken"];
-  const HELD = ["btn-rotate-left", "btn-rotate-right"];
+  const TURNS = ["btn-rotate-left", "btn-rotate-right"];
+  const turnsOffered = (ctx) => TURNS.map((id) => !el(ctx, id).closest(".hidden"));
 
   function assertClip(ctx, what) {
     for (const id of LIVE) assert.equal(held(ctx, id), false, `${what}: ${id} is live`);
-    for (const id of HELD) assert.equal(held(ctx, id), true, `${what}: ${id} is inert`);
-    assert.ok(inert(ctx).every((node) => node.getAttribute("aria-disabled") === "true"), `${what}: and says so`);
-    assert.equal(note(ctx).classList.contains("hidden"), false, `${what}: the sentence is shown`);
-    assert.equal(note(ctx).textContent, "This is a video: its turn is not edited here.",
-      `${what}: it names only what is not edited`);
+    assert.deepEqual(turnsOffered(ctx), [false, false], `${what}: the rotate buttons are not offered`);
+    assert.equal(note(ctx).classList.contains("hidden"), true, `${what}: no sentence: every field it holds is edited`);
+    assert.equal(note(ctx).textContent, "", `${what}: and none left over`);
   }
 
   function assertEditable(ctx, what) {
@@ -169,9 +168,10 @@ describe("a video's title, keywords, name and date are edited, not its turn", ()
     assert.deepEqual(inert(ctx), [], `${what}: every control that writes is live`);
     assert.ok(writers(ctx).every((node) => !node.hasAttribute("aria-disabled")), `${what}: none says it is not`);
     assert.equal(note(ctx).classList.contains("hidden"), true, `${what}: no sentence`);
+    assert.deepEqual(turnsOffered(ctx), [true, true], `${what}: the rotate buttons are offered`);
   }
 
-  test("a clip opened: its title, keywords, name, date and delete live, its turn inert, and the sentence names it", async (t) => {
+  test("a clip opened: its title, keywords, name, date and delete live, its turn not offered, and no sentence", async (t) => {
     const ctx = await viewWithAVideo(t);
     await open(ctx, VIDEO);
     assertClip(ctx, "the clip");
@@ -188,6 +188,21 @@ describe("a video's title, keywords, name and date are edited, not its turn", ()
     press(ctx, "ArrowRight");
     await ctx.settle(120);
     assertEditable(ctx, "stepped on to a photo");
+  });
+
+  test("a clip's record that names no writes (a scan kept from before an install) holds every field and names them", async (t) => {
+    const ctx = await viewWithAVideo(t, {
+      photoExtra: (id) => (id === VIDEO ? { media: "video", mtime: MTIME, writes: undefined } : {}),
+    });
+    await open(ctx, VIDEO);
+    assert.equal(note(ctx).textContent, "Not edited here: date, title and people and keywords.");
+    assert.deepEqual(turnsOffered(ctx), [true, true], "nothing says it cannot be turned: shown, inert");
+    assert.equal(held(ctx, "btn-rotate-left"), true);
+  });
+
+  test("the video cannot be popped out: it would play on after the owner moves to another photo", async (t) => {
+    const ctx = await viewWithAVideo(t);
+    assert.equal(el(ctx, "main-video").hasAttribute("disablepictureinpicture"), true);
   });
 
   test("a clip whose file is gone has every control inert, and says the file is gone", async (t) => {
