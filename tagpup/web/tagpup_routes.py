@@ -818,7 +818,7 @@ def video_file():
 @routes.get("/api/clip/convert-plan")
 def clip_convert_plan():
     """What a clip needs before a browser plays it (tagpup.services.photos.clip_plan, tagpup.files.convertible):
-    {"action": "NOTHING" | "REMUX_AUDIO" | "REENCODE", "sentence"}, asked by the photo panel when the browser did not
+    {"action": "NOTHING" | "REENCODE", "sentence"}, asked by the photo panel when the browser did not
     play it (web/tagpup/media.js). Errors as /api/video-file's (404, 400, 409, 503 with Retry-After), and 503 with
     ffprobe's sentence when it could not read the file just now, 400 with it when it cannot read it as a video. Reads
     the file's header through ffprobe, bounded; writes nothing. To this PC only (403)."""

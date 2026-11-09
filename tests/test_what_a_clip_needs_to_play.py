@@ -29,7 +29,7 @@ from view_library import ViewLibrary  # noqa: E402
 from tagpup import config  # noqa: E402
 from tagpup.core import processes  # noqa: E402
 from tagpup.files import convertible, images, shares, video_frames  # noqa: E402
-from tagpup.files.convertible import NOTHING, REENCODE, REMUX_AUDIO  # noqa: E402
+from tagpup.files.convertible import NOTHING, REENCODE  # noqa: E402
 from tagpup.services import photos as photo_actions  # noqa: E402
 
 TOOLS = config.locate_ffmpeg()
@@ -67,7 +67,7 @@ class ThePlanOfEachClip(unittest.TestCase):
                 (".mp4", "h264", None, NOTHING),               # no sound
                 (".mov", "mpeg4", "pcm_mulaw", REENCODE),      # sound, no picture, no error in Chrome
                 (".mp4", "mpeg4", "aac", REENCODE),
-                (".mp4", "h264", "ac3", REMUX_AUDIO),
+                (".mp4", "h264", "ac3", REENCODE),             # a sound that does not play: re-encoded too
                 (".wmv", "wmv3", "wmav2", REENCODE),
                 (".avi", "h264", "mp3", REENCODE),            # an older format is re-encoded whatever it holds
                 (".mpg", "mpeg2video", "mp2", REENCODE),

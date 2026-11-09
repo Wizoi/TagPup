@@ -9,20 +9,18 @@ its sound and shows no picture, with no error; .wmv, .mpg, .avi have no player a
   * an older format (.wmv, .mpg, .mpeg, .avi, .mod: a container no browser opens) is REENCODE, whatever it holds;
   * a picture in PLAYABLE_VIDEO with a sound in PLAYABLE_AUDIO (or none) plays: NOTHING, in a .mov as in an .mp4 (no
     file is converted because it is not an .mp4: owner, 2026-11-09);
-  * a picture that plays with a sound that does not is REMUX_AUDIO: the picture copied, the sound made AAC;
-  * any other picture is REENCODE (H.264 CRF 23 and AAC, when the converter is built).
+  * anything else is REENCODE (H.264 CRF 23 and AAC, when the converter is built): a picture no browser plays, and a
+    picture that plays with a sound that does not (no clip of the three libraries is one, counted 2026-11-09, so no
+    cheaper copy of its picture is planned: CLAUDE.md, 'A special case needs a real instance').
 
 Pure: codec names in (ffprobe's, tagpup.files.video_frames.streams), a Plan out; nothing is read or run. A `reason` names
-no file, only the format: a file's name can hold a person's name. Remuxing a playable picture out of an older container
-is not a plan: an older extension is REENCODE by the owner's rule, so no input makes it.
+no file, only the format: a file's name can hold a person's name.
 """
 from typing import NamedTuple
 
 #: The clip plays as it is.
 NOTHING = "NOTHING"
-#: Its picture plays and its sound does not: the picture is copied into a new file, the sound made AAC.
-REMUX_AUDIO = "REMUX_AUDIO"
-#: Its picture does not play, or its container does not open: the whole clip is made H.264 and AAC.
+#: Its container does not open, or its picture or its sound does not play: the whole clip is made H.264 and AAC.
 REENCODE = "REENCODE"
 
 #: The containers a browser opens (Chrome, measured): anything else of tagpup.files.images.VIDEO_TYPES is older.
@@ -38,7 +36,7 @@ CONVERT = "it plays here once it is converted (Convert to play)."
 
 
 class Plan(NamedTuple):
-    """What a clip needs (`action`: NOTHING, REMUX_AUDIO or REENCODE) and the sentence that says why (`reason`)."""
+    """What a clip needs (`action`: NOTHING or REENCODE) and the sentence that says why (`reason`)."""
     action: str
     reason: str
 
@@ -58,8 +56,8 @@ def plan_for(extension, video, audio):
         return Plan(REENCODE, "This video's picture is %s, a format browsers do not play (its sound may play without "
                               "it): %s" % (video, CONVERT))
     if not plays_sound(audio):
-        return Plan(REMUX_AUDIO, "This video's sound is %s, a format browsers do not play: its picture plays, and %s"
-                                 % (audio, CONVERT.replace("it plays", "its sound plays")))
+        return Plan(REENCODE, "This video's sound is %s, a format browsers do not play (its picture may play without "
+                              "it): %s" % (audio, CONVERT))
     if video == "hevc":
         return Plan(NOTHING, "This video is HEVC: it plays in this browser once Windows has the HEVC Video Extensions.")
     return Plan(NOTHING, "This video's picture and sound are formats browsers play: its file may be damaged.")
