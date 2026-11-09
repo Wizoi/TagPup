@@ -5,8 +5,9 @@ A selection is one of two shapes, sent by a page that never holds 68,000 ids to 
 
 * `{"ids": [photo id, ...]}`: the photos picked, at most MAX_LISTED. Ids the library has no photo of -- deleted,
   another library's, never anyone's -- are simply not in it, and an id named twice is one.
-* `{"source": {"kind", "value", "recursive"}, "excluded": [photo id, ...]}`: every photo of a source (the library views'
-  own: the whole library, a folder and its subfolders, a keyword, a person, a year, a month) but the excluded ones
+* `{"source": {"kind", "value", "recursive", "media"}, "excluded": [photo id, ...]}`: every photo of a source (the library
+  views' own: the whole library, a folder and its subfolders, a keyword, a person, a year, a month; of the one kind `media`
+  names, as the view's Photos / Videos filter shows it, library_view.media_of) but the excluded ones
   (at most MAX_LISTED; ids not in the source are no matter). The ids are those of `/api/library/ids` for the same
   source, in the same order, read here, on the server, in one transaction: the page sends the source, not its list.
 
@@ -68,7 +69,7 @@ def read(library, body):
     named = body["source"]
     if not isinstance(named, dict):
         raise Refused("A source is {\"kind\": ..., \"value\": ..., \"recursive\": ...}.")
-    source = library_view.source_of(library, named.get("kind"), named.get("value"), named.get("recursive"))
+    source = library_view.source_of(library, named.get("kind"), named.get("value"), named.get("recursive"), named.get("media"))
     return Selection(None, source, _id_list(body.get("excluded", []), "excluded"))
 
 

@@ -598,7 +598,7 @@ def library_navigator():
 
 
 def _source_asked():
-    """(kind, value, recursive, order) a library view's request names: the query of a GET, or the JSON body
+    """(kind, value, recursive, order, media) a library view's request names: the query of a GET, or the JSON body
     of a POST -- a union of 1,000 folders on a share is longer than an address the server reads (#696), so the page sends
     a union in a body. A folder is named by `folder`, which the Roots ingress resolves through the first place of its root
     like every path of a request (in the query or the body); the other kinds by `value` (a union's: its list, or that list
@@ -608,10 +608,11 @@ def _source_asked():
         body = body if isinstance(body, dict) else {}
         kind = body.get("kind")
         value = (body.get("folder") or body.get("value")) if kind == "folder" else body.get("value")
-        return kind, value, body.get("recursive") is True, body.get("order")
+        return kind, value, body.get("recursive") is True, body.get("order"), body.get("media")
     kind = request.args.get("kind")
     value = (request.args.get("folder") or request.args.get("value")) if kind == "folder" else request.args.get("value")
-    return kind, value, (request.args.get("recursive") or "").lower() in YES, request.args.get("order")
+    return (kind, value, (request.args.get("recursive") or "").lower() in YES, request.args.get("order"),
+            request.args.get("media"))
 
 
 @routes.route("/api/library/ids", methods=["GET", "POST"])
@@ -619,9 +620,9 @@ def library_ids():
     """The whole ordered id list of a source, for a grid that jumps to the middle of it
     (tagpup.services.library_view.ids)."""
     library = state.require()
-    kind, value, recursive, order = _source_asked()
+    kind, value, recursive, order, media = _source_asked()
     try:
-        return jsonify(library_view.ids(library, kind, value, recursive, order=order))
+        return jsonify(library_view.ids(library, kind, value, recursive, order=order, media=media))
     except responses.ANSWERED as why:
         return responses.of(why)
     except Exception as e:
