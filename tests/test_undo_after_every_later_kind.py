@@ -16,8 +16,8 @@ before its first rename (Smart Rename's first change, alone), the sweep of a cap
 folder's photos (real ExifTool, changes of photo files; by its writer, as the face pass). The refresh's writer is
 deleted (DECISIONS 2026-10-28, THE MCP SERVER ONLY READS; kr-track holds one, change 2): it is recorded as that writer
 recorded it, a row re-read through refresh_rows.reread and edits_for on the maintenance scaffold. Every kind UNDO_CHECKS
-names that the code makes is a row here (OPERATIONS) or is left out with its reason (LEFT): a kind added to the journal
-fails test_every_kind_the_code_makes_is_a_row_or_left_with_its_reason until it is placed (#2748).
+names that the code makes is a row here (tests/undo_kinds.py, OPERATIONS) or is left out with its reason (LEFT): a kind
+added to the journal fails tests/test_every_change_kind_has_an_undo_check.py in the fast tier until it is placed (#2748).
 
 Lifted (each scenario a pair here, their tests deleted): test_history_routes' listing agreeing with the rehearsal; test_journal's migration never undone; test_journal_through_the_services' refused undo writing
 nothing; the refusals of the face model's switch of P10 (now tests/test_a_library_indexes_and_suggests_with_its_face_model.py).
@@ -43,6 +43,7 @@ import face_rows  # noqa: E402
 from face_rows import FACENET, before_the_face_model, person_of  # noqa: E402
 from test_file_journal import Crash, crash_at  # noqa: E402
 import baked_files  # noqa: E402
+from undo_kinds import OPERATIONS  # noqa: E402
 
 import numpy as np  # noqa: E402
 
@@ -50,8 +51,7 @@ from tagpup.core import paths, validation  # noqa: E402
 from tagpup.core.library import Library  # noqa: E402
 from tagpup.files import bake  # noqa: E402
 from tagpup.files.exiftool_session import ExifToolSession  # noqa: E402
-from tagpup.services import baking, bulk_edit, face_batch, face_people, file_changes, maintenance  # noqa: E402
-from tagpup.services import refresh_rows, retire_photo_vectors, sync, tagging, tags_from_faces  # noqa: E402
+from tagpup.services import baking, file_changes, maintenance, refresh_rows, sync, tagging  # noqa: E402
 from tagpup.services import journal as journal_service  # noqa: E402
 from tagpup.services import libraries as library_actions  # noqa: E402
 from tagpup.services import photos as photo_actions  # noqa: E402
@@ -237,52 +237,6 @@ WRITERS = {
 #: The changes the library holds when it is built: earlier kinds only (name -> the case's attribute holding the id).
 BUILT = {"stamp": "stamp_change", "pass": "pass_change", "switch": "switch_change"}
 
-#: Each kind of change a row here makes, by its UNDO_CHECKS key (tagpup.services.journal), and the rows (BUILT, WRITERS)
-#: making it: the matrix asserts each row's change is of its kind (journal_service.kind_of). A kind no code makes any
-#: more (journal_service.RETIRED) is here where a row makes it as its deleted writer did.
-OPERATIONS = {
-    library_settings.WITH_DEFAULTS: ("stamp",),
-    library_settings.CHANGE: ("settings", "switch"),
-    "migration %d: %s": ("migration",),
-    sync.OPERATION: ("sync", "sync removal"),
-    "save photo": ("save photo",),
-    "smart rename": ("smart rename",),
-    "smart rename: original names": ("original names",),
-    tagging.CLEAR_DUPLICATES: ("clear duplicates",),
-    "rotate": ("rotate",),
-    journal_service.FACE_PASS: ("pass", "later pass"),
-    "refresh_rows": ("refresh",),
-    baking.OPERATION: ("bake",),
-}
-#: Why a kind of change of photo files is no row: a write of fields through file_changes.write_fields whose way back is
-#: the journal's alone (None in UNDO_CHECKS), refused by a newer change of the same files or rows as Save's is.
-AS_SAVE = "a write of photo files' fields whose way back is the journal's alone: Save's row holds the kind"
-#: Why a kind of change of rows alone is no row: its way back is the journal's alone, refused by a newer change of the
-#: same rows (journal.refusal), as the sync removal's of the named face it deleted is.
-AS_ROWS = "a change of faces or people rows alone whose way back is the journal's alone: the sync removal's row holds it"
-#: Every other kind UNDO_CHECKS names that the code makes, and why it is not a row of the matrix.
-LEFT = {
-    tagging.ADD_TO_ALL: AS_SAVE,
-    "apply all suggestions": AS_SAVE,
-    "rename tag": AS_SAVE,
-    "remove tag": AS_SAVE,
-    "time shift": AS_SAVE,
-    **{operation: AS_SAVE for operation in bulk_edit.OPERATIONS.values()},
-    "rename after caption": "a rename of a photo file through file_changes.rename: Smart Rename's row holds the kind",
-    **{operation: AS_ROWS for operation in face_batch.DESCRIPTIONS.values()},
-    face_people.UNNAMED: AS_ROWS,
-    face_people.ADDED: AS_ROWS,
-    face_people.REMOVED: AS_ROWS,
-    journal.PERSON_DELETED: AS_ROWS,
-    journal.PERSON_MERGED: AS_ROWS,
-    tags_from_faces.OPERATION: AS_ROWS,
-    "faces_from_tags": AS_ROWS,
-    library_settings.FROM_REPLACED: "a stamp of the settings, never undone with the same sentence as the stamp's row",
-    baking.INDEX_OPERATION: ("never listed nor undone (its sentence); the save it writes after while unfinished is "
-                             "test_a_save_is_undone_once_the_index_bake_writing_its_photo_is_finished"),
-    retire_photo_vectors.VECTORS_OPERATION: ("its own check (retire_photo_vectors.vectors_check): "
-                                             "tests/test_retiring_the_old_photo_models_vectors.py"),
-}
 #: Kinds made again for each later kind: a rename's undo knows the renamed file by what a copy does not keep.
 MADE_EACH_TIME = {"smart rename"}
 
@@ -463,6 +417,8 @@ class UndoAfterEveryLaterKind(unittest.TestCase):
         outcomes, n, ordered = {}, 0, 0
         earlier = list(BUILT) + list(WRITERS)
         later = list(WRITERS)
+        self.assertEqual(sorted(earlier), sorted(row for rows in OPERATIONS.values() for row in rows),
+                         "a row of the matrix is not of exactly one kind (tests/undo_kinds.py)")
         for a in earlier:
             with entered(a):
                 n += 1
@@ -472,7 +428,7 @@ class UndoAfterEveryLaterKind(unittest.TestCase):
                 if change_a is not None:
                     operation = journal.history(after_a.path, change_id=change_a)[0]["operation"]
                     self.assertIn(a, OPERATIONS.get(journal_service.kind_of(operation), ()),
-                                  "the row is not of the kind OPERATIONS says")
+                                  "the row is not of the kind tests/undo_kinds.py says")
                 if a in MADE_EACH_TIME:
                     after_a = None
                 self.assertIsNotNone(change_a, "%s was not made on the library as built" % a)
@@ -614,24 +570,6 @@ class UndoAfterEveryLaterKind(unittest.TestCase):
         listed, rehearsed, undone = self.undo_from_history(library, synced)
         self.assertEqual((None, None), (listed, undone.refused))
         self.assertEqual("undone", journal.history(library.path, change_id=synced)[0]["status"])
-
-
-class EveryKindIsARowOrLeft(unittest.TestCase):
-    def test_every_kind_the_code_makes_is_a_row_or_left_with_its_reason(self):
-        """A kind of change added to the journal (UNDO_CHECKS) fails here until it is a row of the matrix (OPERATIONS) or
-        left out saying why (LEFT): its undo after a later kind is held by a row, or by the row the reason names (#2748).
-        Reads the tables alone: no library."""
-        made = set(journal_service.UNDO_CHECKS) - set(journal_service.RETIRED)
-        self.assertEqual(set(), set(OPERATIONS) & set(LEFT), "a kind both a row and left out")
-        self.assertEqual(made, (set(OPERATIONS) - set(journal_service.RETIRED)) | set(LEFT),
-                         "a kind the code makes is neither a row of the matrix nor left with its reason, or a row or "
-                         "a reason names a kind the code does not make")
-        self.assertEqual(set(), set(OPERATIONS) - set(journal_service.UNDO_CHECKS), "a row of a kind UNDO_CHECKS lacks")
-        rows = [row for each in OPERATIONS.values() for row in each]
-        self.assertEqual(sorted(set(BUILT) | set(WRITERS)), sorted(rows), "a row is not of exactly one kind")
-        self.assertEqual({}, {kind: journal_service.UNDO_CHECKS[kind] for kind, why in LEFT.items()
-                              if why in (AS_SAVE, AS_ROWS) and journal_service.UNDO_CHECKS[kind] is not None},
-                         "a kind left as the journal's alone has a way back of its own")
 
 
 if __name__ == "__main__":

@@ -10,6 +10,9 @@ the source to hold it there:
   caller of its function instead, its default included; a function whose `operation` is not a change's name (NOT_NAMES)
   is not followed;
 - every key of UNDO_CHECKS is made by the code or is in RETIRED (a kind only the live journals hold);
+- every kind the code makes is a row of the undo matrix or left out of it with its reason (tests/undo_kinds.py,
+  scenario D2; #2748), a reason saying the kind writes photo files held to a writer that reaches
+  file_changes.write_fields or rename, and one saying it writes rows alone to a writer that reaches neither;
 - nothing but tagpup/services/journal.py calls the store's undo or rehearse_undo, or file_changes' undo or
   rehearse_undo, from another module: each undo goes through why_not first (file_changes.undo rehearses by its own
   rehearse_undo with the check it was given).
@@ -25,6 +28,7 @@ from shipped_sources import ROOT  # noqa: E402
 sys.path.insert(0, ROOT)
 
 from tagpup.services import journal as journal_service  # noqa: E402
+import undo_kinds  # noqa: E402
 
 PARAMETER = "operation"
 #: (module, function) whose `operation` is not the name of a change: the write itself (a callable), the reader of the
@@ -37,6 +41,8 @@ NOT_NAMES = {("tagpup.store.db", "write"), ("tagpup.store.db", "write_with_conne
 #: What is scanned besides tagpup/: the programs, the tools and the entry points (index --reset stamps its settings in
 #: tagpup_cli).
 PROGRAMS = ("scripts", "tools", "tagpup_cli.py", "tagpup_web.py")
+#: The writers of a change of photo files: a function passing its `operation` on to one is one too (_Source.file_writers).
+FILE_WRITERS = {("tagpup.services.file_changes", "write_fields"), ("tagpup.services.file_changes", "rename")}
 #: The one module that may call an undo of the store or of the files: it asks why_not before each.
 UNDOER = "tagpup.services.journal"
 #: (module, function) of the undos that write without asking why_not.
@@ -195,13 +201,20 @@ class _Source:
 
     def made(self):
         """{operation name: [where]} of every name passed to a function with an `operation` parameter, and every
-        default of one; and [where: what] could not be resolved."""
+        default of one; and [where: what] could not be resolved. Kept: `callees` ({operation name: {(module, function)
+        it is passed to, or the default of}}) and `passed_on` ({(module, function): {(module, function) its own
+        `operation` is passed to}})."""
         names, unresolved = {}, []
+        self.callees, self.passed_on = {}, {}
 
-        def add(module, function, node, where):
+        def add(module, function, node, where, callee):
+            if (isinstance(node, ast.Name) and node.id == PARAMETER and function is not None
+                    and self.takes_operation(module.name, function.name) is not None):
+                self.passed_on.setdefault((module.name, function.name), set()).add(callee)
             try:
                 for name in self.resolve(module, function, node):
                     names.setdefault(name, []).append(where)
+                    self.callees.setdefault(name, set()).add(callee)
             except Unresolved as problem:
                 unresolved.append("%s: %s" % (where, problem))
 
@@ -213,7 +226,8 @@ class _Source:
                     defaults = dict(zip([a.arg for a in positional[len(positional) - len(args.defaults):]], args.defaults))
                     defaults.update({a.arg: d for a, d in zip(args.kwonlyargs, args.kw_defaults) if d is not None})
                     if PARAMETER in defaults:
-                        add(module, None, defaults[PARAMETER], "%s.%s's default" % (module.name, node.name))
+                        add(module, None, defaults[PARAMETER], "%s.%s's default" % (module.name, node.name),
+                            (module.name, node.name))
                     continue
                 if not isinstance(node, ast.Call):
                     continue
@@ -231,8 +245,17 @@ class _Source:
                         continue
                     passed = [node.args[position]]
                 for value in passed:
-                    add(module, function, value, where)
+                    add(module, function, value, where, callee)
         return names, unresolved
+
+    def file_writers(self):
+        """{(module, function)} of FILE_WRITERS and every function passing its own `operation` on to one (made first)."""
+        found = set(FILE_WRITERS)
+        while True:
+            more = {caller for caller, callees in self.passed_on.items() if callees & found} - found
+            if not more:
+                return found
+            found |= more
 
     def undo_callers(self):
         """[where] of each call of an undo that does not ask why_not (UNDOS) outside UNDOER and the undo's own module."""
@@ -265,6 +288,28 @@ class EveryChangeKindHasAnUndoCheck(unittest.TestCase):
         self.assertEqual([], stale, "no code makes these: delete them, or move them to RETIRED with the live counts")
         made_again = sorted(set(journal_service.RETIRED) & set(self.made))
         self.assertEqual([], made_again, "the code makes these again: they are not retired")
+
+    def test_every_kind_the_code_makes_is_a_row_of_the_undo_matrix_or_left_with_its_reason(self):
+        """A kind of change added to the journal fails here, in the fast tier, until it is a row of the undo matrix
+        (undo_kinds.OPERATIONS) or left out saying why (undo_kinds.LEFT) (#2748); a reason is held to what the kind's
+        writer does: a write of photo files reaches file_changes, a change of rows alone does not."""
+        operations, left = undo_kinds.OPERATIONS, undo_kinds.LEFT
+        made = set(journal_service.UNDO_CHECKS) - set(journal_service.RETIRED)
+        self.assertEqual(set(), set(operations) & set(left), "a kind both a row of the matrix and left out")
+        self.assertEqual(made, (set(operations) - set(journal_service.RETIRED)) | set(left),
+                         "a kind the code makes is neither a row of the undo matrix nor left with its reason "
+                         "(tests/undo_kinds.py), or a row or a reason names a kind the code does not make")
+        self.assertEqual(set(), set(operations) - set(journal_service.UNDO_CHECKS), "a row of a kind UNDO_CHECKS lacks")
+        rows = [row for each in operations.values() for row in each]
+        self.assertEqual(sorted(set(rows)), sorted(rows), "a row of the matrix named for two kinds")
+        writers = self.source.file_writers()
+        said = {kind: why in undo_kinds.WRITES_FILES for kind, why in left.items()
+                if why in undo_kinds.WRITES_FILES | undo_kinds.ROWS_ALONE}
+        does = {kind: bool(self.source.callees.get(kind, set()) & writers) for kind in said}
+        self.assertEqual(said, does, "a reason says the kind writes photo files (or not) and its writer does not")
+        self.assertEqual({}, {kind: journal_service.UNDO_CHECKS[kind] for kind in said
+                              if journal_service.UNDO_CHECKS[kind] is not None},
+                         "a kind left as the journal's alone has a way back of its own")
 
     def test_the_writers_are_found(self):
         # The scan finds the writers it exists for: were it to find none, it would pass with nothing checked.
