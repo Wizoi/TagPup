@@ -34,6 +34,7 @@ from tagpup.services import sync as sync_service  # noqa: E402
 from tagpup.store import db, job_runs, schema  # noqa: E402
 from tagpup.web import app as web  # noqa: E402
 from tagpup.web.lifecycle import Lifecycle  # noqa: E402
+from watchdog.events import FileMovedEvent  # noqa: E402
 
 EXIFTOOL = own_home.installed_exiftool()
 JPEG = None
@@ -175,6 +176,18 @@ class AFolderMovedOrDeleted(Base):
         shutil.rmtree(os.path.join(self.root, "Regatta"))
         self.wait_until(lambda: self.synced)
         time.sleep(1)
+        self.assertEqual([paths.stored(self.root)], self.folder_syncs())
+
+    def test_a_folder_renamed_that_watchdog_called_a_file_syncs_its_parent_with_no_look_at_a_path(self):
+        """Noting a notification runs on watchdog's one dispatch thread, every library's: a look at a share that sleeps
+        there held them all (#2754). A folder renamed while watchdog's own look at it raced comes as a file renamed in
+        its folder, and is synced from that folder. Break: Watcher.notice asking whether the new name is a folder."""
+        watcher = self.started(self.make())
+        with mock.patch.object(shares, "folder_state", side_effect=AssertionError("a look on the dispatch thread")), \
+                mock.patch.object(shares, "stamp_of", side_effect=AssertionError("a look on the dispatch thread")):
+            watcher.notice(paths.key(self.root), FileMovedEvent(os.path.join(self.root, "Regatta"),
+                                                                os.path.join(self.root, "Races")))
+        self.wait_until(lambda: self.synced)
         self.assertEqual([paths.stored(self.root)], self.folder_syncs())
 
     def test_a_file_that_is_no_photo_deleted_is_still_no_sync_of_its_own_folder(self):

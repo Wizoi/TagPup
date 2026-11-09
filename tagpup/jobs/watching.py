@@ -17,6 +17,11 @@ made or changed is dropped. A folder deleted or moved is synced from its parent 
 is any other name deleted or moved away, since Windows reports a folder gone as a file
 gone (watchdog 6 cannot ask what a name that no longer exists was).
 
+Noting a notification looks at no path: it runs on watchdog's one dispatch thread, every library's, and a look at a
+share that sleeps would hold them all. Windows reports a rename only within one folder (a move between folders is a name
+removed and one added), and watchdog has already asked whether the new name is a folder; a rename it called a file's is
+synced from the folder of its old name, which is the new name's folder too.
+
 TagPup's own writes are notified too -- the index's bake, an identity minted, a save, a
 rename -- from whichever process made them: ExifTool writes beside a photo and renames its
 file over it. A folder whose notifications named only photos (at most NAMED_MOST), and none
@@ -67,7 +72,6 @@ from watchdog.events import FileSystemEvent, FileSystemEventHandler
 
 from tagpup.core import paths
 from tagpup.services import job_runs
-from tagpup.services import photos as photo_actions
 from tagpup.services import sync as sync_service
 
 logger = logging.getLogger(__name__)
@@ -418,8 +422,6 @@ class Watcher:
                     self._note_whole(libraries)
                     return
                 folders.append((os.path.dirname(event.src_path), None))
-            if event.event_type == "moved" and dest and not onto_a_photo and photo_actions.folder_state(dest) == "there":
-                folders.append((os.path.dirname(dest), None))
         if not folders:
             return
         now = self._clock()
