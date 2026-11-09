@@ -36,7 +36,6 @@ from tagpup.services import (
     face_batch,
     face_people,
     file_changes,
-    refresh_rows,
     retire_photo_vectors,
     sync,
     tagging,
@@ -110,8 +109,6 @@ UNDO_CHECKS = {
     "time shift": None,
     "rotate": None,
     "faces_from_tags": None,
-    refresh_rows.REDERIVE_OPERATION: None,
-    refresh_rows.REDATE_CLIPS_OPERATION: None,
 }
 UNDO_CHECKS.update({operation: None for operation in bulk_edit.OPERATIONS.values()})
 UNDO_CHECKS.update({operation: None for operation in face_batch.DESCRIPTIONS.values()})
@@ -157,6 +154,12 @@ RETIRED = {
     # A bulk edit run as a job, before bulk edits were named by their edit: renton_parkrun 1 each.
     "bulk people (job %d)": None,
     "bulk tags (job %d)": None,
+    # The re-derives of rows from their own raw_metadata, one-offs deleted once each had run (#2734): photo_index holds 2
+    # "rederive tags and captions" applied and 1 "rederive clip dates" applied, kr-track and renton_parkrun none
+    # (counted read-only 2026-11-08). The journal's account is the whole: each is undone from History as a change of
+    # rows is.
+    "rederive tags and captions": None,
+    "rederive clip dates": None,
 }
 UNDO_CHECKS.update(RETIRED)
 

@@ -16,18 +16,13 @@ And the copy it reads: XMP's when the file holds keywords or a caption there, IP
 written by the real ExifTool (XmpIsTheCopyRead). Reading the union of both copies fails
 test_a_keyword_left_only_in_iptc_is_no_tag_and_a_rename_does_not_bring_it_back and
 test_the_caption_shown_is_xmps_and_a_save_from_it_is_not_refused; preferring an XMP packet over IPTC whatever it holds
-fails test_a_photo_with_iptc_keywords_and_no_xmp_keywords_keeps_its_tags. A row stored by the old rule (IPTC's caption
-first) shows the file's title all the same (the page reads it by vocabulary.title_of from the row's raw_metadata, #2582)
-and its save is accepted; scripts/rederive_captions.py orders its stored captions and search words again: without it
-test_a_row_stored_by_the_old_rule_is_derived_again_and_its_save_is_accepted fails.
+fails test_a_photo_with_iptc_keywords_and_no_xmp_keywords_keeps_its_tags.
 
 Rows are seeded the way the indexer writes them -- native paths, and raw_metadata in
 the shape real rows have, bare aliases and all -- never through the code under test.
 ExifTool is replaced by a stand-in that changes the file the way a real write does.
 """
 import json
-import contextlib
-import io
 import os
 import sys
 import unittest
@@ -36,18 +31,15 @@ from unittest.mock import MagicMock, patch
 WORKSPACE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, WORKSPACE_DIR)
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-sys.path.insert(0, os.path.join(WORKSPACE_DIR, "scripts"))
 
 import photo_rows  # noqa: E402
-import rederive_captions  # noqa: E402
 from handler_harness import Library  # noqa: E402
 from test_file_journal import EXIFTOOL, FilesCase, field_of, keywords_of, requires_exiftool, write_outside  # noqa: E402
 
 from tagpup.core.fields import keyword_fields  # noqa: E402
 from tagpup.core.vocabulary import extract_tags  # noqa: E402
-from tagpup.services import photos as photo_actions, refresh_rows, tagging  # noqa: E402
+from tagpup.services import photos as photo_actions, tagging  # noqa: E402
 from tagpup.store import db as tagpup_db  # noqa: E402
-from tagpup.store import derived  # noqa: E402
 
 KEYWORDS = ["Beach", "Cross Country", "People/Rowan Thackeray"]
 HIERARCHICAL = ["People/Rowan Thackeray"]
@@ -294,87 +286,6 @@ class XmpIsTheCopyRead(FilesCase):
         b = self.made("b.jpg", {"IPTC:Caption-Abstract": "Relay at dusk"},
                       {"XMP:Description": "", "IPTC:Caption-Abstract": "Relay at dusk"})
         self.assertEqual(["Relay at dusk"], self.captions(b))
-
-    def rederive(self, *apply):
-        said = io.StringIO()
-        with contextlib.redirect_stdout(said):
-            code = rederive_captions.main(["--db", self.library.path, *apply])
-        return code, said.getvalue()
-
-    def test_a_row_stored_by_the_old_rule_is_derived_again_and_its_save_is_accepted(self):
-        # photo_index: 383 rows whose stored captions the old rule (every caption field, IPTC's first) made, 104 of them
-        # showing IPTC's caption where the file's XMP holds another; kr-track and renton_parkrun none (2026-11-03).
-        a = self.made("a.jpg", {"XMP:Description": "Relay at the lake", "IPTC:Caption-Abstract": "Relay at dusk"})
-        conn = tagpup_db.connect(self.library.path)
-        try:
-            photo_id = conn.execute("SELECT id FROM photos WHERE path = ?", (a,)).fetchone()[0]
-            conn.execute("UPDATE photos SET captions = ? WHERE id = ?", (json.dumps(["Relay at dusk", "Relay at the lake"]),
-                                                                          photo_id))
-            derived.refresh_photos(conn, [photo_id])   # the search words as the indexer left them with that row
-            conn.commit()
-        finally:
-            conn.close()
-
-        def found(word):
-            return [row[0] for row in self.rows("SELECT rowid FROM search_words WHERE search_words MATCH ?",
-                                                ("captions:" + word,))]
-
-        self.assertEqual(([photo_id], [photo_id]), (found("dusk"), found("lake")))
-
-        # The page shows the file's caption whatever the stored order (#2582): a save of the row is not refused.
-        self.assertEqual("Relay at the lake", self.shown(a))
-
-        code, said = self.rederive()
-        self.assertEqual(0, code, said)
-        self.assertIn("apart 1", said)
-        self.assertIn("shown caption 1", said)
-        self.assertEqual(["Relay at dusk", "Relay at the lake"], self.captions(a), "a dry run writes nothing")
-        code, said = self.rederive("--apply")
-        self.assertEqual(0, code, said)
-        self.assertIn("Written: 1 row(s)", said)
-        self.assertIn("Read again: 0 row(s) still apart.", said)
-        self.assertEqual(["Relay at the lake"], self.captions(a))
-        # The search words followed in the same change: IPTC's stale caption is no longer a word of the photo.
-        self.assertEqual(([], [photo_id]), (found("dusk"), found("lake")))
-        # Run again (a second run, or one after a crash part-way), it changes nothing.
-        self.assertEqual((0, 0), (refresh_rows.rederive(self.library, apply=True).changed,
-                                  refresh_rows.apart(self.library)[0]["apart"]))
-
-        saved = tagging.save_photo(self.library, a, "Relay at the lake, later", [], None, EXIFTOOL, "",
-                                   base={"tags": [], "title": self.shown(a)})
-        self.assertEqual((True, "Relay at the lake, later"), (saved.ok, field_of(a, "XMP:Title")))
-
-    def test_a_row_a_server_saved_between_the_plan_and_the_write_is_skipped_and_the_run_succeeds(self):
-        # The server has the library open: a row it saves after the plan was read is derived by the new rule already.
-        a = self.made("a.jpg", {"XMP:Description": "Relay at the lake", "IPTC:Caption-Abstract": "Relay at dusk"})
-        photo_id = self.rows("SELECT id FROM photos WHERE path = ?", (a,))[0][0]
-        conn = tagpup_db.connect(self.library.path)
-        try:
-            conn.execute("UPDATE photos SET captions = ? WHERE id = ?",
-                         (json.dumps(["Relay at dusk", "Relay at the lake"]), photo_id))
-            conn.commit()
-        finally:
-            conn.close()
-        real, planned = refresh_rows.apart, []
-
-        def apart_then_a_save(library):
-            found = real(library)
-            if not planned:   # the plan has read the row; the server now saves it, derived by the new rule
-                planned.append(1)
-                conn = tagpup_db.connect(library.path)
-                try:
-                    conn.execute("UPDATE photos SET captions = ? WHERE id = ?",
-                                 (json.dumps(["Relay at the lake"]), photo_id))
-                    conn.commit()
-                finally:
-                    conn.close()
-            return found
-
-        with patch.object(refresh_rows, "apart", apart_then_a_save):
-            code, said = self.rederive("--apply")
-        self.assertEqual(0, code, said)
-        self.assertIn("Skipped", said)
-        self.assertIn("Read again: 0 row(s) still apart.", said)
 
     def test_a_photo_with_iptc_keywords_and_no_xmp_keywords_keeps_its_tags(self):
         # 151 photo_index photos hold IPTC keywords and no XMP ones, 4 of them in a file with an XMP packet (2026-11-03).

@@ -43,7 +43,7 @@ def date_photos(conn, photo_ids=None):
 
 
 def _dated(raw_json, path):
-    """(taken, year) of a row holding `raw_json` at `path` (native): date_photos' one rule, and clip_dates_apart's."""
+    """(taken, year) of a row holding `raw_json` at `path` (native): date_photos' one rule."""
     try:
         raw = json.loads(raw_json) if raw_json else {}
     except (TypeError, ValueError):
@@ -730,46 +730,6 @@ def stamps(conn, folder=None, with_vectors=None, vector_stamps=None, with_kind=F
     if vector_stamps is None:
         return rows
     return [row[:-3] + ((row[-2], row[-1]) if row[-3] else None,) for row in rows]
-
-
-def derived_apart(conn):
-    """The photos whose stored tags or captions are not what the indexer's derivation (vocabulary.extract_tags and
-    extract_captions, as follow_fields and the indexer's read derive them) makes of their stored raw_metadata now: the
-    rows stored before the rule changed (DECISIONS 2026-11-03, XMP IS THE COPY THE INDEX READS). (photos, photos with no
-    raw_metadata to derive from, [(id, the row's tags, captions and raw_metadata -- native -- as read, {column: JSON
-    derived now} of the columns that differ)]). Reads only, one row held at a time (photo_index: about a second)."""
-    roots = store_roots.roots_for(conn)
-    photos, unread, apart = conn.execute(
-        "SELECT COUNT(*), SUM(raw_metadata IS NULL OR raw_metadata = '') FROM photos").fetchone() + ([],)
-    for photo_id, tags, captions, raw_json in conn.execute(
-            "SELECT id, tags, captions, raw_metadata FROM photos WHERE raw_metadata IS NOT NULL AND raw_metadata != ''"):
-        raw = json.loads(raw_json)
-        stored = {"tags": tags, "captions": captions}
-        now = {"tags": vocabulary.extract_tags(raw), "captions": vocabulary.extract_captions(raw)}
-        differs = {column: json.dumps(value) for column, value in now.items()
-                   if json.loads(stored[column] or "[]") != value}
-        if differs:
-            apart.append((photo_id, dict(stored, raw_metadata=store_roots.raw_to_native(raw_json, roots)), differs))
-    return photos, unread or 0, apart
-
-
-def clip_dates_apart(conn):
-    """The clips whose stored `taken` or `year` is not what date_photos makes of their stored raw_metadata and path now:
-    the rows dated before a clip's XMP date was read first (DECISIONS 2026-11-08, A5 (D) REVISED). (clips, [(id, the
-    row's taken, year, raw_metadata -- native -- and path -- native -- as read, {"taken", "year"} dated now)]). Reads
-    only."""
-    roots = store_roots.roots_for(conn)
-    clips, apart = 0, []
-    for photo_id, path, raw_json, taken, year in conn.execute(
-            "SELECT id, path, raw_metadata, taken, year FROM photos WHERE kind = 'video'"):
-        clips += 1
-        native = paths.from_row(path, roots)
-        now = dict(zip(("taken", "year"), _dated(raw_json, native)))
-        if (taken, year) != (now["taken"], now["year"]):
-            stored = {"taken": taken, "year": year, "path": native,
-                      "raw_metadata": store_roots.raw_to_native(raw_json, roots)}
-            apart.append((photo_id, stored, now))
-    return clips, apart
 
 
 def row_as_recorded(conn, stored_path):
