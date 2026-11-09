@@ -225,7 +225,7 @@ def tags_merge():
         logger.error("Error merging tag %r: %s", body.get("from"), e)
         _refuse(500, str(e))
     if result.refused:
-        _refuse(400, result.refused)
+        return responses.refused(result)
     reply = dict(result.details)
     if not result.ok:
         reply["error"] = result.message()
@@ -257,7 +257,7 @@ def person_rename():
         logger.error("Error renaming a person: %s", e)
         abort(500, description="Internal error: %s" % e)
     if result.refused:
-        _refuse(400, result.refused)
+        return responses.refused(result)
     if not result.ok and not result.changed:
         return not_renamed(result)
     reply = {"success": True, "photos_affected": result.details["photos_affected"],
@@ -652,7 +652,7 @@ def _busy(library, name=None):
     library of the home that holds it too: the machine's map is one for them all."""
     said = lifecycles.running_for(library)
     if name:
-        for other in roots_location.sharing(library, name, web_libraries.home_libraries()):
+        for other in roots_location.sharing(library, name, runtimes.home_libraries(web_libraries.test_mode())):
             said += ["%s (in %s, which uses this root too)" % (each, other.name) for each in lifecycles.running_for(other)]
     return said
 
@@ -680,7 +680,7 @@ def _root_named(body):
 def roots_list():
     """Each root of the library and where this machine keeps it."""
     library = state.require()
-    found = _roots_answer(lambda: roots_location.overview(library, _machine(), web_libraries.home_libraries()))
+    found = _roots_answer(lambda: roots_location.overview(library, _machine(), runtimes.home_libraries(web_libraries.test_mode())))
     found["busy"] = _busy(library)
     return jsonify(found)
 
@@ -692,7 +692,7 @@ def _moved(library, name):
     result = _roots_answer(lambda: roots_location.change_location(
         library, name, body.get("location"), machine, apply=apply, override=body.get("override") is True,
         expected=body.get("from") or None, busy=lambda: _busy(library, name),
-        others=web_libraries.home_libraries()))
+        others=runtimes.home_libraries(web_libraries.test_mode())))
     if result.changed:
         # The map moved: what this process kept of the old places is let go -- the connections
         # find the new map by themselves within a second, and every cache keyed by the library's

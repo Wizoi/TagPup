@@ -139,7 +139,7 @@ def faces_write(library, action):
         logger.error("Error in a face action: %s", e)
         abort(500, description="Internal error: %s" % e)
     if result.refused:
-        refuse(400, result.refused)
+        abort(make_response(responses.refused(result)))
     if not result.ok:
         refuse(500, result.message())
     fingerprints = result.details.get("fingerprints")
