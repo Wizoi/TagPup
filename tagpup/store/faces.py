@@ -135,8 +135,8 @@ def fingerprint(conn):
     return (tuple(row) if row else (0, 0, 0, 0)) + (generation(conn), model_key(conn))
 
 
-def accounted_write(db_path, operation, label="faces write"):
-    """A write to the faces table whose effect alone the fingerprint's change describes: (what `operation(conn)` returned,
+def accounted_write(db_path, work, label="faces write"):
+    """A write to the faces table whose effect alone the fingerprint's change describes: (what `work(conn)` returned,
     the fingerprint as the write began, the fingerprint just before its commit).
 
     One IMMEDIATE transaction, on a connection of its own under the library's write lock (db.write_with_connection: run
@@ -144,12 +144,12 @@ def accounted_write(db_path, operation, label="faces write"):
     nobody else can write between the two fingerprints: a cache that drops the faces this write took out of the pool may
     re-stamp itself with the second, the difference being this write and no batch the indexer or TagPup committed
     meanwhile. Reading them before the lock and after the commit stamped such a batch as accounted for, and its faces
-    never reached the grid. `operation` may be run more than once, and its writes are rolled back if it raises.
+    never reached the grid. `work` may be run more than once, and its writes are rolled back if it raises.
     """
     def accounted(conn):
         db.begin(conn, immediate=True)
         before = fingerprint(conn)
-        done = operation(conn)
+        done = work(conn)
         return done, before, fingerprint(conn)
 
     return db.write_with_connection(db_path, accounted, label=label)
