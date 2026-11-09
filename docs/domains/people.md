@@ -1,68 +1,107 @@
 # People and faces: the state of the domain
 
 The domain's charter is `.claude/agents/tagpup-owner-people.md`: its Scope, the contract the other domains rely on, its
-invariants and guards, and its scenarios P1 to P7. This page states each of the seven conditions of health
-(docs/OWNERS.md) with its evidence and date. A condition not met is the domain's queue.
+invariants and guards, and its scenarios P1 to P7, P10 and P11. This page states each of the seven conditions of health
+(docs/OWNERS.md) with its evidence and date. A condition not met is the domain's queue. Counted read-only 2026-11-08
+(`db.readonly_uri`; counts only, no name or path), unless a line carries another date.
 
-## What the domain holds (counted 2026-10-15, read-only)
+## What the domain holds (counted 2026-11-08)
 
-| Library | People | Groups | Face roots | Faces | Named | By hand | Excluded | Listed people | From a face alone |
-|---|---|---|---|---|---|---|---|---|---|
-| kr-track | 78 | 1 | 12 | 9,850 | 1,640 | 1,531 | 5,788 | 1,981 | 1,052 |
-| photo_index | 411 | 12 | 7 | 187,784 | 35,425 | 175 | 27 | 79,586 | 230 |
-| renton_parkrun | 257 | 1 | 1 | 3,328 | 1,212 | 1,071 | 101 | 1,264 | 189 |
+| Library | People | Faces | With a person | By hand | Excluded |
+|---|---|---|---|---|---|
+| photo_index | 408 | 183,669 | 58,457 | 126 | 2 |
+| kr-track | 108 | 12,664 | 2,780 | 1,638 | 2 |
+| renton_parkrun | 257 | 3,315 | 1,039 | 1 | 0 |
 
-People at the top of the tree: 11, 4 and 0. Leaves two people share: 0, 2 and 0. A face with a name and no id: 0 in all
-three; a listed person with no id: 0 in all three; a person hidden from autocomplete: 0 in all three. Saved Suggest chips:
-601, 5 and 199, of which 103 in kr-track hold a bare name (98 of them found only by `Directory.of_name`).
+A person here is a node of the tag tree with the faces flag and no child. The groups, the face roots and the listed people
+of the 2026-10-15 table are not recounted and are left out. All three libraries are on schema 38, on the one face model.
+
+- A face with a name and no id: 0 / 0 / 0. A face whose `tag_id` names no node: 0 / 0 / 0. A face whose cached name differs
+  from its node's leaf: 0 / 0 / 0. A `photo_people` row with no id or a dangling one: 0 / 0 / 0.
+- A face or a `photo_people` row on a clip (`photos.kind = 'video'`): 0 / 0 / 0. The index looks for faces in photos only
+  (`store.photos.FACE_KINDS`; a clip's faces wait for a migration of their own, DECISIONS 2026-11-02, "THE OWNERS' PLANS"),
+  and no bake writes faces into a clip (`BAKED_KINDS`).
+- People sharing a leaf: one pair in photo_index, none in the other two (known since 2026-10-15, recounted). Two cousins
+  called alike are named by id and a typed bare name that fits both is refused (P6).
+- Stored Suggest rows holding a person's name with no `/` (the bare name only `Directory.of_name` finds): 0 of 111 in
+  photo_index, 79 of 546 in kr-track, 0 of 1,164 in renton_parkrun (2026-11-08; 98 chips counted on 2026-10-15).
 
 Face vectors (migration 33, 2026-10-18) are in `face_embeddings`, one per face and face model. Every reader of vectors is
 given the key it reads under (a required argument): a decision reads the library's `faces.model` once
 (`store.faces.model_key`, on its own connection), reads its vectors under it and decides by that key's cuts; a set of
 vectors kept between reads carries its key (`clustering.FaceRows.key`, `identify.UnnamedFaces.key`) and is compared only
 with vectors of the same key (`FaceRows.under`), so a switch committed meanwhile never sets one model's vectors beside the
-other's, nor reads them by the other's cuts. Every face holds a vector under its library's model: no face of the three
-libraries lacks one (0 of 197,285, counted read-only 2026-10-28) and no writer files a face without its vector, so every
-reader of a face's vector joins it (`store.faces.WITH_VECTOR`) and none answers for a face without one: `identify.NO_VECTOR`,
-cluster-faces' "took no part", the store's `VECTOR` left join and `HAS_VECTOR`, and baking's `FACES_WITHOUT_VECTORS` were
-deleted 2026-10-28 (Cut B).
+other's, nor reads them by the other's cuts. Every face holds a vector under its library's model (183,669 / 12,664 / 3,315
+faces, counted 2026-11-08), and no writer files a face without its vector, so every reader of a face's vector joins it
+(`store.faces.WITH_VECTOR`).
 
-## The seven conditions (2026-10-15)
+## The seven conditions (2026-11-08)
 
 1. **No reach-ins.** Met. The uses of People's internals by other domains are rows of the Integration charter's contract
    table: `core/vocabulary` (row 60), `people_vocabulary` / `read_people_vocabulary` (61), `face_refs` / `crop_of` /
-   `cache_crop` (62), `taxonomy.seed` (63), each with its guard test.
-2. **No rule written twice.** Met.
-   - Who is a person and who a group: `person_ids.People`, alone. `taxonomy.vocabulary_of` builds the `PeopleVocabulary`
-     from its listing and groups; `PeopleVocabulary.from_rows` (its own roots, categories and groups) and
-     `taxonomy.group_tags` are gone (#1463). Compared on the three libraries before and after: the roots, groups, people,
-     ids and every photo's people (62,327 photos) are identical.
-   - Who makes a new person: `face_people.made`, the tag first (#1252). The store's face writers refuse a name no node has,
-     nothing written; `ensure_node` makes keywords' nodes only.
+   `cache_crop` (62), `taxonomy.seed` (63), each with its guard test. Open and recorded: #2741 (`core/vocabulary.py` holds
+   the caption and title readers, Files' concern, in a People module) and #2740 (two Organize page tests are mapped to
+   Views though they exercise People's `selection-panel.js` and `face-boxes.js`); both `low`, neither a reach-in into
+   People's internals.
+2. **No rule written twice.** Met, but for the face in the background, below.
+   - Who is a person and who a group: `person_ids.People`, alone. Who makes a new person: `face_people.made`, the tag first
+     (#1252). The store's face writers refuse a name no node has.
    - The settings a detection is recorded under are held equal to those a face model is made from
-     (`tests/test_service_faces.py`, ADetectionIsRecordedUnderTheModelsSettings); the two spellings cannot import each other
-     (an import cycle, or torch).
-3. **No hidden coupling.** Met. Clustering read a photo's people as ids in a statement of its own and wrote them over the
-   records' `people`, which every other reader takes as names (#1372, #1373). `store.photos.records(people_ids=True)` answers
-   them under `people_ids`, in the statement that reads the keywords, with no names built (the same plan, 0.34 s over
-   photo_index's 59,519 rows).
-4. **No concept that could collapse.** Met. `person_ids.wire` is gone (#1482): a person travels as the id of their node, and
-   only the doors take a typed name (`faces.who_is`, `face_people.made`). `face_people.shown` and `store.people.listed_ids`
-   are gone. `Ref` and `Person` stay two: by design, below.
-5. **No branch without an instance.** Met. Deleted, no instance: the store's node for a typed name; `ensure_node`'s person
-   arm; `detector_of`'s reading of a missing setting as None (only stand-in models lacked them, #1499); a detected face's
-   `name` (no face model sets one); `from_rows`' arm for a path whose parent is not in the tree (0 live). Kept, with the
-   user action or the count: a typed name (the pages' New Person dialog and the face box's typed name: neither the CLI nor the MCP names a face); `Directory.of_name` for the 98 saved
-   chips (#1426, below).
+     (`tests/test_service_faces.py`, ADetectionIsRecordedUnderTheModelsSettings).
+   - **The face in the background has three definitions, two of them still pixel rules**: `clustering.BACKGROUND_SHARE`
+     (2% of the picture's shorter side, DECISIONS 2026-11-02; one home since 5492cb67 as `clustering.is_background`, asked by
+     `services/faces.py` for the photo's panel, its boxes and its Add all); `clustering.BACKGROUND_AREA` (2,000 px, asked by
+     `face_tags._to_be_named` for Name faces from tags, `is_background_sized`); and `clustering.background_faces` (under a
+     tenth of the photo's largest face and under 2,000 px, asked by Suggest and by cluster-faces). The library stores no
+     picture size, so the two jobs read stored boxes and cannot ask the share; storing a picture size is a migration and the
+     owner's to answer (#2738, #2761, open `low`). Until then a face can be hidden on the photo and still named by the job.
+3. **No hidden coupling.** Met. Clustering reads a photo's people as ids in a statement of its own (`store.photos.records(
+   people_ids=True)`, #1372, #1373) and no reader takes ids for names. A page and the server share one table for filing a
+   person (`person-filing-table`) and one matrix for who a face looks like (P11).
+4. **No concept that could collapse.** Met. `person_ids.wire` is gone (#1482): a person travels as the id of their node,
+   and only the doors take a typed name (`faces.who_is`, `face_people.made`). `Ref` and `Person` stay two: by design, below.
+5. **No branch without an instance.** Met. Kept, each with its user action or count: a typed name (the pages' New Person
+   dialog and the face box's typed name; neither the CLI nor the MCP names a face); `Directory.of_name` and `of_reference`'s
+   bare-name arm (79 stored kr-track Suggest rows above, #1426); `is_background_sized` and `background_faces` (stored
+   boxes of 7,248 photo_index faces are left out of Suggest by the second, counted in #2761). A person at the top of the
+   tag tree is legal (DECISIONS 2026-11-08, "A PERSON AT THE TOP OF THE TAG TREE IS LEGAL"): no branch refuses it and
+   none is needed. The eleven people made bare at the top of kr-track in 2026-11 were merged under People on 2026-11-02
+   (docs/watching.md #2360, the path that made them not found); none is left at the top of any library (0 nodes with the
+   faces flag, no parent and no child, counted 2026-11-08).
 6. **Scenario tests, each file owned and mapped.** Met by the owner's bar (DECISIONS 2026-10-15, recommendation 1): P1 to
-   P7 each have files in `tests/owners.py`. This pass deleted `tests/test_people_vocabulary.py`, which restated rules held
-   elsewhere: three mutations of what it asserted (a bare name names the person; a group or face root is a person; the tree's
-   roots are not read) each fail tests that stay, the D5 scenario `test_photo_people_follow_their_sources` among them. The
+   P7, P10 and P11 each have a file in `tests/owners.py`, and `tests/test_the_test_map.py` fails a file with no owner. The
    unit files that stay, and the rule each holds, are listed below.
-7. **No open data or wrong finding, and every low fixed or by design.** Met once this branch is merged, but for #1 and #831,
-   whose status is the owner's (below): fixed #1188, #1252, #1293, #1297, #1372, #1373, #1463, #1467, #1481, #1482, #1499,
-   #1504; by design #1209, #1294, #1426, the idx_faces_name half of #1472; #1436, #1471 and the charter half of #1472 are
-   the main session's (the agents' definitions).
+7. **No open data or wrong finding, and every low fixed or by design.** Met on `tools/add_findings.py --open` of
+   2026-11-08: 20 open, all `low`, none `data` or `wrong`. People's own open lows are #2738 and #2761 (the background
+   rule, waiting on the owner's answer about a stored picture size), #2740, #2741 and this page's #2739. #1 and #831, the
+   faces of a sideways photo, are closed `decided:` (owner, 2026-10-16). Fixed and by design rows older than this page are
+   in docs/history/ and below.
+
+## The scenarios of this domain
+
+P1 to P7 (the id of a node as the person; names, tags and faces in step; Identify; Name faces from tags as a resumable job;
+a tree edit; two cousins called alike; ignore, assign, restore and undo) are in `tests/owners.py`. Added or changed since
+2026-10-28:
+
+- **P10, a library on its face model** (`tests/test_a_library_indexes_and_suggests_with_its_face_model.py`): a new photo is
+  indexed and Suggested by the library's own face model, the face under the floor is not made, and Name faces from tags reads
+  vectors by that model's cuts (`clustering.Cuts`).
+- **P11, one nearest person everywhere** (`tests/test_a_face_gets_one_nearest_person_everywhere.py`): Suggest, Identify, the
+  strip, the boxes and Name faces from tags give a face the same nearest person; a person who changed over the years is
+  compared by the faces of the face's own years, an undated face by every year (`FaceRows`, `in_era`).
+- **The naming queue.** Naming on the photo page is shown at once and written after it: the photo's write queue first, then
+  the database, shown as it was if the write fails; faces clicked while the file is being written are written together as
+  one write of the file for their people, then each face named (`web/tagpup/face-boxes.js`, `photo.js`;
+  `tests/frontend/face-strip.test.mjs`, `organize-faces.test.mjs`). Name faces from tags is the job
+  (`tagpup/jobs/naming_faces.py`): `tests/test_naming_faces_job.py` and `tests/test_name_faces_routes.py` under P4, a restart
+  in the middle settles and a second click does not repeat.
+- **Selection suggestions.** The selection panel's Suggested People also lists who the selected photos' unnamed faces look
+  like, asked once for the photos not answered yet (`POST /api/photo-faces/suggestions`, `web/tagpup/selection-faces.js`,
+  2026-11-02) and forgotten when one of the photo's faces is named, unnamed or left out; a chip the faces alone offer does
+  not promise that Apply All writes it (#2364). The test is `tests/frontend/selection-suggests-who-the-faces-look-like.test.mjs`,
+  mapped to Views (#2740); the answer is People's, from the one shared matrix.
+- **Clips.** A clip has no face and no `photo_people` row (0 on all three libraries); its tags written by a save or a tree
+  rename are the Files domain's (`tests/test_a_tag_tree_edit_of_a_tag_a_clip_holds.py`). Suggest looks at photos only (DECISIONS 2026-11-08, "SUGGEST LOOKS AT PHOTOS ONLY").
 
 ## By design (each row closed `decided:`)
 
@@ -141,21 +180,22 @@ deleted 2026-10-28 (Cut B).
   name nobody when a write fails, which is worse.
 - **#1294**, `store.faces.name` takes many ids with one caller passing one: the list is the same statement, and some 40
   tests name several faces with it; narrowing it changes nothing a person does.
-- **#1426**, `Directory.of_name` and `of_reference`'s bare-name arm: 98 saved Suggest chips of kr-track hold a person as a
-  bare name only it finds (counted 2026-10-15). The suggester writes the tag path now; the arm goes when the owner clears or
-  runs those suggestions again, as he wishes.
+- **#1426**, `Directory.of_name` and `of_reference`'s bare-name arm: 79 of kr-track's 546 stored Suggest rows hold a person as a
+  bare name only it finds (counted 2026-11-08; 98 chips on 2026-10-15). The suggester writes the tag path now; the arm goes
+  when the owner clears or runs those suggestions again, as he wishes.
 - **`Ref` and `Person` stay two.** A `Person` is a node (always an id); a `Ref` is whom a keyword or a face names, and a
   keyword under a face root that no node holds names a `Ref` with no id: a photo read without its library
   (`PeopleVocabulary.defaults()`), which lists nobody for it (`people_rows`).
 - **#1472's index half**: `idx_faces_name` goes with migration 33 (built 2026-10-18, DECISIONS "MIGRATION 33 IS PULLED FORWARD").
 - **#1466**, TagTuner's two people reads, was closed `decided:` before this pass (no instance; 0 hidden people live).
 
+
 ## The owner's to answer
 
-- **#1 and #831**, faces of a sideways photo: DECISIONS 2026-10-07 un-tabled the redesign (boxes stored as the photo
-  displays). It is a coordinate redesign, new work under the feature freeze; it is neither fixed nor by design until the
-  owner chooses when.
-  Amended by DECISIONS 2026-10-27: faces are detected on the picture as shown, boxes kept stored, the panel draws them turned (#1975).
+- **A picture size stored with each photo** (#2738, #2761): the one answer that lets the two jobs (Name faces from tags,
+  cluster-faces and Suggest) ask the 2% rule the photo is shown by. It is a migration; not built until the owner chooses.
+- **#1 and #831**, faces of a sideways photo: closed `decided:` (owner, 2026-10-16); DECISIONS 2026-10-27 has faces detected
+  on the picture as shown, boxes kept stored, the panel drawing them turned (#1975).
 
 ## The unit files that stay, and the rule each holds
 
@@ -213,32 +253,19 @@ shown, the tag where filed), `person-tag-form` (a person written as a tag path),
 `tuner-refresh-keeps-the-grid-loading`, `tuner-select-all-is-linear`, `tuner-starts-last`,
 `tuner-suggestions-belong-to-their-grid` and `tuner-undo-puts-faces-back`, each the rule its name says.
 
+
 ## History
 
-- 2026-10-23, phase 4b cut 1 (DECISIONS 2026-10-23): an index is followed by Re-examine's matcher over the faces it made
-  (`services.faces.automatch_new`: the ids between two reads of `store.faces.newest_id`, `faces.unnamed(ids=)`), which
-  writes nothing and is said on the CLI's `New faces: ` line; `cluster-faces` is run by hand. The scenario is
-  `tests/test_new_faces_are_matched_after_an_index.py` (F11).
+One line each; the decision and its reasons are in docs/DECISIONS.md.
 
-- 2026-10-20, phase 3 merge 3, items 1 and 2: the cuts a name is given and offered at are the face model's
-  (`clustering.Cuts`, `CUTS`, `cuts_of`; FaceNet's 0.80 / 0.04 and 0.70 / 0.02 unchanged, AdaFace's 0.520 / 0.205 and
-  0.310 / 0.090 from the gate), asked by every reader by the key its vectors were read under; Name faces from tags'
-  counts renamed `like_them_enough_to_name` / `like_them_enough_to_offer`. A library may switch to the new model once its
-  pass has reached all but 5% of its faces (`settings.change`, docs/AI_PIPELINE.md).
-
-- 2026-10-17, phase 2c: the vote of a cluster of one in a photo of two or more faces asks the tag's gate
-  (`names_from_the_tag`) for a name it gives, in cluster-faces' first round past the photo's conflicts; a name the face
-  carries is never asked, an anchor (one face, one keyword person) and a cluster of two or more are not asked. The rounds and
-  the last pass read who each person is in one place (`identities._known_faces`, anchors first). `min_samples` stays 1.
-- 2026-10-17, phase 2b: a name resting on likeness alone needs a margin over the next person named as well
-  (`clustering.margins`, NAME_MARGIN 0.04, OFFER_MARGIN 0.02; owner): the pairing and the last pass of cluster-faces, a save's
-  tags naming one of several faces, Re-examine, New Person, Suggest, the strip, the boxes and the Identify grid. A name a face
-  carries or one given by hand is asked none; the photo with one face and one person is not asked one (the tag says whose
-  it is); a name already given is not flagged by it (`looks_wrong`). The flat matrices are grouped by person in one place
-  (`clustering.FacesByPerson`); `tests/test_face_values_have_one_owner.py` fails a top-of-a-row taken elsewhere.
-- 2026-10-15, the domain pass:
-  - the vocabulary from `person_ids.People` (#1463); `wire` gone (#1482); one maker of a person (#1252);
-  - clustering's people as ids under their own key, in one statement (#1372, #1373);
-  - the specs without the deleted command (#1293); INVARIANTS' guards;
-  - fixtures through the real writers (#1297, #1481, #1467), the stand-in models with their settings (#1499), the XMP
-    person-field tests gone (#1504), a test named for what it tests (#1188), one duplicate unit file deleted.
+- 2026-11-08: a person at the top of the tag tree is legal (DECISIONS 2026-11-08).
+- 2026-11-08: the 2% rule has one home, `clustering.is_background` (5492cb67); the job's pixel rule waits (#2738, #2761).
+- 2026-11-02: a face under 2% of the picture's shorter side is not shown on the photo (DECISIONS 2026-11-02).
+- 2026-11-02: eleven bare top-level people of kr-track merged under People (docs/watching.md #2360).
+- 2026-11-02: naming a face is shown at once and written behind the photo's queue; the selection's Suggested People lists
+  who the faces look like (commits aaf1d8d2 to 475944c8, 75a859ec).
+- 2026-10-28: the old detector's faces are gone and the face pass deleted (DECISIONS 2026-10-22, 2026-10-25, 2026-10-27).
+- 2026-10-23: an index is followed by Re-examine's matcher over the faces it made (DECISIONS 2026-10-23; F11).
+- 2026-10-20, 2026-10-17: the cuts are the face model's; a name on likeness alone needs a margin (DECISIONS 2026-10-17,
+  2026-10-20).
+- 2026-10-15: the domain pass, the vocabulary from `person_ids.People`, one maker of a person (DECISIONS 2026-10-15; docs/history/).
