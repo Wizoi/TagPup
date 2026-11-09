@@ -204,7 +204,7 @@ def begin_write(conn):
     here. A no-op inside a transaction."""
     if conn.in_transaction:
         return
-    conn.execute("BEGIN IMMEDIATE")
+    db.begin(conn, immediate=True)
     state = getattr(conn, "roots_state", None)
     if state is not None and _rows(conn) != state.rows:
         conn.roots_state = None

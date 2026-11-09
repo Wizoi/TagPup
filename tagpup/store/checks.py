@@ -352,6 +352,13 @@ RULES = (schema_current, generations_kept, faces_without_a_photo, named_and_excl
          folders_out_of_date, search_index_out_of_date, face_person_ids_out_of_step,
          listed_person_ids_out_of_step, patch_records_outside_writing, files_whose_picture_changed)
 
+#: The rule of RULES that finds each derived table (derived.ALL, the one statement of which tables are derived) out of
+#: date: a table each, held to derived.ALL and to RULES by tests/test_doctor.py, so a new derived table is not left
+#: without one.
+OF_DERIVED = {"photo_people": people_out_of_date, "photo_tags": photo_tags_out_of_date, "folders": folders_out_of_date,
+              "photo_folder": photo_folders_out_of_date, search_index.WORDS: search_index_out_of_date,
+              search_index.NAMES: search_index_out_of_date}
+
 
 def run(conn):
     """Every rule's Check, in RULES order. A library behind the code's schema has none of the tables the other rules read:

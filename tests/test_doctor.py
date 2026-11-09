@@ -343,8 +343,12 @@ class ALibraryAtRest(unittest.TestCase):
 class TheDerivedTablesAtRest(ALibraryAtRest):
     def test_a_library_that_was_written_through_the_store_breaks_none(self):
         self.assertEqual({}, self.counts())
-        for rule in ("photo_tags_out_of_date", "photo_folders_out_of_date", "folders_out_of_date"):
-            self.assertIn(getattr(checks, rule), checks.RULES, rule)
+
+    def test_every_derived_table_has_a_rule_the_doctor_runs(self):
+        """A derived table's check was by convention: nothing held derived.ALL to a rule per table (#2751)."""
+        self.assertEqual(sorted(derived.ALL), sorted(checks.OF_DERIVED), "a derived table with no rule, or a rule of none")
+        self.assertEqual([], [table for table, rule in checks.OF_DERIVED.items() if rule not in checks.RULES],
+                         "a derived table whose rule the doctor does not run")
 
     def test_a_writer_that_changed_a_photos_keywords_and_did_not_refresh(self):
         self.update("UPDATE photos SET tags = '[\"Trips/Lake\"]' WHERE id = ?", self.ids["a.jpg"])

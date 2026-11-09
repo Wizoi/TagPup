@@ -38,6 +38,9 @@ BARE_IN_TESTS = {
     "test_roots_store.py": 2,
 }
 SQLITE_CONNECT = re.compile(r"\bsqlite3\.connect\s*\(")
+#: A transaction begun by hand: a string that is only BEGIN, with its kind. A trigger's body ("BEGIN DELETE ... END") is
+#: not one.
+BEGIN_BY_HAND = re.compile(r"""["']\s*BEGIN(\s+(DEFERRED|IMMEDIATE|EXCLUSIVE))?(\s+TRANSACTION)?\s*["']""", re.IGNORECASE)
 
 
 def test_sources():
@@ -95,6 +98,19 @@ class TestNobodyConnectsDirectly(unittest.TestCase):
         """The check above is worthless if it matches nothing anywhere."""
         with open(os.path.join(WORKSPACE_DIR, OWNER), encoding="utf-8") as f:
             self.assertIn("sqlite3.connect", f.read())
+
+    def test_a_transaction_is_begun_through_db_begin(self):
+        """The write transaction was spelled by hand four times outside db.py, one of them (the faces' accounted write)
+        without the busy retry or the roots check every other write has (#2750). db.begin is the one place a transaction
+        is begun; a write that is run again on a busy database begins inside db.write_with_connection's operation."""
+        offenders = []
+        for path in source_files():
+            with open(path, encoding="utf-8") as f:
+                offenders += ["%s:%d" % (os.path.relpath(path, WORKSPACE_DIR), line_no)
+                              for line_no, line in enumerate(f, 1) if BEGIN_BY_HAND.search(line)]
+        self.assertEqual([], offenders, "begin the transaction with tagpup.store.db.begin")
+        with open(os.path.join(WORKSPACE_DIR, OWNER), encoding="utf-8") as f:
+            self.assertTrue(BEGIN_BY_HAND.search(f.read()), "the check matches nothing, not even db.begin's")
 
     def test_every_launcher_is_checked(self):
         """A launcher once opened its own connection unseen, because the list skipped it."""

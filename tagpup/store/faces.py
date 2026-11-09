@@ -21,11 +21,9 @@ A face names its photo by id; a photo's path crosses this module native, convert
 library's roots on the way in and out (tagpup.store.roots).
 """
 import collections
-import contextlib
 import json
 import logging
 import os
-import types
 
 from tagpup.core import dates
 from tagpup.core.vocabulary import Ref
@@ -137,33 +135,24 @@ def fingerprint(conn):
     return (tuple(row) if row else (0, 0, 0, 0)) + (generation(conn), model_key(conn))
 
 
-@contextlib.contextmanager
-def accounted_write(db_path, label="faces write"):
-    """A write to the faces table whose effect alone the fingerprint's change describes.
+def accounted_write(db_path, work, label="faces write"):
+    """A write to the faces table whose effect alone the fingerprint's change describes: (what `work(conn)` returned,
+    the fingerprint as the write began, the fingerprint just before its commit).
 
-    Holds the library's write lock and one IMMEDIATE transaction. Yields `write`, with
-    `conn` and `before`, the fingerprint as the write began; `after` is read just before
-    the commit. Nobody else can write between the two, so a cache that drops the faces
-    this write took out of the pool may re-stamp itself with `after`: the difference is
-    this write, and no batch the indexer or TagPup committed meanwhile. Reading them
-    before the lock and after the commit stamped such a batch as accounted for, and its
-    faces never reached the grid. Rolled back if the block raises.
+    One IMMEDIATE transaction, on a connection of its own under the library's write lock (db.write_with_connection: run
+    again when another process holds the library, its roots checked before the commit), opened before the first read, so
+    nobody else can write between the two fingerprints: a cache that drops the faces this write took out of the pool may
+    re-stamp itself with the second, the difference being this write and no batch the indexer or TagPup committed
+    meanwhile. Reading them before the lock and after the commit stamped such a batch as accounted for, and its faces
+    never reached the grid. `work` may be run more than once, and its writes are rolled back if it raises.
     """
-    with db.lock_for(db_path):
-        conn = db.connect(db_path, timeout=30.0)
-        try:
-            conn.execute("BEGIN IMMEDIATE")
-            write = types.SimpleNamespace(conn=conn, before=fingerprint(conn), after=None)
-            try:
-                yield write
-            except BaseException:
-                conn.rollback()
-                raise
-            write.after = fingerprint(conn)
-            conn.commit()
-            logger.debug("%s committed", label)
-        finally:
-            conn.close()
+    def accounted(conn):
+        db.begin(conn, immediate=True)
+        before = fingerprint(conn)
+        done = work(conn)
+        return done, before, fingerprint(conn)
+
+    return db.write_with_connection(db_path, accounted, label=label)
 
 
 def face_refs(photo_path, db_path=None, conn=None):

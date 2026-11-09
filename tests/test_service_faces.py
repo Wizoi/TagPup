@@ -116,6 +116,12 @@ class NamingAFace(FacesCase):
         result = faces.name_face(self.lib.library, face, "wren halloway")
         self.assertEqual((result.changed, self.face_row(face)[0]), (1, "Wren Halloway"))
         self.assertEqual(self.lib.rows("SELECT name_source FROM faces WHERE id = ?", (face,))[0][0], "manual")
+        conn = db.connect(db.readonly_uri(self.lib.library.path), uri=True)
+        try:
+            now = store_faces.fingerprint(conn)
+        finally:
+            conn.close()
+        self.assertEqual(now, result.details["fingerprints"][1], "the cached grid is re-stamped with the table as written")
         self.assertEqual(faces.name_face(self.lib.library, face, "Wren Halloway").changed, 0)
 
     def test_a_face_that_is_not_there_is_not_found(self):
@@ -247,14 +253,50 @@ class RemovingAFolder(FacesCase):
                          {"photos_removed": 1, "faces_removed": 2, "manual_lost": 1, "excluded_lost": 1})
 
 
-class AnAccountedWrite(FacesCase):
-    def test_it_rolls_back_when_the_block_raises(self):
+class AFaceActionWhileAnotherProcessWrites(FacesCase):
+    """The CLI's index (another process) holds the library's write lock when the owner names or excludes a face in TagTuner.
+    The action waits its turn and is run again, as every other write is (db.write_with_connection), rather than failing
+    "database is locked"; its fingerprints are read inside its own transaction, so the cached grid is re-stamped with
+    this write alone."""
+
+    def held_by_another_process(self):
+        """A connection holding the write lock, released at the action's first wait (db.retry_when_busy's sleep): what
+        the index's batch does, committing while the action waits. The busy timeout is 0, so the wait is the retry's."""
+        other = db.connect(self.lib.library.path)
+        self.addCleanup(other.close)
+        other.execute("BEGIN IMMEDIATE")
+        waits = []
+
+        def wait(seconds):
+            waits.append(seconds)
+            if other.in_transaction:
+                other.commit()
+
+        return waits, [mock.patch.object(db, "BUSY_TIMEOUT_MS", 0), mock.patch.object(db.time, "sleep", side_effect=wait)]
+
+    def test_an_exclude_waits_and_is_written(self):
         face = self.face(self.photo("a.jpg"))
-        with self.assertRaises(RuntimeError):
-            with store_faces.accounted_write(self.lib.library.path) as write:
-                write.conn.execute("UPDATE faces SET name = 'Wren Halloway' WHERE id = ?", (face,))
-                raise RuntimeError("stop")
-        self.assertIsNone(self.face_row(face)[0])
+        waits, patches = self.held_by_another_process()
+        with patches[0], patches[1]:
+            result = faces.exclude(self.lib.library, [face], "stranger")
+        self.assertEqual(1, len(waits), "it waited once for the other process's commit")
+        self.assertEqual(1, result.changed)
+        self.assertEqual(1, self.face_row(face)[2])
+        before, after = result.details["fingerprints"]
+        self.assertNotEqual(before, after)
+
+    def test_naming_a_face_waits_and_is_written(self):
+        photo = self.photo("a.jpg", people=["Wren Halloway"])
+        face = self.face(photo)
+        waits, patches = self.held_by_another_process()
+        with patches[0], patches[1]:
+            result = faces.name_face(self.lib.library, face, self.person("Wren Halloway"))
+        self.assertEqual(1, len(waits))
+        self.assertEqual(1, result.changed)
+        self.assertEqual(("Wren Halloway", "manual"), self.face_row(face)[:2])
+        before, after = result.details["fingerprints"]
+        self.assertIsNotNone(after)
+        self.assertNotEqual(before, after)
 
 
 class ADetectionIsRecordedUnderTheModelsSettings(unittest.TestCase):
