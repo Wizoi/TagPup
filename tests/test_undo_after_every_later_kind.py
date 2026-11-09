@@ -11,14 +11,13 @@ lifted by undoing that one first: undone in that order, both are.
 
 The kinds: a stamp of the settings, a change of the settings, a switch of face model, a face pass (by its
 writer: a kind the live journals hold, its command deleted), a migration's record (a synthetic additive step, tests/migration_names.py), a sync and a refresh of a row re-read from its
-file, a sync removing the row of a photo whose file another program deleted (with its named face), Save on a photo, Smart Rename, a rotation (of the photo the later pass gave a face and its crop) and a bake of a
+file, a sync removing the row of a photo whose file another program deleted (with its named face), Save on a photo, Smart Rename, a photo's name kept
+before its first rename (Smart Rename's first change, alone), the sweep of a caption repeating its photo's title, a rotation (of the photo the later pass gave a face and its crop) and a bake of a
 folder's photos (real ExifTool, changes of photo files; by its writer, as the face pass). The refresh's writer is
 deleted (DECISIONS 2026-10-28, THE MCP SERVER ONLY READS; kr-track holds one, change 2): it is recorded as that writer
-recorded it, a row re-read through refresh_rows.reread and edits_for on the maintenance scaffold. Left to the guard
-(tests/test_every_change_kind_has_an_undo_check.py): the bulk edits, tag renames and face namings (each a change of photo
-files or of faces whose way back is the journal's alone, None in UNDO_CHECKS, as Save's is); merge_duplicate_person_tags,
-whose writer is deleted too (photo_index holds one, change 1), is listed and undone in
-tests/test_journal_through_the_services.py.
+recorded it, a row re-read through refresh_rows.reread and edits_for on the maintenance scaffold. Every kind UNDO_CHECKS
+names that the code makes is a row here (OPERATIONS) or is left out with its reason (LEFT): a kind added to the journal
+fails test_every_kind_the_code_makes_is_a_row_or_left_with_its_reason until it is placed (#2748).
 
 Lifted (each scenario a pair here, their tests deleted): test_history_routes' listing agreeing with the rehearsal; test_journal's migration never undone; test_journal_through_the_services' refused undo writing
 nothing; the refusals of the face model's switch of P10 (now tests/test_a_library_indexes_and_suggests_with_its_face_model.py).
@@ -51,7 +50,8 @@ from tagpup.core import paths, validation  # noqa: E402
 from tagpup.core.library import Library  # noqa: E402
 from tagpup.files import bake  # noqa: E402
 from tagpup.files.exiftool_session import ExifToolSession  # noqa: E402
-from tagpup.services import baking, file_changes, maintenance, refresh_rows, sync, tagging  # noqa: E402
+from tagpup.services import baking, bulk_edit, face_batch, face_people, file_changes, maintenance  # noqa: E402
+from tagpup.services import refresh_rows, retire_photo_vectors, sync, tagging, tags_from_faces  # noqa: E402
 from tagpup.services import journal as journal_service  # noqa: E402
 from tagpup.services import libraries as library_actions  # noqa: E402
 from tagpup.services import photos as photo_actions  # noqa: E402
@@ -93,6 +93,20 @@ def a_later_pass(case, library):
     finally:
         conn.close()
     return change_id
+
+
+def a_kept_name(case, library):
+    """The first photo's name kept in its file before any rename (photos.preserve_names): Smart Rename's first change,
+    made alone, of a photo the rename here does not rename."""
+    kept = photo_actions.preserve_names(library, [case.photo[1]], EXIFTOOL)
+    return kept.details.get("change") if kept.changed else None
+
+
+def a_clear_duplicates(case, library):
+    """The sweep of captions repeating their photo's title (scripts/clear_duplicate_captions.py --apply): the first
+    photo's Description cleared, its title kept."""
+    cleared = tagging.clear_duplicate_captions(library, EXIFTOOL, apply=True)
+    return cleared.details.get("change") if cleared.changed else None
 
 
 def a_rotate(case, library):
@@ -215,11 +229,60 @@ WRITERS = {
     "refresh": a_refresh,
     "save photo": a_save,
     "smart rename": a_smart_rename,
+    "original names": a_kept_name,
+    "clear duplicates": a_clear_duplicates,
     "rotate": a_rotate,
     "bake": a_bake,
 }
 #: The changes the library holds when it is built: earlier kinds only (name -> the case's attribute holding the id).
 BUILT = {"stamp": "stamp_change", "pass": "pass_change", "switch": "switch_change"}
+
+#: Each kind of change a row here makes, by its UNDO_CHECKS key (tagpup.services.journal), and the rows (BUILT, WRITERS)
+#: making it: the matrix asserts each row's change is of its kind (journal_service.kind_of). A kind no code makes any
+#: more (journal_service.RETIRED) is here where a row makes it as its deleted writer did.
+OPERATIONS = {
+    library_settings.WITH_DEFAULTS: ("stamp",),
+    library_settings.CHANGE: ("settings", "switch"),
+    "migration %d: %s": ("migration",),
+    sync.OPERATION: ("sync", "sync removal"),
+    "save photo": ("save photo",),
+    "smart rename": ("smart rename",),
+    "smart rename: original names": ("original names",),
+    tagging.CLEAR_DUPLICATES: ("clear duplicates",),
+    "rotate": ("rotate",),
+    journal_service.FACE_PASS: ("pass", "later pass"),
+    "refresh_rows": ("refresh",),
+    baking.OPERATION: ("bake",),
+}
+#: Why a kind of change of photo files is no row: a write of fields through file_changes.write_fields whose way back is
+#: the journal's alone (None in UNDO_CHECKS), refused by a newer change of the same files or rows as Save's is.
+AS_SAVE = "a write of photo files' fields whose way back is the journal's alone: Save's row holds the kind"
+#: Why a kind of change of rows alone is no row: its way back is the journal's alone, refused by a newer change of the
+#: same rows (journal.refusal), as the sync removal's of the named face it deleted is.
+AS_ROWS = "a change of faces or people rows alone whose way back is the journal's alone: the sync removal's row holds it"
+#: Every other kind UNDO_CHECKS names that the code makes, and why it is not a row of the matrix.
+LEFT = {
+    tagging.ADD_TO_ALL: AS_SAVE,
+    "apply all suggestions": AS_SAVE,
+    "rename tag": AS_SAVE,
+    "remove tag": AS_SAVE,
+    "time shift": AS_SAVE,
+    **{operation: AS_SAVE for operation in bulk_edit.OPERATIONS.values()},
+    "rename after caption": "a rename of a photo file through file_changes.rename: Smart Rename's row holds the kind",
+    **{operation: AS_ROWS for operation in face_batch.DESCRIPTIONS.values()},
+    face_people.UNNAMED: AS_ROWS,
+    face_people.ADDED: AS_ROWS,
+    face_people.REMOVED: AS_ROWS,
+    journal.PERSON_DELETED: AS_ROWS,
+    journal.PERSON_MERGED: AS_ROWS,
+    tags_from_faces.OPERATION: AS_ROWS,
+    "faces_from_tags": AS_ROWS,
+    library_settings.FROM_REPLACED: "a stamp of the settings, never undone with the same sentence as the stamp's row",
+    baking.INDEX_OPERATION: ("never listed nor undone (its sentence); the save it writes after while unfinished is "
+                             "test_a_save_is_undone_once_the_index_bake_writing_its_photo_is_finished"),
+    retire_photo_vectors.VECTORS_OPERATION: ("its own check (retire_photo_vectors.vectors_check): "
+                                             "tests/test_retiring_the_old_photo_models_vectors.py"),
+}
 #: Kinds made again for each later kind: a rename's undo knows the renamed file by what a copy does not keep.
 MADE_EACH_TIME = {"smart rename"}
 
@@ -244,6 +307,13 @@ EXPECTED_REFUSED = {
     # A bake and a save of one photo, either way round: the same rule as the rename's.
     ("save photo", "bake"): "applied after it, wrote the same photo files: undo it first",
     ("bake", "save photo"): "applied after it, wrote the same photo files: undo it first",
+    # The kept name and the sweep write the first photo, as the bake does: each of the three pairs either way round.
+    ("original names", "bake"): "applied after it, wrote the same photo files: undo it first",
+    ("bake", "original names"): "applied after it, wrote the same photo files: undo it first",
+    ("clear duplicates", "bake"): "applied after it, wrote the same photo files: undo it first",
+    ("bake", "clear duplicates"): "applied after it, wrote the same photo files: undo it first",
+    ("original names", "clear duplicates"): "applied after it, wrote the same photo files: undo it first",
+    ("clear duplicates", "original names"): "applied after it, wrote the same photo files: undo it first",
 }
 #: (earlier, later) whose refusal undoing the later change first does not lift: the later write's undo stamps the sync's
 #: row again (History refusing it too, with the same sentence; #1951, decided).
@@ -269,7 +339,7 @@ class UndoAfterEveryLaterKind(unittest.TestCase):
     @classmethod
     def build(cls, library):
         """harbour: seven photos (real JPEGs, their keywords written
-        by ExifTool), faces as the pass left them -- matched faces holding FaceNet's vector and the new model's, faces
+        by ExifTool; the first one's caption repeating its title), faces as the pass left them -- matched faces holding FaceNet's vector and the new model's, faces
         the old detector alone found holding FaceNet's, one alone in the sixth photo -- named automatically, by hand,
         nobody, excluded or undecided; the pass one change; switched to the new model after it. Stamped as the live
         libraries were before the face model was a setting: no faces.model row, which the switch inserts."""
@@ -281,6 +351,8 @@ class UndoAfterEveryLaterKind(unittest.TestCase):
         library_actions.record_added(library, [cls.folder])
         cls.photo = {n: os.path.join(cls.folder, "ferry %d.jpg" % n) for n in range(1, 8)}
         fields = {n: {"XMP:Subject": ["Tamsin Okoro" if n == 1 else "Harbour/Ferry"]} for n in cls.photo}
+        # The first photo's caption repeats its title, as a save wrote both before 2026-11-06: the sweep's to clear.
+        fields[1].update({"XMP:Title": "Ferry", "XMP:Description": "Ferry"})
         with ExifToolSession(executable=EXIFTOOL) as et:
             for n, path in cls.photo.items():
                 Image.new("RGB", (64, 48), (90, 110, 20 * n)).save(path, "JPEG")
@@ -397,6 +469,10 @@ class UndoAfterEveryLaterKind(unittest.TestCase):
                 self.put_files_back("base")
                 after_a = self.copy(self.base, "a%d" % n)
                 change_a = getattr(self, BUILT[a]) if a in BUILT else WRITERS[a](self, after_a)
+                if change_a is not None:
+                    operation = journal.history(after_a.path, change_id=change_a)[0]["operation"]
+                    self.assertIn(a, OPERATIONS.get(journal_service.kind_of(operation), ()),
+                                  "the row is not of the kind OPERATIONS says")
                 if a in MADE_EACH_TIME:
                     after_a = None
                 self.assertIsNotNone(change_a, "%s was not made on the library as built" % a)
@@ -450,15 +526,17 @@ class UndoAfterEveryLaterKind(unittest.TestCase):
         self.assertTrue(set(EXPECTED_REFUSED) <= made, "a pair the promise names was not made")
         self.assertEqual(set(), {pair for pair, refused in outcomes.items() if refused is None},
                          "a later kind's writer made nothing after an earlier kind")
-        # Every later kind after every earlier one, the diagonal not generated: 13 earlier by 10 later, less 10 (the
+        # Every later kind after every earlier one, the diagonal not generated: 15 earlier by 12 later, less 12 (the
         # retirings' kinds and Suggest's step left with retire-faces and retire-vectors, 2026-10-25; a rotation came in,
-        # 2026-10-27; the switch back went, 2026-10-28; a sync's removal came in, 2026-10-30, #2160).
+        # 2026-10-27; the switch back went, 2026-10-28; a sync's removal came in, 2026-10-30, #2160; a kept name and the
+        # sweep of repeated captions came in, #2748).
         self.assertEqual(len(earlier) * len(later) - len(later), len(made), "the pairs a library can hold were not made")
-        self.assertEqual(120, len(made))
-        self.assertEqual(4, ordered, "the pairs undone in order: a bake and the rename or the save after it, a rename "
-                                     "or a save and the bake after it")
-        # Measured about 90 s alone with the sync's removal; the suite's tier timing reports it, so no wall-clock
-        # assertion.
+        self.assertEqual(168, len(made))
+        self.assertEqual(10, ordered, "the pairs undone in order: a bake and the rename, the save, the kept name or the "
+                                      "sweep after it, each of them and the bake after it, the kept name and the sweep "
+                                      "of one photo either way round")
+        # Measured about 90 s alone with the sync's removal, before the kept name and the sweep came in; the suite's
+        # tier timing reports it, so no wall-clock assertion.
 
     def test_a_sync_is_not_offered_once_a_save_wrote_its_photo(self):
         """Another program writes a caption into a photo and a sync re-reads its row; then the owner saves the photo
@@ -536,6 +614,24 @@ class UndoAfterEveryLaterKind(unittest.TestCase):
         listed, rehearsed, undone = self.undo_from_history(library, synced)
         self.assertEqual((None, None), (listed, undone.refused))
         self.assertEqual("undone", journal.history(library.path, change_id=synced)[0]["status"])
+
+
+class EveryKindIsARowOrLeft(unittest.TestCase):
+    def test_every_kind_the_code_makes_is_a_row_or_left_with_its_reason(self):
+        """A kind of change added to the journal (UNDO_CHECKS) fails here until it is a row of the matrix (OPERATIONS) or
+        left out saying why (LEFT): its undo after a later kind is held by a row, or by the row the reason names (#2748).
+        Reads the tables alone: no library."""
+        made = set(journal_service.UNDO_CHECKS) - set(journal_service.RETIRED)
+        self.assertEqual(set(), set(OPERATIONS) & set(LEFT), "a kind both a row and left out")
+        self.assertEqual(made, (set(OPERATIONS) - set(journal_service.RETIRED)) | set(LEFT),
+                         "a kind the code makes is neither a row of the matrix nor left with its reason, or a row or "
+                         "a reason names a kind the code does not make")
+        self.assertEqual(set(), set(OPERATIONS) - set(journal_service.UNDO_CHECKS), "a row of a kind UNDO_CHECKS lacks")
+        rows = [row for each in OPERATIONS.values() for row in each]
+        self.assertEqual(sorted(set(BUILT) | set(WRITERS)), sorted(rows), "a row is not of exactly one kind")
+        self.assertEqual({}, {kind: journal_service.UNDO_CHECKS[kind] for kind, why in LEFT.items()
+                              if why in (AS_SAVE, AS_ROWS) and journal_service.UNDO_CHECKS[kind] is not None},
+                         "a kind left as the journal's alone has a way back of its own")
 
 
 if __name__ == "__main__":
