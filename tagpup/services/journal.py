@@ -170,18 +170,25 @@ def _pattern(name):
                               for part in re.split(r"(%[sd])", name)) + r"\Z", re.S)
 
 
-_PATTERNED = [(_pattern(name), rule) for name, rule in UNDO_CHECKS.items() if "%" in name]
+_PATTERNED = [(_pattern(name), name) for name in UNDO_CHECKS if "%" in name]
+
+
+def kind_of(operation):
+    """The UNDO_CHECKS key a change made as `operation` is of: the name whole, else the format it matches ("migration
+    37: ..." is of "migration %d: %s"); None for a name the table does not hold (only a test makes one)."""
+    if operation in UNDO_CHECKS and "%" not in operation:
+        return operation
+    for pattern, name in _PATTERNED:
+        if pattern.match(operation):
+            return name
+    return None
 
 
 def undo_rule(operation):
     """What UNDO_CHECKS says of the way back of a change made as `operation`: a sentence, a check, or None (also for a
     name it does not hold)."""
-    if operation in UNDO_CHECKS and "%" not in operation:
-        return UNDO_CHECKS[operation]
-    for pattern, rule in _PATTERNED:
-        if pattern.match(operation):
-            return rule
-    return None
+    kind = kind_of(operation)
+    return None if kind is None else UNDO_CHECKS[kind]
 
 
 def why_not(conn, change_id):
