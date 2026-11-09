@@ -1,25 +1,29 @@
 # Views, search and AI: the state of the domain
 
 The domain's charter is `.claude/agents/tagpup-owner-views-ai.md` (its Scope, its contract, its guards, the scenario list
-V1 to V9, V11 to V14; V10, MTCNN's detector cap, retired with the old models). This page states what the domain is today, each of the seven conditions of health (docs/OWNERS.md) with its
-evidence and date, and what is so by design. A condition not met is the domain's queue.
+V1 to V9, V11 to V17; V10, MTCNN's detector cap, retired with the old models). This page states what the domain is today,
+each of the seven conditions of health (docs/OWNERS.md) with its evidence and date, and what is so by design. A condition
+not met is the domain's queue.
 
-## What the domain is (counted 2026-10-15, read-only)
+## What the domain is (counted 2026-11-08, read-only, `db.readonly_uri`)
 
-Which photos, in what order and how many, for every way the owner looks at a library (a folder, a keyword, a person, a
-date, a union of them, a typed search), the navigator's counts, the photos' CLIP vectors, Suggest, and the models on the
-one graphics card. What it reads, in the three live libraries:
+Which photos and clips, in what order and how many, for every way the owner looks at a library (a folder, a keyword, a
+person, a date, a union of them, a typed search), the navigator's counts, the photos' CLIP vectors (a clip's five frames),
+Suggest, the video the browser plays and the poster it shows, and the models on the one graphics card. What it reads, in
+the three live libraries:
 
 | | photo_index | kr-track | renton_parkrun |
 |---|---|---|---|
-| photos (each with a vector and a row of search words) | 59,519 | 1,499 | 1,309 |
-| faces | 187,784 | 9,850 | 3,328 |
-| photo_tags / photo_people rows | 150,053 / 79,586 | 1,999 / 1,981 | 1,075 / 1,264 |
-| folders | 2,617 | 21 | 9 |
-| saved suggestions / candidate-word vectors | 13 / 1,080 | 485 / 270 | 1,164 / 112 |
+| photos (clips among them, `kind = 'video'`) | 61,797 (2,179) | 2,070 (5) | 1,309 (0) |
+| clips with a vector / rows in `embedding_frames` | 2,179 / 8,708 | 5 / 20 | 0 / 0 |
+| faces | 183,669 | 12,664 | 3,315 |
+| photo_tags / photo_people rows | 150,380 / 79,482 | 4,292 / 2,825 | 1,076 / 1,076 |
+| folders | 2,618 | 35 | 9 |
+| saved suggestions / candidate-word vectors | 111 / 978 | 546 / 102 | 1,164 / 0 |
+| `faces_detected` rows | 10,580 | 707 | 31 |
 | model keys holding vectors (each with one vector length) | 1 | 1 | 1 |
 
-All three libraries name the same set of models (CLIP and face settings): 1 set.
+All three libraries name the same models (ViT-SO400M-14-SigLIP2/webli and scrfd-adaface): 1 set. Schema 38 in each.
 
 ## The contract other domains rely on
 
@@ -36,44 +40,40 @@ All three libraries name the same set of models (CLIP and face settings): 1 set.
 | After the switch, the vectors under every key but the library's own, and Suggest's words under those models (not the own model's), are retired by `retire-photo-vectors` (`tagpup/services/retire_photo_vectors.py`): refused while more than the switch's share of the photos hold no vector under the own key; the library's key read again in each chunk; one rowless change a key (`VECTORS_OPERATION`), its undo refused (`vectors_check`), and the switch back refused by the switch's own gate | V14 (`tests/test_retiring_the_old_photo_models_vectors.py`) |
 | Vectors and suggestions follow their photo; a looking run keeps nothing | `tests/test_suggest_then_apply_all.py` (V3, V9), `tests/test_analyse_only_suggest.py` (V3: a looking run forced to remember fails 16 of 24) |
 | A view kind moves in every layer: store `KINDS`, `_source_of`, `library-source.js`, `navigator-model.js`, `search-model.js` | `tests/test_view_rules_follow_the_server.py`, `tests/test_chip_keys_follow_the_server.py`, `tests/frontend/search-page.test.mjs` (every member kind has a section, a chip-key pair and labels of its own) |
+| A clip keeps its frame 0 as its row in `embeddings` and frames 1 to 4 in `embedding_frames` (migration 38; DECISIONS 2026-11-06), written with the vector and taken with it; a search answers each photo once, at its nearest vector (`suggesting.best_frame`, `PhotoIndex.search`), a clip among the `k` once; Suggest looks at photos only, a clip is a neighbour and never a subject (DECISIONS 2026-11-08) | V3 (`tests/test_a_clip_is_matched_on_its_best_frame.py`) |
+| A video is played by `/api/video-file`: a range at a time, at most `VIDEO_SPAN` (4 MiB), 206 / 416 / 404 / 503 / 409 as the route's docstring says, to this PC only; a stream that cannot go on ends short; a share not answering is one bounded look (`services.photos.video_bytes`) | V15 (`tests/test_playing_a_video.py`) |
+| A clip's picture in the grid is its poster, the middle frame ffmpeg takes (`files/video_frames.poster`), kept as a photo's thumbnail is; ffmpeg is a prerequisite checked at start (DECISIONS 2026-11-06) | V16 (`tests/test_a_clip_shows_its_poster.py`) |
+| Suggest's neighbour cut for clips is measured on a copy, not set: clips keep 0.35 until the owner sets it from the measurement (DECISIONS 2026-11-07, 2026-11-08) | V17 (`tests/test_measuring_the_neighbour_cut_for_clips.py`) |
 
-## The seven conditions (2026-10-15)
+## The seven conditions (2026-11-08)
 
-1. **No reach-ins.** Met for what this pass swept. The suggester and the runtime are reached through `Runtime.begin`
-   and `suggester.model_for_run` alone; tests reach the suggester the way a run does (`tests/stand_in_models.py`).
-   `tagpup_cli.py index` (Files) makes the CLIP model only once a photo is to be embedded (#1089).
-2. **No rule written twice.** Met. The runtime took test models two ways (given, or built); now only built
-   (`build_clip`/`build_faces`). `begin` called `model_for_run` twice for `remember`; now once. "A run of another set is
-   under way" is `Runtime._another_set`, asked by `begin` and by the warm-up; a lease's set and settings are built by
-   `_Lease` alone.
+1. **No reach-ins.** Met. The suggester and the runtime are reached through `Runtime.begin` and `suggester.model_for_run`
+   alone; tests reach the suggester the way a run does (`tests/stand_in_models.py`). A clip's bytes and poster are asked of
+   `services.photos` and `services.thumbnails`; the page never looks at the file (`tests/test_photo_looks_have_one_owner.py`).
+2. **No rule written twice.** Met. "A run of another set is under way" is `Runtime._another_set`; a lease's set and settings
+   are built by `_Lease` alone. A clip's best frame is `suggesting.best_frame`, asked by `PhotoIndex.search` alone.
 3. **No hidden coupling.** Met. A view kind added to the server and not to the pages fails the page test over
-   `view_rules.json` `member_kinds` (mutation: `year_other` dropped from `sectionOf` or its labels fails it).
-   `model_for_run` no longer passes `remember` "only when it differs" so a stand-in need not know of it.
-4. **No concept that could collapse.** Met: models given to the runtime collapsed into models built from settings; the
-   warm-up is a run's `_Lease` (with no index), not a second kind of hold.
-5. **No branch without an instance.** Met. Deleted for 0 live instances: the suggester's arms for no CLIP model, no face
-   model and no index (#1420); `runtime._part`'s unreadable-setting arm (0 of 3 libraries hold one; the settings
-   validator refuses one); the navigator's person with no id (the route always sends one); the index's vector-length
-   check and all that only it used (`stored_mismatch`, `stored_dim`, `vector_dim`, `clear_clip_embeddings`,
-   `output_dim`; 1 key and 1 length per library), whose arm cleared every model's vectors. The seven catch-alls of the
-   suggester that turned a failed read or write into "nothing" are gone: a run's read that fails fails the run with its
-   sentence, a photo's fails the photo (V3). The warm-up's refusal beside a run of another set has a user action: the
-   server starts and the owner clicks Suggest in a library on another set before the warm-up runs.
-6. **Scenario tests, each file owned and mapped.** Met: V1 to V9 and V11 to V14 each have a file in tests/owners.py. Unit tests that
-   restated a scenario were lifted and deleted, each with a mutation that fails the scenario: `test_library_view`'s
-   EqualDates and dated-then-undated order (V1), `test_a_clip_is_indexed_as_a_video`'s AClipsDateRule (V1: its XMP date first, zeros no date, 2026-11-08), `test_selection`'s source-is-the-ids-route and excluded tests (V7),
-   `test_embeddings_follow_their_photo`'s rename and folder removal (V9). The unit files that stay hold a rule no
-   scenario holds (below).
-7. **No open data or wrong finding, and every low fixed or by design.** Met: #1420, #1423, #1424, #1425, #1089 and #1303
-   are fixed; the pass's own findings (a vector-length check with no instance, a swallowed read of the named faces) are
-   fixed; the third (a stand-in arm in `services/faces.detector_of`) is People's.
+   `view_rules.json` `member_kinds`. A clip's frames follow their photo by the migration's trigger
+   (`embedding_frames_go_with_their_photo`) and by `embeddings.put` / `put_by_id` replacing them with the vector.
+4. **No concept that could collapse.** Met. Models given to the runtime collapsed into models built from settings; the
+   warm-up is a run's `_Lease`; a clip's frame 0 is the vector itself, not a second kind of row.
+5. **No branch without an instance.** Met. Deleted in earlier passes for 0 instances: the suggester's arms for no model
+   and no index (#1420), the vector-length check (#1089), the unreadable-setting arm, the seven catch-alls. Kept for an
+   instance counted 2026-11-08: a clip with frame 0 alone (2,179 clips hold a vector and 8,708 frame rows; kr-track's 5
+   hold 20), and a library with no clip (renton_parkrun, 0). The warm-up's refusal beside a run of another set has a user
+   action: the server starts and the owner clicks Suggest in a library on another set.
+6. **Scenario tests, each file owned and mapped.** Met: V1 to V9 and V11 to V17 each have a file in `tests/owners.py`
+   (`tests/test_the_test_map.py` passes 2026-11-08). Unit tests that restated a scenario were lifted and deleted (V1, V7,
+   V9). The unit files that stay hold a rule no scenario holds (below).
+7. **No open data or wrong finding, and every low fixed or by design.** Met 2026-11-08: `tools/add_findings.py --open`
+   lists none of severity data or wrong; this page was #2729.
 
 ## By design
 
-- **photo_index holds no `faces_detected` row, so a photo of it with no face is detected again by the first Suggest
-  that looks at it** (#1573; owner, 2026-10-16). That Suggest records the detection (with the library's detector
-  name), and the photo is settled from then on; the row set fills as the owner suggests. Live count 2026-10-16: 0
-  rows, 10,492 photos with no face row; cap or no cap, the cost is one detection each (about a second).
+- **A photo with no `faces_detected` row is detected again by the first Suggest that looks at it** (#1573; owner,
+  2026-10-16). That Suggest records the detection (with the library's detector name) and the photo is settled from then
+  on. Counted 2026-11-08: 10,580 rows in photo_index against 61,797 photos, 707 of 2,070 in kr-track, 31 of 1,309 in
+  renton_parkrun; the cost is one detection each (about a second).
 - **Suggest alternating between two libraries on different model sets reloads the models at each switch.** The process
   keeps one set at a time (#761; DECISIONS 2026-10-15): two ViT-H-14-sized sets do not share the owner's card with
   the owner's other programs. Cost today: 0 (1 set across the 3 libraries). Keeping two sets is the owner's call.
@@ -87,14 +87,13 @@ All three libraries name the same set of models (CLIP and face settings): 1 set.
   would read the folder's faces half written. Since 2026-10-23 the process ends with a read-only matching of the faces
   it made (DECISIONS 2026-10-23), no longer a clustering that rewrites names. The wait says what it waits for, and
   Cancel stops it.
-- **Phase 0 times the pipeline through hooks, not by importing the stages** (#1527). A program under `scripts/` may not
-  import store, files or ml, nor hold SQL (`tests/test_layers.py`), so phase 0's `measure_pipeline_stages` (deleted 2026-10-28 with the old models) hooked the objects the
-  runtime and services hand it, and the census reads through services. A later brief that needs a stage the hooks cannot
-  reach needs a store read or an ml helper of its own, not a wider import.
+- **A program under `scripts/` may not import store, files or ml, nor hold SQL** (`tests/test_layers.py`; #1527): a
+  census reads through services; a stage it cannot reach needs a store read or an ml helper of its own.
 - **The census strata count a photo's faces in play, not every face found** (#1528): named, or unnamed and not excluded
-  (`services.identify.photos_waiting`). The services expose no all-faces count without the vectors. The difference is
-  27 excluded faces on photo_index and 5,788 of 9,850 on kr-track (counted 2026-10-16), so kr-track's strata read
-  low; the census output says so.
+  (`services.identify.photos_waiting`); a library with many excluded faces reads low, and the census output says so.
+- **The whole-library view reads clips with a scan of `photos`** (#2644; DECISIONS 2026-11-08): 0.04 s for photo_index's
+  2,179 clips, so no index is made for it alone; the partial index on `kind = 'video'` rides with the next migration that
+  has its own reason. The plan test accepts the scan by name. A browser timing comes before any claim the click got slower.
 
 - **A Suggest offers a name by the cuts of the face model its run holds** (2026-10-20, phase 3 merge 3;
   `clustering.cuts_of(self.faces.key)`, `suggester`): a library switched mid-run ends on the model it began with, and
@@ -128,15 +127,8 @@ All three libraries name the same set of models (CLIP and face settings): 1 set.
 
 ## History
 
-- 2026-10-17, AI pipeline 1b: each photo's model work is split into a processor half and a card half
-  (`ClipModel.input_of` / `embed_input`, `FaceModel.picture` / `detect_and_embed`, `PhotoEmbeddings.prepared` /
-  `made`), and the CLI's index reads the next photos ahead on two threads (`tagpup.core.read_ahead`); a read never loads
-  a model, and a run takes its turn for each card half. 1.94 to 1.68 s a photo on an event folder, 1.22 to 1.05 on the
-  many-face sample, the rows identical (docs/AI_PIPELINE.md, phase 1b).
-
-- 2026-10-15, the domain pass: the warm-up holds a run's lease, and `begin` drops another set only once its own are made
-  (#1423, #1424); the runtime takes test models one way; the suggester is always given both models (#1420, #1425); the
-  unreadable-setting and no-id-person arms gone; a page test over every member kind; an index with nothing to do imports
-  no model library (3.2 s to 1.0 s in a sandbox, #1089) and the vector-length check is deleted; the suggester's
-  catch-alls gone; the Activity page names what holds the models; V1, V7 and V9 lifted over the unit tests they
-  restated; `test_settings.py` named for what it tests (#1303).
+- 2026-10-15 domain pass (one lease for the warm-up, one way to take models, the deleted arms): DECISIONS 2026-10-15 and
+  docs/history/ARCHITECTURE_phases.md.
+- 2026-10-17 AI pipeline 1b (a processor half and a card half, read-ahead): docs/AI_PIPELINE.md, phase 1b.
+- 2026-11-06 to 2026-11-08 clip frames, best-frame matching, the video route, posters, the neighbour-cut measure:
+  DECISIONS 2026-11-06, 2026-11-07, 2026-11-08.
