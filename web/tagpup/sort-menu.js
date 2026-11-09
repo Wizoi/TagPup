@@ -41,7 +41,7 @@ function choose(item) {
     if (order === lib.order) return;
     // state.nav.order follows when the view opens (navigator.js navigatorFollows): a person who stays on a photo with
     // unsaved edits keeps the view, and the order of the next one, as they were.
-    openLibraryView({ kind: lib.kind, value: lib.value, recursive: lib.recursive, order });
+    openLibraryView({ kind: lib.kind, value: lib.value, recursive: lib.recursive, order, media: lib.media });
 }
 
 const menu = radioMenu({ button: btnSortBy, menu: sortMenu, held: state.sortMenu, prepare, choose });

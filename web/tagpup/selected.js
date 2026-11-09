@@ -276,6 +276,8 @@ export function selectionRequest({ job = true } = {}) {
     const lib = state.library;
     const sel = lib.sel;
     const source = { kind: lib.kind, value: lib.value, recursive: lib.recursive };
+    // Select all under Videos is the clips alone (filter-menu.js); 'both' is library-source.js DEFAULT_MEDIA, which imports this.
+    if (lib.media !== 'both') source.media = lib.media;
     if (plan.how === 'ids') return { ok: true, body: { ids: lib.ids.filter(id => sel.ids.has(id)) } };
     if (plan.how === 'source') return { ok: true, body: { source, excluded: [...sel.excluded] } };
     if (plan.how === 'rest-ids') return { ok: true, body: { ids: lib.ids.filter(id => !sel.excluded.has(id)) } };

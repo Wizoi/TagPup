@@ -325,6 +325,18 @@
                                 </div>
                                 <span class="library-strip-actions">
                                     <button id="btn-library-refresh" type="button" class="btn btn-secondary btn-sm btn-icon" aria-label="Refresh view" title="Refresh view: ask the library for this view's photos again; the place in the view is kept"><span aria-hidden="true">&#x21BB;</span></button>
+                                    <!-- Show: the view's photos and videos, its photos alone or its videos alone (web/tagpup/filter-menu.js; a radio menu, radio-menu.js). -->
+                                    <span class="radio-menu-anchor">
+                                        <button id="btn-filter-media" type="button" class="btn btn-secondary btn-sm" aria-haspopup="menu" aria-expanded="false" aria-controls="filter-menu" data-own-keys>Show: <span id="filter-media-current" class="radio-menu-current"></span> <span aria-hidden="true">&#x25BE;</span></button>
+                                        <div id="filter-menu" class="radio-menu hidden" role="menu" aria-label="Show" data-own-keys>
+                                            <div role="group" aria-labelledby="filter-menu-heading">
+                                                <div id="filter-menu-heading" class="radio-menu-heading" role="presentation">Show</div>
+                                                <button type="button" role="menuitemradio" aria-checked="false" tabindex="-1" data-media="both">Both</button>
+                                                <button type="button" role="menuitemradio" aria-checked="false" tabindex="-1" data-media="photo">Photos</button>
+                                                <button type="button" role="menuitemradio" aria-checked="false" tabindex="-1" data-media="video">Videos</button>
+                                            </div>
+                                        </div>
+                                    </span>
                                     <!-- Sort by: the field and the direction, each a group of radio items (web/tagpup/sort-menu.js, #714; a radio menu, radio-menu.js). -->
                                     <span class="radio-menu-anchor">
                                         <button id="btn-sort-by" type="button" class="btn btn-secondary btn-sm" aria-haspopup="menu" aria-expanded="false" aria-controls="sort-menu" data-own-keys>Sort by: <span id="sort-by-current" class="radio-menu-current"></span> <span aria-hidden="true">&#x25BE;</span></button>

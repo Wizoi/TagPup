@@ -32,7 +32,8 @@ export const state = {
     // is to be shown in it once it is here. Several rows are selected at once (#672): the selection is the followed source
     // itself (a union of the rows' sources, held in the address), so a section keeps only `anchor`, the row a Shift-click
     // runs from, `notice`, a sentence about the last click (too many rows), and `opened`, whether its first index was opened
-    // (People's branches start open). `order` is the order views are read in, as last chosen or opened (#671). `pending`: the
+    // (People's branches start open). `order` is the order views are read in, as last chosen or opened (#671); `media` what they
+    // show, the same way (filter-menu.js: 'both', 'photo' or 'video'; a page loaded opens on 'both'). `pending`: the
     // section's read under way, for another feature waiting on it (the search's picker, navigator.js readSectionIndex).
     nav: {
         shown: 'folder',
@@ -40,6 +41,7 @@ export const state = {
         tab: 'folders',
         followed: null,
         order: 'taken',
+        media: 'both',
         timer: null,
         sections: {
             folders: { status: 'idle', message: '', notice: '', index: null, expanded: new Set(), filter: '', filterTimer: null, currentId: null, anchor: null, rows: [], asked: 0, stale: false, reveal: false, opened: false, pending: null },
@@ -69,6 +71,8 @@ export const state = {
     detailsPanel: { open: false },
     // The Sort by menu of a view's header (sort-menu.js, #714): whether it is open, and the token of the view it was drawn for.
     sortMenu: { open: false, token: 0 },
+    // Show, beside it (filter-menu.js): the same.
+    filterMenu: { open: false, token: 0 },
     // The search box of the Library pane (search.js, phase 9e-2). `lists` the chips of All of, Any of and None of -- each a source
     // { kind, value, recursive }, as the open search holds them, or as just changed by the person before the search opens --;
     // `within` whether "Within the sidebar's selection" is ticked; `shownToken` the view the box last showed and `showing`

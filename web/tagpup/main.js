@@ -32,6 +32,7 @@ import { deleteSelection } from './bulk-edit.js';
 import { checkFolderMembership, wireMembership } from './membership.js';
 import { choosePane, navigatorCountsChanged, navigatorFollows, wireNavigator } from './navigator.js';
 import { showSortOrder, wireSortMenu } from './sort-menu.js';
+import { showMediaFilter, wireFilterMenu } from './filter-menu.js';
 import { searchFollows, searchVocabularyChanged, wireSearch } from './search.js';
 import { addedFromView, wireBanner } from './library-banner.js';
 import { renderSyncInfo } from './sync-state.js';
@@ -75,7 +76,7 @@ Object.assign(upper, {
     selectPhoto,
     landOnAnchor, leaveLibraryView, libraryChanged, libraryViewPainted, navigatorCountsChanged, navigatorFollows, openInOrganize,
     openLibraryPhoto, openLibraryView, restoreViewAsLeft,
-    photosDeleted, photosWritten, reloadChangedPhoto, showSortOrder, suggested,
+    photosDeleted, photosWritten, reloadChangedPhoto, showMediaFilter, showSortOrder, suggested,
     updateCameraHighlights, updateCarryForwardState, updateFolderAutoApplyState,
     updateSelectedThumbnailsCount, updateSuggestButtonState
 });
@@ -156,6 +157,7 @@ document.addEventListener('DOMContentLoaded', () => {
     wireNavigator();
     wireSearch();
     wireSortMenu();
+    wireFilterMenu();
     wireMoves();
     wireBanner();
 

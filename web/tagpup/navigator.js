@@ -282,7 +282,10 @@ export function navigatorFollows() {
     const nav = state.nav;
     const lib = state.library;
     nav.followed = lib && !lib.invalid ? { kind: lib.kind, value: lib.value, recursive: lib.recursive } : null;
-    if (lib && !lib.invalid) nav.order = lib.order || DEFAULT_ORDER;
+    if (lib && !lib.invalid) {
+        nav.order = lib.order || DEFAULT_ORDER;
+        nav.media = lib.media;   // Show's choice (filter-menu.js), as the order
+    }
     const target = sectionOf(nav.followed);
     const touched = new Set(membersOf(nav.followed).map(sectionOf));
     for (const name of NAV_ORDER) nav.sections[name].reveal = touched.has(name);

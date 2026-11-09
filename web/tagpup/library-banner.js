@@ -123,7 +123,7 @@ export function checkNotHeld(lib, { refreshed = false } = {}) {
         present(lib, known, false);
         return;
     }
-    if (lib.recursive && lib.total >= AUTO_CHECK_BELOW) {
+    if (lib.recursive && lib.of >= AUTO_CHECK_BELOW) {   // the folder's size, whatever Show shows
         showCheckLink(lib);
         return;
     }
