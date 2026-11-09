@@ -43,15 +43,15 @@ of them, missed:
   (`db.readonly_uri`), not what a fixture holds. Check a claim you report against it.
 - **What the owner sees**: the page, the message, the time it takes, on a network share.
 - **A model swap's output**: the dry run prints the new model's output distribution (sizes, counts) beside the old
-  model's, and the owner looks at one real folder before `--apply` (the pass made 31 smudges under 40 px, 2026-10-18).
+  model's, and the owner looks at one real folder before `--apply`.
 - **Every test file has one owner**: a test file you add (or rename, or delete) is added to (or removed from)
   `tests/owners.py` (owner, kind, scenario ids; `tests/test_the_test_map.py` fails the merge otherwise), and a
   finding number cited in a test you delete must be cited by the scenario test that covers it (the ratchet).
 - **Scratch files go in your own subfolder** of the scratchpad (`scratchpad/<your-branch-name>/`), never a generic name in the
-  shared folder: two workers' `p2.py` collided and one patched the other's worktree (2026-10-15).
+  shared folder.
 - **Moved code is new code**: code that moves from `scripts/` (a spike, a harness) into `tagpup/` meets this whole list
   and the write path's owner (batching, a share that stops answering) as if written today, and each test the move
-  deletes names its successor (4 `wrong`/`data` rows on a moved harness, retro 2026-10-24).
+  deletes names its successor.
 - **Is the case real?** A fallback, a compatibility arm or a defensive branch needs a live count above zero or the user
   action that produces it (CLAUDE.md, 'A special case needs a real instance'). If it has neither, refuse the write that
   could make it and write no branch. Say in the report which cases you did not handle for that reason.

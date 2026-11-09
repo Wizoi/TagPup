@@ -5,7 +5,7 @@ behind each rule, live in [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md); this is wh
 line naming its owner and its guard; a rule with no guard keeps its words here. A rule broken twice moves into a guard.
 
 **New code goes where [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) puts it.** That file is a map
-(about 41 KB): the layers, what each package owns, the data model on one page, the processes, and where to
+(about 53 KB): the layers, what each package owns, the data model on one page, the processes, and where to
 look for each concern. Check it before adding a module, a route or a query.
 **[docs/INVARIANTS.md](docs/INVARIANTS.md)** is one page of the rules whose violation loses data, each with its
 owner and the test that enforces it; review against it. **[docs/DECISIONS.md](docs/DECISIONS.md)** is the
@@ -121,7 +121,8 @@ the bake was built as a command, then rebuilt as the indexer's job).
 already had rows created 233 duplicate faces.
 
 **A write reports what it changed, not what it attempted.** A backfill read 60 photos,
-reported 60 done, and wrote nothing; the paths did not match and nothing said so.
+reported 60 done, and wrote nothing; the paths did not match and nothing said so. A finding about such a write closes `fixed` only with `wrote N`
+(`tools/add_findings.py`, `tests/test_add_findings.py`).
 
 **Performance work**: a speed claim is a claim about a user action, timed in a real browser in a sandbox, baseline
 first. Read docs/DEVELOPMENT.md, "Performance work", before claiming anything got faster.
@@ -147,8 +148,7 @@ domain and which files are its, plus what is particular to the task.
 - A number told to the owner about their libraries is one counted this session, not relayed.
 - Commit before launching background agents, and keep their work in worktrees.
 - One session per phase: `/clear` at a phase boundary (the memory handoff carries the state), `/compact` inside a long
-  one, at about 300k of context at the latest; a worker brief is ONE concern and names what remains (47 of 122 worker
-  runs went past 150k, 2026-10-24..28). A retro runs at each phase end and on its triggers, by [docs/RETRO.md](docs/RETRO.md) (the `retro` skill).
+  one, at about 300k of context at the latest; a worker brief is ONE concern and names what remains. A retro runs at each phase end and on its triggers, by [docs/RETRO.md](docs/RETRO.md) (the `retro` skill).
 - Decide by the rules here and in docs/ARCHITECTURE.md; ask the owner only what they alone can answer. The cheapest
   correct change first: no extra backup, no workaround around the model where the model can be fixed.
 
@@ -160,9 +160,10 @@ checklist"; DECISIONS 2026-10-15 and 2026-10-16). The seven: no reach-ins, no ru
 concept that could collapse, no branch without an instance, scenario tests owned and mapped, no open `data`/`wrong` finding.
 A feature is taken one at a time, its live count in the brief, planned by the owners of the domains it touches (a sweep
 first, the single place that owns each rule named), built by one worker who checks its diff against the seven conditions,
-reviewed once by each owner: it adds no debt, or it is refused.- **A branch adds about 1,200 lines or fewer, one concern.** A larger piece is cut into merges that each leave the trunk
-  whole; a deletion is never over budget (DECISIONS 2026-10-16). A hook refuses a `git merge` adding over 1,200 lines
-  without an `Over budget: <reason>` line, or whose subject is only a `Worktree:` line (`.claude/hooks/merge-budget.mjs`).
+reviewed once by each owner: it adds no debt, or it is refused.
+- **A branch adds about 1,200 lines or fewer, one concern**; a larger piece is cut into merges that each leave the trunk
+  whole, a deletion is never over budget (`.claude/hooks/merge-budget.mjs` refuses a `git merge` over it without an
+  `Over budget: <reason>` line; DECISIONS 2026-10-16).
 - **At most two review rounds**, the ownership question ("which single place should own this?") in the second; a round
   after it only for a finding that can change a file or lose data. A finding carries a severity: `data` (can lose or
   corrupt data), `wrong` (a wrong result the owner sees), `low`. Only `data` and `wrong` block a merge; a merge or phase-end report quotes `tools/add_findings.py --open`.
@@ -173,23 +174,21 @@ reviewed once by each owner: it adds no debt, or it is refused.- **A branch adds
 - **Each branch removes at least as many concepts, shims or tests as it adds**, or says why.
 - **Test files are named for what they test, never for a review round** (`..._followup`,
   `..._third_review` are renamed or merged when touched).
-- **A special case needs a real instance** (owner, 2026-10-11: three imagined cases had grown into a whole name-keyed fallback).
-  Every fallback, compatibility arm, defensive branch and 'what if' path must cite either a live count above zero (counted
-  this session, read-only) or the user action, through the real writers, that produces it. A case with neither is not
-  handled: the write that could make it is refused at the source with a plain sentence, and the branch is not written. An
-  owner decision that rules a class out (a shared leaf, a group as a person, a keyword with a person's name) is cited, not
-  re-argued. A fixture that holds a shape nothing real makes is not an instance.
+- **A special case needs a real instance** (owner, 2026-10-11). Every fallback, compatibility arm, defensive branch and
+  'what if' path cites a live count above zero (counted this session, read-only) or the user action, through the real
+  writers, that produces it; with neither, the write that could make it is refused at the source and the branch is not
+  written. An owner decision that rules a class out is cited, not re-argued; a fixture shape nothing real makes is not an
+  instance.
 - **Tests answer scenarios, not code** (owner, 2026-10-11). A test is a scenario a person lives through (rapid clicks, a
   crash half way, two libraries, an update while working), grouped by domain owner and named for it; a test that only
   restates what a function does is too granular and misses the scenario between functions. New work adds or lifts a
   scenario test, and deletes the granular tests it makes redundant. Every test file has one owner in `tests/owners.py`
   (`tests/test_the_test_map.py`).
 - **A `low` finding is fixed or recorded as by design**, with its reason in its own row, closed `decided:` (a
-  decision that changes behaviour still gets a DECISIONS row); there is no third state, no list of accepted debt (owner,
-  2026-10-15, amended 2026-10-23), unless nothing can be done until it is reported again or reproduced: then it is moved to
-  docs/watching.md (`tools/add_findings.py --watch`), not counted open and not brought up; read it when an issue is reported,
-  to see whether it is a duplicate (owner, 2026-11-02). A finding is verified
-  against the trunk, and against a live count where it names one, before it is reported or briefed.
+  decision that changes behaviour still gets a DECISIONS row); no third state, no list of accepted debt (owner, 2026-10-15),
+  unless nothing can be done until it is reported again or reproduced: then `tools/add_findings.py --watch` moves it to
+  docs/watching.md (owner, 2026-11-02). A finding is verified against the trunk, and a live count where it names one,
+  before it is reported or briefed.
 
 ## Before committing
 
