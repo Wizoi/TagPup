@@ -7,7 +7,10 @@ date first, then Apple's CreationDate as given, else QuickTime's CreateDate, kep
 is none, and the bare CreateDate, QuickTime's copy, is never read as a photo's: tests/test_library_views_scenarios.py,
 V1), and a vector made of its frames after the photos, in the
 same turn of the graphics card: frame 0's is its vector, frames 1 to 4 kept beside it (tagpup_cli.py's _index_clips).
-No face is looked for and nothing is written into its file. The next index and the owed scan
+No face is looked for and nothing is written into its file. A clip in an older format (.wmv, .mpg, .avi, .mod) is
+indexed so too, undated when it carries no date, beside an .mp4 of its name, shown its poster, and never written: a
+tag, title, Date Taken or a rename's kept name is refused (images.CLIP_NOT_PATCHED: no MOV/MP4 boxes to patch;
+DECISIONS 2026-11-09). The next index and the owed scan
 (tagpup.store.photo_fingerprints.owed) owe it nothing, so sync never queues a clip's folder again. The photos beside
 it are indexed exactly as before, and a folder with no clip is indexed as it was.
 
@@ -49,9 +52,10 @@ from test_an_index_reads_the_next_photos_ahead import StandIns, photo, recorded 
 
 import tagpup_cli  # noqa: E402
 from tagpup import config  # noqa: E402
-from tagpup.core import paths, processes  # noqa: E402
+from tagpup.core import fields, paths, processes  # noqa: E402
+from tagpup.core.result import Refused  # noqa: E402
 from tagpup.core.library import Library  # noqa: E402
-from tagpup.files import images, video_frames  # noqa: E402
+from tagpup.files import field_values, images, video_frames  # noqa: E402
 from tagpup.ml import clip as clip_model  # noqa: E402
 from tagpup.services import bake_after_index, baking  # noqa: E402
 from tagpup.services import faces as face_records  # noqa: E402
@@ -81,6 +85,21 @@ def clip(folder, name):
     target = os.path.join(folder, name)
     made = processes.run([TOOLS.ffmpeg, "-y", "-loglevel", "error", "-f", "lavfi", "-i", "testsrc=size=160x120:rate=10",
                           "-t", "1", "-pix_fmt", "yuv420p"] + CLIPS[name] + [target], capture_output=True)
+    assert made.returncode == 0, made.stderr
+    return target
+
+
+#: Clips in an older format, each as its program leaves one: (picture codec, container's own options).
+OLDER = {"harbour.wmv": ["-c:v", "wmv2"], "launch.mpg": ["-c:v", "mpeg1video", "-r", "25"], "slipway.avi": ["-c:v", "mpeg4"]}
+
+
+def older(folder, name):
+    """A one-second clip of ffmpeg's test pattern at `folder`/`name`, in an older format (OLDER), with no date."""
+    os.makedirs(folder, exist_ok=True)
+    target = os.path.join(folder, name)
+    made = processes.run([TOOLS.ffmpeg, "-y", "-loglevel", "error", "-f", "lavfi", "-i", "testsrc=size=160x120:rate=10",
+                          "-t", "1", "-pix_fmt", "yuv420p", "-map_metadata", "-1"] + OLDER[name] + [target],
+                         capture_output=True)
     assert made.returncode == 0, made.stderr
     return target
 
@@ -194,6 +213,37 @@ class AClipIsIndexedAsAVideo(unittest.TestCase):
         given, _vector, faces, detected = held["harbour.mp4"]
         self.assertEqual((False, [], None), (given, faces, detected), "the clip was given an identity or a face")
         self.assertEqual({}, self.owed(folder))
+
+    def test_an_older_format_beside_an_mp4_of_its_name_is_indexed_as_a_video_shown_its_poster_and_never_written(self):
+        folder = os.path.join(self.home.root, "Slipway")
+        clip(folder, "harbour.mp4")
+        made = {name: older(folder, name) for name in OLDER}
+        before = {name: digest(path) for name, path in made.items()}
+
+        self.index(folder)
+
+        found = rows(self.library)
+        self.assertEqual({"harbour.mp4": "video", **{name: "video" for name in OLDER}},
+                         {name: kind for name, (kind, _taken, _vector) in found.items()})
+        self.assertEqual({name: None for name in OLDER}, {name: found[name][1] for name in OLDER}, "undated stays undated")
+        self.assertEqual({name: True for name in OLDER}, {name: found[name][2] for name in OLDER},
+                         "its vector was not made of its frames")
+        held = ids(self.library)
+        for name in OLDER:
+            with self.subTest(poster=name):
+                self.assertEqual(thumbnails.OK, thumbnails.serve(Library(self.library), held[name][0],
+                                                                 config.locate_ffmpeg).kind)
+        saved = []
+        with field_values.session(own_home.installed_exiftool()) as et:
+            for name, values in (("harbour.wmv", {fields.PRESERVED_NAME: ["harbour.wmv"]}),
+                                 ("launch.mpg", {**fields.title_fields("Launch day")}),
+                                 ("slipway.avi", fields.date_taken_fields("2021:07:04 11:30:00", clip=True))):
+                with self.subTest(write=name), self.assertRaises(Refused) as refused:
+                    field_values.write(et, made[name], values, saving=lambda record, old: saved.append(record))
+                self.assertEqual(images.CLIP_NOT_PATCHED, str(refused.exception))
+        self.assertEqual(([], before), (saved, {name: digest(path) for name, path in made.items()}),
+                         "nothing saved, nothing written")
+        self.assertIn("All images are up to date", self.index(folder))
 
     def test_a_folder_opened_and_read_again_after_a_rename_lists_its_clip_beside_its_photo(self):
         # The folder view lists a folder's clips (video, merge B2), and so does its read after Smart Rename, which the
