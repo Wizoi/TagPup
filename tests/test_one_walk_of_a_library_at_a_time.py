@@ -6,6 +6,10 @@ its 69,700 files over the share, and a second library's sync waited 15 min behin
 run of the `sync` job, claimed as the runner's: whichever asks first walks, and the other is told "running", then "not
 due" -- a run that ended done since it was wanted covers it. One walk.
 
+A folder's sync by the watcher records no run, and walked beside the daily one (#2755): now it takes the library's walk
+(recurring.sync_folder), as a run of the `sync` job does. A photo copied in while the daily walks is synced after it, RECHECK
+later; the daily asked while a folder's sync walks is told "running", and walks once it is over.
+
 The libraries are made as the indexer leaves them, in the test's own home; fictional names. Nothing sleeps: the walks are
 held on events, the watcher's clock is the test's, and each claim's outcome is told as it is made.
 """
@@ -115,15 +119,29 @@ class TheWatcherAndTheDailySyncWantOneLibrary(unittest.TestCase):
         patcher = mock.patch.object(recurring, "run_claimed", run_claimed)
         patcher.start()
         self.addCleanup(patcher.stop)
+        #: Each sync of a folder the watcher asked for: "ran", or "running" when the walk was another's.
+        self.folder_turns = []
+        real_folder = recurring.sync_folder
+
+        def sync_folder(library, call):
+            result = real_folder(library, call)
+            with self.told:
+                self.folder_turns.append("running" if result is None else "ran")
+                self.told.notify_all()
+            return result
+        folder_patcher = mock.patch.object(recurring, "sync_folder", sync_folder)
+        folder_patcher.start()
+        self.addCleanup(folder_patcher.stop)
         FakeObserver.scheduled = threading.Event()
         self.addCleanup(setattr, FakeObserver, "scheduled", None)
         self.clock = Clock()
 
-    def walk(self, who, entered=None, release=None):
-        """A sync of the library as `who` makes one, recorded as a walk, held on `release` once `entered` is set."""
+    def walk(self, who, entered=None, release=None, only_a_folders=False):
+        """A sync of the library as `who` makes one, recorded as a walk, held on `release` once `entered` is set (only a
+        folder's, when `only_a_folders`)."""
         def walked(library, folder=None, apply=True):
             self.walks.append((who, folder))
-            if entered is not None:
+            if entered is not None and (folder is not None or not only_a_folders):
                 entered.set()
                 release.wait(WAIT)
             return sync.sync(library, folder=folder, apply=apply)
@@ -146,6 +164,61 @@ class TheWatcherAndTheDailySyncWantOneLibrary(unittest.TestCase):
         with self.told:
             self.assertTrue(self.told.wait_for(lambda: outcome in self.outcomes, WAIT),
                             "never told %r; told %r" % (outcome, self.outcomes))
+
+    def folder_told_of(self, turn, count):
+        with self.told:
+            self.assertTrue(self.told.wait_for(lambda: self.folder_turns.count(turn) >= count, WAIT),
+                            "never told %r; told %r" % (turn, self.folder_turns))
+
+    def copied_in(self, watcher):
+        """A photo copied into the library's folder, and its notification as the watch on the folder gives it."""
+        photo = os.path.join(self.folder, "IMG_0002.jpg")
+        with open(photo, "wb") as handle:
+            handle.write(b"jpeg 2")
+        watcher.notice(paths.key(self.folder), FileCreatedEvent(photo))
+
+    def test_a_photo_copied_in_while_the_daily_sync_walks_is_synced_after_it_not_beside_it(self):
+        """#2755. Break: the watcher syncing a folder without the library's walk (runtime.folder_watcher not handing it
+        recurring.sync_folder), or dropping the folder when the walk is another's (Watcher._folder_later)."""
+        entered, release = threading.Event(), threading.Event()
+        self.addCleanup(release.set)
+        watcher = self.watcher(self.walk("watcher"), recheck=100.0)
+        runner = self.runner(self.walk("runner", entered, release))
+        job = recurring.JOBS.get(recurring.SYNC)
+        watcher.start()
+        self.told_of(("watcher", "ran"))   # the catch-up
+        daily = threading.Thread(target=runner.run_job, args=(job, self.library), kwargs={"force": True},
+                                 name="DailySyncThread", daemon=True)
+        daily.start()
+        self.addCleanup(daily.join, WAIT)
+        self.assertTrue(entered.wait(WAIT), "the daily sync never walked")
+        self.copied_in(watcher)
+        self.folder_told_of("running", 1)
+        release.set()
+        daily.join(WAIT)
+        self.told_of(("runner", "ran"))
+        self.clock.now = 100.0   # its recheck
+        self.folder_told_of("ran", 1)
+        self.assertEqual([("watcher", None), ("runner", None), ("watcher", paths.stored(self.folder))], self.walks)
+
+    def test_the_daily_sync_asked_while_a_folders_sync_walks_is_told_running_and_walks_after_it(self):
+        """#2755, the other way. Break: a run of the `sync` job not taking the library's walk (recurring.run_claimed)."""
+        entered, release = threading.Event(), threading.Event()
+        self.addCleanup(release.set)
+        watcher = self.watcher(self.walk("watcher", entered, release, only_a_folders=True))
+        runner = self.runner(self.walk("runner"))
+        job = recurring.JOBS.get(recurring.SYNC)
+        watcher.start()
+        self.told_of(("watcher", "ran"))   # the catch-up
+        self.copied_in(watcher)
+        self.assertTrue(entered.wait(WAIT), "the folder's sync never walked")
+        self.assertEqual("running", runner.run_job(job, self.library, force=True).why,
+                         "the daily sync walked beside a folder's")
+        release.set()
+        self.folder_told_of("ran", 1)
+        self.assertTrue(runner.run_job(job, self.library, force=True).ran, "the daily sync did not walk after it")
+        self.assertEqual([("watcher", None), ("watcher", paths.stored(self.folder)), ("runner", None)], self.walks)
+        self.assertEqual([("watcher", "ran"), ("runner", "running"), ("runner", "ran")], self.outcomes)
 
     def test_the_watchers_catch_up_walks_first_and_the_daily_sync_is_told_running_then_not_due(self):
         """Runs 94 and 95 of 2026-10-28. Break: the watcher syncing whole without recurring.sync_whole (the runner's claim

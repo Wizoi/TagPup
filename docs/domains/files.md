@@ -160,7 +160,9 @@ The one place is `sync.look`; nothing else removes a row for a missing file (the
 - The watcher resumes a share within a tick of its being heard back (`watching._heard_back`); its 30 s `RECHECK` is the
   safety net. A folder back is wanted since the share was first found not answering (`away_at`).
 - One walker per library: the watcher's whole sync goes through the job claim (`recurring.run_claimed`, `sync_whole`), so
-  the daily job and the watcher never walk one library together.
+  the daily job and the watcher never walk one library together; a run of the job and the watcher's sync of one folder
+  (`recurring.sync_folder`) take the library's walk in the process (`recurring.walk`), the second told "running" and the
+  folder asked again `RECHECK` later (`Watcher._folder_later`).
 - A sync that could not look at its roots ends failed (`Job.failed`, `sync.could_not_look`) and is retried in an hour,
   not a day later.
 - The Activity page shows a root on such a share as "share not answering since hh:mm".
