@@ -518,6 +518,26 @@ class AServerThatSaysNotFoundAtOnce(unittest.TestCase):
         self.assertEqual(before, vl.rows("SELECT * FROM photos ORDER BY id"), "a row was touched")
         self.assertEqual(journal, vl.rows("SELECT id, status FROM changes ORDER BY id"), "a change was journaled")
 
+    def test_a_tag_tree_rewrite_of_photos_on_a_share_found_away_answers_at_once_without_the_away_wait(self):
+        """The tag tree's rewrites are uncapped but not patient (owner, 2026-11-08, #2630): a photo on a share found away is
+        its error at once, as before the caption sweep's wait existed; only the sweep looks again after AWAY_SECONDS.
+        Break: write_fields passing `patient=uncapped`."""
+        from tagpup.services import file_changes
+        vl = ViewLibrary(self)
+        for path in self.PHOTOS:
+            vl.photo("", "", taken="2024:06:01 10:00:00", tags=["Trips/Harbour"], at=path)
+        shares.stamp_of(self.PHOTOS[0])   # found away
+        session = mock.MagicMock()
+        started = time.monotonic()
+        with mock.patch.object(shares, "AWAY_SECONDS", 6.0), \
+                mock.patch.object(shares, "wait_back") as wait_back, \
+                mock.patch("tagpup.files.exiftool_session.ExifToolSession", session):
+            done = tagging.replace_tag(vl.library, self.PHOTOS, "Trips/Harbour", "Trips/Coast", "exiftool")
+        self.assertLess(time.monotonic() - started, 3.0, "waited for the share's window")
+        wait_back.assert_not_called()
+        self.assertEqual(0, done.changed)
+        self.assertEqual([file_changes.AWAY_WHY] * 4, [str(why) for _, why in done.errors])
+
     def test_a_share_that_comes_back_is_asked_again_by_the_next_walk(self):
         self.assertIs(shares.UNANSWERED, shares.Walk().stamp_of(self.PHOTOS[0]))
         self.server_up = self.file_there = True
