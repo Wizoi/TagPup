@@ -184,7 +184,7 @@ class PartialWritesOnARowReadFromItsFile(Photos):
         mtime, size, raw, taken = self.row(path)
         stat = os.stat(path)
         self.assertEqual((mtime, size), (stat.st_mtime, stat.st_size))
-        self.assertEqual((raw["EXIF:DateTimeOriginal"], raw["XMP:Subject"]), (TAKEN, ["Activity/Sailing"]))
+        self.assertEqual((raw["EXIF:DateTimeOriginal"], raw["XMP:Subject"]), (TAKEN, "Activity/Sailing"))
         self.assertIsNotNone(taken)
 
     def test_rotating_stamps_a_row_that_was_read(self):
