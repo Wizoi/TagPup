@@ -38,8 +38,15 @@ def as_read(photo_path, fields, people=None):
 
 def add_read(conn, photo_path, fields, people=None):
     """Record the read of `fields` from `photo_path` as the indexer records it, and return its id: the row alone, no
-    vector and no look for faces -- what the index still owes work (photo_fingerprints.owed). The caller commits."""
-    photos.record_indexed(conn, photo_path, as_read(photo_path, fields, people))
+    vector and no look for faces -- what the index still owes work (photo_fingerprints.owed). The picture's size is its
+    header's (images.picture_size, as the index reads it); a path no file is at -- most fixtures make none -- records
+    none. The caller commits."""
+    record = as_read(photo_path, fields, people)
+    try:
+        record["width"], record["height"] = images.picture_size(photo_path)
+    except OSError:
+        pass
+    photos.record_indexed(conn, photo_path, record)
     return photos.ensure_row(conn, photo_path)
 
 

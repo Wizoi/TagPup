@@ -136,7 +136,7 @@ def _kept_with_no_model(metas, embeddings, unexamined):
     """What the index keeps of each of `metas` [records of MetadataExtractor.batch_read] with no model, asked before any
     model is built or the graphics card's turn taken: (looked, complete). `looked` is {paths.key: {"vector", "stale",
     "decoded"}}: the vector kept by its stamp, or the Stale one (PhotoEmbeddings.kept), and of a stale one its decode,
-    (stamp, fingerprint, zero tail) -- or what the decode raised -- which the index's read uses and never decodes again.
+    (stamp, fingerprint, zero tail, picture size) -- or what the decode raised -- which the index's read uses and never decodes again.
     `complete` is True when every photo is kept by its stamp or by its fingerprint (photo_fingerprints.same_picture: only
     its metadata changed): none is in `unexamined`, none holds a bake to read, none has no vector. Then the index builds
     no model, imports no torch and takes no turn: the photos are stamped again with what they are. Asked in order and
@@ -158,7 +158,8 @@ def _kept_with_no_model(metas, embeddings, unexamined):
         width, height = image_files.picture_size(meta["path"])
         reserve(width * height * 3)
         stamp, upright = embeddings.opened(meta["path"])
-        return stamp, image_files.fingerprint(upright), upright.info.get(image_files.ZERO_TAIL_INFO, 0)
+        return (stamp, image_files.fingerprint(upright), upright.info.get(image_files.ZERO_TAIL_INFO, 0),
+                (width, height))
     stale = [meta for meta in metas if looked[paths.key(meta["path"])]["stale"] is not None]
     with read_ahead.ReadAhead(stale, lambda meta: looked[paths.key(meta["path"])], read, threads=READ_THREADS,
                               ahead=READ_AHEAD, budget=READ_AHEAD_BYTES) as decodes:
@@ -642,7 +643,8 @@ def index(ctx, directories, force_reembed: bool, reset: bool, skip_faces: bool, 
         def read(meta, begun, reserve):
             """On a thread of the read-ahead: the photo decoded and made ready for the models, its bake weighed against
             the picture's fingerprint, nothing written and nothing on the graphics card. A picture that does not decode
-            raises images.Unreadable, handed to the loop below in the photo's turn."""
+            raises images.Unreadable, handed to the loop below in the photo's turn. Every answer carries the picture's
+            size from its header (images.picture_size), which its row records (photos.width, height)."""
             path = meta["path"]
             decoded = early.get(paths.key(path)) if begun["stale"] is not None else None
             if isinstance(decoded, Exception):
@@ -654,11 +656,11 @@ def index(ctx, directories, force_reembed: bool, reset: bool, skip_faces: bool, 
                 # Suggest) has another stamp: decoded below, its old vector never recorded as the new picture's.
                 picture = None
                 if face_processor and begun["examine"]:
-                    width, height = image_files.picture_size(path)
-                    reserve(read_ahead_bytes(width, height, None, face_processor))
+                    reserve(read_ahead_bytes(*decoded[3], None, face_processor))
                     picture = face_processor.picture(path)
                 return None, decoded[2], picture, {"stamp": decoded[0], "upright": None, "fingerprint": decoded[1],
-                                                   "took": bake_reading.Taken(), "same": True}
+                                                   "took": bake_reading.Taken(), "same": True,
+                                                   "picture_size": decoded[3]}
             width, height = image_files.picture_size(path)
             decodes = begun["vector"] is None or bake_reading.holds(begun["bake"])
             reserve(read_ahead_bytes(width, height, embeddings.clip if decodes else None, face_processor))
@@ -679,7 +681,8 @@ def index(ctx, directories, force_reembed: bool, reset: bool, skip_faces: bool, 
                 # no face picture but a never-examined photo's.
                 picture = face_processor.picture(path) if face_processor and begun["examine"] else None
                 return None, zeros, picture, {"stamp": stamp, "upright": None, "fingerprint": fingerprint,
-                                              "took": bake_reading.Taken(), "same": True}
+                                              "took": bake_reading.Taken(), "same": True,
+                                              "picture_size": (width, height)}
             picture = face_processor.picture(path) if face_processor and looks else None
             took = bake_reading.taken(begun["bake"], meta, fingerprint, picture, photo_key=photo_key, face_key=face_key)
             if begun["vector"] is None and took.vector is None and begun["clip"]:
@@ -689,7 +692,7 @@ def index(ctx, directories, force_reembed: bool, reset: bool, skip_faces: bool, 
             if begun["vector"] is not None or took.vector is not None or prepared is not None:
                 upright = None
             return prepared, zeros, picture, {"stamp": stamp, "upright": upright, "fingerprint": fingerprint,
-                                              "took": took, "same": False}
+                                              "took": took, "same": False, "picture_size": (width, height)}
 
         # The photos are read ahead and handed back in their order; the graphics card, the identity written into a
         # file and every write of the library stay on this thread, one photo after the other, as before.
@@ -760,6 +763,9 @@ def index(ctx, directories, force_reembed: bool, reset: bool, skip_faces: bool, 
                         embeddings.clip.load()
                         prepared = embeddings.prepared_from(decoded["stamp"], decoded["upright"])
                     emb, on_card, kind = embeddings.made(path, prepared), True, "made"
+                # The picture's size in its stored pixels, the frame its face boxes are in: recorded with its row
+                # (record_indexed), so a rule of the background asks no file.
+                meta["width"], meta["height"] = decoded["picture_size"]
                 if decoded["fingerprint"] is not None:
                     meta["fingerprint"] = (image_files.FINGERPRINT_KEY, decoded["fingerprint"])
                 else:
