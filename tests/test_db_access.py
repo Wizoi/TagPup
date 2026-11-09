@@ -40,7 +40,7 @@ BARE_IN_TESTS = {
 SQLITE_CONNECT = re.compile(r"\bsqlite3\.connect\s*\(")
 #: A transaction begun by hand: a string that is only BEGIN, with its kind. A trigger's body ("BEGIN DELETE ... END") is
 #: not one.
-BEGIN_BY_HAND = re.compile(r"""["']\s*BEGIN(\s+(DEFERRED|IMMEDIATE|EXCLUSIVE))?(\s+TRANSACTION)?\s*["']""", re.IGNORECASE)
+BEGIN_BY_HAND = re.compile(r"""["']\s*BEGIN(\s+(DEFERRED|IMMEDIATE|EXCLUSIVE))?(\s+TRANSACTION)?\s*[;"']""", re.IGNORECASE)
 
 
 def test_sources():
