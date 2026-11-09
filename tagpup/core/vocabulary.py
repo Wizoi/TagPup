@@ -1,5 +1,6 @@
 """The tag vocabulary: how a tag path is spelled and taken apart, and what a photo's
-metadata says -- its tags, the people it names, its captions.
+tags say -- which of its keywords are tags, the people they name. Which copy of a keyword, title or caption a photo's
+metadata is read from, and which text is its title, is tagpup.core.fields'.
 
 A tag is a path of segments -- Family/Immediate/Rowan Thackeray -- written with "/";
 "|" and "\\" are read as the same separator on the way in, as some tools write them. A
@@ -239,135 +240,18 @@ UNMATCHED = "Unmatched"
 NOT_A_PERSON = frozenset(name.lower() for name in (*BUCKETS.values(), UNMATCHED))
 
 
-# What a photo's metadata says. `meta` is the record tagpup.files.metadata reads: every
-# field under its ExifTool name ("XMP:Subject") and again bare ("Subject").
-
-#: A value a file holds twice, in XMP and in IPTC's older copy: (XMP's fields, IPTC's), each under both names a read
-#: records it by. XMP is the copy read when it holds the value, a text that is not blank; IPTC's only when it holds
-#: none (DECISIONS 2026-11-03, XMP IS THE COPY THE INDEX READS): a keyword or caption save may patch XMP alone and
-#: leave IPTC holding what it held before (tagpup.core.fields.XMP_ONLY). A title's copies (TITLE_COPIES) are
-#: XMP:Title and IPTC:ObjectName (tagpup.core.fields.title_fields), a caption's (DESCRIPTION_COPIES) the Description.
-#: A clip's title may be in its QuickTime Title (fields.CLIP_TITLE), which TagPup writes only to clear it with XMP's: read
-#: as XMP's copy when XMP holds none (a clip's title is its XMP:Title, else its QuickTime Title: DECISIONS 2026-11-07,
-#: item 3; 2026-11-08).
-#: ExifTool answers it beside XMP's, and the bare "Title" is whichever it answered last
-#: (tagpup.files.metadata.structured), so a copy is read by the first of its names that holds a value (_read_copy), the
-#: prefixed names first. A keyword is read by its group's name alone, XMP:Subject's or IPTC:Keywords': the bare
-#: "Subject" of a clip holding no XMP:Subject is its QuickTime Subject, a Microsoft Xtra entry that is not text on all
-#: 14 live clips holding one (a 32-byte value ExifTool answers as hex; no clip of the three libraries holds a text
-#: QuickTime keyword, counted 2026-11-07), and was read as a tag until the owner ruled it out (2026-11-07, #2662). Every
-#: row of the three libraries holding a bare keyword name holds its group's name beside it (counted 2026-11-07).
-KEYWORD_COPIES = (("XMP:Subject",), ("IPTC:Keywords",))
-TITLE_COPIES = (("XMP:Title", fields.CLIP_TITLE, "Title"), ("IPTC:ObjectName", "ObjectName"))
-DESCRIPTION_COPIES = (("XMP:Description", "Description"), ("IPTC:Caption-Abstract", "Caption-Abstract"))
-#: The title first, then the caption: the first a photo holds is its title as the page shows it (title_of). A photo
-#: with a Description and no Title shows the Description as its title (DECISIONS 2026-11-06, THE TITLE AND THE
-#: CAPTION ARE TWO VALUES: the first save moves it into the title, tagpup.services.tagging).
-CAPTION_COPIES = (TITLE_COPIES, DESCRIPTION_COPIES)
-
-#: Keywords, flat and hierarchical: every field a photo's tags may be read from. The hierarchy is XMP's alone.
-KEYWORD_FIELDS = KEYWORD_COPIES[0] + KEYWORD_COPIES[1]
-HIERARCHY_FIELDS = ("XMP:HierarchicalSubject", "HierarchicalSubject")
-
-#: Titles and captions, the title first: the first a photo holds (by CAPTION_COPIES) is the title shown.
-CAPTION_FIELDS = tuple(name for copies in CAPTION_COPIES for copy in copies for name in copy)
-
-
-def _held_caption_fields():
-    # fields: the one spelling of the fields a caption write sets
-    written = [name for field in fields.caption_fields("") for name in (field, field.split(":", 1)[-1])]
-    return CAPTION_FIELDS + tuple(name for name in dict.fromkeys(written) if name not in CAPTION_FIELDS)
-
-
-#: Every field a photo's caption is held in: those read as its captions, and the ones a
-#: caption write sets as well (tagpup.core.fields.caption_fields: EXIF's too) -- where a
-#: caption another program wrote may be all the file holds. Asked when a caption is
-#: being set, to tell one the file holds already from a new one.
-HELD_CAPTION_FIELDS = _held_caption_fields()
-
-
-def trimmed(value):
-    """A field's value as the reader keeps it: text, without the blanks around it."""
-    return str(value).strip()
-
-
-def _values(meta, fields):
-    """Every value these fields hold, trimmed, in field order; empty ones left out."""
-    found = []
-    for key in fields:
-        val = meta.get(key)
-        if val:
-            if isinstance(val, list):
-                found.extend(t for t in (trimmed(v) for v in val if v) if t)
-            elif trimmed(val):
-                found.append(trimmed(val))
-    return found
-
-
-def _read_copy(meta, copies):
-    """The values of one value held twice (KEYWORD_COPIES, a pair of CAPTION_COPIES): XMP's when it holds one, else
-    IPTC's, each read by the first of its names that holds a value (a photo's bare name holds what its prefixed one
-    does; a clip's bare "Title" may be its QuickTime copy, read only when XMP holds none). A field present but blank
-    holds none."""
-    for names in copies:
-        for name in names:
-            found = _values(meta, (name,))
-            if found:
-                return found
-    return []
-
-
 def extract_tags(meta):
     """A photo's tags: every keyword once, in order.
 
     A flat keyword that is only a level of a hierarchical one on the same photo
     ("Family" beside "Family/Immediate/Cora Ingersoll") is left out: it is the path
     written again in pieces, not a tag of its own. The flat keywords are XMP's when it holds any, IPTC's only
-    when it holds none (KEYWORD_COPIES): a keyword removed from XMP alone stays removed, and IPTC's 64-byte cut of a
-    keyword XMP holds whole (docs/findings.md, #278) is never read beside it.
+    when it holds none (fields.keywords_held, by fields.KEYWORD_COPIES): a keyword removed from XMP alone stays
+    removed, and IPTC's 64-byte cut of a keyword XMP holds whole (docs/findings.md, #278) is never read beside it.
     """
-    held = _read_copy(meta, KEYWORD_COPIES) + _values(meta, HIERARCHY_FIELDS)
-    tags = list(dict.fromkeys(t for t in held if t))
+    tags = list(dict.fromkeys(t for t in fields.keywords_held(meta) if t))
     levels = {part for tag in tags if "/" in tag for part in segments(tag)}
     return [tag for tag in tags if "/" in tag or tag not in levels]
-
-
-def extract_captions(meta):
-    """A photo's title and caption -- each distinct text once, in order: the index's `captions`, which a search reads
-    every word of.
-
-    The reader records every field twice, prefixed and bare, and the same text is
-    usually written to several fields, so reading them all listed each caption two or
-    more times: 99.6% of indexed rows carried a duplicate. The first is the photo's
-    title as everything shows it (title_of): XMP's Title when it holds one, else IPTC's
-    ObjectName, else the description, XMP's, else IPTC's Caption-Abstract (CAPTION_COPIES).
-    """
-    return list(dict.fromkeys(c for copies in CAPTION_COPIES for c in _read_copy(meta, copies) if c))
-
-
-def title_of(meta):
-    """A photo's title as the page shows it, the index orders by and Smart Rename names it by: the first of its
-    captions (extract_captions), trimmed; "" for none. The one rule of which text is the title."""
-    found = extract_captions(meta)
-    return found[0] if found else ""
-
-
-def own_title(meta):
-    """The title the photo holds of its own (TITLE_COPIES: XMP:Title, else a clip's QuickTime Title, else IPTC:ObjectName),
-    trimmed; "" for none, a photo showing its description as its title among them."""
-    found = _read_copy(meta, TITLE_COPIES)
-    return found[0] if found else ""
-
-
-def holds_title(meta):
-    """Does the photo hold a title of its own (TITLE_COPIES), not only a description shown as one?"""
-    return bool(own_title(meta))
-
-
-def captions_held(meta):
-    """Every caption a file holds, in any field a caption is held in (HELD_CAPTION_FIELDS),
-    each distinct text once, trimmed as the reader trims it."""
-    return list(dict.fromkeys(c for c in _values(meta, HELD_CAPTION_FIELDS) if c))
 
 
 class PeopleVocabulary:

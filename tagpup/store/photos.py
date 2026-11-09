@@ -265,8 +265,8 @@ def follow_fields(conn, photo_path, written, stat=None, before=None, batch=None,
                 else:
                     # In the scan's shape (metadata.clean_metadata_value): one text is a text, a list field's too.
                     raw[name] = list(texts) if len(texts) > 1 else texts[0]
-        keywords = keywords or key in vocabulary.KEYWORD_FIELDS + vocabulary.HIERARCHY_FIELDS
-        captions = captions or key in vocabulary.CAPTION_FIELDS
+        keywords = keywords or key in fields.KEYWORD_FIELDS + fields.HIERARCHY_FIELDS
+        captions = captions or key in fields.CAPTION_FIELDS
         if key in fields.DOCUMENT_ID_KEYS:
             identity = (texts[0] if texts else None,)
     held = fields.read_document_id(whole) if whole is not None else None
@@ -279,7 +279,7 @@ def follow_fields(conn, photo_path, written, stat=None, before=None, batch=None,
         values.append(json.dumps(vocabulary.extract_tags(raw)))
     if captions:
         columns.append("captions")
-        values.append(json.dumps(vocabulary.extract_captions(raw)))
+        values.append(json.dumps(fields.extract_captions(raw)))
     if identity is not None:
         columns.append("document_id")
         values.append(identity[0])

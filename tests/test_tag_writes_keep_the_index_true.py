@@ -12,7 +12,7 @@ Three ways it did not:
 * TagTuner's bulk writers wrote the files and never told the index at all.
 
 And the copy it reads: XMP's when the file holds keywords or a caption there, IPTC's only when XMP holds none
-(DECISIONS 2026-11-03, XMP IS THE COPY THE INDEX READS; vocabulary.KEYWORD_COPIES, CAPTION_COPIES), on real JPEGs
+(DECISIONS 2026-11-03, XMP IS THE COPY THE INDEX READS; fields.KEYWORD_COPIES, CAPTION_COPIES), on real JPEGs
 written by the real ExifTool (XmpIsTheCopyRead). Reading the union of both copies fails
 test_a_keyword_left_only_in_iptc_is_no_tag_and_a_rename_does_not_bring_it_back and
 test_the_caption_shown_is_xmps_and_a_save_from_it_is_not_refused; preferring an XMP packet over IPTC whatever it holds

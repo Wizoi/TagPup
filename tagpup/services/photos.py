@@ -38,10 +38,10 @@ def page_record(path, meta, mtime=0.0, size=0):
         "filename": os.path.basename(path),
         "tags": meta.get("tags", []),
         "people": meta.get("people", []),
-        # The title by the one rule the save compares by (vocabulary.title_of over what the file holds), never the
+        # The title by the one rule the save compares by (fields.title_of over what the file holds), never the
         # stored `captions`, whose order is the indexer's of the day: a row stored before the title came first showed
         # its Description while the save read its Title, and every save of it was refused as changed on disk (#2582).
-        "title": vocabulary.title_of(raw_meta),
+        "title": fields.title_of(raw_meta),
         "mtime": mtime,
         "size": size,
         "year": dates.shown_year(None if year is None else str(year)),

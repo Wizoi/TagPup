@@ -101,7 +101,7 @@ before it plans, so only those three give one back, however the bake ends; an in
 ## The copy the index reads, and a write that leaves copies stale (M4, merge 4a)
 
 A photo's tags and captions are read from XMP when it holds them, IPTC's copy only when XMP holds none
-(`vocabulary.KEYWORD_COPIES`, `CAPTION_COPIES`; DECISIONS 2026-11-03, XMP IS THE COPY THE INDEX READS). Each value is
+(`fields.KEYWORD_COPIES`, `CAPTION_COPIES`; DECISIONS 2026-11-03, XMP IS THE COPY THE INDEX READS). Each value is
 read from its own pair (Subject or Keywords, Description or Caption-Abstract, Title or ObjectName), and a field present
 but blank holds none: 12,469 photo_index rows hold an empty XMP description beside an IPTC caption, 12,473 an XMP title
 and only an IPTC caption, 151 IPTC keywords and no XMP ones (4 of them with an XMP packet) (counted 2026-11-03). A write
@@ -113,12 +113,12 @@ A photo indexed or saved is derived by this rule (the indexer, `follow_fields`).
 383 rows; kr-track and renton_parkrun none; counted 2026-11-03) were derived again from their own raw_metadata by a
 one-off, deleted once 0 rows were apart in the three libraries (#2734); photo_index's journal holds its changes,
 "rederive tags and captions", undone from History as any change of rows (`journal.RETIRED`). The page's title is
-`vocabulary.title_of` over the row's raw_metadata, the rule the save compares by, whatever order the row stores (#2582).
+`fields.title_of` over the row's raw_metadata, the rule the save compares by, whatever order the row stores (#2582).
 
 A photo's title and its caption are two values (DECISIONS 2026-11-06). The title is XMP:Title, else IPTC:ObjectName
-(`vocabulary.TITLE_COPIES`, written by `fields.title_fields`: the photo panel's save); the caption is the Description,
+(`fields.TITLE_COPIES`, written by `fields.title_fields`: the photo panel's save); the caption is the Description,
 XMP's else IPTC's Caption-Abstract (`DESCRIPTION_COPIES`; EXIF:ImageDescription and XPComment are written copies, never
-read), which no page writes. The title shown is `vocabulary.title_of`: the title, else the Description, so the index's
+read), which no page writes. The title shown is `fields.title_of`: the title, else the Description, so the index's
 `captions` hold the title first. A save of a photo with no title, its Description shown as the title, moves it: the
 Title gets the title saved and every caption field holding the text shown is cleared in the same write
 (`tagging._caption_moved`), whether the title saved is that text, another, or none: one rule, so a cleared title stays

@@ -80,7 +80,7 @@ class ATitleAndACaption(S.Fresh):
 
     def test_a_photo_with_a_title_keeps_a_description_equal_to_it_when_its_title_is_saved_or_changed(self):
         """#2596: a photo with a title of its own keeps its Description, even one equal to the title (25 photo_index and
-        51 kr-track photos, counted 2026-11-08): the save is not the sweep. With the guard (vocabulary.holds_title in
+        51 kr-track photos, counted 2026-11-08): the save is not the sweep. With the guard (fields.holds_title in
         tagging._caption_moved) taken out, the Description was cleared as if it were shown as the title."""
         caption = {field: "Pier at noon" for field in CAPTION_FIELDS}
         titled = {"XMP:Title": "Pier at noon", "IPTC:ObjectName": "Pier at noon"}

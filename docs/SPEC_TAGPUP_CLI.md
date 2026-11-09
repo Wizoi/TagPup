@@ -72,7 +72,7 @@ The system reads and writes metadata using the following tags:
 ### Read Fields
 - **Keywords / Tags**: `IPTC:Keywords`, `XMP:Subject`, `XMP:HierarchicalSubject`
 - **People / Faces**: the leaf of a hierarchical tag under a root the library's tree marks as holding faces (e.g., `John Doe` from `Family/Immediate/John Doe`). `XMP:PersonInImage` and `XMP:RegionName` are not read at all (owner, 2026-10-15).
-- **Titles**: `XMP:Title`, `IPTC:ObjectName` (the title shown is the Title, else the Description: `vocabulary.title_of`)
+- **Titles**: `XMP:Title`, `IPTC:ObjectName` (the title shown is the Title, else the Description: `fields.title_of`)
 - **Captions / Descriptions**: `IPTC:Caption-Abstract`, `XMP:Description`
 - **Title / Name**: `XMP:Title`, `IPTC:ObjectName`
 - **Date Taken**: `EXIF:DateTimeOriginal`, `XMP:DateTimeOriginal`, `EXIF:CreateDate`
