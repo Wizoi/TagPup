@@ -462,6 +462,20 @@ class OnAThreadInTheServer(CutOff):
         self.assertTrue(any("could not be settled now" in line for line in said.output), said.output)
         self.assert_put_off_with_its_photos_refused(["done"] * 4 + ["planned"] * 8)
 
+    def test_a_file_away_on_the_thread_puts_the_change_off_with_its_photo_still_refused(self):
+        """The last photo's share does not answer while the thread settles: the eleven others are settled, the change is
+        left. Put off like a cancelled one, its photo still refused: freed, the next save's own settle took the change up in
+        its request (the wait the thread is for), or, with a batch running, wrote the photo ahead of it, a conflict at the
+        next start. Fails on the code before: the save took it up and wrote the photo."""
+        real, away = file_changes.file_states, os.path.normcase(self.photos[11])
+
+        def states(photo_paths):
+            return [(path, file_changes.AWAY if os.path.normcase(path) == away else state)
+                    for path, state in real(photo_paths)]
+        with mock.patch.object(file_changes, "file_states", side_effect=states):
+            self.on_the_thread()
+        self.assert_put_off_with_its_photos_refused(["done"] * 11 + ["planned"])
+
     def test_a_line_that_is_full_puts_the_change_off_with_its_photos_still_refused(self):
         with mock.patch.object(batches, "MOST_WAITING", -1), self.assertLogs(file_changes.logger, "ERROR") as said:
             self.on_the_thread()

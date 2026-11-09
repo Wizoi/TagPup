@@ -108,7 +108,9 @@ def run(db_path, apply, out=say):
     except KeyboardInterrupt as stopped:
         change = getattr(stopped, "change", None)
         if change is None and progress.change is None:
-            out("%s: stopped before anything was written." % name)
+            # Opening the library first finishes a change an earlier run left half done (settle_once), which writes files.
+            out("%s: stopped before this run planned or wrote anything. It first finishes a change an earlier run left "
+                "half done, if there is one: one it was finishing as it stopped is finished by the next run." % name)
         elif change is None:
             # A second Ctrl+C, in the read back: how far it had been written is the journal's, not claimed away.
             written = progress.written()
