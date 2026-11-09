@@ -36,6 +36,7 @@ THIS_PC_ONLY = (
     ("/api/library", _VIEWS),
     ("/api/photo-thumb", _VIEWS),
     ("/api/video-file", _VIEWS),
+    ("/api/clip", _VIEWS),
     ("/api/name-faces", "Naming faces works on the whole library and answers this PC only"),
     ("/activity", _ACTIVITY),
     ("/api/activity", _ACTIVITY),

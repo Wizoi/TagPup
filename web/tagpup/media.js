@@ -12,8 +12,13 @@
 //  * the same video shown again (a refresh of the panel, a save) keeps playing where it is;
 //  * a video the browser cannot play says why on the status line: its file is gone, the share or the server is not
 //    answering, the server refused it in a sentence of its own (409: its file is being deleted, from this page or
-//    another), or its format is not one this browser plays (an HEVC clip without the HEVC extension). The browser
-//    gives the same error for a refused request as for a format it cannot play, so the server is asked which it was;
+//    another), or what it needs to play, the server's sentence (GET /api/clip/convert-plan, tagpup.files.convertible:
+//    an older format, a picture or a sound no browser plays, an HEVC clip without the HEVC extension; FORMAT when the
+//    server cannot say). The browser gives the same error for a refused request as for a format it cannot play, so the
+//    server is asked which it was;
+//  * a video whose picture the browser does not decode and says nothing (Chrome plays the sound of an MPEG-4 Part 2
+//    clip with no picture and no error: its videoWidth is 0 once its first data is loaded) is asked about the same way;
+//  * an answer about a video already left says nothing: every sentence is said only while its video is the one shown;
 //  * which files a delete is working on is the server's to know (tagpup.files.recycle_bin.being_deleted), never this
 //    page's guess: a clip is always asked for, and one that failed is asked for again when it is shown again.
 // Switching library is another page: the video goes with it. A video's title, people and keywords are edited as a
@@ -58,6 +63,7 @@ export function showMedia(photo, pictureUrl) {
     const route = videoRoute(photo);
     if (mainVideo.dataset.route === route && !mainVideo.error) return;   // the same video again: it plays on (one that failed is asked again)
     mainVideo.dataset.route = route;
+    mainVideo.dataset.clip = String(photo.id);
     mainVideo.src = api.url(route);
 }
 
@@ -68,6 +74,7 @@ export function stopVideo() {
     mainVideo.pause();
     mainVideo.removeAttribute('src');
     delete mainVideo.dataset.route;
+    delete mainVideo.dataset.clip;
     mainVideo.load();
 }
 
@@ -77,17 +84,35 @@ const GONE = 'This video’s file is not there.';
 const NOT_INDEXED = 'This video has not been indexed yet: it plays here once its folder is indexed.';
 const AWAY = 'This video could not be read just now: the share or the server is not answering. Open it again in a moment.';
 
-/** The video failed: ask the server whether it refused (gone, away, in a sentence of its own) before blaming the format, and say which. */
+/** `sentence` on the status line, while the video at `route` is still the one shown. */
+function sayOf(route, sentence) {
+    if (mainVideo.dataset.route === route) setStatus('error', sentence, { transient: false });
+}
+
+/**
+ * Ask the server what clip `clip`, shown from `route`, needs before this browser plays it, and say its sentence (or its
+ * refusal's: a share away, ffprobe unable to read it); `otherwise` when no sentence comes back.
+ */
+function sayWhatItNeeds(route, clip, otherwise) {
+    if (mainVideo.dataset.route !== route) return;
+    api.fetch(`/api/clip/convert-plan?id=${encodeURIComponent(clip)}`).then(
+        res => res.json().then(
+            body => sayOf(route, (body && (res.ok ? body.sentence : body.error)) || otherwise),
+            () => sayOf(route, otherwise)),
+        () => sayOf(route, otherwise),
+    );
+}
+
+/** The video failed: ask the server whether it refused (gone, away, in a sentence of its own) before asking what it needs to play, and say which. */
 function videoFailed() {
     const route = mainVideo.dataset.route;
     if (!route) return;                                  // stopped already: an error of the stream let go
+    const clip = mainVideo.dataset.clip;
     const code = mainVideo.error ? mainVideo.error.code : 0;
-    const say = (sentence) => {
-        if (mainVideo.dataset.route === route) setStatus('error', sentence, { transient: false });
-    };
+    const say = (sentence) => sayOf(route, sentence);
     api.fetch(route, { headers: { Range: 'bytes=0-0' } }).then(
         res => {
-            if (res.ok) return say(code === 4 ? FORMAT : UNREAD);
+            if (res.ok) return sayWhatItNeeds(route, clip, code === 4 ? FORMAT : UNREAD);
             if (res.status === 404) return say(GONE);
             if (res.status === 409) return res.json().then(body => say(body.error || AWAY), () => say(AWAY));
             return say(AWAY);
@@ -96,10 +121,18 @@ function videoFailed() {
     );
 }
 
+/** Its first data is loaded and there is no picture, with no error: a picture this browser does not decode. */
+function pictureMissing() {
+    const route = mainVideo.dataset.route;
+    if (!route || mainVideo.error || mainVideo.videoWidth > 0) return;
+    sayWhatItNeeds(route, mainVideo.dataset.clip, FORMAT);
+}
+
 /** The player's wiring: stopped whenever the panel is hidden, and a failure said on the status line. */
 export function wireMedia() {
     new MutationObserver(() => {
         if (panelContent.classList.contains('hidden')) stopVideo();
     }).observe(panelContent, { attributes: true, attributeFilter: ['class'] });
     mainVideo.addEventListener('error', videoFailed);
+    mainVideo.addEventListener('loadeddata', pictureMissing);
 }

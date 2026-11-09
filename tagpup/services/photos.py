@@ -6,7 +6,7 @@ import os
 
 from tagpup.core import dates, fields, paths, photo_meta, renaming, validation, vocabulary
 from tagpup.core.result import Conflict, NotFound, Refused, Result, Unavailable
-from tagpup.files import field_values, images, metadata, names, recycle_bin, shares
+from tagpup.files import convertible, field_values, images, metadata, names, recycle_bin, shares, video_frames
 from tagpup.services import file_changes, file_only, libraries, rotation, thumbnails
 from tagpup.services import roots as roots_service
 from tagpup.store import db, faces, generations, photos, taxonomy
@@ -312,6 +312,28 @@ def video(library, photo_id):
     if stamp is None:
         raise NotFound("The file of video %d is not there." % photo_id)
     return Video(path, stamp[1], stamp[0], images.content_type(path))
+
+
+#: Seconds ffprobe may take to say what a clip holds (clip_plan): its header, read once; past it, killed with its tree.
+PLAN_SECONDS = 20
+
+
+def clip_plan(library, photo_id, find_ffmpeg):
+    """What the clip `photo_id` of `library` needs before a browser plays it, as /api/clip/convert-plan answers it:
+    {"action", "sentence"}, tagpup.files.convertible's plan of what ffprobe finds in it (video_frames.streams, one run
+    within PLAN_SECONDS; `find_ffmpeg` is tagpup.config.locate_ffmpeg). Raises as `video` does (NotFound, Conflict,
+    Unavailable, paths.RootsError); Unavailable with ffprobe's sentence when it could not be read just now (its share
+    away, the deadline passed, ffmpeg gone); Refused with it when ffprobe cannot read the file as a video. Reads the
+    file's header; writes nothing."""
+    found = video(library, photo_id)
+    tools = find_ffmpeg()
+    if tools.problem:
+        raise Unavailable(tools.problem)
+    held = video_frames.streams(tools, found.path, PLAN_SECONDS)
+    if held.problem:
+        raise (Refused if held.whose == video_frames.THE_FILE else Unavailable)(held.problem)
+    plan = convertible.plan_for(os.path.splitext(found.path)[1], held.video, held.audio)
+    return {"action": plan.action, "sentence": plan.reason}
 
 
 def video_bytes(video, start, length):

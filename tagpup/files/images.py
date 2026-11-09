@@ -35,11 +35,15 @@ PHOTO_TYPES = {
 #: The extensions of PHOTO_TYPES, lower case with the dot.
 PHOTO_EXTENSIONS = frozenset(PHOTO_TYPES)
 
-#: The Content-Type a video's own bytes go out under (/api/video-file), by its extension: the three the libraries' folders
-#: hold (2,184 .mov/.mp4/.m4v files, tagpup.files.containers). Not servable as a photo: /api/photo-file never sends one.
-#: What the index keeps as a row of kind 'video' (kind_of); a clip in an older format (.wmv, .mpg, .avi, .mod) is not
-#: indexed until it is converted to one of these (DECISIONS, "VIDEO: THE OWNERS' PLANS AND THE OWNER'S ANSWERS").
-VIDEO_TYPES = {".mp4": "video/mp4", ".m4v": "video/mp4", ".mov": "video/quicktime"}
+#: The Content-Type a video's own bytes go out under (/api/video-file), by its extension. Not servable as a photo:
+#: /api/photo-file never sends one. What the index keeps as a row of kind 'video' (kind_of): the MOV/MP4/M4V the
+#: libraries' folders hold (2,184 files, tagpup.files.containers), and the older formats (.wmv, .mpg, .mpeg, .avi, .mod:
+#: 629 files), listed with the play mark so the owner sees them (DECISIONS 2026-11-09). An older format is never written
+#: (containers.read finds no MOV/MP4 boxes in it: images.CLIP_NOT_PATCHED) and no browser plays it: what it needs to play
+#: is tagpup.files.convertible's to say.
+VIDEO_TYPES = {".mp4": "video/mp4", ".m4v": "video/mp4", ".mov": "video/quicktime",
+               ".wmv": "video/x-ms-wmv", ".mpg": "video/mpeg", ".mpeg": "video/mpeg", ".avi": "video/x-msvideo",
+               ".mod": "video/mpeg"}
 
 #: The largest side of a face crop, and the JPEG quality it is kept at. Face detection
 #: cut and encoded its own crops beside face_crop's (docs/findings.md, #74).

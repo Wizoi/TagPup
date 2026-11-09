@@ -8,6 +8,7 @@ reads, not a read of the whole file.
     tools = tagpup.config.locate_ffmpeg()          # which ffmpeg the machine has (found: a prerequisite)
     found = video_frames.frames(tools, path, 5)    # Frames(pictures=(jpeg bytes, ...), problem=None)
     found = video_frames.poster(tools, path)       # one picture, from the middle of the video
+    found = video_frames.streams(tools, path)      # Streams(video="h264", audio="aac", problem=None): what it holds
 
 A frame is JPEG bytes, upright (ffmpeg applies a video's rotation matrix before any filter of ours: it autorotates by
 default), its pixels made square (a DV or MPEG-2 video stores 720 wide for 4:3 and 16:9 alike), its longer side at most
@@ -26,6 +27,9 @@ index gives the frames before the cut and no problem: fewer pictures than asked.
 starts processes of its own. A problem names no file: a file's name can hold a person's name. ffmpeg itself is found:
 it is a prerequisite of every process that asks (tagpup.config.ffmpeg_problem), and the one caller, thumbs.poster, is
 reached only through a check that it is there (tagpup.services.thumbnails).
+
+`streams` is the one ffprobe read of what a clip holds, its picture's and its sound's codec names (what a browser needs
+to play it is tagpup.files.convertible's to say): one ffprobe run, bounded as the frames are, failing as they do.
 """
 import json
 import logging
@@ -78,21 +82,40 @@ class Frames(NamedTuple):
     whose: Optional[str] = None
 
 
+class Streams(NamedTuple):
+    """What a video holds, by ffprobe's codec names: its first picture stream's (`video`; a cover picture is not one)
+    and its first sound stream's (`audio`, None when it has none); when they could not be read, None and None and why
+    (`problem`) and whose it is (`whose`), as Frames says them."""
+    video: Optional[str]
+    audio: Optional[str]
+    problem: Optional[str]
+    whose: Optional[str] = None
+
+
 def _refused(problem, whose=THE_MOMENT):
     return Frames((), problem, whose)
+
+
+def _looked(path):
+    """(sentence, whose) when the file at `path` cannot be read just now or is not there, by one bounded look
+    (shares.stamp_of: a share asleep holds no ffmpeg); None when it is there to read."""
+    stamp = shares.stamp_of(path)
+    if stamp is None:
+        return NOT_THERE, THE_MOMENT
+    if stamp is shares.UNANSWERED:
+        return SHARE_AWAY, THE_MOMENT
+    if stamp is shares.CANNOT_READ:
+        return CANNOT_READ, THE_MOMENT
+    return None
 
 
 def frames(tools, path, count, max_side=MAX_SIDE, seconds=DEFAULT_SECONDS):
     """`count` frames of the video at `path`, equally spaced (see the module); `tools` is what
     tagpup.config.locate_ffmpeg answered, with no problem."""
     count = max(1, int(count))
-    stamp = shares.stamp_of(path)
-    if stamp is None:
-        return _refused(NOT_THERE)
-    if stamp is shares.UNANSWERED:
-        return _refused(SHARE_AWAY)
-    if stamp is shares.CANNOT_READ:
-        return _refused(CANNOT_READ)
+    problem = _looked(path)
+    if problem:
+        return _refused(*problem)
     deadline = time.monotonic() + seconds
     span, problem = _span(tools.ffprobe, path, deadline, seconds)
     if problem:
@@ -113,6 +136,33 @@ def frames(tools, path, count, max_side=MAX_SIDE, seconds=DEFAULT_SECONDS):
 def poster(tools, path, max_side=MAX_SIDE, seconds=DEFAULT_SECONDS):
     """One frame of the video at `path`, from its middle: Frames with one picture, or the problem."""
     return frames(tools, path, 1, max_side, seconds)
+
+
+def streams(tools, path, seconds=DEFAULT_SECONDS):
+    """Streams of the video at `path`: its picture's and its sound's codec names, by one ffprobe run within `seconds`;
+    `tools` is what tagpup.config.locate_ffmpeg answered, with no problem. A file with no picture stream is NOT_A_VIDEO,
+    the file's."""
+    problem = _looked(path)
+    if problem:
+        return Streams(None, None, *problem)
+    done, problem = _run([tools.ffprobe, "-v", "error", "-show_entries",
+                          "stream=codec_type,codec_name:stream_disposition=attached_pic", "-of", "json", path],
+                         time.monotonic() + seconds, seconds)
+    if problem:
+        return Streams(None, None, *problem)
+    code, out, err = done
+    try:
+        said = json.loads(out.decode("utf-8", "replace")) if code == 0 else {}
+    except ValueError:
+        said = {}
+    found = said.get("streams") or []
+    picture = [s.get("codec_name") for s in found
+               if s.get("codec_type") == "video" and not (s.get("disposition") or {}).get("attached_pic")]
+    if not picture or not picture[0]:
+        _log("ffprobe", err, path)
+        return Streams(None, None, NOT_A_VIDEO, THE_FILE)
+    sound = [s.get("codec_name") for s in found if s.get("codec_type") == "audio"]
+    return Streams(picture[0], sound[0] if sound else None, None)
 
 
 def _rate(said):
