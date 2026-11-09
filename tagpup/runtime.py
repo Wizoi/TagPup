@@ -263,13 +263,15 @@ def _folder_watcher_task(runtime):
 def folder_watcher(libraries, sync_with, **timings):
     """The folder watcher (tagpup.jobs.watching.Watcher) over `libraries()`, each folder synced by `sync_with(library,
     folder)` -- a Runtime's sync, applied -- and a whole library's sync claimed as a run of the daily
-    `sync` job (recurring.sync_whole), so the watcher and the recurring runner never walk one library at once (#2102).
+    `sync` job (recurring.sync_whole), so the watcher and the recurring runner never walk one library at once (#2102);
+    a folder's sync takes the library's walk (recurring.sync_folder), and waits for a run of the job to end (#2755).
     The catch-up at start is skipped for a library in step within CATCH_UP_SKIP, and a folder whose notifications were
     TagPup's own writes is not synced (sync.followed). `timings`: the Watcher's own (a test's shorter ones, its observer
     and clock)."""
     return watching.Watcher(libraries, watch_folders, sync_with, images.is_media,
                             recent=lambda library: sync_service.synced_whole_within(library, watching.CATCH_UP_SKIP),
-                            whole=recurring.sync_whole, followed=sync_service.followed, **timings)
+                            whole=recurring.sync_whole, followed=sync_service.followed,
+                            one_folder=recurring.sync_folder, **timings)
 
 
 def watch_folders(library):

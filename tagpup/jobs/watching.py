@@ -52,6 +52,9 @@ that ended done started since `noted`, when it was first wanted (time.time()); r
 the library, it is asked again RECHECK later, still wanted since then. A folder back from a share that did not answer
 is wanted since the share was first found not answering, so the catch-up that waited for it (sync.FOLDER_WAIT) and
 looked at every folder covers it; one back from gone is wanted from now, since a sync that found it gone ended done.
+A folder's sync is handed to `one_folder(library, call)`, which the server wires to recurring.sync_folder: it is not run
+while a run of the `sync` job walks the library, and is asked again RECHECK later, with what its notifications named
+(#2755); a run of the job asked while a folder's sync walks is told "running" in its turn.
 
 A watch asks Windows only for what can change a photo's row (NOTIFY_FILTER): a name made, removed or renamed, and a
 file's last write -- the row's stamp is (mtime, size), and a file's size never changes without its last write. Watchdog's
@@ -248,11 +251,14 @@ class Watcher:
 
     def __init__(self, libraries, folders, sync, concerns, debounce=DEBOUNCE, recheck=RECHECK, tick=TICK,
                  clock=time.monotonic, observer=make_observer, max_watches=MAX_WATCHES, recent=None, whole=None,
-                 followed=None):
+                 followed=None, one_folder=None):
         self._libraries, self._folders, self._sync, self._concerns = libraries, folders, sync, concerns
         self._followed = followed or (lambda library, photos: False)
         #: whole(library, call, noted) -> an Outcome: the whole library's sync, claimed (None: call() at once).
         self._whole = whole
+        #: one_folder(library, call) -> call()'s Result, or None when it was not called: a folder's sync, taking the
+        #: library's walk (recurring.sync_folder; None: call() at once).
+        self._one_folder = one_folder
         #: recent(library): was it synced whole lately? The catch-up at start is skipped
         #: for one that was -- a crash restart or an update need not walk it again.
         self._recent = recent or (lambda library: False)
@@ -525,7 +531,7 @@ class Watcher:
                         continue
                     if folder is not None and named and self._own(library, folder, named):
                         continue
-                    self._run(library, folder, noted)
+                    self._run(library, folder, noted, named)
                 finally:
                     self._decided()
 
@@ -549,7 +555,7 @@ class Watcher:
         logger.info("%s answers again; looking at the folders on it now.", share)
         self._look_soon.set()
 
-    def _run(self, library, folder, noted=None):
+    def _run(self, library, folder, noted=None, named=None):
         with self._lock:
             self._syncing += 1
             at = {"folder": None}
@@ -564,6 +570,12 @@ class Watcher:
                     self._not_run(library, outcome.why, noted)
                     return
                 result = outcome.result
+            elif self._one_folder is not None:
+                result = self._one_folder(library, lambda: self._synced(library, folder, at))
+                if result is None:
+                    ran = False
+                    self._folder_later(library, folder, named)
+                    return
             else:
                 # What it found, changed and removed, and how it ended, is the sync's own closing line
                 # (tagpup.services.sync._said), under its run tag: the watcher writes no second one.
@@ -586,6 +598,23 @@ class Watcher:
         """The sync of `folder` (None: the whole library), the folder its walk is at kept in `at` meanwhile (status)."""
         with sync_service.walking_at_into(at):
             return self._sync(library, folder)
+
+    def _folder_later(self, library, folder, named):
+        """The sync of `folder` was not run: a run of the `sync` job walks `library` (one_folder). It is wanted again
+        RECHECK later, what its notifications `named` kept, merged with what was noted of it meanwhile; a whole sync that
+        waits is wanted since now, as a notification makes it (notice)."""
+        logger.info("%s is being synced whole by another run; syncing a folder of it in %d s.", library.name, self.recheck)
+        at = self._clock() + self.recheck - self.debounce
+        key = paths.key(folder)
+        with self._lock:
+            pending = self._pending_for(library)
+            held = pending["folders"].get(key)
+            if held is None:
+                pending["folders"][key] = [paths.stored(folder), at, named]
+            else:
+                held[1], held[2] = max(held[1], at), _named(held[2], named, False)
+            if pending["noted"] is not None:
+                pending["noted"] = max(pending["noted"], time.time())
 
     def _not_run(self, library, why, noted):
         """The whole sync of `library` was not run, `why` (recurring.Outcome.why): "not due", a run since it was wanted

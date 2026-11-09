@@ -31,7 +31,9 @@ runs none, unless a test asks (tagpup.runtime.runs_recurring_jobs).
 
 The folder watcher's sync of a whole library is a run of the `sync` job too (sync_whole), claimed
 and ended as this runner's are (run_claimed): one walk of a library at a time, whichever of the two
-wants it (#2102), and a whole sync by either counts as the daily one.
+wants it (#2102), and a whole sync by either counts as the daily one. Its sync of one folder (sync_folder) records no
+run; it and a run of the `sync` job take the library's walk in this process (walk), so neither starts while the other
+walks: the one that asks second is told "running" and asked again later (#2755).
 """
 import contextlib
 import logging
@@ -268,13 +270,55 @@ class Outcome:
         return self.run_id is not None
 
 
+#: {library key: Lock}: the walk of each library in this process, held by a run of the `sync` job and by the folder
+#: watcher's sync of one folder (walk). Between processes the claim's row is what keeps a run of the job one at a time.
+_walks = {}
+_walks_guard = threading.Lock()
+
+
+@contextlib.contextmanager
+def walk(library):
+    """True while this thread holds `library`'s walk, let go of as the block ends, an exception or a stop included;
+    False, at once and nothing held, while another thread holds it: no thread waits on a walk, which can take an hour
+    over a share. One walk of a library at a time in this process: a run of the `sync` job (run_claimed) and the
+    folder watcher's sync of one folder (sync_folder), #2755. Two libraries holding one folder have a walk each."""
+    with _walks_guard:
+        held = _walks.setdefault(library.key, threading.Lock())
+    if not held.acquire(blocking=False):
+        yield False
+        return
+    try:
+        yield True
+    finally:
+        held.release()
+
+
+def sync_folder(library, call):
+    """The folder watcher's sync of one folder of `library`: `call()`, its Result, while it holds the library's walk; None,
+    not called, while a run of the `sync` job walks the library (the watcher asks again later, Watcher._folder_later). It
+    records no run: a folder's sync is recorded by the sync itself, when worth it (tagpup.services.sync.worth_recording)."""
+    with walk(library) as turn:
+        return call() if turn else None
+
+
 def run_claimed(job, where, run_for, call, clock=time.time, due=None, started=None):
     """Run `job` once for `run_for` (a library's name; None for a job not run per library), its run recorded in the
     library `where` (job_runs.run, which claims and ends it): refused while a live process holds a run of it, or when
     `due(last, now)`, asked with the last run that ended, says no; else `call(now)`, which returns the Result, and the
     run ended done, or failed when the call raised, its Result is not ok, or `job.failed` says why it did not do its
     work. `started(outcome, now)`, a context manager, is entered once the run is claimed and held while it runs. An
-    Outcome. The runner's (Runner.run_job) and the folder watcher's sync of a whole library (sync_whole)."""
+    Outcome. The runner's (Runner.run_job) and the folder watcher's sync of a whole library (sync_whole). A run of the
+    `sync` job holds the library's walk from before its claim to its end: refused "running", no row written, while the
+    watcher syncs a folder of it (walk)."""
+    if job.name != SYNC:
+        return _run_claimed(job, where, run_for, call, clock, due, started)
+    with walk(where) as turn:
+        if not turn:
+            return Outcome(job.name, run_for, why="running")
+        return _run_claimed(job, where, run_for, call, clock, due, started)
+
+
+def _run_claimed(job, where, run_for, call, clock, due, started):
     with job_runs.run(where, job.name, run_for, clock, due) as run:
         if not run:
             return Outcome(job.name, run_for, why=run.why, error=run.error)
