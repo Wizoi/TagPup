@@ -7,7 +7,7 @@ let one library's tags, rows or tree reach the other's; a library that does not 
 folder is refused Suggest there, and refused a write there too (test_rows_only_in_folders_added.py,
 test_roots_scenarios.py (AFolderTheLibraryDoesNotHold) already cover that half of this story).
 
-ExifTool is stood in for, as test_service_change_tags.py and test_sync.py do; the
+ExifTool is stood in for (exiftool() below; test_sync.py's for sync); the
 photo files and both libraries' rows are real.
 
 Both libraries index the shared folder, and each index writes the bake (docs/PLAN_KEEP_IN_STEP.md, cut 2): a bake under
@@ -27,7 +27,6 @@ import fake_exiftool  # noqa: E402
 import own_home  # noqa: E402
 import photo_rows  # noqa: E402
 
-from test_service_replace_tag import exiftool  # noqa: E402
 
 from click.testing import CliRunner  # noqa: E402
 from PIL import Image  # noqa: E402
@@ -48,6 +47,34 @@ from tagpup.services import libraries as library_actions  # noqa: E402
 from tagpup.store import db  # noqa: E402
 
 EXIFTOOL = own_home.installed_exiftool()
+
+
+def exiftool(files):
+    """A session whose photos hold the keywords in `files` (path -> tags), which keeps each keyword write in `files` as a
+    file would (the journal reads back what it wrote). Returns (session, et)."""
+    et = mock.MagicMock()
+    et.get_tags.side_effect = lambda paths, tags=None, params=None: [
+        {"SourceFile": p, "XMP:Subject": list(files.get(p, []))} for p in paths]
+
+    def set_tags(paths, tags=None, params=None):
+        for path in paths:
+            if "XMP:Subject" in (tags or {}):
+                value = tags["XMP:Subject"]
+                files[path] = list(value) if isinstance(value, list) else [value]
+            elif "-XMP:Subject=" in (params or []):
+                files[path] = []
+
+    def execute(*args):
+        if "-XMP:Subject=" in args:
+            files[args[-1]] = []
+        return ""
+
+    et.set_tags.side_effect = set_tags
+    et.execute.side_effect = execute
+    session = mock.MagicMock()
+    session.return_value.__enter__.return_value = et
+    session.return_value.__exit__.return_value = False
+    return session, et
 
 
 class Reads:

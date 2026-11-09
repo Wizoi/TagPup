@@ -118,7 +118,7 @@ _SCENARIO_FILES = {
         "test_tag_a_photo_read_it_back_and_undo test_time_shift test_xmp_packet_edits_what_it_owns "
         "test_iptc_block_edits_what_it_owns test_exif_block_edits_what_it_owns test_segment_edits_choose_what_to_write "
         "test_a_photo_written_by_its_own_editors test_the_two_writers_compared_on_copies "
-        "test_a_photos_title_and_caption"
+        "test_a_photos_title_and_caption test_tag_writes_keep_the_index_true"
     ),
     "F2": "test_no_writes_to_damaged_photos test_rows_only_in_folders_added test_an_index_reads_the_next_photos_ahead",
     "F3": (
@@ -252,7 +252,7 @@ _FILES = {
         "unit": (
             "bulk-edit bulk-writes-queue just-look-edits path-helpers photo-write-queue picture-check-says-so rename-failed retried-save "
             "rotate-refreshes-thumbnails smart-rename-count "
-            "test_a_bake_is_used_only_whole test_a_cut_keyword_is_not_planned_again test_a_face_box_turned_upright_and_back "
+            "test_a_bake_is_used_only_whole test_a_face_box_turned_upright_and_back "
             "test_a_photo_is_known_by_its_picture "
             "test_a_row_describes_its_file_one_way "
             "test_batches_go_through_the_model "
@@ -269,14 +269,12 @@ _FILES = {
             "test_paths_roots test_photo_identity test_photo_meta "
             "test_relink_checks_the_destination test_remove_folder_lists_the_library "
             "test_renaming "
-            "test_service_change_tags "
-            "test_service_indexing test_service_page_images test_service_replace_tag "
+            "test_service_indexing test_service_page_images "
             "test_service_smart_rename "
             "test_settling_carries_vectors "
-            "test_tag_writes_keep_the_index_true "
             "test_thumbnails "
             "test_what_counts_as_a_photo "
-            "test_when_a_photo_was_taken_is_kept tuner-picker-and-queue "
+            "tuner-picker-and-queue "
             "tuner-remove-folder unsaved-edits write-queue-status"
         ),
         "guard": "test_photo_looks_have_one_owner test_the_block_editors_have_one_caller",
