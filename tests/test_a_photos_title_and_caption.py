@@ -78,6 +78,20 @@ class ATitleAndACaption(S.Fresh):
         self.assertEqual(("Pier at dusk", "Pier at dusk"), (again["title"], self.shown_by_the_index(photo_id)),
                          "the page and the index show the same title")
 
+    def test_a_photo_with_a_title_keeps_a_description_equal_to_it_when_its_title_is_saved_or_changed(self):
+        """#2596: a photo with a title of its own keeps its Description, even one equal to the title (25 photo_index and
+        51 kr-track photos, counted 2026-11-08): the save is not the sweep. With the guard (vocabulary.holds_title in
+        tagging._caption_moved) taken out, the Description was cleared as if it were shown as the title."""
+        caption = {field: "Pier at noon" for field in CAPTION_FIELDS}
+        titled = {"XMP:Title": "Pier at noon", "IPTC:ObjectName": "Pier at noon"}
+        path, photo_id = self.made("a.jpg", 69, {**titled, **caption})
+        body, after = self.saved(self.save(self.record(photo_id), tags=["Trips/Coast", "Trips/Lakes"]))
+        self.assertEqual({**titled, **caption}, self.held(path), "the same title saved with a tag")
+        self.saved(self.post("/photo/save-metadata", {"path": body["new_path"], "title": "Pier at dusk",
+                                                      "tags": ["Trips/Coast", "Trips/Lakes"], **after}))
+        self.assertEqual({**{field: "Pier at dusk" for field in TITLE_FIELDS}, **caption}, self.held(path),
+                         "a changed title")
+
     def test_a_description_without_a_title_is_shown_as_the_title_and_the_first_save_moves_it(self):
         moved = {"XMP:Description": "Harbour at dawn", "IPTC:Caption-Abstract": "Harbour at dawn",
                  "EXIF:ImageDescription": "Harbour at dawn"}

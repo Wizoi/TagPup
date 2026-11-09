@@ -4,7 +4,7 @@ the box is held to what the server sends and not to a reply written by hand. One
 the box speaks of: waiting for the index and cancelled there, waiting for the graphics card, under way with one photo read and one
 that could not be, completed with that failure kept; a folder with no photo is an error; one never asked about is idle. The
 temporary folder is spelled as the page test's folder (D:\\Library\\2020), so the file is the same on every run. A reply
-that differs from the file fails, naming the command that writes it again (WRITE_FIXTURE, as test_activity_page_replies).
+that differs from the file fails, naming the command that writes it again (page_fixtures).
 """
 import json
 import os
@@ -14,17 +14,15 @@ import time
 import unittest
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import page_fixtures  # noqa: E402
 from service_fixture import TempLibrary  # noqa: E402
 
 from tagpup.core import gpu_turns, paths  # noqa: E402
 from tagpup.jobs import suggestions as jobs  # noqa: E402
 
-FIXTURE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "frontend", "fixtures", "suggest_status.json")
+FIXTURE = page_fixtures.path_of("suggest_status.json")
 PAGE_FOLDER = "D:\\Library\\2020"
 UNREADABLE = "cannot identify image file"
-WRITE_FIXTURE = "TAGPUP_WRITE_FIXTURE"
-WRITE_COMMAND = ("%s=1 .venv/Scripts/python.exe -m unittest tests.test_suggest_status_replies"
-                 " (then read the diff of %s)" % (WRITE_FIXTURE, "tests/frontend/fixtures/suggest_status.json"))
 
 
 class Model:
@@ -141,19 +139,7 @@ class RepliesForTheBox(unittest.TestCase):
         self.assertEqual(jobs.CANCELLED, found["cancelled"]["message"])
         self.assertEqual("No images found in this folder.", found["error"]["message"])
         text = "{\n" + ",\n".join("%s: %s" % (json.dumps(key), json.dumps(found[key], sort_keys=True)) for key in sorted(found)) + "\n}\n"
-        before = None
-        if os.path.exists(FIXTURE):
-            with open(FIXTURE, encoding="utf-8") as handle:
-                before = handle.read()
-        if before == text:
-            return
-        if os.environ.get(WRITE_FIXTURE) == "1":
-            os.makedirs(os.path.dirname(FIXTURE), exist_ok=True)
-            with open(FIXTURE, "w", encoding="utf-8", newline="\n") as handle:
-                handle.write(text)
-            return
-        self.fail("The replies the suggestions box reads differ from %s, which its page test answers from. If the "
-                  "change is meant, write it again: %s" % (FIXTURE, WRITE_COMMAND))
+        page_fixtures.hold_to(self, FIXTURE, text, "tests.test_suggest_status_replies", "the suggestions box")
 
 
 if __name__ == "__main__":

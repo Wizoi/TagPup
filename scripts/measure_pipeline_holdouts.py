@@ -560,16 +560,24 @@ READY = "copy-is-ready"
 def work_copy(source, work):
     """The copy of the library `source` in `work` ((its path, {root: place})): made once, its roots placed in the work
     folder (sandbox.place_roots), and kept between runs; a copy stopped part-way (no READY) is made again. The source is
-    only read (sandbox.copy_library)."""
+    only read (sandbox.copy_library). READY names the library the copy was made of: a copy of another (or of one it
+    does not name) is refused, never measured as `source` (#2642)."""
     target = os.path.join(work, "data", "measured.db")
     ready = os.path.join(work, READY)
-    if not os.path.exists(ready):
+    if os.path.exists(ready):
+        with open(ready, encoding="utf-8") as handle:
+            made_of = handle.read().strip()
+        if not made_of or not paths.same(made_of, source):
+            raise SystemExit("--work %s holds a copy of another library (%s), not of %s: give a new or empty folder."
+                             % (work, made_of or "one it does not name", source))
+    else:
         if os.path.exists(target):
             os.remove(target)   # a copy stopped part-way
         os.makedirs(os.path.dirname(target), exist_ok=True)
         sandbox.copy_library(source, target)
         write_json(os.path.join(work, "placed.json"), sandbox.place_roots(target, work))
-        open(ready, "w").close()
+        with open(ready, "w", encoding="utf-8") as handle:
+            handle.write(source)
     with open(os.path.join(work, "placed.json"), encoding="utf-8") as handle:
         return target, json.load(handle)
 
@@ -896,8 +904,9 @@ def clips_main(args, source, out):
     finally:
         index.close()
     found["model_key"] = index.model
+    found["library"] = os.path.splitext(os.path.basename(source))[0]
     at = time.strftime("%Y%m%dT%H%M%S")
-    path = os.path.join(out, "holdout-clips-%s.json" % at)
+    path = os.path.join(out, "holdout-clips-%s-%s.json" % (found["library"], at))
     write_json(path, found)
     print("written %s" % path)
     clips_table(found, print)

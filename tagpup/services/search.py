@@ -416,19 +416,12 @@ class PhotoIndex:
         self._signature = self._photos_signature()
         with self._read_lock:
             self.count, _vectored = store_photos.counts(self.conn, self.model)
-            reading = vectors and self.model is not None
-            rows = store_photos.vectors(self.conn, self.model) if reading else []
-            frames = store_photos.frame_vectors(self.conn, self.model) if reading else []
-        ids, embeddings = [], []
-        for photo_id, emb_bytes in rows:
-            if emb_bytes:
-                ids.append(photo_id)
-                embeddings.append(np.frombuffer(emb_bytes, dtype=np.float32))
-        self.indexed = len(ids)
-        for photo_id, emb_bytes in frames:
-            ids.append(photo_id)
-            embeddings.append(np.frombuffer(emb_bytes, dtype=np.float32))
-        del rows, frames
+            found = self._vectors_by_photo() if vectors and self.model is not None else {}
+        # A clip's vector and its frames each under its id; their order is search's to make (suggesting.best_frame).
+        ids = [photo_id for photo_id, held in found.items() for _vector in held]
+        embeddings = [vector for held in found.values() for vector in held]
+        self.indexed = len(found)
+        del found
         if embeddings:
             self.dim = len(embeddings[0])
             self.index = VectorIndex(embeddings, ids)
@@ -457,10 +450,14 @@ class PhotoIndex:
         this index's model, read now on its connection from the rows search reads (store.photos.vectors and
         frame_vectors): a clip is a photo holding more than one. What the measurement of Suggest's neighbour cut for clips
         compares a clip's frame 0 with its best frame on (scripts/measure_pipeline_holdouts.py, clips; findings #2626).
-        Asked of an index that is loaded."""
+        Asked of an index that is loaded; the one read of them, which loading the index (_read_rows) flattens."""
         with self._read_lock:
-            rows = store_photos.vectors(self.conn, self.model)
-            frames = store_photos.frame_vectors(self.conn, self.model)
+            return self._vectors_by_photo()
+
+    def _vectors_by_photo(self):
+        """vectors_by_photo, read by a caller holding self._read_lock."""
+        rows = store_photos.vectors(self.conn, self.model)
+        frames = store_photos.frame_vectors(self.conn, self.model)
         found = {photo_id: [np.frombuffer(emb_bytes, dtype=np.float32)] for photo_id, emb_bytes in rows if emb_bytes}
         for photo_id, emb_bytes in frames:
             found[photo_id].append(np.frombuffer(emb_bytes, dtype=np.float32))

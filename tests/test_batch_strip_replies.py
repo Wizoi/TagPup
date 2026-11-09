@@ -1,6 +1,7 @@
 """The replies the pages' batch strip reads (web/common/batch-strip.js), made by the real routes and written to
 tests/frontend/fixtures/batches.json for the page's test (tests/frontend/batch-strip.test.mjs) to answer from, so the page is held to
-what the server sends and not to a reply written by hand (docs/OWNERS.md, contract 22). Volatile numbers (tickets, change ids, clocks)
+what the server sends and not to a reply written by hand (docs/OWNERS.md, contract 22); a reply that differs from
+the file fails, naming the command that writes it again (page_fixtures). Volatile numbers (tickets, change ids, clocks)
 are renumbered, so the file is the same on every run. Fictional names only.
 """
 import json
@@ -11,6 +12,7 @@ import unittest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import page_fixtures  # noqa: E402
 import test_bulk_edits as T  # noqa: E402
 from test_batches import ANOTHER, in_thread, wait_until  # noqa: E402
 
@@ -19,7 +21,7 @@ from tagpup.files import exiftool_session  # noqa: E402
 from tagpup.services import batches  # noqa: E402
 from tagpup.store import db, file_journal  # noqa: E402
 
-FIXTURE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "frontend", "fixtures", "batches.json")
+FIXTURE = page_fixtures.path_of("batches.json")
 
 
 def steady(rows):
@@ -127,10 +129,7 @@ class RepliesForTheStrip(T.Bulk):
         self.assertEqual(409, found["queue_full"]["status"])
         self.assertEqual(400, found["over_the_cap"]["status"])
         text = "{\n" + ",\n".join("%s: %s" % (json.dumps(key), json.dumps(found[key], sort_keys=True)) for key in sorted(found)) + "\n}\n"
-        os.makedirs(os.path.dirname(FIXTURE), exist_ok=True)
-        if not os.path.exists(FIXTURE) or open(FIXTURE, encoding="utf-8").read() != text:
-            with open(FIXTURE, "w", encoding="utf-8", newline="\n") as handle:
-                handle.write(text)
+        page_fixtures.hold_to(self, FIXTURE, text, "tests.test_batch_strip_replies", "the batch strip")
 
 
 if __name__ == "__main__":

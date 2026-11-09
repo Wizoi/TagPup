@@ -262,10 +262,9 @@ def follow_fields(conn, photo_path, written, stat=None, before=None, batch=None,
                     # read beside its XMP copy, took the bare Title and Subject the scan stores out of its row.
                     if name == key or raw.get(name) == held:
                         raw.pop(name, None)
-                elif key in fields.LIST_FIELDS or len(texts) > 1:
-                    raw[name] = list(texts)
                 else:
-                    raw[name] = texts[0]
+                    # In the scan's shape (metadata.clean_metadata_value): one text is a text, a list field's too.
+                    raw[name] = list(texts) if len(texts) > 1 else texts[0]
         keywords = keywords or key in vocabulary.KEYWORD_FIELDS + vocabulary.HIERARCHY_FIELDS
         captions = captions or key in vocabulary.CAPTION_FIELDS
         if key in fields.DOCUMENT_ID_KEYS:

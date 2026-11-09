@@ -1,7 +1,7 @@
 """The replies the Activity page reads (web/activity/), made by the real routes from libraries seeded through the real
 writers, and held in tests/frontend/fixtures/activity.json for the page's test (tests/frontend/activity-page.test.mjs)
 to answer from, so the page is held to what the server sends and not to a reply written by hand (docs/OWNERS.md,
-contract 22). A reply that differs from the file fails, naming the command that writes it again (WRITE_FIXTURE). An
+contract 22). A reply that differs from the file fails, naming the command that writes it again (page_fixtures). An
 index says how far it got as the indexer's lines are read (tagpup.services.indexing.index_folder, the fake indexer of
 test_an_index_is_one_run_under_its_sync printing them): no count of its is spelled here. Each scenario is a morning the
 owner opens the page on:
@@ -36,6 +36,7 @@ from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import own_home  # noqa: E402,F401
+import page_fixtures  # noqa: E402
 from test_a_failed_run_says_what_to_do import NIGHT, Clock, _Libraries  # noqa: E402
 from test_activity_routes import FakeWatcher  # noqa: E402
 from test_an_index_is_one_run_under_its_sync import FAKE_CLI, ROOT  # noqa: E402
@@ -50,15 +51,12 @@ from tagpup.store import file_journal, journal  # noqa: E402
 from tagpup.web import app as web  # noqa: E402
 from tagpup.web.lifecycle import Lifecycle  # noqa: E402
 
-FIXTURE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "frontend", "fixtures", "activity.json")
+FIXTURE = page_fixtures.path_of("activity.json")
 MINUTE, HOUR = 60, 3600
 ROUTES = ("now", "jobs", "timeline", "logs")
 #: The process id the fixture holds wherever this process's is spelled.
 STAND_IN_PID = "4242"
 #: Set to 1 to write the fixture again from the replies, when a change of the server's is meant to change them.
-WRITE_FIXTURE = "TAGPUP_WRITE_FIXTURE"
-WRITE_COMMAND = ("%s=1 .venv/Scripts/python.exe -m unittest tests.test_activity_page_replies"
-                 " (then read the diff of %s)" % (WRITE_FIXTURE, "tests/frontend/fixtures/activity.json"))
 
 
 class RepliesForTheActivityPage(_Libraries):
@@ -182,19 +180,7 @@ class RepliesForTheActivityPage(_Libraries):
         self.pictures = os.path.join(self.home.root, "Pictures")
         shares.forget()
         self.assertEqual(text, self.written(), "the replies differ from one run to the next")
-        before = None
-        if os.path.exists(FIXTURE):
-            with open(FIXTURE, encoding="utf-8") as handle:
-                before = handle.read()
-        if before == text:
-            return
-        if os.environ.get(WRITE_FIXTURE) == "1":
-            os.makedirs(os.path.dirname(FIXTURE), exist_ok=True)
-            with open(FIXTURE, "w", encoding="utf-8", newline="\n") as handle:
-                handle.write(text)
-            return
-        self.fail("The replies the Activity page reads differ from %s, which its page test answers from. If the "
-                  "change is meant, write it again: %s" % (FIXTURE, WRITE_COMMAND))
+        page_fixtures.hold_to(self, FIXTURE, text, "tests.test_activity_page_replies", "the Activity page")
 
     def written(self):
         """The four mornings' replies, as the fixture's text: every time.time the scenario's (self.clock), an index's
