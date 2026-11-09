@@ -48,9 +48,10 @@ MEMBER_KINDS = (ALL, FOLDER, KEYWORD, PERSON, YEAR, MONTH, KEYWORD_ONLY, YEAR_OT
 RANGED = (YEAR, MONTH, YEAR_OTHER)
 
 #: A source: its kind, its value -- a folder's path (native), a keyword's tag as the tree spells it, a person's
-#: name, a year as an integer, a month as "YYYY-MM", a union's tuple of Sources; None for all -- and, for a folder,
-#: whether its subfolders are in.
-Source = collections.namedtuple("Source", "kind value recursive", defaults=(None, False))
+#: name, a year as an integer, a month as "YYYY-MM", a union's tuple of Sources; None for all --, for a folder,
+#: whether its subfolders are in, and `only`: the one kind of its photos it holds (PHOTO or VIDEO, the view's Photos / Videos
+#: filter), None for both. Only the source a view or a selection names carries `only`, never a member of a union or a search.
+Source = collections.namedtuple("Source", "kind value recursive only", defaults=(None, False, None))
 
 #: What a search asks (Source.value of a SEARCH): the photos in every source of `all_of` (each a member kind or a union),
 #: in at least one of `any_of` (none: no such condition), in none of `none_of`, and -- `words`, text, "" for none --
@@ -98,8 +99,9 @@ def caption_sql(column="captions"):
 #: Ids read in one statement.
 CHUNK = 500
 
-#: A clip: the `photos.kind` of a video (migration 37); every other row is a photo.
+#: A clip: the `photos.kind` of a video (migration 37); every other row is a photo, of kind PHOTO (never NULL).
 VIDEO = "video"
+PHOTO = "photo"
 
 # ---- A source's photos -----------------------------------------------------------------------
 
@@ -317,8 +319,24 @@ def _union_scope(conn, members, reads=None):
 
 
 def _scope(conn, source, reads=None):
-    """The Scope of `source`; None for a source that holds none whatever is asked (a folder the library has no
-    row of, a person nobody is called)."""
+    """The Scope of `source`, of its photos of one kind alone when `source.only` names one (_of_kind); None for a source
+    that holds none whatever is asked. The list, the count, a selection's tally and folders and a bulk edit's resolve all
+    read a source through here, so under the Photos / Videos filter they hold the same photos."""
+    return _of_kind(_source_scope(conn, source, reads), source.only)
+
+
+def _of_kind(scope, only):
+    """`scope` holding only the photos whose `kind` is `only` -- the same from_, its where ANDed with `p.kind = ?` and counted
+    over that from_ --, or `scope` itself, its SQL unchanged, when `only` is None (both kinds)."""
+    if scope is None or only is None:
+        return scope
+    where, params = "(%s) AND p.kind = ?" % scope.where, tuple(scope.params) + (only,)
+    return scope._replace(where=where, params=params, count=("SELECT COUNT(*) FROM %s WHERE %s" % (scope.from_, where), params))
+
+
+def _source_scope(conn, source, reads=None):
+    """The Scope of `source` whatever its photos' kind; None for a source that holds none whatever is asked (a folder the
+    library has no row of, a person nobody is called)."""
     kind = source.kind
     if kind == ALL:
         return Scope("photos p", "1", (), ("SELECT COUNT(*) FROM photos", ()))
@@ -460,7 +478,9 @@ def source_ids(conn, source, cap, order=TAKEN):
 
 
 def view_ids(conn, source, cap, order=TAKEN):
-    """(ids, total, video ids) of a source, read in ONE transaction, as source_ids is: what a library view is told. The
+    """(ids, total, video ids, of) of a source, read in ONE transaction, as source_ids is: what a library view is told. `of`
+    is how many photos the source holds of either kind: `total` when it asks for both, else counted by the source's where
+    without its kind, in the same transaction (a folder of photos alone under Videos is 0 of its photos). The
     video ids are those of the source's photos whose kind is VIDEO, every one of the source's whatever `cap` cut, by id:
     the view's count by kind is their number and `total` less it, from the same snapshot and the same where as the list,
     so the two cannot disagree (#2569). One more read of the source, of ids and kind alone; the whole library's is a scan
@@ -468,14 +488,16 @@ def view_ids(conn, source, cap, order=TAKEN):
     -> 123-140 ms (the clip statement alone 85-99 ms, SCAN p); a top folder with subfolders about 196 -> 321 ms; a
     14,838-photo keyword 92 -> 148 ms; a 14,838-photo person 33 -> 82 ms; a leaf folder, month, year unchanged."""
     db.begin(conn)
-    scope = _scope(conn, source)
+    whole = _source_scope(conn, source)
+    scope = _of_kind(whole, source.only)
     if scope is None:
-        return [], 0, []
+        return [], 0, [], 0
     ids, total = _ids_of(conn, scope, cap, order)
     videos = [photo_id for (photo_id,) in conn.execute(
         "SELECT p.id FROM %s WHERE (%s) AND p.kind = ? ORDER BY p.id" % (scope.from_, scope.where),
         list(scope.params) + [VIDEO])]
-    return ids, total, videos
+    of = total if source.only is None else conn.execute(*whole.count).fetchone()[0]
+    return ids, total, videos, of
 
 
 def existing_ids(conn, photo_ids):

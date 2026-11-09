@@ -83,15 +83,31 @@ def opened(library):
 
 # ---- The request's words, read ------------------------------------------------------------------
 
-def source_of(library, kind, value=None, recursive=False):
-    """The store's Source for a request's words, or Refused with why it means nothing. A folder is
+def source_of(library, kind, value=None, recursive=False, media=None):
+    """The store's Source for a request's words, or Refused with why it means nothing; `media` (media_of) the one kind of
+    its photos it holds, set on this source alone, never on a union's or a search's members. A folder is
     spelled by its first place when the library has roots (paths.canonical: the web layer's ingress does it
     for the request, this for a caller that is not one) and as the filesystem spells it (paths.stored).
 
     A union (`any_of`) is a list of sources, each {"kind", "value", "recursive"} -- as JSON text in a request's
     query, as a list in a body -- none of them a union, at least one and at most MAX_MEMBERS; the same source named
     twice is one. A union of one source is that source."""
-    return _source_of(kind, value, recursive, _Canonical(library), member=False)
+    only = media_of(media)
+    return _source_of(kind, value, recursive, _Canonical(library), member=False)._replace(only=only)
+
+
+#: What a request's `media` may say: photos alone, videos alone; none (or "") is both.
+MEDIA = (store.PHOTO, store.VIDEO)
+
+
+def media_of(text):
+    """The kind of photo a request's `media` keeps (store.PHOTO, store.VIDEO), None for both -- no `media`, or "" --, or
+    Refused."""
+    if text is None or text == "":
+        return None
+    if text not in MEDIA:
+        raise Refused("media must be one of %s, or none for both." % ", ".join(MEDIA))
+    return text
 
 
 class _Canonical:
@@ -263,21 +279,22 @@ def order_of(text):
 
 # ---- The ids ---------------------------------------------------------------------------------------
 
-def ids(library, kind, value=None, recursive=False, cap=None, order=None):
-    """{"source", "order", "total", "ids", "complete", "videos"}: the whole ordered id list of a source, for a page that
+def ids(library, kind, value=None, recursive=False, cap=None, order=None, media=None):
+    """{"source", "order", "media", "total", "ids", "complete", "videos", "of"}: the whole ordered id list of a source, of its
+    photos of the one kind `media` names (media_of; None: both), for a page that
     jumps to the middle of it. At most `cap` ids (MAX_IDS); `total` is the source's, `complete` false
     when the list was cut. `videos` the ids of the source's clips, by id (store.view_ids): the view's count by kind is
-    their number and `total` less it, the page's to show, never to count (#2569). One transaction of ids alone: no
-    card, no BLOB."""
-    source = source_of(library, kind, value, recursive)
+    their number and `total` less it, the page's to show, never to count (#2569). `of` is how many photos the source holds of
+    either kind, `total` when `media` is none (store.view_ids). One transaction of ids alone: no card, no BLOB."""
+    source = source_of(library, kind, value, recursive, media)
     order = order_of(order)
     conn = _open(library)
     try:
-        found, total, videos = store.view_ids(conn, source, MAX_IDS if cap is None else cap, order)
+        found, total, videos, of = store.view_ids(conn, source, MAX_IDS if cap is None else cap, order)
     finally:
         conn.close()
-    return {"source": described(source), "order": order, "total": total, "ids": found, "complete": len(found) == total,
-            "videos": videos}
+    return {"source": described(source), "order": order, "media": source.only, "total": total, "ids": found,
+            "complete": len(found) == total, "videos": videos, "of": of}
 
 
 def read_ids(text):
