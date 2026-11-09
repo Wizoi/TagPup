@@ -215,10 +215,10 @@ _FILES = {
     },
     "people": {
         "unit": (
-            "face-strip grid-build-progress identify-faces identify-faces-cluster-buttons identify-faces-counts "
+            "face-strip faces-say-they-are-loading grid-build-progress identify-faces identify-faces-cluster-buttons identify-faces-counts "
             "identify-faces-in-place-removal library-sort-and-organize-header name-faces organize-faces person-directory "
             "person-faces person-filing-table person-names person-tag-form review-dialog review-from-activity "
-            "show-matched-toggle tag-editor-in-place tag-order tag-view tag-vocabulary tagpup-people-by-id "
+            "selection-suggests-who-the-faces-look-like show-matched-toggle tag-editor-in-place tag-order tag-view tag-vocabulary tagpup-people-by-id "
             "tagpup-people-lists-by-id tags-shown-alphabetical "
             "test_answers_carry_their_person test_automatch_references test_automatch_writes_once test_cluster_candidates "
             "test_clustering_evidence test_every_tag_has_an_id "
@@ -281,10 +281,10 @@ _FILES = {
     },
     "views": {
         "unit": (
-            "details-panel faces-say-they-are-loading folder-view-clips grid-keys grid-window library-header-strip-toolbar library-moves library-photo-back "
+            "details-panel folder-view-clips grid-keys grid-window library-header-strip-toolbar library-moves library-photo-back "
             "library-selection library-selection-jumps library-tally library-view looking-suggestions navigator "
             "navigator-multi photo-camera photo-details-layout photo-position photo-suggestions-panel search-page selection "
-            "selection-follows-the-photo selection-panel selection-suggestions selection-suggests-who-the-faces-look-like stale-cards suggest-cancel suggestions-follow-a-saved-photo tagging-flow "
+            "selection-follows-the-photo selection-panel selection-suggestions stale-cards suggest-cancel suggestions-follow-a-saved-photo tagging-flow "
             "test_a_search_keeps_no_thread_buffers "
             "test_camera_words test_caption_order test_chip_keys_follow_the_server test_view_rules_follow_the_server "
             "test_clip_sees_photos_upright test_embeddings_follow_their_photo "
