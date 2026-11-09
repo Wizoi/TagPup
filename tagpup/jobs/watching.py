@@ -17,8 +17,8 @@ made or changed is dropped. A folder deleted or moved is synced from its parent 
 is any other name deleted or moved away, since Windows reports a folder gone as a file
 gone (watchdog 6 cannot ask what a name that no longer exists was).
 
-Noting a notification looks at no path: it runs on watchdog's one dispatch thread, every library's, and a look at a
-share that sleeps would hold them all. Windows reports a rename only within one folder (a move between folders is a name
+Noting a notification looks at no path of our own: it runs on watchdog's one dispatch thread, every library's, and a look
+at a share that sleeps would hold them all (watchdog itself asks `os.path.isdir` of a renamed name there, unbounded). Windows reports a rename only within one folder (a move between folders is a name
 removed and one added), and watchdog has already asked whether the new name is a folder; a rename it called a file's is
 synced from the folder of its old name, which is the new name's folder too.
 
