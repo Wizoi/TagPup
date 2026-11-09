@@ -530,7 +530,8 @@ def ensure_document_id(et, path, metadata=None):
 
     `metadata` is the dict already read for the photo, so the common case -- a photo
     that has an identity -- costs nothing beyond a dictionary lookup. Only a photo
-    without one is written to, through write(): the one writer of a photo's fields.
+    without one is written to, through write(): the one writer of a photo's fields, made once more when its new file's
+    picture changed (written_once_more, as a save's is; #2476).
 
     The write is one command, as every write is (write: an objection ExifTool calls minor does not stop it); a lock
     or a timeout leaves the photo as it was.
@@ -544,7 +545,9 @@ def ensure_document_id(et, path, metadata=None):
         return existing
     minted = identity.mint_document_id()
     try:
-        write(et, path, {identity.DOCUMENT_ID_FIELD: minted})
+        written_once_more(et, path, {identity.DOCUMENT_ID_FIELD: minted}, again=lambda: logger.warning(
+            "%s: the write of its identity changed the picture's bytes; the new file was discarded, and it is written "
+            "once more", path))
     except Exception as e:
         logger.warning("Could not give %s an identity: %s", path, e)
         return None

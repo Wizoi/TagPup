@@ -548,6 +548,29 @@ class APhotoIsWrittenBesideItselfAndMovedOverIt(KeptCase):
         self.assertEqual(self.stamped, self.row_of_a(), "the row is not stamped from a write that did not land")
         self.assertEqual([], self.states(result.details["change"]))
 
+    def test_an_identity_minted_into_a_new_file_whose_picture_changed_is_minted_once_more(self):
+        """The indexer's mint of a photo's identity (field_values.ensure_document_id) is a write like a save's: a new file
+        whose picture changed is removed and the mint made once more (#2476's decision), not swallowed with the photo
+        indexed without one this time."""
+        real, made = field_values._command, []
+
+        def command(et, source, target, params, clear):
+            real(et, source, target, params, clear)
+            made.append(target)
+            if len(made) == 1:
+                flip_a_picture_byte(target)
+
+        with ExifToolSession(executable=EXIFTOOL) as et, \
+                mock.patch.object(field_values, "_command", side_effect=command), \
+                self.assertLogs(field_values.logger, "WARNING") as logged:
+            minted = field_values.ensure_document_id(et, self.a)
+            held = fields.read_document_id(et.get_metadata([self.a])[0])
+        self.assertIsNotNone(minted)
+        self.assertEqual((2, minted), (len(made), held))
+        self.assertTrue(any("picture's bytes" in line for line in logged.output), logged.output)
+        self.assertEqual(picture_of(self.before), picture_of(bytes_of(self.a)))
+        self.assertFalse(os.path.exists(self.scratch))
+
     def test_a_crash_once_the_new_file_is_written_leaves_the_photo_and_a_settle_writes_it(self):
         # The photo older than the write, as on a share: the scratch file's age, not the photo's, says no write is under way.
         long_ago = os.stat(self.a).st_mtime - 3 * 86400
