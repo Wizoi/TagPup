@@ -9,7 +9,7 @@
 // window as it is THEN (a scroll that flies past asks for nothing it has left behind), two at a time,
 // and one the window has left is cancelled. A batch that fails is tried once more and then given up:
 // the placeholder says so and Refresh view tries again. Cards are kept by id, the last-used ones, at
-// most MAX_CARDS: the far ones go.
+// most CARDS_KEPT: the far ones go.
 //
 // Everything the view holds is `state.library` (state.js); this module has no state of its own. A view
 // that is closed or replaced is told apart from the one a reply was asked for by the object itself:
@@ -75,10 +75,10 @@ export function orderLabel(order) {
     return `${named ? named.label : field}, ${descending ? 'descending' : 'ascending'}`;
 }
 
-/** Cards in one request: the most the server answers. */
+/** Cards in one request: the most the server answers (tagpup.services.library_view.MAX_CARDS; tests/fixtures/view_rules.json). */
 export const BATCH = 200;
-/** Cards kept: the least recently used go. */
-export const MAX_CARDS = 2000;
+/** Cards the page keeps: the least recently used go. Not the server's cap on a request (BATCH). */
+export const CARDS_KEPT = 2000;
 /**
  * How long the window must stand still before its cards are asked for: a scroll that flies past asks for
  * nothing it leaves behind. A scroll that never stops is answered every MAX_REARMS delays all the same.
@@ -626,8 +626,8 @@ function held(card) {
 }
 
 function trim(lib) {
-    if (lib.cards.size <= MAX_CARDS) return;
-    let over = lib.cards.size - Math.floor(MAX_CARDS * 0.9);
+    if (lib.cards.size <= CARDS_KEPT) return;
+    let over = lib.cards.size - Math.floor(CARDS_KEPT * 0.9);
     for (const id of lib.cards.keys()) {
         if (over-- <= 0) break;
         lib.cards.delete(id);

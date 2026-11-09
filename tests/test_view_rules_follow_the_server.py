@@ -23,6 +23,7 @@ with open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "fixtures", "
 
 class TheTableIsTheServers(unittest.TestCase):
     def test_the_caps_kinds_orders_and_parts(self):
+        self.assertEqual(library_view.MAX_CARDS, TABLE["max_cards"])
         self.assertEqual(library_view.MAX_MEMBERS, TABLE["max_members"])
         self.assertEqual(library_view.MAX_WORDS, TABLE["max_words"])
         self.assertEqual(list(store.KINDS), TABLE["kinds"])

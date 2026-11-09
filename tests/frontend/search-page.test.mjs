@@ -122,6 +122,7 @@ describe("one chip for one source (the page's key against the server's reading)"
   test("what the page refuses before it asks is what the server refuses: tests/fixtures/view_rules.json", async (t) => {
     const ctx = await loadViewPage(t, { search: `?view=year&value=${YEAR - 1}` });
     const source = pageExports(ctx.window, "web/tagpup/library-source.js");
+    assert.equal(source.BATCH, VIEW_RULES.max_cards);
     assert.equal(source.MAX_MEMBERS, VIEW_RULES.max_members);
     assert.equal(source.MAX_WORDS, VIEW_RULES.max_words);
     assert.deepEqual([...source.LIBRARY_KINDS], VIEW_RULES.kinds);
