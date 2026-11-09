@@ -228,6 +228,24 @@ class TakingNamesOffMany(Bulk):
             self.assertEqual([], self.tags(photo))
             self.assertEqual((None, None), self.row(face)[:2], "unreviewed, not nobody")
 
+    def test_the_undo_of_taking_the_names_off_puts_back_the_names_the_deciders_and_the_tags(self):
+        """#2793: no test undid an unname-bulk change. The deciders differ (a guess and a choice) so a restore that wrote
+        'manual' everywhere fails; breaking face_batch.Follower's backward walk fails the asserts."""
+        made = []
+        for n in range(3):
+            photo = self.held("unname_%02d.jpg" % n, [PEOPLE + WREN, "Regatta"])
+            made.append((photo, self.face(photo, name=WREN, name_source="manual" if n % 2 == 0 else None)))
+        reply = self.tuner_post("faces/unmatch-bulk", {"face_ids": [f for _p, f in made]})
+        self.assertEqual(200, reply.status_code, reply.get_json())
+        self.assertEqual(3, reply.get_json()["tags_removed"])
+        for photo, face in made:
+            self.assertEqual(["Regatta"], self.tags(photo))
+            self.assertEqual((None, "manual"), self.row(face)[:2])
+        self.undo(reply.get_json()["change"])
+        for n, (photo, face) in enumerate(made):
+            self.assertEqual((WREN, "manual" if n % 2 == 0 else None, 0), self.row(face)[:3], "names and deciders")
+            self.assertEqual({PEOPLE + WREN, "Regatta"}, set(self.tags(photo)), "tags")
+
     def test_a_photo_that_cannot_be_written_keeps_its_tag_and_its_face_named(self):
         made = self.many(2, [PEOPLE + WREN, "Regatta"], name=WREN, name_source="manual")
         self.files.fails.add(paths.key(made[0][0]))

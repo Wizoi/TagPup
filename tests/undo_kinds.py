@@ -33,7 +33,9 @@ AS_SAVE = "a write of photo files' fields whose way back is the journal's alone,
 #: A bulk decision on faces carried by a write of photo files with its faces alongside (tagpup.services.face_batch), the
 #: faces put back in the transaction that undoes each file.
 AS_FACE_BATCH = ("a write of photo files with its faces alongside, undone with them: Save's row holds the files' way back; "
-                 "tests/test_bulk_faces_and_tags.py undoes an assignment, an ignore and a cancelled batch from History")
+                 "tests/test_bulk_faces_and_tags.py undoes an assignment, an ignore, "
+                 "a cancelled batch and the taking of names off faces (unname bulk) from History, and its ReExamine "
+                 "undoes a re-examine")
 #: A rename of photo files through file_changes.rename.
 AS_RENAME = "a rename of a photo file through file_changes.rename: Smart Rename's row holds the kind"
 #: A change of faces or people rows alone, no file: refused by a newer change of the same rows (journal.refusal), as the
