@@ -94,14 +94,11 @@ answers the fields it left as they were (`field_values.write`; `fields.XMP_ONLY`
 caption write sets), and the file is verified, recorded and journaled as `fields.as_patched` says it holds them
 (`file_changes._carry`). Every write still writes every copy, so that answer is always empty until merge 4b.
 
-The rows stored before this rule put IPTC's caption first (photo_index 383 rows, 104 showing another caption than the
-file's XMP; kr-track and renton_parkrun none; counted 2026-11-03), and a save from one is refused as changed on disk. A
-photo indexed or saved afterwards is derived by the rule (the indexer, `follow_fields`); the rows of before are derived
-again, once, from their own raw_metadata by `scripts/rederive_captions.py` (`refresh_rows.rederive`: a dry run that
-counts and rehearses, `--apply` one journaled change, undoable, the search words with it), run with `--apply` on each
-library (idempotent). It orders the stored captions -- the caption sort, a library card's caption, the search words --
-and is not needed before an install: the page's title is `vocabulary.title_of` over the row's raw_metadata, the rule
-the save compares by, whatever order the row stores (#2582).
+A photo indexed or saved is derived by this rule (the indexer, `follow_fields`). The rows stored before it (photo_index
+383 rows; kr-track and renton_parkrun none; counted 2026-11-03) were derived again from their own raw_metadata by a
+one-off, deleted once 0 rows were apart in the three libraries (#2734); photo_index's journal holds its changes,
+"rederive tags and captions", undone from History as any change of rows (`journal.RETIRED`). The page's title is
+`vocabulary.title_of` over the row's raw_metadata, the rule the save compares by, whatever order the row stores (#2582).
 
 A photo's title and its caption are two values (DECISIONS 2026-11-06). The title is XMP:Title, else IPTC:ObjectName
 (`vocabulary.TITLE_COPIES`, written by `fields.title_fields`: the photo panel's save); the caption is the Description,
@@ -111,9 +108,8 @@ read), which no page writes. The title shown is `vocabulary.title_of`: the title
 Title gets the title saved and every caption field holding the text shown is cleared in the same write
 (`tagging._caption_moved`), whether the title saved is that text, another, or none: one rule, so a cleared title stays
 cleared. A photo with a title of its own keeps its Description. Rows stored before the rule put the Description first
-(photo_index 8,263, kr-track and renton_parkrun none; counted 2026-11-06): their page shows the title all the same and
-saves; until `scripts/rederive_captions.py --apply` orders them, as above, the order by caption reads
-their Description first. A library card carries no caption of its own (`store.library_view.card_rows`): the title a
+(photo_index 8,263, kr-track and renton_parkrun none; counted 2026-11-06) were ordered again by the same one-off, as
+above. A library card carries no caption of its own (`store.library_view.card_rows`): the title a
 card shows is the panel's record's (`web/tagpup/library-source.js`), `title_of`, as a folder's page records are; only
 the order by caption (`caption_sql`) reads the stored `captions`.
 
@@ -279,10 +275,11 @@ refused. Each was edited in memory (a caption, a keyword added, an Orientation),
 - **A clip's Date Taken** (DECISIONS 2026-11-08, A5 (D) REVISED) is written into its exif:DateTimeOriginal, and
   into its xmp:CreateDate only where it holds one (`fields.held_dates`, decided when the write is planned: 41
   photo_index clips hold one); its QuickTime dates are never written. The index dates a clip by its XMP dates
-  first (`dates.CLIP_XMP_DATE_FIELDS`), then its QuickTime ones. The rows dated before that rule are dated again
-  from their own raw_metadata by the one-off `scripts/rederive_clip_dates.py` (counted 2026-11-08, read-only:
-  photo_index 80 of its 2,179 clips apart, none by its year; kr-track's 5 clips none; renton_parkrun none). F12:
-  `tests/test_a_clip_dated_through_the_journal.py`, `tests/test_a_clip_dated_again_from_its_row.py`.
+  first (`dates.CLIP_XMP_DATE_FIELDS`), then its QuickTime ones. The rows dated before that rule (photo_index 80
+  of its 2,179 clips, none by its year; kr-track and renton_parkrun none) were dated again from their own raw_metadata
+  by a one-off, applied on photo_index as the journal's "rederive clip dates" (undone from History as any change of
+  rows: `journal.RETIRED`) and deleted once no clip was apart (#2734). F12:
+  `tests/test_a_clip_dated_through_the_journal.py`.
 
 ## The EXIF block editor
 

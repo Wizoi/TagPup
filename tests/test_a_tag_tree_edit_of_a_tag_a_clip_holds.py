@@ -4,8 +4,7 @@ through), and the tree moves once every file is rewritten.
 
 What the owner lives through: a tag is renamed in the tag tree, merged into another in TagTuner, or retired, and a clip
 of the library holds it. The clip is rewritten with the photos, its row follows and the tree
-moves. A node the reader of before made of a clip's QuickTime Subject that is not text (four on photo_index, #2662)
-is left with no photo once the rows are re-derived, and deleted from the tree with no file written.
+moves.
 
 Real ffmpeg clips and the real ExifTool (tests/test_a_clip_tagged_through_the_journal.ALibraryHoldingAClip). Fictional
 names only.
@@ -18,7 +17,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import test_a_clip_tagged_through_the_journal as tagged  # noqa: E402
 
-from tagpup.services import refresh_rows, tags  # noqa: E402
+from tagpup.services import tags  # noqa: E402
 from tagpup.store import taxonomy  # noqa: E402
 
 EXIFTOOL = tagged.EXIFTOOL
@@ -65,22 +64,6 @@ class ATagTreeEditOfATagAClipHolds(tagged.ALibraryHoldingAClip):
         self.assertEqual((True, []), (result.details["applied"], result.errors), result.message())
         self.assert_holds(["Trips/Pier"], clip, self.clip_path)
         self.assertIsNone(self.node("Trips/Coast"))
-
-    def test_a_node_made_of_a_quicktime_subject_that_is_not_text_is_deleted_once_its_clip_is_re_derived(self):
-        held = tagged.with_a_quicktime_subject_that_is_not_text(self.clip_path)
-        with tagged.read_as_before():
-            clip, = self.index(self.clip_path)
-        self.vl.tree(held)
-        self.assertEqual([held], self.tags_of(clip))
-        done = refresh_rows.rederive(self.vl.library, apply=True)
-        self.assertEqual((True, 1), (done.ok, done.changed), done.message())
-        before = self.read_bytes(self.clip_path)
-        reply = self.post("taxonomy/delete-confirm", {"tag_id": self.node(held), "action": "delete"})
-        body = reply.get_json()
-        self.assertEqual((True, 0), (body["success"], body["photos_rewritten"]), body)
-        self.assertIsNone(self.node(held), "the node is gone")
-        self.assertEqual(before, self.read_bytes(self.clip_path), "no file is written")
-        self.assertEqual([], self.tags_of(clip))
 
 
 if __name__ == "__main__":
