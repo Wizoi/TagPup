@@ -4,7 +4,8 @@
 What the owner lives through: a clip tagged long ago in Windows Photo Gallery holds its Tags in the WM/Category entry of
 its moov/udta/Xtra box, which TagPup never reads as tags (DECISIONS 2026-11-07). The one-time move reads that Category
 (fields.CLIP_CATEGORY, asked as Microsoft:Category and answered by ExifTool as QuickTime:Category: fields.read_key) beside
-the clip's keyword fields, plans its tags with the Category's added and the Category cleared, and journals it: the tags
+the clip's keyword fields, plans its tags with the Category's added and the Category cleared (the move's own planner,
+tagpup.services.windows_tags.planner, as scripts/move_windows_tags.py runs it), and journals it: the tags
 land in the clip's XMP, the Xtra's four type bytes become `free` in the same patch, the clip's row reads the tags, and
 the journal records the Category it held and the [] it holds. History's Undo gives the Xtra back (the four bytes) and
 takes the tags off again, the clip as before but for the XMP box the move appended. A second move finds nothing to free
@@ -28,26 +29,24 @@ from test_a_clip_tagged_through_the_journal import EXIFTOOL, ALibraryHoldingACli
 
 from tagpup.core import fields  # noqa: E402
 from tagpup.files import containers  # noqa: E402
-from tagpup.services import bulk_edit, file_changes  # noqa: E402
+from tagpup.services import file_changes, windows_tags  # noqa: E402
+from tagpup.store import taxonomy  # noqa: E402
 
 WINDOWS_TAGS = patched.WINDOWS_TAGS
-#: What the move reads of each clip: its Windows Tags and its keyword fields.
-READ = [fields.CLIP_CATEGORY, *fields.keyword_fields([], [])]
-OPERATION = bulk_edit.OPERATIONS[bulk_edit.TAGS]
-
-
-def moved(_path, held):
-    """The move's plan of one clip from what it holds: its tags with its Windows Tags added, its Category cleared."""
-    tags = list(held.get("XMP:Subject", []))
-    tags += [tag for tag in held.get(fields.CLIP_CATEGORY, []) if tag not in tags]
-    return file_changes.Plan(after={**patched.keywords(tags), fields.CLIP_CATEGORY: []})
 
 
 class AClipsWindowsTagsFreed(ALibraryHoldingAClip):
 
-    def move(self):
-        """The move of the clip's Windows Tags through the journal; its Result."""
-        return file_changes.write_fields(self.vl.library, OPERATION, EXIFTOOL, [self.clip_path], READ, moved)
+    def setUp(self):
+        super().setUp()
+        self.vl.tree("People/Wren Ashcombe", face_root="People")
+
+    def move(self, tree=None):
+        """The move of the clip's Windows Tags through the journal, planned by the move's own planner from the tag tree
+        (`tree`, else the library's); its Result."""
+        tree = taxonomy.tags(self.vl.conn) if tree is None else tree
+        return file_changes.write_fields(self.vl.library, windows_tags.OPERATION, EXIFTOOL, [self.clip_path],
+                                         list(windows_tags.READ), windows_tags.planner(self.vl.library, tree))
 
     def windows_tags(self):
         """(the XMP:Subject, the Windows Tags) ExifTool reads of the clip now, the Category asked as the move asks it."""
@@ -73,6 +72,7 @@ class AClipsWindowsTagsFreed(ALibraryHoldingAClip):
         self.assertEqual((1, []), (reply.get_json()["changed"], reply.get_json()["errors"]))
 
     def assert_nothing_written(self, result, before):
+        self.assertEqual([windows_tags.NO_WINDOWS_TAGS], [why for _path, why in result.skipped])
         self.assertEqual((0, [], None), (result.changed, result.errors, result.details["change"]),
                          "no change: nothing to free, and the result says nothing was written")
         self.assertEqual(before, self.read_bytes(self.clip_path))
@@ -126,7 +126,7 @@ class AClipsWindowsTagsFreed(ALibraryHoldingAClip):
         patched.with_windows_tags(self.clip_path, ("Trips/Coast ", "1.50"))
         self.index(self.clip_path)
         original = self.read_bytes(self.clip_path)
-        result = self.move()
+        result = self.move(tree=("Trips/Coast ", "1.5"))     # a tree holding them as the read gives them
         self.assertEqual((1, []), (result.changed, result.errors))
         change = result.details["change"]
         self.assertEqual(["Trips/Coast ", "1.5"], self.journaled(change)[0][fields.CLIP_CATEGORY],
