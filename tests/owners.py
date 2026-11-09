@@ -308,13 +308,13 @@ _FILES = {
     },
     "apps": {
         "unit": (
-            "activity-page add-folder-dialog apply-all-failure-undo banner-cost batch-strip database-routing "
+            "activity-page add-folder-dialog apply-all-failure-undo banner-cost batch-strip cache-version database-routing "
             "delete-while-folder-changes dialog-frames dialogs-keep-the-keys dom-output video-keys folder-keeps-history-position "
             "folder-opening folder-picker gear history-dialog image-zoom images-after-an-update library-memory "
             "library-picker open-photo page-state progress-polling roots-dialog server-replaced server-update "
             "settings-dialog stale-record test_a_request_is_decoded_once "
             "test_activity_page_replies test_activity_routes test_add_findings test_retro_metrics test_stale_findings test_an_empty_folder_is_scanned_again test_background_tasks "
-            "test_background_work_is_waited_for test_batch_strip_replies test_browser_opens_once test_config "
+            "test_background_work_is_waited_for test_batch_strip_replies test_browser_opens_once test_config test_page_record_fields "
             "test_dark_selects test_database_context_isolation test_folder_scan_follows_the_library test_gzip_json "
             "test_heavy_imports_stay_lazy test_history_routes test_indexing_names_a_real_control "
             "test_inspect_reads_only_the_photos_asked_about test_inspect_uses_the_stores_mtime_rule "

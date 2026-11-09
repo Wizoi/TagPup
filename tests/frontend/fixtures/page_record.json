@@ -1,0 +1,37 @@
+{
+  "read": [
+    "camera",
+    "filename",
+    "lens",
+    "media",
+    "mtime",
+    "path",
+    "people",
+    "raw_metadata",
+    "size",
+    "tags",
+    "taken",
+    "title",
+    "writes",
+    "year"
+  ],
+  "unreadable": [
+    "camera",
+    "filename",
+    "lens",
+    "media",
+    "mtime",
+    "path",
+    "people",
+    "raw_metadata",
+    "read_error",
+    "size",
+    "tags",
+    "taken",
+    "title",
+    "unreadable",
+    "writes",
+    "year"
+  ],
+  "version": 6
+}
