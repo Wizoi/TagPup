@@ -459,13 +459,22 @@ def _write_session(library, operation, exiftool_path, photo_paths, read, plan_on
     return _said_removed(result, since)
 
 
-def _looked_at_again(stored, away, batch):
+def away_now(photo_paths, patient=False, stop=None):
+    """The keys (paths.key) of the photos of `photo_paths` on a network share that did not answer (file_states: AWAY);
+    `patient`, those still away after one more look (_looked_at_again; `stop`, a callable, ends its wait). The one look a
+    write takes before it reads (write_fields), and the one-time move of clips' Windows Tags before its survey
+    (tagpup.services.windows_tags)."""
+    away = {paths.key(path) for path, state in file_states(photo_paths) if state == AWAY}
+    return _looked_at_again(photo_paths, away, stop) if away and patient else away
+
+
+def _looked_at_again(stored, away, stop):
     """The keys of `away` (photos of `stored` on a share found away) still away after one more look, once each share's
     window is over (shares.wait_back: at most AWAY_SECONDS, sooner when the look that timed out answers): a `patient`
     write's first look at an idle share is slow, and every photo looked at in the 30 s it is then taken as away was
-    left out (#2622: a sweep of 43,754 photos skipped all of them). A batch asked to stop waits no longer."""
+    left out (#2622: a sweep of 43,754 photos skipped all of them). A batch asked to stop (`stop`) waits no longer."""
     for share in {shares.share_of(path) for path in stored if paths.key(path) in away}:
-        shares.wait_back(share, shares.AWAY_SECONDS, stop=batch.stop.is_set if batch is not None else None)
+        shares.wait_back(share, shares.AWAY_SECONDS, stop=stop)
     return {paths.key(path) for path, state in file_states([path for path in stored if paths.key(path) in away])
             if state == AWAY}
 
@@ -492,9 +501,7 @@ def _write_fields(et, library, operation, exiftool_path, photo_paths, read, plan
         # whole deadline (five minutes) and hold the lock and the request that long (#1492). A `patient` write
         # looks once more after the share's window, up to shares.AWAY_SECONDS (_looked_at_again). What the caller read just
         # now answered.
-        away = {paths.key(path) for path, state in file_states(stored) if state == AWAY}
-        if away and patient:
-            away = _looked_at_again(stored, away, batch)
+        away = away_now(stored, patient, batch.stop.is_set if batch is not None else None)
         # A batch asked to stop while it reads the files it plans from stops at the next batch of reads (#1200).
         held = field_values.read(et, [path for path in stored if paths.key(path) not in away], read,
                                  stop=batch.stop if batch else None)
