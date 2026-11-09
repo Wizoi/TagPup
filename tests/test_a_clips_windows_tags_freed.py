@@ -117,6 +117,24 @@ class AClipsWindowsTagsFreed(ALibraryHoldingAClip):
         self.assertEqual([], self.tags_of(clip), "the tags go from the row too")
         self.assertEqual("undone", self.journaled(change)[2])
 
+    def test_a_windows_tag_a_read_spells_otherwise_is_given_back_by_the_undo_not_marked_a_conflict(self):
+        """A Windows tag ExifTool answers otherwise than the Xtra spells it ("1.50", answered as the JSON number 1.5 and
+        kept by the journal as "1.5") beside one ending in a blank (which ExifTool keeps): the undo finds the freed
+        Xtra's texts as a read gives them (fields.same_read) and gives it back. Matched by list equality, the undo found
+        no box holding them and marked the file a conflict (#2802). None of the 7,293 live texts is either (counted
+        2026-11-09); this fails on the code before the fix."""
+        patched.with_windows_tags(self.clip_path, ("Trips/Coast ", "1.50"))
+        self.index(self.clip_path)
+        original = self.read_bytes(self.clip_path)
+        result = self.move()
+        self.assertEqual((1, []), (result.changed, result.errors))
+        change = result.details["change"]
+        self.assertEqual(["Trips/Coast ", "1.5"], self.journaled(change)[0][fields.CLIP_CATEGORY],
+                         "the journal keeps the texts as ExifTool answered them")
+        self.undone(change)
+        self.assertEqual("undone", self.journaled(change)[2], "given back, not a conflict")
+        self.assertEqual(original, self.read_bytes(self.clip_path)[:len(original)], "the Xtra as it was")
+
     def test_a_clip_with_no_xtra_writes_nothing_and_says_so(self):
         self.index(self.clip_path)
         before = self.read_bytes(self.clip_path)

@@ -57,7 +57,8 @@ box (containers.Video.xtra, moov/udta/Xtra: each of the 2,103 photo_index clips 
 WM/Category, counted 2026-11-09) in the same Patch that writes the XMP, its four type bytes made `free`
 (`category=()`); the Xtra's other Windows properties go with it, and nothing moves. An undo gives it back (`category`,
 the texts it held) by the same four bytes, only to the one `free` box directly in udta whose bytes are an Xtra's
-entries holding exactly those texts (`xtra_boxes`, `windows_tags`), while the clip holds no Xtra. Each box is read
+entries holding those texts as a read gives them (fields.same_read: trimmed, in any order, a number or a boolean as
+ExifTool answers it; the journal keeps what ExifTool read; `xtra_boxes`, `windows_tags`), while the clip holds no Xtra. Each box is read
 whole, its header with it, so the four bytes the patch writes over are the ones read as `Xtra` (or `free`) on the open
 file. None, the rewrite's, for a clear of a clip holding no Xtra, two, or one holding no WM/Category text (10 live
 clips hold an empty Xtra; the move asks only of a clip whose Category ExifTool read), and a give-back to a clip
@@ -183,15 +184,22 @@ def _title_ranges(layout, title, freed):
 
 def _xtra_ranges(category, read):
     """The range that frees the clip's Xtra (`category` (); `read`, its one Xtra, read) when it holds Windows Tags, or
-    gives `category`'s texts back to the one of `read` (free boxes of udta, read) holding exactly them; None, the
-    rewrite's, otherwise (the module)."""
+    gives `category`'s texts back to the one of `read` (free boxes of udta, read) holding them as a read gives them
+    (_holds_tags); None, the rewrite's, otherwise (the module)."""
     if category:
-        found = [box for box, raw in read if windows_tags(raw, b"free", box.header) == list(category)]
+        found = [box for box, raw in read if _holds_tags(windows_tags(raw, b"free", box.header), category)]
         written = containers.XTRA.encode("latin-1")
     else:
         found = [box for box, raw in read if windows_tags(raw, containers.XTRA.encode("latin-1"), box.header)]
         written = b"free"
     return ((found[0].offset + 4, written),) if len(found) == 1 else None
+
+
+def _holds_tags(texts, category):
+    """Are `texts` (windows_tags of a free box; None, no Xtra's) the Windows Tags `category` (the journal's, as ExifTool
+    read them) as a read gives them (fields.same_read)? Matched by list equality, a text the parse and the journal
+    spell apart left the undo unmatched, and the file marked a conflict (#2802)."""
+    return texts is not None and fields.same_read(fields.CLIP_CATEGORY, texts, category)
 
 
 def _xmp_patch(layout, packet):
