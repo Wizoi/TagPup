@@ -870,7 +870,8 @@ def clips_table(found, report):
             report("At each cut, %s asked, held out %s: the neighbour slots kept, the share that are clips, and the tags "
                    "offered from the neighbours, precision / recall (offered)." % (asked + "s", held_out.replace("by_", "by ")))
             report("")
-            report("| Cut | Slots, best of five | Clip share | P / R (n) | Slots, frame 0 | Clip share | P / R (n) |")
+            report("| Cut | Slots, best of five | Clip share | P / R (tags offered) | Slots, frame 0 | Clip share "
+                   "| P / R (tags offered) |")
             report("|---|---|---|---|---|---|---|")
             for cut in CLIP_CUTS:
                 cells = []

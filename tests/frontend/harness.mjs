@@ -352,6 +352,25 @@ export class RealServer extends FakeServer {
     this.base = base;
     this.waiting = [];
     this.replied = [];   // the URLs answered whole
+    this.inFlight = 0;   // requests sent and not answered yet
+  }
+
+  /**
+   * Resolves once the page has no request out and its replies' renders have run: what a test's end waits for before its
+   * window is closed. A reply landing on a closed window drew into a document that was gone ("generated asynchronous
+   * activity after the test ended ... reading 'createElement'", #2598). At most `seconds`, so a page that never settles
+   * cannot hold the run.
+   */
+  async quiet(window, seconds = 10) {
+    const deadline = Date.now() + seconds * 1000;
+    while (Date.now() < deadline) {
+      await flush(window, 4);
+      if (this.inFlight === 0) {
+        await flush(window, 4);
+        if (this.inFlight === 0) return;
+      }
+      await Promise.race([this.nextReply(), new Promise((resolve) => setTimeout(resolve, 200))]);
+    }
   }
 
   nextReply() {
@@ -363,6 +382,7 @@ export class RealServer extends FakeServer {
       const url = typeof input === "string" ? input : String(input.url);
       const body = typeof init.body === "string" && /^[\[{]/.test(init.body) ? JSON.parse(init.body) : init.body;
       this.calls.push({ url, method: init.method || "GET", body });
+      this.inFlight += 1;
       const target = new URL(url, "http://page/");
       const abort = new AbortController();
       if (init.signal) init.signal.addEventListener("abort", () => abort.abort(), { once: true });
@@ -374,6 +394,7 @@ export class RealServer extends FakeServer {
         if (init.signal && init.signal.aborted) throw new window.DOMException("The operation was aborted.", "AbortError");
         throw error;
       } finally {
+        this.inFlight -= 1;
         this.waiting.splice(0).forEach((resolve) => resolve());
       }
     };
@@ -425,19 +446,34 @@ export async function until(ctx, done, what, seconds = 30) {
   }
 }
 
-/** Windows still open, so a failing test cannot leave timers running forever. */
-const openWindows = new Set();
+/** Windows still open, so a failing test cannot leave timers running forever; each with the server its page talks to. */
+const openWindows = new Map();
 
-/** Close every open jsdom window, stopping its polling timers. */
-export function closeAllApps() {
-  for (const window of openWindows) {
-    try {
-      window.close();
-    } catch {
-      /* already closed */
-    }
+function closeWindow(window) {
+  try {
+    window.close();
+  } catch {
+    /* already closed */
   }
+}
+
+/** Close a window; one on a real server once its page has no request out (RealServer.quiet), so no reply lands on it closed. */
+function closeSettled(window, server) {
+  if (!server || typeof server.quiet !== "function") {
+    closeWindow(window);
+    return Promise.resolve();
+  }
+  return server.quiet(window).then(() => closeWindow(window), () => closeWindow(window));
+}
+
+/**
+ * Close every open jsdom window, stopping its polling timers. A window on a fake server is closed at once; one on the real
+ * server when its replies are in: `afterEach(() => closeAllApps())` returns the promise, which the runner waits for.
+ */
+export function closeAllApps() {
+  const closing = [...openWindows].map(([window, server]) => closeSettled(window, server));
   openWindows.clear();
+  return Promise.all(closing);
 }
 
 /**
@@ -496,15 +532,11 @@ export async function loadApp(appName, { url, server = new FakeServer(), t, befo
     window.Element.prototype.scrollIntoView = function () {};
   }
 
-  openWindows.add(window);
+  openWindows.set(window, server);
   if (t && typeof t.after === "function") {
     t.after(() => {
-      openWindows.delete(window);
-      try {
-        window.close();
-      } catch {
-        /* already closed */
-      }
+      const open = openWindows.delete(window);
+      return open ? closeSettled(window, server) : undefined;
     });
   }
   server.install(window);

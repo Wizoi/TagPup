@@ -220,6 +220,24 @@ describe("#674: Delete of a view's selection", () => {
     assert.match(all.questions[0], /^Delete 1 photo\? It is where there is no Recycle Bin \(1 on a removable drive\): it is copied to this PC \(1 MB\)/);
   });
 
+  test("clips in the selection are said as videos: the question and what was done (#2645)", async (t) => {
+    const clips = { onIds: () => ({ source: {}, total: 40, ids: range(40), videos: [5, 9], complete: true }),
+      cardExtra: (id) => ({ media: [5, 9].includes(id) ? "video" : "photo" }) };
+    const ctx = await view(t, 40, { where: { ...BIN, total: 2 }, ...clips });
+    ctx.bulk.edit = { op: "delete", total: 2, changed: 2 };
+    for (const id of [5, 9]) pick(ctx, id);
+    await remove(ctx);
+    assert.match(ctx.questions[0], /^Delete 2 videos\? The files go to the Recycle Bin/);
+    assert.match(stripSentence(ctx), /^Deleted 2 videos to the Recycle Bin;/);
+
+    const mixed = await view(t, 40, clips);
+    mixed.bulk.edit = { op: "delete", total: 3, changed: 2, error_count: 1, errors: [{ id: 2, name: "IMG_2.jpg", why: "the file is in use" }] };
+    for (const id of [2, 5, 9]) pick(mixed, id);
+    await remove(mixed);
+    assert.match(mixed.questions[0], /^Delete 1 photo, 2 videos\?/);
+    assert.match(stripSentence(mixed), /^Deleted 2 photos and videos to the Recycle Bin;/, "a count of a mixed selection that is not its own");
+  });
+
   test("no room on this PC for the copies: said, nothing asked, nothing started (#694)", async (t) => {
     const ctx = await view(t, 40, { where: { ...BIN, through_this_pc: 3, copy_bytes: 9e12, no_room: "There is not room on this PC for the copies: 8,583,068 MB needed. Nothing was deleted." } });
     for (const id of [2, 5, 9]) pick(ctx, id);

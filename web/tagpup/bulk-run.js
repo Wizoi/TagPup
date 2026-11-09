@@ -16,8 +16,8 @@ import { setStatus } from './status.js';
 import { forgetFolderCaches } from './cache.js';
 import { hasUnsavedEdits } from './edits.js';
 import { refreshHeldCards } from './library-source.js';
-import { endedSentence, photosOf, showEnded } from './common/batch-strip.js';
-import { doneWords } from './bulk-words.js';
+import { endedSentence, showEnded } from './common/batch-strip.js';
+import { doneWords, itemsOf } from './bulk-words.js';
 
 const JSON_HEADERS = { 'Content-Type': 'application/json' };
 
@@ -97,7 +97,7 @@ export async function runBulk({ op, selection, params, desc, picked }) {
     if (bulkBusy()) return { ok: false, why: BUSY_SENTENCE };
     bulk.running = true;
     lockBulkControls();
-    setStatus('busy', `${desc.verb} ${desc.what} ${desc.prep} ${photosOf(picked)}...`, { transient: false });
+    setStatus('busy', `${desc.verb} ${desc.what} ${desc.prep} ${itemsOf(picked, desc.kinds)}...`, { transient: false });
     let res;
     let body;
     try {
@@ -119,7 +119,8 @@ export async function runBulk({ op, selection, params, desc, picked }) {
     lockBulkControls();
     // Photos came into the view since it was read: the server took more than were picked.
     const wider = body.total > picked && selection && selection.source
-        ? ` TagPup took ${body.total.toLocaleString()} photos but ${picked.toLocaleString()} were selected: ${(body.total - picked).toLocaleString()} more came into this view since it was read.` : '';
+        ? ` TagPup took ${body.total.toLocaleString()} but ${itemsOf(picked, desc.kinds)} ${picked === 1 ? 'was' : 'were'} selected: `
+            + `${(body.total - picked).toLocaleString()} more came into this view since it was read.` : '';
     // A batch that stopped before its end (as asked, or ExifTool stopped answering) answers with its own sentence: N of M, and
     // the change in History, in place of the same error on each photo it left.
     const stopped = body.stopped;

@@ -1,6 +1,7 @@
 // TagPup's page: what a bulk edit of a library view asks before it is written, and the words it names itself in, as plain functions
 // of numbers and names. How it goes and how it ends is the shared strip's (web/common/batch-strip.js).
 import { howLong, photosOf } from './common/batch-strip.js';
+import { kindsSaid } from './folder.js';
 
 /** Photos a second the page assumes of a bulk edit: 9d-1 measured 15 to 23, and a write now reads each file to its end (about 53 ms a photo). */
 export const ASSUMED_PER_SECOND = 15;
@@ -19,21 +20,37 @@ export const DELETE_PER_SECOND = 15;
  */
 export const COPY_BYTES_PER_SECOND = 200 * 1024 * 1024;
 
-/** What the edit is, in words: `{ op, verb, past, what, prep }` for Add or Remove of tags or people. */
-export function describeTags({ op, add = [], remove = [] }) {
-    const names = (add.length ? add : remove).join(', ');
-    if (add.length && remove.length) {
-        return { op, verb: 'Change', past: 'Changed', what: `${add.join(', ')} and ${remove.join(', ')}`, prep: 'on' };
-    }
-    if (add.length) {
-        return { op, verb: 'Add', past: 'Added', what: names, prep: 'to' };
-    }
-    return { op, verb: 'Remove', past: 'Removed', what: names, prep: 'from' };
+/**
+ * `count` of what a selection holds, by kind (#2645): `kinds` is the selection's `{ photos, videos }` (selected.js selectionKinds),
+ * or null. A count that is the selection's is said as kindsSaid says one ("2 photos, 1 video"); a count the server answered
+ * otherwise (photos that came into the view since, a delete that failed for some) by the kinds the selection held.
+ */
+export function itemsOf(count, kinds) {
+    if (!kinds || !kinds.videos) return photosOf(count);
+    if (kinds.photos + kinds.videos === count) return kindsSaid(kinds);
+    const n = count.toLocaleString();
+    if (!kinds.photos) return `${n} ${count === 1 ? 'video' : 'videos'}`;
+    return `${n} ${count === 1 ? 'photo or video' : 'photos and videos'}`;
 }
 
-/** "Delete 3,412 photos", "Added Trips/Coast to 1 photo": the words of `desc` for `count` photos, `form` 'verb' or 'past'. */
+/**
+ * What the edit is, in words: `{ op, verb, past, what, prep, kinds }` for Add or Remove of tags or people; `kinds` the selection's
+ * by kind, which its counts are said in (itemsOf).
+ */
+export function describeTags({ op, add = [], remove = [], kinds = null }) {
+    const names = (add.length ? add : remove).join(', ');
+    if (add.length && remove.length) {
+        return { op, verb: 'Change', past: 'Changed', what: `${add.join(', ')} and ${remove.join(', ')}`, prep: 'on', kinds };
+    }
+    if (add.length) {
+        return { op, verb: 'Add', past: 'Added', what: names, prep: 'to', kinds };
+    }
+    return { op, verb: 'Remove', past: 'Removed', what: names, prep: 'from', kinds };
+}
+
+/** "Delete 3,412 photos", "Added Trips/Coast to 1 photo, 2 videos": the words of `desc` for `count`, `form` 'verb' or 'past'. */
 function phrase(desc, form, count, after = '') {
-    return [desc[form], desc.what, desc.prep, photosOf(count)].filter(Boolean).join(' ') + after;
+    return [desc[form], desc.what, desc.prep, itemsOf(count, desc.kinds)].filter(Boolean).join(' ') + after;
 }
 
 /**
@@ -41,11 +58,11 @@ function phrase(desc, form, count, after = '') {
  * (/api/library/selection/delete-check: `through_this_pc`, the photos in places with no Recycle Bin), `count` the photos. How many
  * went for good is the reply's (doneWords), never the question's: a file the warning named may have failed to go.
  */
-export function describeDelete(where, count) {
+export function describeDelete(where, count, kinds = null) {
     const through = Math.min((where && where.through_this_pc) || 0, count);
     const binned = !through ? ' to the Recycle Bin'
         : through >= count ? " through this PC's Recycle Bin" : ", those from places with no Recycle Bin through this PC's";
-    return { op: 'delete', verb: 'Delete', past: 'Deleted', what: '', prep: '', binned, throughThisPc: through };
+    return { op: 'delete', verb: 'Delete', past: 'Deleted', what: '', prep: '', binned, throughThisPc: through, kinds };
 }
 
 /** `2,345 MB`: bytes as the question says them, rounded up. */
@@ -70,8 +87,8 @@ export function bigClip(size) {
  * share, a removable drive), through this PC (#694): copied to it, the copies to its Recycle Bin, then the originals deleted, and a
  * copy restored goes to the folder under Downloads, not back to the share -- how long, and that the rows go too.
  */
-export function deleteQuestion(where, count) {
-    const head = `Delete ${photosOf(count)}?`;
+export function deleteQuestion(where, count, kinds = null) {
+    const head = `Delete ${itemsOf(count, kinds)}?`;
     const rows = count === 1 ? ' Its row leaves the library, with its faces.' : ' Their rows leave the library, with their faces.';
     const through = Math.min((where && where.through_this_pc) || 0, count);
     const seconds = count / DELETE_PER_SECOND + (through ? ((where && where.copy_bytes) || 0) / COPY_BYTES_PER_SECOND : 0);
@@ -129,7 +146,7 @@ export function forGoodQuestion(names, count) {
 
 /** The question before a bulk edit: it names the write and the count, what it touches, how long, and how to undo it. */
 export function confirmSentence(desc, count) {
-    const head = `${desc.verb} ${desc.what} ${desc.prep} ${photosOf(count)}?`;
+    const head = `${desc.verb} ${desc.what} ${desc.prep} ${itemsOf(count, desc.kinds)}?`;
     return `${head} This changes the photo files and takes ${howLong(count / ASSUMED_PER_SECOND)}. `
         + 'History lists it as one change and can undo it.';
 }

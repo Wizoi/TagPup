@@ -5,6 +5,9 @@
  * reloaded the main image once with a throwaway query string, and left the grid's
  * thumbnail -- and the main image on the next visit -- to come from the cache, turned
  * the old way. Every image URL now carries the photo's mtime, which a rotate changes.
+ *
+ * A rotate is a write of the photo, and waits its turn behind a save of it (#2587): posted at once, it turned the file
+ * under a queued save, which then named the stamp from before the turn and was refused as changed on disk.
  */
 import { test, describe, afterEach } from "node:test";
 import assert from "node:assert/strict";
@@ -74,5 +77,43 @@ describe("a rotate refreshes every image of the photo", () => {
 
     assert.equal(scans, before + 1, "the photo was read again after a rotate with no stamp");
     assert.match(document.getElementById("main-image").getAttribute("src"), /v=3000/);
+  });
+
+  test("Rotate clicked while a save of the photo is under way waits for the save to answer", async (t) => {
+    const held = [];
+    const server = new FakeServer()
+      .on("/api/folder/scan", PHOTOS.map((p) => ({ ...p, size: 500 })))
+      .on("/api/taxonomy/tree", [])
+      .on("/api/people", [])
+      .on("/api/tags", [])
+      .on("/api/photo-faces", { faces: [], total: 0, unmatched: 0 })
+      .on("/api/folder/suggest-status", { status: "idle" })
+      .on("/api/photo/save-metadata", () => new Promise((resolve) => held.push(() => resolve({ success: true, mtime: 1500, size: 520 }))))
+      .on("/api/photo/rotate", { success: true, mtime: 2000, size: 530 });
+    const { window, document } = await loadApp("tagpup", { server, t });
+    window.alert = () => {};
+    await openFolder({ window, document }, "D:\\p");
+    await new Promise((r) => window.setTimeout(r, 60));
+    document.querySelector('#photo-list .photo-item-file[data-path="D:\\\\p\\\\a.jpg"]')
+      .dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
+    await new Promise((r) => window.setTimeout(r, 40));
+
+    const input = document.getElementById("input-add-title") || document.getElementById("input-photo-title");
+    input.focus();
+    input.value = "Sports day";
+    input.dispatchEvent(new window.Event("input", { bubbles: true }));
+    document.getElementById("btn-save-details").click();
+    await new Promise((r) => window.setTimeout(r, 40));
+    assert.equal(held.length, 1, "fixture: the save is held on the server");
+
+    document.getElementById("btn-rotate-left").dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
+    await new Promise((r) => window.setTimeout(r, 60));
+    const rotates = () => server.calls.filter((c) => c.url.includes("/api/photo/rotate"));
+    assert.equal(rotates().length, 0, "the rotate was posted while the save of the photo was under way");
+
+    held.shift()();
+    await new Promise((r) => window.setTimeout(r, 80));
+    assert.equal(rotates().length, 1, "the rotate was not posted once the save answered");
+    assert.match(document.getElementById("main-image").getAttribute("src"), /v=2000/);
   });
 });
