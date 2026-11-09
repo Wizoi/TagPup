@@ -82,31 +82,35 @@ def name_face(library, face_id, person):
     if who is None:
         return result
     ref, person_name = who
+
+    def name(conn):
+        """(faces changed, why it is refused or None), decided in the write."""
+        row = faces.rows(conn, [face_id]).get(face_id)
+        if not row:
+            raise NotFound("Face ID not found")
+        photo_path, old, excluded = row
+        # An excluded face has been ruled out of identity work; naming it leaves a face
+        # that is both ruled out and claimed, which no view shows and no Undo reaches.
+        if excluded:
+            raise Conflict("Cannot match: this face is excluded. Restore it first to name it.")
+        # Already this person: nothing to change but who decided -- an automatic name (clustering's, or a
+        # photo's tag's, #788) a person now confirms becomes their decision, in the spelling it has.
+        if old and person_ids.matches(old, person_ids.target(conn, ref)):
+            return faces.confirm(conn, face_id), None
+        if faces.named_elsewhere_in_photo(conn, photo_path, ref, face_id):
+            return 0, "Cannot match: '%s' is already tagged on another face in this photo." % person_name
+        faces.name(conn, [face_id], ref)
+        return 1, None
+
     try:
-        with faces.accounted_write(library.path, "name a face") as write:
-            row = faces.rows(write.conn, [face_id]).get(face_id)
-            if not row:
-                raise NotFound("Face ID not found")
-            photo_path, old, excluded = row
-            # An excluded face has been ruled out of identity work; naming it leaves a face
-            # that is both ruled out and claimed, which no view shows and no Undo reaches.
-            if excluded:
-                raise Conflict("Cannot match: this face is excluded. Restore it first to name it.")
-            # Already this person: nothing to change but who decided -- an automatic name (clustering's, or a
-            # photo's tag's, #788) a person now confirms becomes their decision, in the spelling it has.
-            if old and person_ids.matches(old, person_ids.target(write.conn, ref)):
-                result.changed = faces.confirm(write.conn, face_id)
-                result.details.update(face_ids=[face_id], fingerprints=(write.before, write.after))
-                return result
-            if faces.named_elsewhere_in_photo(write.conn, photo_path, ref, face_id):
-                result.refuse("Cannot match: '%s' is already tagged on another face in this photo."
-                              % person_name)
-                return result
-            faces.name(write.conn, [face_id], ref)
-            result.changed = 1
+        (changed, refused), before, after = faces.accounted_write(library.path, name, "name a face")
     except person_ids.PersonProblem as problem:
         people_service.translate(problem)
-    result.details.update(face_ids=[face_id], fingerprints=(write.before, write.after))
+    if refused:
+        result.refuse(refused)
+        return result
+    result.changed = changed
+    result.details.update(face_ids=[face_id], fingerprints=(before, after))
     return result
 
 
@@ -268,9 +272,9 @@ def exclude(library, face_ids, reason=None):
     if refused:
         result.refuse(refused)
         return result
-    with faces.accounted_write(library.path, "exclude faces") as write:
-        result.changed = faces.exclude(write.conn, face_ids, reason)
-    result.details.update(face_ids=list(face_ids), fingerprints=(write.before, write.after))
+    result.changed, before, after = faces.accounted_write(
+        library.path, lambda conn: faces.exclude(conn, face_ids, reason), "exclude faces")
+    result.details.update(face_ids=list(face_ids), fingerprints=(before, after))
     return result
 
 

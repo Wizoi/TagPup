@@ -137,7 +137,14 @@ def connect(target, *args, foreign_keys=False, **kwargs):
 
 def begin(conn, immediate=False):
     """Open a transaction on `conn` now, for a batch the caller commits or rolls back as
-    one. IMMEDIATE takes the write lock at once rather than at the first write."""
+    one. IMMEDIATE takes the write lock at once rather than at the first write. The one
+    place a transaction is begun (tests/test_db_access.py).
+
+    It waits the busy timeout for another process and does not retry: a write run again on a
+    busy database is write_with_connection's, with the begin inside its operation. A caller
+    that holds a connection across several transactions -- the index's (roots.begin_write),
+    the migration runner's, under the write lock for the whole run -- begins here, and a
+    failure is raised to it: a migration left undone is run again by the next open."""
     conn.execute("BEGIN IMMEDIATE" if immediate else "BEGIN")
 
 

@@ -932,7 +932,7 @@ def _ensure(db_path):
 
 def _migrate(db_path, conn):
     with db.lock_for(db_path):
-        conn.execute("BEGIN IMMEDIATE")
+        db.begin(conn, immediate=True)
         try:
             # A library with no tables yet is being made, not migrated: nothing to back
             # up, watch or record. One below the baseline has nothing here to bring it forward: refused before anything is
@@ -972,7 +972,7 @@ class _Run:
         # The first of SQLite's twelve steps: foreign keys off, which only takes effect
         # outside a transaction. Dropping a table with them on deletes every row naming it.
         conn.execute("PRAGMA foreign_keys = OFF")
-        conn.execute("BEGIN IMMEDIATE")
+        db.begin(conn, immediate=True)
         try:
             # Again inside the transaction: another process may have got here first.
             if version(conn) >= migration.version:
