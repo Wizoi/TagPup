@@ -4,31 +4,44 @@ The domain's charter is `.claude/agents/tagpup-owner-files.md`: its Scope, the c
 invariants and guards, and its scenarios F1 to F12. This page states each of the seven conditions of health
 (docs/OWNERS.md) with its evidence and date. A condition not met is the domain's queue.
 
-## What the domain holds (counted 2026-10-15, read-only)
+## What the domain holds (counted 2026-11-08, read-only)
 
-| Library | Photos | Folders | With a DocumentID | Faces | Changes of photo files in the journal |
-|---|---|---|---|---|---|
-| kr-track | 1,499 | 21 | 1,490 | 9,850 | 274 |
-| photo_index | 59,519 | 2,617 | 546 | 187,784 | 40 |
-| renton_parkrun | 1,309 | 9 | 1,309 | 3,328 | 1,185 |
-| all three | 62,327 | 2,647 | 3,345 | 200,962 | 1,499 |
+| Library | Photos | Of them clips | Folders | With a DocumentID | Faces | Changes of photo files in the journal |
+|---|---|---|---|---|---|---|
+| kr-track | 2,070 | 5 | 35 | 2,065 | 12,664 | 1,846 |
+| photo_index | 61,797 | 2,179 | 2,618 | 980 | 183,669 | 2,953 |
+| renton_parkrun | 1,309 | 0 | 9 | 1,309 | 3,315 | 1,202 |
+| all three | 65,176 | 2,184 | 2,662 | 4,354 | 199,648 | 6,001 |
 
-One library's root is on a network share (1,309 rows). No row is stamped (0.0, 0), none has a NULL stamp, and none holds
-XMP PersonInImage or RegionName (all 0 in the three).
+The photos without a DocumentID are photo_index's 60,817 and kr-track's 5 (its clips); the journal's files are
+95,231 done and 139 conflict in photo_index, 4,696 done in kr-track and 4,319 in renton_parkrun. One library's root is on
+a network share (renton_parkrun's 1,309 rows, the share counted 2026-10-15). No row is stamped (0.0, 0), none has a NULL
+stamp, and none holds XMP PersonInImage or RegionName (all 0 in the three, 2026-11-08).
 
-## The seven conditions (2026-10-15)
+## The seven conditions (restated 2026-11-08; the first pass was 2026-10-15)
+
+What the pass of 2026-10-15 held is below with today's evidence; what the work since added (the own metadata writer and
+its editors, the clips, the bake) is stated where it belongs, and the long sections after this one (the census, the
+editors) are the evidence those scenario tests cite.
 
 1. **No reach-ins.** Met. Every use of a Files module by another domain is a row of the Integration charter's contract
-   table: Files is the callee of rows 6, 7, 38, 46, 47, 48, 50, 51 and 53 to 59. Those from 50 are this pass's: inspect,
-   tags, identify, box_shape, the naming jobs' folder scope, the journal's undo and dating, the thumbnails' rows,
-   and face_people's write through `file_changes.batch_exclusively`. Each names its guard test; box_shape is review only.
-   face_people's own ExifTool session went (#1474).
+   table: Files is the callee of rows 6, 7, 38, 46, 47, 48, 50, 51 and 53 to 59, and of rows 69 to 74 (a video's
+   bytes through `read_span`; the web server's settling of a half-done change; the page record's `writes`; the delete
+   check and the Recycle Bin's keeping; a clip's frames; the thumbnail cache and a clip's poster). Files is the caller of
+   rows 60, 61, 62 (vocabulary, the people vocabulary, the faces store), 65 and 66 (the index's matching of the faces it
+   made and its reading of a bake) and 68 (`sync._said` into `tagpup.logs`). Rows 50 to 59 are the 2026-10-15 pass's:
+   inspect, tags, identify, box_shape, the naming jobs' folder scope, the journal's undo and dating, the thumbnails'
+   rows, and face_people's write through `file_changes.batch_exclusively`. Each names its guard test; box_shape is review
+   only. face_people's own ExifTool session went (#1474).
 2. **No rule written twice.** Met.
    - One batch reader, `field_values.read`: the indexer's `MetadataExtractor.batch_read` and sync's pairing read
      through it (#1473). A timeout ends the read and leaves every photo not read unread (#1490).
    - One writer of a photo's fields, `field_values.write`; the identity mint writes through it (`ensure_document_id`).
      It writes a file one of two ways: a journaled write of a JPEG whose fields fit is patched in place
-     (`in_place.patch_jpeg`, called from nowhere else; `PATCH_IN_PLACE`), every other write is ExifTool's rewrite.
+     (`in_place.patch_jpeg`, called from nowhere else; `PATCH_IN_PLACE`, True), every other write is ExifTool's rewrite.
+     A patch's new segments are made by ExifTool into a copy of the header or, behind `OWN_WRITER` (False until the
+     owner turns it on), by `segment_edits` (the one caller of the three block editors,
+     `tests/test_the_block_editors_have_one_caller.py`); a clip is patched by `clip_patch`.
      It writes every photo beside itself and moves the new file over it only once its picture is the photo's
      (`_landed`, #2377, DECISIONS 2026-11-03): the one check of a rewrite, the patch in place's verify the other
      mechanism of the same rule (INVARIANTS), not merged with it: a patch checks only the bytes it changed
@@ -47,7 +60,7 @@ XMP PersonInImage or RegionName (all 0 in the three).
    `sync.folder_state` (now `sync.watch_states`), `bulk_edit._reachable`, `MetadataExtractor._read_one_by_one`,
    `face_people.CHUNK`, `face_people.TIMEOUT` and the route's `_too_many`.
 5. **No branch without an instance.** Met.
-   - Deleted, 0 live rows each: the (0.0, 0) stamp of a failed stat, `_structure(stamp=None)`, `record_indexed`'s 0.0
+   - Deleted, 0 live rows each (still 0, 2026-11-08): the (0.0, 0) stamp of a failed stat, `_structure(stamp=None)`, `record_indexed`'s 0.0
      defaults and Apply All's `.get("people") or []`.
    - Kept, with the user action that makes the case:
      - an unstamped record: a share that stops answering during an index (one root is on a share), an ExifTool that
@@ -55,13 +68,15 @@ XMP PersonInImage or RegionName (all 0 in the three).
      - a stop during the planning read: Cancel or a hand-over;
      - a Ctrl+C part-way.
    - `tests/photo_rows.stamp_of`'s (0.0, 0) is a fixture's, by design (its docstring).
-6. **Scenario tests, each file owned and mapped.** Met. F1 to F12 each have files in `tests/owners.py`, and
-   `test_bulk_delete` is F8. `test_service_save_photo` and `test_save_reply_says_rename_failed` were lifted into F1
-   (`tests/test_tag_a_photo_read_it_back_and_undo.py`) with mutation proofs, and the restatements deleted.
-7. **No open data or wrong finding, and every low fixed or by design.** Met once this branch is merged:
-   - #1490 (wrong) is fixed;
-   - #1491 to #1496 are fixed;
-   - the lows below are by design.
+6. **Scenario tests, each file owned and mapped.** Met, with one open low. F1 to F12 each have files in `tests/owners.py`
+   (Files' test files, counted 2026-11-08: 61 scenario, 53 unit, 2 guard), and `test_bulk_delete` is F8.
+   `test_service_save_photo` and `test_save_reply_says_rename_failed` were lifted into F1
+   (`tests/test_tag_a_photo_read_it_back_and_undo.py`) with mutation proofs, and the restatements deleted. F12 (clips)
+   has grown into one id over many clauses and test files: open as #2736, to be split.
+7. **No open data or wrong finding, and every low fixed or by design.** Met for data and wrong
+   (`tools/add_findings.py --open`, 2026-11-08: 20 open, all low). Files' open lows are #2736 (F12's size), #2754 and
+   #2755 (the watcher), #2756 (an unreachable arm of the bulk edit) and #2735 (this page, closed by this restatement).
+   Closed: #1490 (wrong), #1491 to #1496, and the lows below, by design.
 
 ## The journaled path and its two named exceptions
 
@@ -217,7 +232,7 @@ a JPEG (the XMP packet's size, EXIF Orientation; regions, extended XMP and two X
 
 ## The XMP packet editor
 
-`tagpup/files/xmp_packet.py` (M2 of docs/PLAN_OWN_METADATA.md; its one caller `segment_edits`, M4): pure, a packet's bytes in
+`tagpup/files/xmp_packet.py` (M2 of docs/PLAN_OWN_METADATA.md; its one caller `segment_edits`, for a JPEG's packet and, as `segment_edits.new_packet`, a clip's): pure, a packet's bytes in
 and out, for a JPEG's segment and a clip's box alike. It owns nine properties (`PROPERTIES`, found by namespace URI):
 dc:subject and lr:hierarchicalSubject (a Bag), dc:description and dc:title (an x-default Alt), exif:DateTimeOriginal,
 xmp:CreateDate, tiff:Orientation, xmpMM:DocumentID and xmpMM:PreservedFileName (text). `read` answers their values;
@@ -283,7 +298,7 @@ refused. Each was edited in memory (a caption, a keyword added, an Orientation),
 
 ## The EXIF block editor
 
-`tagpup/files/exif_block.py` (M3 of docs/PLAN_OWN_METADATA.md; no caller yet, M4 wires it): pure, an EXIF segment's
+`tagpup/files/exif_block.py` (M3 of docs/PLAN_OWN_METADATA.md; its one caller `segment_edits`, behind `OWN_WRITER`, False): pure, an EXIF segment's
 body (`Exif\0\0` and the TIFF block) in and out. It owns nine fields (`FIELDS`): IFD0's ImageDescription, Orientation,
 XPComment and XPKeywords; the Exif IFD's DateTimeOriginal, CreateDate, SubSecTime, SubSecTimeOriginal and
 SubSecTimeDigitized. The block's layout is `containers.exif_tiff`'s, the one walk of its IFDs (IFD0, IFD1 and its
@@ -337,7 +352,7 @@ own header 12, note-relative 9, not an IFD 46, the Canon footer wrong 1 (photo_i
 
 ## The IPTC block editor
 
-`tagpup/files/iptc_block.py` (M3 of docs/PLAN_OWN_METADATA.md; no caller yet, M4 wires it): pure, an APP13 segment's
+`tagpup/files/iptc_block.py` (M3 of docs/PLAN_OWN_METADATA.md; its one caller `segment_edits`, behind `OWN_WRITER`, False): pure, an APP13 segment's
 body (`Photoshop 3.0` and its 8BIM resources) in and out. It owns three datasets (`DATASETS`): 2:05 ObjectName (the
 title), 2:25 Keywords and 2:120 Caption-Abstract. The layout is containers.py's, the one statement of it, read by the
 census, the in-place patch and this editor alike: `photoshop_resources`, `resource`, `pad_resource` (the dummy resource
@@ -372,7 +387,7 @@ the fit rates and the version and zero counts below came out the same), the rest
 - **Against ExifTool** (the building worker's 12 copies of sampled headers, an ASCII and a non-cp1252 value each): 22
   of 24 APP13 bodies byte-identical; the 2 that differ by design: for a value outside cp1252 in a block with no 1:90,
   ExifTool writes `?` and no 1:90, TagPup adds 1:90 UTF-8 (and 1:00) and writes the letter.
-- **Decided here, as ExifTool does** (no file changes today: no caller yet): the version datasets 1:00 and 2:00 added to
+- **Decided here, as ExifTool does** (no file changes while `OWN_WRITER` is False): the version datasets 1:00 and 2:00 added to
   a record that lacks one (photo_index: 1,441 of 1,460 blocks with records lack 1:00, 1,109 lack 2:00); zero bytes after
   the last dataset dropped (754 of 1,461); a trailing NUL read off a value (1,041 photo_index captions end in one); a
   value cut by `fields.as_written`, which every write of a value passes today before ExifTool, so the file holds what an
@@ -383,8 +398,9 @@ the fit rates and the version and zero counts below came out the same), the rest
 
 ## segment_edits: a write's values made into a header's segments
 
-`tagpup/files/segment_edits.py` (M4 of docs/PLAN_OWN_METADATA.md, merge 4b-1; no caller until 4b-2 wires it into
-`in_place.patch_jpeg`): pure, the journal's values of a write ({field: [texts]}) and a JPEG header (its bytes to the
+`tagpup/files/segment_edits.py` (M4 of docs/PLAN_OWN_METADATA.md; `in_place.patch_jpeg` calls it
+when `field_values.OWN_WRITER` is True, which it is not yet; `services/metadata_check.py` is the shadow comparison on
+copies): pure, the journal's values of a write ({field: [texts]}) and a JPEG header (its bytes to the
 first scan's header's end, `in_place._header_of`'s) in; `new_header` answers the header with only the EXIF, XMP and IPTC
 bodies changed (every marker and length byte the header's) and the fields it left stale, or None: not a patch, the
 caller rewrites the file, nothing written. It is the one caller of the three editors
@@ -418,7 +434,8 @@ caller rewrites the file, nothing written. It is the one caller of the three edi
   changing nothing; a photo holding two segments of a patched kind (two EXIF 4 / 0 / 0, two APP13 0 / 2 / 3 in the census
   above), refused before this module by `in_place._header_of`, whatever the write changes; a rotation of a photo with no EXIF Orientation, since the IFD0 table is followed by data in every
   absent case counted (docs above, "The EXIF block editor"), refused by the editor, not by a rule here.
-- **Not verified**: a patch in a real file against ExifTool's (4b-2's shadow comparison).
+- **Not verified here**: a patch in a real file against ExifTool's (the shadow comparison is
+  `services/metadata_check.py`; its result is not recorded on this page).
 
 ## By design (each row closed `decided:`)
 
@@ -470,6 +487,9 @@ caller rewrites the file, nothing written. It is the one caller of the three edi
   the journal's preconditions settle it, and only reads are wasted.
 
 ## History
+
+- 2026-11-08: the page restated: counts, the seven conditions and the contract rows (69 to 74 as callee, 60 to 68 as
+  caller) as of today (#2735); the lines that called the editors callerless and the two re-derives live were corrected.
 
 - 2026-10-15, the domain pass:
   - one batch reader; a photo ExifTool did not answer for is left unread (#1473, #1490, #1491, #1495);
