@@ -16,6 +16,8 @@ accepted, ...) from findings.md to the archive of its number range, byte for byt
 `--watch N "why"` moves an open row, byte for byte but for its status, to docs/watching.md: a finding with nothing to do
 until it is reported again or reproduced. It is not counted by `--open` and not brought up again; it is read when an issue
 is reported, to see whether it is that one (owner, 2026-11-02). Its number is kept and never given again.
+A row naming a sweep, backfill, `--apply` or bulk write is not closed `fixed` unless the status says `wrote N` (the count the
+fix wrote, 0 included; owner, 2026-11-08).
 Nothing is written unless every row parses and every numbered row exists.
 
 A worker on a branch does NOT number into findings.md: two branches that both number
@@ -98,6 +100,19 @@ def watch(findings, watching, key, reason):
 def without_first_cell(row):
     """The row from its second cell on, starting with the `|` that ends the first."""
     return row[row.index("|", 1):]
+
+
+#: A row naming one of these is about a write over many files or rows; closing it `fixed` must say what the fix wrote.
+BULK = re.compile(r"sweep|backfill|--apply|bulk write", re.I)
+WROTE = re.compile(r"\bwrote \d+")
+
+
+def unproven_bulk(text, key, status):
+    """True when row `key` of `text` names a bulk write and `status` closes it `fixed` without `wrote N` (a sweep read
+    60 photos, reported 60 done and wrote nothing, #2622)."""
+    match = re.search(r"^\| %s \|[^\n]*$" % re.escape(str(key)), text, re.M)
+    return bool(match and BULK.search(match.group(0)) and re.match(r"fixed\b", status.strip(), re.I)
+                and not WROTE.search(status))
 
 
 def set_status(text, key, status):
@@ -314,6 +329,8 @@ def main(argv=None):
             text, given = add_branch(text, rows)
             _say_similar(rows, _read(args.findings), args.archive_dir, _watching_text(args.watching_file))
         for key, status in args.status:
+            if unproven_bulk(text, key, status):
+                parser.error("%s names a bulk write: close it `fixed: <commit>; wrote N ...` with what the fix wrote" % key)
             updated = set_status(text, key, status)
             if updated is None:
                 parser.error("no row %s in %s" % (key, args.branch_file))
@@ -331,6 +348,8 @@ def main(argv=None):
     floor = highest(*archives.values(), watching)
     given, mapping, changed, moved = [], {}, {}, 0
     for key, status in args.status:
+        if unproven_bulk(text, key, status) or unproven_bulk("\n".join(archives.values()), key, status):
+            parser.error("#%s names a bulk write: close it `fixed: <commit>; wrote N ...` with what the fix wrote" % key)
         if set_status(text, key, status) is not None:
             text = set_status(text, key, status)
             continue

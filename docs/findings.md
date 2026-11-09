@@ -35,3 +35,4 @@ Findings fixed before 2026-09-23 are in the git log (`git log --grep="^fix"`). T
 
 | # | Found | Finding | Status |
 |---|---|---|---|
+| 2728 | 2026-11-08 | low: a finding about a write over many files could be closed `fixed` with no count of what the fix wrote, the shape of #2622 (60 read, 60 reported, none written). Retro 2026-11-08 action. | open |

@@ -167,6 +167,18 @@ class Files(unittest.TestCase):
         run(self.base + ["--status", "1", "fixed: 123abc"])
         self.assertIn("| 1 | 2026-09-20 | Old and done. | fixed: 123abc |", self.read(self.archives, "findings_closed_0001-0250.md"))
 
+    def test_a_sweep_row_is_not_closed_fixed_without_what_the_fix_wrote(self):
+        sweep = "| 5 | 2026-11-07 | The caption sweep reported Cleared: 0 and wrote nothing. | open |\n"
+        with open(self.findings, "a", encoding="utf-8", newline="") as handle:
+            handle.write(sweep)
+        before = self.read(self.findings)
+        with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
+            run(self.base + ["--status", "5", "fixed: abc"])
+        self.assertEqual(before, self.read(self.findings))
+        run(self.base + ["--status", "5", "fixed: abc; wrote 60 of 60 on a copy"])
+        self.assertIn("fixed: abc; wrote 60 of 60 on a copy |", self.read(self.findings))
+        run(self.base + ["--status", "2", "decided: by design"])
+
     def test_a_row_that_is_nowhere_is_an_error_and_nothing_is_written(self):
         before = self.read(self.findings)
         with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
