@@ -285,6 +285,7 @@ class TheDoctor(Library):
         said = [line for line in lines if line.startswith("photos whose file fails to open")]
         self.assertEqual(1, len(said), lines)
         self.assertIn("fails to open: 3 ", said[0])   # the copy that stops in zeros, the empty file, the file of zeros
+        self.assertNotIn("could not be looked at", said[0], "the row whose file is gone is missing_files', not unreached")
         self.assertNotIn("incomplete copy", "\n".join(lines))
         _broken, shown = self.run_doctor(5)
         listed = "\n".join(shown)

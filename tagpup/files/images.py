@@ -174,7 +174,7 @@ def tail_check(photo_path):
     photo, 0xFF or zero padding below ZERO_TAIL, bytes after a PNG's IEND all decode. It cannot see
     damage in the middle of a picture, which the indexer's full decode (`opened`) does. No write asks
     it (DECISIONS 2026-10-15)."""
-    if os.path.getsize(photo_path) == 0:   # unbounded: the read of the photo's end, next, has no deadline (by design)
+    if os.path.getsize(photo_path) == 0:   # unbounded: its one caller bounds the whole look (inspect, shares.bounded)
         raise Unreadable("empty", "the file is empty")
     return zero_tail_of(photo_path)
 

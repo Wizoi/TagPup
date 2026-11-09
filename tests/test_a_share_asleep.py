@@ -119,13 +119,28 @@ class ASleepingShare(unittest.TestCase):
 
     def test_the_rows_whose_file_is_gone_leave_out_the_photos_on_it_and_name_no_folder_gone(self):
         """The MCP tool's answer (inspect.missing_files): a photo on the share asleep is not looked at, not gone. The
-        doctor says the same: it called all of them missing with a bare os.path.exists (#1388)."""
+        doctor says the same: it called all of them missing with a bare os.path.exists (#1388).
+
+        The doctor's look for a file that fails to open, run first so that the share falls asleep under it: it waits
+        READ_WAIT for the first photo, then takes the share as away and counts the others not looked at at once -- it
+        read each file with no deadline, a share asleep held it for as long as Windows waited on every photo, and the
+        "not found" it then said skipped the photo uncounted (#2753)."""
+        with mock.patch.object(shares, "READ_WAIT", 0.05):
+            started = time.monotonic()
+            opens = inspect.files_that_fail_to_open(self.vl.library)
+            took = time.monotonic() - started
+        self.assertEqual((0, 3, []), (opens["count"], opens["unreached"], opens["files"]))
+        self.assertLess(took, 1.0, "the share was waited for on more than one photo")
         found = inspect.missing_files(self.vl.library)
         self.assertEqual((0, 0, 0, 3), (found["rows"], found["folders"], found["folders_gone"], found["not_looked_at"]))
         said = []
         doctor.report(self.vl.path, out=said.append)
         self.assertIn("rows whose file is not on disk: 0, in 0 folder(s); 0 folder(s) are gone entirely; 3 row(s) not "
                       "looked at (their share did not answer, or the file could not be read)", said)
+        self.assertIn("looking at the end and the header of each of the 3 photos' files for one that fails to open: over "
+                      "a minute for every thousand on a network share", said)
+        opened = [line for line in said if line.startswith("photos whose file fails to open")]
+        self.assertTrue(opened[0].endswith("; 3 could not be looked at"), opened)
 
 
 class ASyncThatCannotLookAtAFolder(unittest.TestCase):
