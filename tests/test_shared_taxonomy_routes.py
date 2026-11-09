@@ -170,5 +170,30 @@ class TheSharedStylesheets(unittest.TestCase):
             self.assertEqual(404, app.test_client().get("/library/common/..%2Fstyle.css").status_code)
 
 
+class ARefusedResultIsAnsweredAsItsKind(unittest.TestCase):
+    """A refusal that is not a plain one keeps its status through TagTuner's tag merge (#2764)."""
+
+    def merge_refused(self, kind):
+        from unittest import mock
+
+        from tagpup.core.result import Result
+        from tagpup.services import tags as tags_service
+        tuner, _home = web_client.app_for(self, "tuner")
+        result = Result()
+        result.refuse("Not now.", kind)
+        with mock.patch.object(tags_service, "merge", return_value=result):
+            return tuner.test_client().post("/library/api/tags/merge", json={"from": "A/B", "into": "A/C"})
+
+    def test_each_kind_of_refusal_is_answered_as_its_row_says(self):
+        from tagpup.web import responses
+        for kind, (status, said) in responses.STATUS.items():
+            with self.subTest(kind):
+                reply = self.merge_refused(kind)
+                self.assertEqual(status, reply.status_code)
+                self.assertEqual("Not now.", reply.get_json()["error"])
+                for key in said:
+                    self.assertTrue(reply.get_json()[key])
+
+
 if __name__ == "__main__":
     unittest.main()

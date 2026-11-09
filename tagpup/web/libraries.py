@@ -165,7 +165,7 @@ def attach_library():
     g.library = request.environ.get("tagpup.library")
 
 
-def _test_mode():
+def test_mode():
     """Was this server started on a test library?"""
     startup = current_app.config.get("STARTUP_LIBRARY")
     return startup is not None and libraries.is_test_library(os.path.basename(startup.path))
@@ -184,20 +184,7 @@ def list_libraries():
     that file on every choice."""
     data_dir = tagpup_config.data_dir()
     files = os.listdir(data_dir) if os.path.exists(data_dir) else []
-    return jsonify({"databases": sorted(libraries.picker_names(files, _test_mode()))})
-
-
-def home_libraries():
-    """Every library of this home the picker offers that is on disk, as Libraries: what the
-    Roots screen asks the others of (the machine map is shared by the data folder)."""
-    data_dir = tagpup_config.data_dir()
-    files = os.listdir(data_dir) if os.path.exists(data_dir) else []
-    found = []
-    for name in libraries.picker_names(files, _test_mode()):
-        library = Library(tagpup_config.library_path(libraries.for_mode(name + ".db", _test_mode())))
-        if os.path.exists(library.path):
-            found.append(library)
-    return found
+    return jsonify({"databases": sorted(libraries.picker_names(files, test_mode()))})
 
 
 @picker.post("/api/databases/create")
@@ -209,7 +196,7 @@ def create_library():
     if not db_name or not isinstance(db_name, str):
         return responses.error(400, validation.problem("library name", ""))
     db_name = libraries.file_name_for(db_name)
-    db_path = tagpup_config.library_path(libraries.for_mode(db_name, _test_mode()))
+    db_path = tagpup_config.library_path(libraries.for_mode(db_name, test_mode()))
     try:
         result = library_actions.create(db_path)
     except Exception as e:
