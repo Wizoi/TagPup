@@ -19,12 +19,14 @@ shows (Views, Integration).
 | a clip's frames 1 to 4 (`embedding_frames`), photo-model keys | 8,708, 1 | 20, 1 | 0, 1 |
 | changes / change_rows / change_files | 6,340 / 1,500,284 / 95,369 | 1,948 / 88,883 / 4,696 | 1,247 / 24,032 / 4,319 |
 | changes made below 32 (row undo refused) | 715 | 316 | 1,210 |
-| roots / settings / job_runs | 1 / 11 / 436 | 1 / 10 / 243 | 1 / 10 / 174 |
+| roots / settings / job_runs | 1 / 11 / 438 | 1 / 10 / 245 | 1 / 10 / 176 |
 
 Unfinished work (2026-11-08): 0 `derived_pending`, 0 files `writing`, 0 patch records; 139 `conflict` files, all in
 photo_index (every other file `done`), none with a note the doctor counts (`file_journal.NOTES`) (the doctor's last full
-report: 0 broken rules on all three, 2026-10-29). Snapshots are 3 daily, 1 weekly and 1 monthly per library; the copies below schema 32 are
-listed "too old to restore". Migration 33 (each face's vector to `face_embeddings`, keyed by the face model; the drops of
+report: 0 broken rules on all three, 2026-10-29). Snapshots are 3 daily, 1 weekly and 1 monthly per library (counted
+2026-11-08 under `data/backups`); a copy of photo_index is 4.03 to 4.13 GB (the monthly, taken 2026-10-16,
+2.62 GB), so its five snapshots hold about 19 GB beside the `before-*` copies; the copies below schema 32 are listed "too
+old to restore". Migration 33 (each face's vector to `face_embeddings`, keyed by the face model; the drops of
 `faces_pending` and `idx_faces_name`; DECISIONS 2026-10-18, "MIGRATION 33 IS PULLED FORWARD") has run on all three
 (schema 33, counted 2026-10-18), and 34 to 38 after it: 37 (`photos.kind`, 'photo' in every row there was, and
 `change_files.patch` and `patch_before`; DECISIONS 2026-11-02, "VIDEO: THE OWNERS' PLANS AND THE OWNER'S ANSWERS", 4) and
@@ -57,26 +59,30 @@ section 10.
 | Files (`services.rotation`; the bake and the read side, phase 6) | `photo_fingerprints` (migration 34): get and put by photo id, `forget` by path; a row whose photo is gone reads as none; not journaled, not derived; a rotation forgets it beside the vectors | `test_migrations` (`TheOwnersLibraryAt33MeetsMigration34`), `test_rotate_is_journaled` |
 | People (`store.faces`) | `store.faces.model_key` reads `store.settings.face_model` on the reader's own connection: a face's vector (`face_embeddings`, keyed by face and model) is read under the key its caller gives the reader, which a decision reads once from the library's `faces.model` on its own connection | `test_a_library_indexes_and_suggests_with_its_face_model` (P10: the index, Suggest and Name faces from tags read under the library's key), `test_journal_keys_and_cascades` |
 
-## The seven conditions (2026-10-15)
+## The seven conditions (2026-11-08; first stated 2026-10-15, DECISIONS 2026-10-15 and 2026-10-16)
 
-1. **No reach-ins.** Met. No module outside the domain calls a private name of a Data module (swept after the pass: `db.key`
-   is public, `schema.row_key`, `schema.version`, `schema.pending_on`, `schema.forget` are the doors); the contract rows
-   above are in the Integration table.
+1. **No reach-ins.** Met. No module outside the domain calls a private name of a Data module (`db.key`, `schema.row_key`,
+   `schema.version`, `schema.pending_on`, `schema.forget` are the doors); the contract rows above are the Integration
+   table. A transaction is begun only by `db.begin` (`tests/test_db_access.py`, #2750).
 2. **No rule written twice.** Met. The stored-value comparison and the column list (`schema.same_stored`, `table_columns`),
    the pending list, the schema version, the row-key text and the library key each have one owner; the rooted-row scan
-   is one checker (`roots_check.broken` over `store.roots.PATH_COLUMNS`), read once per connection.
+   is one checker (`roots_check.broken` over `store.roots.PATH_COLUMNS`), read once per connection. Each derived table
+   (`derived.ALL`) has one doctor rule (`checks.OF_DERIVED`), held to it by `tests/test_doctor.py`.
 3. **No hidden coupling.** Met. The doctor's cache depends on its own stamp (writes and `data_version`) and is not stored
    inside a transaction (a rollback case is a test).
 4. **No concept that could collapse.** Met. The data-changing migration kind, `rebuild_table`, `roots_verify` under its old
-   name, `inspection.schema_version` and `libraries._key` are gone.
-5. **No branch without an instance.** Met. About 30 version probes and legacy arms went with the baseline at 32; what the
-   baseline still makes and nothing reads is by design (below).
-6. **Scenario tests, owned and mapped.** Met. Every file is owned in `tests/owners.py`; the four per-service failure tests
-   became one scaffold test with mutation proofs for all three arms of `maintenance.run`; the bar is that no unit test
-   restates a scenario, and the rest hold a specific rule. D2's undo is the undo matrix
-   (`test_undo_after_every_later_kind`, 2026-10-24: every ordered pair of the change kinds a library holds, made by their
-   real writers); the per-pair refusal tests it lifted were deleted (#1805).
-7. **No open `data` or `wrong` finding.** Met: none in the domain.
+   name, `inspection.schema_version` and `libraries._key` are gone; the two one-off re-derives (`rederive tags and
+   captions`, `rederive clip dates`) are retired names in `journal.RETIRED` (3 applied changes in photo_index, none in
+   the others, counted 2026-11-08).
+5. **No branch without an instance.** Met. About 30 version probes and legacy arms went with the baseline at 32 (DECISIONS
+   2026-10-15); what the baseline still makes and nothing reads is by design (below). Each `journal.RETIRED` kind cites
+   its live count in its comment.
+6. **Scenario tests, owned and mapped.** Met. Every file is owned in `tests/owners.py` (`tests/test_the_test_map.py`); the
+   domain holds 22 scenario, 22 unit, 6 guard and 2 migration files (counted 2026-11-08). D2's undo is the undo matrix
+   (`test_undo_after_every_later_kind`: every ordered pair of the change kinds a library holds, made by their real
+   writers); D8 meets the owner's library at each of 32 to 37 with the real next migration (`tests/test_migrations.py`).
+7. **No open `data` or `wrong` finding.** Met: none in the domain. Open `low` (2026-11-08): the doctor's cost on
+   photo_index, a full check not finished in 13 minutes in a review run (#2753).
 
 ## By design (each row closed `decided:`)
 
@@ -84,7 +90,8 @@ section 10.
   `touches` is the tables whose rows a step may move (`schema.Migration`); a migration branch carries, in its own branch, a
   check of an additive step's `touches` if it claims the undo exemption (names no table the journal keys), and a check
   that no `sqlite_sequence` counter goes down if it rebuilds an AUTOINCREMENT table.
-- **#1375**: a library whose making failed holds only `schema_version`. The three libraries each have their 33 tables, and
+- **#1375**: a library whose making failed holds only `schema_version`. The three libraries each have their 35 tables (34 without
+  `sqlite_sequence`, 2 virtual; counted 2026-11-08 at schema 38), and
   every entry that makes a library runs `ensure`, which makes it whole.
 - **#1088, #1277**: `faces_pending` and `idx_faces_name` go with migration 33. The `pruned` value of the `changes.status`
   CHECK stays: dropping it rebuilds the journal's `changes` table for nothing (DECISIONS 2026-10-18, "AFTER MIGRATION 33",
@@ -97,14 +104,11 @@ section 10.
 
 ## History
 
-- 2026-10-02: settings journaled; the journal not gold-plated during the roots work.
-- 2026-10-11: roots adoption and repair-address deleted; the `before-*` copies of versions 2 to 18 deleted.
-- 2026-10-15: the baseline moved to 32; migrations 1 to 32, their probes and tests deleted; a library or snapshot below 32 is
-  refused untouched.
-- 2026-10-15: the data-changing migration kind and `rebuild_table` deleted; `schema.forget` replaced 20 reaches into a
-  private; snapshots read their version through `schema.version_of`; one rooted-rows checker.
-- 2026-10-15: `faces_pending`'s code deleted; the doctor asks shares for missing files as sync does.
-- 2026-10-15: one comparison, one column list, one pending list, one row key; the doctor reads rooted rows once per
-  connection; `db.key` made public; `roots_verify` became `roots_sample`.
-- 2026-10-15: the one face with a name and no id was cleared; a name alone is nobody and the doctor counts such a row with
-  "faces whose name is not their person's".
+One line per item; the reasoning is in DECISIONS.md.
+
+- 2026-10-02 to 10-11: settings journaled, roots adoption and repair-address deleted (DECISIONS 2026-10-11).
+- 2026-10-15: the baseline moved to 32 and the probes, the data-changing migration kind and `rebuild_table` went (DECISIONS
+  2026-10-15, 2026-10-16); one comparison, one column list, one pending list, one row key, one rooted-rows checker.
+- 2026-10-18: migration 33, the face vectors keyed by model (DECISIONS 2026-10-18).
+- 2026-10-28: the old models and their change kinds retired into `journal.RETIRED` (DECISIONS 2026-10-28).
+- 2026-11-02 to 11-08: migrations 37 and 38 for clips (DECISIONS 2026-11-02, 2026-11-06); the one-off re-derives retired.
