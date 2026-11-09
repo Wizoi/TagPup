@@ -52,11 +52,24 @@ so a clear finding no title item is the rewrite's too: the title is in a form th
 no live clip, 2026-11-08), refused before a byte of the XMP is written rather than read back still titled after it.
 A title typed over is not written here: the QuickTime copy stays as it was.
 
+A clip's Windows Tags (DECISIONS 2026-11-09): the one-time move of a clip's Windows Tags into its XMP frees its Xtra
+box (containers.Video.xtra, moov/udta/Xtra: each of the 2,103 photo_index clips holding one, 2,093 of them holding a
+WM/Category, counted 2026-11-09) in the same Patch that writes the XMP, its four type bytes made `free`
+(`category=()`); the Xtra's other Windows properties go with it, and nothing moves. An undo gives it back (`category`,
+the texts it held) by the same four bytes, only to the one `free` box directly in udta whose bytes are an Xtra's
+entries holding exactly those texts (`xtra_boxes`, `windows_tags`), while the clip holds no Xtra. Each box is read
+whole, its header with it, so the four bytes the patch writes over are the ones read as `Xtra` (or `free`) on the open
+file. None, the rewrite's, for a clear of a clip holding no Xtra, two, or one holding no WM/Category text (10 live
+clips hold an empty Xtra; the move asks only of a clip whose Category ExifTool read), and a give-back to a clip
+holding an Xtra again (Windows wrote its Tags since).
+
 A `Patch`'s last range may start at the file's end (an append) or run past it (a box that grows there): `size` is the
 file's size once written. Its ranges are in file order and do not overlap.
 """
+import struct
 from dataclasses import dataclass
 
+from tagpup.core import fields
 from tagpup.files import containers
 
 #: How a patch places the packet (the module's 1 to 4).
@@ -68,10 +81,14 @@ _MOST = 2 ** 32 - 1
 #: the old bytes is bounded by this and a few headers, far under the journal's cap (file_journal.PATCH_CAP, 1 MB).
 OLD_MOST = 1 << 16
 _PACKET_END = b"<?xpacket end="
-#: The most an undo reads of a free box of the item list to know whether it holds the title it gives back.
-TITLE_MOST = 1 << 16
+#: The most a patch reads of a box it frees or gives back, to know what it holds: a free box of the item list (a title)
+#: or of udta (an Xtra), and the Xtra a clear frees (the largest live Xtra is 1,417 bytes, 2026-11-09).
+FREED_MOST = 1 << 16
 #: A title item's data atom, before its text: its type, UTF-8 (1), as every live title's is (2026-11-08).
 _UTF8 = b"\0\0\0\1"
+#: The Xtra entry of a clip's Windows Tags; each of its values is UTF-16LE text ended by a NUL (type 8: all 7,293 values
+#: of the 2,093 clips holding one, counted 2026-11-09).
+CATEGORY = b"WM/Category"
 
 
 @dataclass(frozen=True)
@@ -83,27 +100,65 @@ class Patch:
     how: str
 
 
-def patch(layout, packet, title=None, freed=()):
+def patch(layout, packet, title=None, freed=(), category=None, xtra_read=()):
     """The `Patch` that puts `packet` (bytes, the whole new XMP packet; None, the XMP as it is) into the clip laid out as
     `layout` (containers.Video), and, with `title` given, frees its QuickTime title ("") or gives it back (its text) to
-    the one of the `freed` ((box, its bytes after its header), ...: freed_titles' boxes, read) that holds it; None when
-    the clip needs the rewrite (the module says when). A Patch with no ranges is nothing to write."""
+    the one of the `freed` ((box, its bytes after its header), ...: freed_titles' boxes, read) that holds it; with
+    `category` given, frees its Xtra (()) or gives it back (its Windows Tags, texts) to the one of `xtra_read` ((box,
+    its bytes, header and all), ...: xtra_boxes(layout, category), read) that holds them; None when the clip needs the
+    rewrite (the module says when). A Patch with no ranges is nothing to write."""
     if not _understood(layout):
         return None
     titled = () if title is None else _title_ranges(layout, title, freed)
+    tagged = () if category is None else _xtra_ranges(category, xtra_read)
     placed = Patch((), layout.file_size, IN_PLACE) if packet is None else _xmp_patch(layout, packet)
-    if titled is None or placed is None:
+    if titled is None or tagged is None or placed is None:
         return None
-    return Patch(tuple(sorted(placed.ranges + titled)), placed.size, placed.how)
+    return Patch(tuple(sorted(placed.ranges + titled + tagged)), placed.size, placed.how)
 
 
 def freed_titles(layout):
     """The boxes an undo may give the clip's QuickTime title back to: each `free` box of its item list
-    (containers.Video.item_list) of at most TITLE_MOST, while it holds no title item; () otherwise."""
+    (containers.Video.item_list) of at most FREED_MOST, while it holds no title item; () otherwise."""
     ilst = layout.item_list
     if ilst is None or layout.titles:
         return ()
-    return tuple(box for box in ilst.children if box.type == "free" and box.end - box.payload <= TITLE_MOST)
+    return tuple(box for box in ilst.children if box.type == "free" and box.end - box.payload <= FREED_MOST)
+
+
+def xtra_boxes(layout, category):
+    """The boxes in_place reads whole for a write of the clip's Windows Tags (patch's `category`), each of at most
+    FREED_MOST: for a clear (()), its one Xtra (containers.Video.xtra); for an undo giving texts back, each `free` box
+    directly in its udta, while it holds no Xtra; () for None."""
+    if category is None or (category and layout.in_udta(containers.XTRA)):
+        return ()
+    found = layout.in_udta("free") if category else (layout.xtra,) if layout.xtra is not None else ()
+    return tuple(box for box in found if box.size <= FREED_MOST)
+
+
+def windows_tags(raw, kind, header):
+    """The Windows Tags `raw` holds, a box's bytes from its header on (`header` long), when its type is `kind` (b"Xtra",
+    b"free") and its content is an Xtra's entries, whole: the texts of its WM/Category values, as the journal keeps a
+    field's (fields.field_values), [] for none; None for a box of another type or bytes that are no Xtra's."""
+    if raw[4:8] != kind:
+        return None
+    content, at, texts = raw[header:], 0, []
+    try:
+        while at < len(content):
+            size, named = struct.unpack_from(">II", content, at)
+            end, (count,) = at + size, struct.unpack_from(">I", content, at + 8 + named)
+            value = at + 12 + named
+            for _ in range(count):
+                length = struct.unpack_from(">I", content, value)[0]
+                if content[at + 8:at + 8 + named] == CATEGORY:
+                    texts.append(content[value + 6:value + length].decode("utf-16-le", "replace").rstrip("\0"))
+                value += max(length, 6)
+            if value != end or end > len(content):
+                return None
+            at = end
+    except struct.error:
+        return None
+    return fields.field_values(texts)
 
 
 def holds_title(content, text):
@@ -124,6 +179,19 @@ def _title_ranges(layout, title, freed):
     if len(found) != 1:
         return None
     return ((found[0].offset + 4, containers.TITLE_ITEM.encode("latin-1")),)
+
+
+def _xtra_ranges(category, read):
+    """The range that frees the clip's Xtra (`category` (); `read`, its one Xtra, read) when it holds Windows Tags, or
+    gives `category`'s texts back to the one of `read` (free boxes of udta, read) holding exactly them; None, the
+    rewrite's, otherwise (the module)."""
+    if category:
+        found = [box for box, raw in read if windows_tags(raw, b"free", box.header) == list(category)]
+        written = containers.XTRA.encode("latin-1")
+    else:
+        found = [box for box, raw in read if windows_tags(raw, containers.XTRA.encode("latin-1"), box.header)]
+        written = b"free"
+    return ((found[0].offset + 4, written),) if len(found) == 1 else None
 
 
 def _xmp_patch(layout, packet):

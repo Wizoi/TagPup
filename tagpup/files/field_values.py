@@ -366,9 +366,14 @@ def _clip_written(photo_path, values, saving):
     title = None
     if fields.CLIP_TITLE in values:
         title = (fields.as_written(fields.CLIP_TITLE, values[fields.CLIP_TITLE]) or [""])[0]
+    # A clip's Windows Tags, its Xtra freed by their move into its XMP or given back by its undo (clip_patch;
+    # DECISIONS 2026-11-09).
+    category = None
+    if fields.CLIP_CATEGORY in values:
+        category = tuple(fields.as_written(fields.CLIP_CATEGORY, values[fields.CLIP_CATEGORY]))
     try:
-        stale = in_place.patch_clip(
-            photo_path, lambda old: segment_edits.new_packet(old, values), saved_first, title=title)
+        stale = in_place.patch_clip(photo_path, lambda old: segment_edits.new_packet(old, values), saved_first,
+                                    title=title, category=category)
     except in_place.Away:
         raise NotAnswered("its folder did not answer the patch of its fields in %d s; it is settled by its bytes "
                           "the next time" % in_place.SECONDS) from None

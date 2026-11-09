@@ -6,8 +6,8 @@ Pure: a header's bytes and layout in, bytes out; no file, nothing written. The o
 
 `new_packet(old, values)` is a clip's: the packet its XMP box holds (None, a clip with none: xmp_packet.blank()) made to
 hold a save of its tags, title, name or Date Taken (fields.CLIP_FIELDS), grown when it must be (tagpup.files.clip_patch places it); every
-copy outside XMP is left stale (`clip_stale_of`), also when the XMP value is cleared. A clip's QuickTime Title
-(fields.CLIP_TITLE) is no XMP: clip_patch frees it or gives it back, not the packet.
+copy outside XMP is left stale (`clip_stale_of`), also when the XMP value is cleared. A clip's QuickTime Title and its
+Windows Tags (fields.CLIP_OUTSIDE_XMP) are no XMP: clip_patch frees them or gives them back, not the packet.
 
 `new_header(layout, header, values)` is (the header with only its edited segments' bodies changed, the fields left
 stale), or None when the write is not a patch -- a field the own writer does not write, a value it cannot spell, a
@@ -79,7 +79,8 @@ def new_packet(old, values):
     if unknown:
         raise ValueError("%s is not a field a clip's write names (fields.CLIP_FIELDS)" % unknown[0])
     stale = clip_stale_of(values)
-    wanted = {field: texts for field, texts in values.items() if field not in stale and field != fields.CLIP_TITLE}
+    wanted = {field: texts for field, texts in values.items()
+              if field not in stale and field not in fields.CLIP_OUTSIDE_XMP}
     base = xmp_packet.blank() if old is None else old
     try:
         changes = {name: _value(field, name, texts) for field, texts in wanted.items()

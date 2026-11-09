@@ -138,6 +138,15 @@ TAG_SOURCE_FIELDS = ("IPTC:Keywords", "XMP:Subject", "XMP:HierarchicalSubject")
 #: it was.
 CLIP_TITLE = "QuickTime:Title"
 
+#: A clip's Windows Tags: the WM/Category entry of its Microsoft Xtra box (2,093 photo_index clips, counted 2026-11-09),
+#: which the reader never reads as tags (DECISIONS 2026-11-07, #2662). A journaled write names it only to free the Xtra
+#: in the same patch that writes the clip's XMP ([]), and its undo to give the Xtra back (the texts it held): the
+#: one-time move of those Tags into XMP (a clip's tags write, _CLIP_WRITE_FIELDS; tagpup.files.clip_patch; DECISIONS
+#: 2026-11-09). ExifTool reads it under its group 1 name, Microsoft, and answers it under group 0's (read_key).
+CLIP_CATEGORY = "Microsoft:Category"
+#: The fields of a clip's write that clip_patch writes outside its XMP packet, which the packet's editor leaves out.
+CLIP_OUTSIDE_XMP = frozenset({CLIP_TITLE, CLIP_CATEGORY})
+
 
 def expand_tag_fields(tags):
     """Split a tag list into the flat and hierarchical keyword forms written to files.
@@ -361,10 +370,12 @@ PHOTO_WRITES = ("tags", "title", "date", "rotate", "name")
 #: (DECISIONS 2026-11-06); a turn of a clip is ExifTool's rewrite of the whole file, refused before it is planned.
 CLIP_WRITES = ("tags", "title", "name", "date")
 
-#: The fields each of CLIP_WRITES names: a clip's title is its title fields and its QuickTime Title (CLIP_TITLE), which
+#: The fields each of CLIP_WRITES names: a clip's tags are its keyword fields and its Windows Tags (CLIP_CATEGORY); its
+#: title is its title fields and its QuickTime Title (CLIP_TITLE), which
 #: a photo's write never names (title_fields is what ExifTool writes into a JPEG); its name, the one it had before; its
 #: date, its XMP dates (date_taken_fields of a clip), never its QuickTime ones.
-_CLIP_WRITE_FIELDS = {"tags": frozenset(keyword_fields([], [])), "title": frozenset(title_fields("")) | {CLIP_TITLE},
+_CLIP_WRITE_FIELDS = {"tags": frozenset(keyword_fields([], [])) | {CLIP_CATEGORY},
+                      "title": frozenset(title_fields("")) | {CLIP_TITLE},
                       "name": frozenset({PRESERVED_NAME}), "date": frozenset(dates.CLIP_XMP_DATE_FIELDS)}
 
 
@@ -495,12 +506,17 @@ def is_struct(field):
     return read_key(field) in {read_key(each) for each in STRUCT_FIELDS}
 
 
+#: A group 1 name a field is asked by whose -G answer is another group 0 name: a clip's Xtra (CLIP_CATEGORY).
+_GROUP_0 = {"Microsoft": "QuickTime"}
+
+
 def read_key(field):
     """The key ExifTool answers `field` under when it reads with -G (group family 0):
     "XMP-xmpMM:DocumentID" is written under its own group and answered as
-    "XMP:DocumentID"; "XMP:Subject" is both."""
+    "XMP:DocumentID"; "XMP:Subject" is both; "Microsoft:Category" is answered as "QuickTime:Category" (_GROUP_0)."""
     group, _, name = str(field).partition(":")
-    return "%s:%s" % (group.split("-", 1)[0], name) if name else field
+    group = group.split("-", 1)[0]
+    return "%s:%s" % (_GROUP_0.get(group, group), name) if name else field
 
 
 def field_values(value):

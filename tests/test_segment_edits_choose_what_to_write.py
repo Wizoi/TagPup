@@ -356,9 +356,10 @@ class AClipsSave(unittest.TestCase):
         for field in (fields.ORIENTATION, *sorted(photos_dates), *caption("")):
             with self.subTest(field), self.assertRaises(ValueError):
                 segment_edits.new_packet(None, {**keywords(["Pier"]), field: ["1"]})
-        self.assertEqual(set(keywords([])) | set(title("")) | {fields.CLIP_TITLE, fields.PRESERVED_NAME} | clips_dates,
-                         set(fields.CLIP_FIELDS), "its name it had kept too, before its first rename (A5), and its "
-                         "XMP dates, a photo's EXIF ones refused (A5 (D) REVISED)")
+        self.assertEqual(set(keywords([])) | set(title("")) | {fields.CLIP_TITLE, fields.PRESERVED_NAME} | clips_dates
+                         | {fields.CLIP_CATEGORY}, set(fields.CLIP_FIELDS),
+                         "its name it had kept too, before its first rename (A5), its XMP dates, a photo's EXIF ones "
+                         "refused (A5 (D) REVISED), and its Windows Tags, freed by their move into XMP (2026-11-09)")
 
 
 class ADateOrARotation(unittest.TestCase):

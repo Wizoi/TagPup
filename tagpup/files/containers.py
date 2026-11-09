@@ -11,8 +11,9 @@ cut short, a box that claims more than the file holds, or bytes that are no box 
     Video   the top-level boxes in order (moov and udta with their children), the XMP box wherever it is (a `uuid` box
             BE7ACFCB-97A9-42E8-9C71-999491E3AFAC at the top level, as ExifTool writes into an MP4 and as an append at
             the end leaves it; or `XMP_` inside moov's udta, as ExifTool writes into a .mov), the free/skip/wide boxes
-            beside a box (room a write may take), moov before or after mdat, moof (a fragmented file), and the clip's
-            QuickTime title item (moov/udta/meta/ilst/\xa9nam, `title_item`).
+            beside a box (room a write may take), moov before or after mdat, moof (a fragmented file), the clip's
+            QuickTime title item (moov/udta/meta/ilst/\xa9nam, `title_item`) and its Microsoft Xtra box
+            (moov/udta/Xtra, `xtra`), where Windows keeps the clip's Tags.
     Jpeg    the segments up to the first scan, each APP1 EXIF, APP1 XMP and APP13 Photoshop (IPTC) segment with its
             slack: the bytes a rewrite of the segment at its old length may use, as the in-place study defined them
             (DECISIONS 2026-11-02, "THE JPEG PATCH IS BUILT WITH THE VIDEOS"): XMP's whitespace between </x:xmpmeta>
@@ -35,6 +36,10 @@ CONTAINERS = {"moov": frozenset({"udta"}), "udta": frozenset({"meta"}), "meta": 
 #: The box of a clip's QuickTime title (ExifTool's QuickTime:Title), an item of an ilst; QuickTime's older user data
 #: keeps one directly in udta.
 TITLE_ITEM = "\xa9nam"
+#: The box Windows keeps a clip's Tags in (its WM/Category entry) and the other properties it writes: every one of the
+#: 2,103 photo_index clips holding one holds one, directly in moov/udta (counted 2026-11-09); none holds two, none one
+#: elsewhere.
+XTRA = "Xtra"
 #: The handler (its hdlr's) of a meta box whose ilst holds items by their four-letter names, TITLE_ITEM among them; a
 #: 'mdta' meta's ilst holds numbered items its keys box names.
 ITEM_HANDLER = "mdir"
@@ -186,7 +191,8 @@ class Video:
         """((path of box types, box), ...): every XMP box, top-level `uuid` and moov/udta/XMP_ alike, in file order."""
         return tuple(_xmp_boxes(self.boxes, ()))
 
-    def _in_udta(self, kind):
+    def in_udta(self, kind):
+        """Every box of type `kind` directly in the first moov's udta, in file order."""
         moov = self.moov
         return tuple(child for udta in (moov.children if moov else ()) if udta.type == "udta"
                      for child in udta.children if child.type == kind)
@@ -195,15 +201,15 @@ class Video:
     def titles(self):
         """Every QuickTime title item (TITLE_ITEM) under the first moov's udta, in file order: directly in it, or in the
         ilst of a meta in it, whatever the meta's handler."""
-        listed = tuple(item for meta in self._in_udta("meta") for ilst in meta.children if ilst.type == "ilst"
+        listed = tuple(item for meta in self.in_udta("meta") for ilst in meta.children if ilst.type == "ilst"
                        for item in ilst.children if item.type == TITLE_ITEM)
-        return tuple(sorted(self._in_udta(TITLE_ITEM) + listed, key=lambda box: box.offset))
+        return tuple(sorted(self.in_udta(TITLE_ITEM) + listed, key=lambda box: box.offset))
 
     @property
     def item_list(self):
         """The one ilst of a moov/udta/meta whose handler is ITEM_HANDLER, it and its meta walked whole; None for none,
         for two, or for one whose boxes do not fit."""
-        found = [(meta, ilst) for meta in self._in_udta("meta") if meta.handler == ITEM_HANDLER
+        found = [(meta, ilst) for meta in self.in_udta("meta") if meta.handler == ITEM_HANDLER
                  for ilst in meta.children if ilst.type == "ilst"]
         if len(found) != 1 or found[0][0].broken or found[0][1].broken:
             return None
@@ -217,6 +223,12 @@ class Video:
         if ilst is None or len(found) != 1 or found[0] not in ilst.children:
             return None
         return found[0]
+
+    @property
+    def xtra(self):
+        """The clip's one Microsoft Xtra box (XTRA), directly in moov/udta; None for none, or for two."""
+        found = self.in_udta(XTRA)
+        return found[0] if len(found) == 1 else None
 
     def slack_beside(self, box):
         """(free boxes just before `box`, free boxes just after it): the runs of free/skip/wide boxes that touch it among

@@ -42,7 +42,9 @@ headers only) and its one XMP box's packet read, at most clip_patch.OLD_MOST; th
 the free boxes after it, grown where it ends the file, or appended in a new box at the end (the file grows by its last
 range, the record saying its size after). A cleared title also frees the clip's QuickTime title item, four bytes, and
 an undo gives it back the same way (clip_patch, DECISIONS 2026-11-08): the free boxes of its item list are read for
-that, at most clip_patch.TITLE_MOST each. No other byte is read, nor any hash taken, of a clip of any size (DECISIONS
+that, at most clip_patch.FREED_MOST each. The move of a clip's Windows Tags into its XMP frees its Xtra box the same way,
+and an undo gives it back (DECISIONS 2026-11-09): the Xtra, or the free boxes of udta, are read whole for that, at most
+clip_patch.FREED_MOST each. No other byte is read, nor any hash taken, of a clip of any size (DECISIONS
 2026-11-03). It is not a patch's, nothing written, for no MOV/MP4/M4V, two XMP boxes, a box over OLD_MOST, a packet the
 writer cannot make, or a clip clip_patch will not place (a tail, no moov, fragments): such a clip is not written until
 the whole-file rewrite (owner, 2026-11-05, Q2). It is opened once, alone, as a photo is; one another program holds open
@@ -342,7 +344,7 @@ def patch_jpeg(path, new_header, saving):
 # --- a clip's patch ------------------------------------------------------------------------------------------------
 
 
-def patch_clip(path, new_packet, saving, title=None):
+def patch_clip(path, new_packet, saving, title=None, category=None):
     """Write a journaled write's fields into the XMP of the clip (MOV/MP4/M4V) at `path` by a patch (the module): the
     fields it left holding what they held (a tuple) once the file holds them -- a patch saved by `saving(record, before)`
     (the journal's, which commits the record before this writes a byte, and raises when it will not, nothing then
@@ -352,21 +354,23 @@ def patch_clip(path, new_packet, saving, title=None):
     `new_packet(old)` is the writer's (segment_edits.new_packet, its values given): given the packet of the clip's one
     XMP box (bytes; None for a clip with none), it answers (the new packet, the fields left stale) or None for no patch.
     `title`, the write's QuickTime:Title (clip_patch.patch): None not written, "" freed, a text given back by an undo.
+    `category`, the write's Windows Tags (fields.CLIP_CATEGORY; clip_patch.patch): None not written, () its Xtra freed,
+    texts given back by an undo.
     Raises Refused(OPEN_ELSEWHERE) at once when another program holds the
     clip open; Away when its share does not answer, the file as it was or as far as the patch wrote it (held settles
     it); any other OSError the open or a write raised; whatever `new_packet` or `saving` raises."""
     with _opened_to_patch(path) as lent:
-        found = lent.bounded(path, lambda: _packet_of(lent.handle, title))
+        found = lent.bounded(path, lambda: _packet_of(lent.handle, title, category))
         if found is None:
             return None
-        layout, old, freed = found
+        layout, old, freed, xtra_read = found
         made = new_packet(old)
         if made is None:
             return None
         packet, stale = made
-        if packet == old and title is None:
+        if packet == old and title is None and category is None:
             return tuple(stale)
-        placed = clip_patch.patch(layout, None if packet == old else packet, title, freed)
+        placed = clip_patch.patch(layout, None if packet == old else packet, title, freed, category, xtra_read)
         if placed is None:
             return None
         if placed.ranges:
@@ -374,12 +378,13 @@ def patch_clip(path, new_packet, saving, title=None):
         return tuple(stale)
 
 
-def _packet_of(handle, title=None):
+def _packet_of(handle, title=None, category=None):
     """(the clip's layout, the packet its one XMP box holds, None for none, the freed title boxes an undo giving `title`
-    back reads: ((box, its bytes after its header), ...), clip_patch.freed_titles) of the open file, or None when it is
+    back reads: ((box, its bytes after its header), ...), clip_patch.freed_titles, the boxes a write of `category`
+    reads: ((box, its bytes, header and all), ...), clip_patch.xtra_boxes) of the open file, or None when it is
     not a patch's: no MOV/MP4/M4V, or no XMP box a patch reads (clip_patch.xmp_box). Raises the OSError of a read that
     failed on the way (a share gone part-way through the walk), which is "could not be read", never "not a patch's"
-    (#2540). Reads the boxes' headers, the packet and those free boxes, no other byte."""
+    (#2540). Reads the boxes' headers, the packet and those boxes, no other byte."""
     layout = containers.read(handle)
     if isinstance(layout, containers.Unreadable) and layout.error is not None:
         raise layout.error
@@ -387,12 +392,13 @@ def _packet_of(handle, title=None):
         return None
     freed = tuple((box, _read_at(handle, box.payload, box.end - box.payload))
                   for box in (clip_patch.freed_titles(layout) if title else ()))
+    xtra_read = tuple((box, _read_at(handle, box.offset, box.size)) for box in clip_patch.xtra_boxes(layout, category))
     if not layout.xmp:
-        return layout, None, freed
+        return layout, None, freed, xtra_read
     box = clip_patch.xmp_box(layout)
     if box is None:
         return None
-    return layout, _read_at(handle, box.payload, box.end - box.payload), freed
+    return layout, _read_at(handle, box.payload, box.end - box.payload), freed, xtra_read
 
 
 # --- the open file, shared by both patches ----------------------------------------------------------------------------
