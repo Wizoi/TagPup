@@ -39,6 +39,7 @@ export const upper = {
     searchFollows: null,
     searchVocabularyChanged: null,
     selectPhoto: null,
+    showMediaFilter: null,
     showSortOrder: null,
     suggested: null,
     updateCameraHighlights: null,

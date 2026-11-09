@@ -181,7 +181,7 @@ _SCENARIO_FILES = {
     "P7": "test_identify_ignore_assign_restore_undo",
     "P10": "test_a_library_indexes_and_suggests_with_its_face_model",
     "P11": "test_a_face_gets_one_nearest_person_everywhere",
-    "V1": "test_library_views_scenarios test_a_view_of_photos_or_videos_alone",
+    "V1": "test_library_views_scenarios test_a_view_of_photos_or_videos_alone scenario-a-view-of-photos-or-videos-alone",
     "V2": "test_library_search",
     # test_a_clip_is_matched_on_its_best_frame: Suggest's neighbours, a clip among them at its best frame (M2).
     "V3": "test_analyse_only_looks_are_kept test_analyse_only_suggest test_suggest_then_apply_all "
@@ -189,7 +189,7 @@ _SCENARIO_FILES = {
     "V4": "test_one_gpu_at_a_time test_one_gpu_jobs",
     "V5": "test_selection_scenarios",
     "V6": "test_models_released_when_idle",
-    "V7": "test_selection_scenarios test_a_view_of_photos_or_videos_alone",
+    "V7": "test_selection_scenarios test_a_view_of_photos_or_videos_alone scenario-a-view-of-photos-or-videos-alone",
     "V8": "test_library_views_scenarios",
     "V9": "test_suggest_then_apply_all",
     "V11": "test_switching_a_librarys_face_model",

@@ -28,10 +28,10 @@ export function rememberLibrary(name) {
 }
 
 /**
- * The parameters of an address that name a view of a library (web/tagpup/library-source.js): its source and its order.
- * The one list: leaving a view, and going to another library, take all of them away (findings #697).
+ * The parameters of an address that name a view of a library (web/tagpup/library-source.js): its source, its order and what it
+ * shows (`media`). The one list: leaving a view, and going to another library, take all of them away (findings #697).
  */
-export const VIEW_PARAMS = Object.freeze(['view', 'value', 'recursive', 'order']);
+export const VIEW_PARAMS = Object.freeze(['view', 'value', 'recursive', 'order', 'media']);
 
 /** The page's address for another library: its folder (?path) goes with it, a view of this library does not. */
 export function goToLibrary(name) {

@@ -197,7 +197,7 @@ export async function loadViewPage(t, {
   server.on("/api/library/ids", answer("ids", (url) => {
     ctx.idsAsked.push(url);
     if (onIds) return onIds(url);
-    return { source: {}, total: ids.length, ids, videos: [], complete: true };
+    return { source: {}, total: ids.length, ids, videos: [], complete: true, of: ids.length };
   }));
   server.on("/api/library/cards", answer("cards", (url) => {
     const asked = decodeURIComponent((url.match(/ids=([^&]+)/) || [])[1] || "").split(",").map(Number);

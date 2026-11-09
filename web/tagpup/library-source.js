@@ -75,6 +75,21 @@ export function orderLabel(order) {
     return `${named ? named.label : field}, ${descending ? 'descending' : 'ascending'}`;
 }
 
+/**
+ * What a view shows of its source (the owner, 2026-11-08): its photos and videos both, its photos alone or its videos alone, as
+ * the address and GET /api/library/ids name it (`media`; none for both). Both is what an address that names none shows, and what
+ * a page loaded or reloaded opens on (library-view.js openViewFromAddress).
+ */
+export const LIBRARY_MEDIA = ['both', 'photo', 'video'];
+export const DEFAULT_MEDIA = 'both';
+/** What Show's menu calls each (filter-menu.js). */
+export const MEDIA_CHOICES = [{ media: 'both', label: 'Both' }, { media: 'photo', label: 'Photos' }, { media: 'video', label: 'Videos' }];
+
+/** What a view's `media` is called: "Both", "Photos", "Videos". */
+export function mediaLabel(media) {
+    return (MEDIA_CHOICES.find(each => each.media === media) || MEDIA_CHOICES[0]).label;
+}
+
 /** Cards in one request: the most the server answers (tagpup.services.library_view.MAX_CARDS; tests/fixtures/view_rules.json). */
 export const BATCH = 200;
 /** Cards the page keeps: the least recently used go. Not the server's cap on a request (BATCH). */
@@ -116,17 +131,21 @@ export function viewSpecFromSearch(search) {
     if (!LIBRARY_ORDERS.includes(order)) {
         return { error: `This address names an order (“${order.slice(0, 40)}”) that TagPup does not know. The orders are ${LIBRARY_ORDERS.join(', ')}.` };
     }
-    if (kind === 'all') return { kind, value: null, recursive: false, order };
+    const media = params.get('media') || DEFAULT_MEDIA;
+    if (!LIBRARY_MEDIA.includes(media)) {
+        return { error: `This address shows a kind of item (“${media.slice(0, 40)}”) that TagPup does not know. The kinds are photo and video.` };
+    }
+    if (kind === 'all') return { kind, value: null, recursive: false, order, media };
     if (kind === 'any_of') {
         const members = unionFromText(params.get('value') || '');
-        return members.error ? members : { kind, value: members, recursive: false, order };
+        return members.error ? members : { kind, value: members, recursive: false, order, media };
     }
     if (kind === 'search') {
         const value = searchFromText(params.get('value') || '');
-        return value.error ? value : { kind, value, recursive: false, order };
+        return value.error ? value : { kind, value, recursive: false, order, media };
     }
     const found = memberOf(kind, params.get('value'), ['1', 'true', 'yes'].includes((params.get('recursive') || '').toLowerCase()));
-    return found.error ? found : { ...found, order };
+    return found.error ? found : { ...found, order, media };
 }
 
 /** One source as an address or a union names it: { kind, value, recursive }, or { error } saying why it is none. */
@@ -281,13 +300,15 @@ export function viewSearch(spec) {
     else if (spec.kind !== 'all') params.set('value', spec.value);
     if (spec.recursive) params.set('recursive', '1');
     if (spec.order && spec.order !== DEFAULT_ORDER) params.set('order', spec.order);
+    if (spec.media && spec.media !== DEFAULT_MEDIA) params.set('media', spec.media);
     return `?${params.toString()}`;
 }
 
-/** Are these the same view: the same source, read in the same order? */
+/** Are these the same view: the same source, read in the same order, showing the same? */
 export function sameView(a, b) {
     if (!a || !b || a.kind !== b.kind || Boolean(a.recursive) !== Boolean(b.recursive)) return false;
     if ((a.order || DEFAULT_ORDER) !== (b.order || DEFAULT_ORDER)) return false;
+    if ((a.media || DEFAULT_MEDIA) !== (b.media || DEFAULT_MEDIA)) return false;
     if (a.kind === 'any_of') return unionText(a.value || []) === unionText(b.value || []);
     if (a.kind === 'search') return searchText(a.value) === searchText(b.value);
     return (a.value ?? null) === (b.value ?? null);
@@ -355,8 +376,19 @@ export function viewLabel(spec) {
     return `Folder ${spec.value}${spec.recursive ? ', and its subfolders' : ''}`;
 }
 
+/**
+ * Why a view of photos alone, or videos alone, holds nothing while its source holds `of` of the other kind: "No videos here: the
+ * 1,204 in this view are all photos. Choose Both to see them."
+ */
+function filteredSentence(spec) {
+    const other = spec.media === 'video' ? 'photo' : 'video';
+    const held = spec.of === 1 ? `the one in this view is a ${other}` : `the ${spec.of.toLocaleString()} in this view are all ${other}s`;
+    return `No ${spec.media}s here: ${held}. Choose Both to see ${spec.of === 1 ? 'it' : 'them'}.`;
+}
+
 /** Why a view holds nothing, in a sentence. */
 export function emptySentence(spec) {
+    if (spec.media && spec.media !== DEFAULT_MEDIA && spec.of > 0) return filteredSentence(spec);
     if (spec.kind === 'all') return 'This library holds no photos.';
     if (spec.kind === 'any_of') return 'None of the rows selected holds a photo, or the library no longer has them.';
     if (spec.kind === 'search') return 'Nothing in the library matches this search.';
@@ -381,6 +413,7 @@ function idsRequest(lib, signal) {
     if (lib.kind !== 'any_of' && lib.kind !== 'search') return [idsUrl(lib), { signal }];
     const body = { kind: lib.kind, value: JSON.parse(lib.kind === 'search' ? searchText(lib.value) : unionText(lib.value)) };
     if (lib.order && lib.order !== DEFAULT_ORDER) body.order = lib.order;
+    if (lib.media !== DEFAULT_MEDIA) body.media = lib.media;
     return ['/api/library/ids', {
         method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body), signal,
     }];
@@ -392,6 +425,7 @@ function idsUrl(lib) {
     else if (lib.kind === 'any_of') query.push(`value=${encodeURIComponent(unionText(lib.value))}`);
     else if (lib.value !== null) query.push(`value=${encodeURIComponent(lib.value)}`);
     if (lib.order && lib.order !== DEFAULT_ORDER) query.push(`order=${encodeURIComponent(lib.order)}`);
+    if (lib.media !== DEFAULT_MEDIA) query.push(`media=${encodeURIComponent(lib.media)}`);
     return `/api/library/ids?${query.join('&')}`;
 }
 
@@ -404,11 +438,13 @@ export function newLibrary(spec) {
         token: state.libraryTokens,
         kind: spec.kind, value: spec.value ?? null, recursive: Boolean(spec.recursive),
         order: LIBRARY_ORDERS.includes(spec.order) ? spec.order : DEFAULT_ORDER,   // how the ids are ordered (#671)
+        media: LIBRARY_MEDIA.includes(spec.media) ? spec.media : DEFAULT_MEDIA,    // what it shows of its source (filter-menu.js)
         status: 'loading',            // loading | ready | empty | error
         message: '',                  // why it is empty or failed, in a sentence
         notice: '',                   // something that went wrong beside the view: a refresh, a selection
         failure: null,                // { status } of the ids request that failed: a search's 400 is said by the box (search.js)
         ids: [], total: 0, complete: true,
+        of: 0,                        // how many the source holds of either kind: `total` itself when it shows both
         videos: new Set(),            // the ids of the view's clips, as the server read them with its ids (#2569)
         loading: false, controller: null,
         cards: new Map(),             // id -> card, least recently used first
@@ -459,6 +495,7 @@ export function loadLibraryIds(lib, refreshing = false) {
             lib.loading = false;
             lib.ids = Array.isArray(body.ids) ? body.ids : [];
             lib.total = Number.isFinite(body.total) ? body.total : lib.ids.length;
+            lib.of = body.of;   // the server's, always sent (tagpup.services.library_view.ids)
             lib.complete = body.complete !== false;
             lib.videos = new Set(body.videos);
             lib.status = lib.ids.length === 0 ? 'empty' : 'ready';
@@ -676,6 +713,7 @@ export function dropPhotos(lib, ids) {
     const gone = new Set(ids);
     lib.ids = lib.ids.filter(id => !gone.has(id));
     lib.total = Math.max(0, lib.total - gone.size);
+    lib.of = Math.max(0, lib.of - gone.size);
     for (const id of gone) {
         lib.cards.delete(id);
         lib.tries.delete(id);

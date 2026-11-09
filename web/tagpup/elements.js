@@ -202,5 +202,9 @@ export const librarySearchNote = document.getElementById('library-search-note');
 export const btnSortBy = document.getElementById('btn-sort-by');
 export const sortByCurrent = document.getElementById('sort-by-current');
 export const sortMenu = document.getElementById('sort-menu');
+// Show, beside it, and its menu (filter-menu.js)
+export const btnFilterMedia = document.getElementById('btn-filter-media');
+export const filterMediaCurrent = document.getElementById('filter-media-current');
+export const filterMenu = document.getElementById('filter-menu');
 export const justLookingText = document.getElementById('just-looking-text');
 export const btnAddFolderFromNote = document.getElementById('btn-add-folder-from-note');

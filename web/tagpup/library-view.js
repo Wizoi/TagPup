@@ -110,11 +110,17 @@ function hideChrome() {
     btnRefreshList.title = 'Refresh files list';
     libraryStrip.classList.add('hidden');
     folderViewTop.classList.remove('in-library-view');
-    upper.showSortOrder();   // its menu, if it was open, is of no view now
+    headerMenusFollow();     // their menus, if one was open, are of no view now
     forgetBanner();
     clearSyncInfo();
     folderViewTitle.textContent = 'Folder View';
     updateCurrentFolderLabel();
+}
+
+/** Sort by and Show say what the view open is read in and shows, and a menu drawn for another view closes. */
+function headerMenusFollow() {
+    upper.showSortOrder();
+    upper.showMediaFilter();
 }
 
 /** The strip, the counts and the window's title say what the view is and where it stands. */
@@ -144,7 +150,7 @@ export function libraryChanged() {
     libraryStripStatus.classList.toggle('library-strip-problem', lib.status === 'error' || Boolean(lib.notice));
     libraryStripStatus.title = status || '';
     btnLibraryRefresh.disabled = lib.invalid || lib.loading;
-    upper.showSortOrder();
+    headerMenusFollow();
     folderViewTitle.textContent = lib.invalid ? 'Library view' : label;
     folderViewStats.textContent = viewCountSaid(lib);
     folderViewHeader.textContent = '';
@@ -194,8 +200,10 @@ function clearAddress() {
  * and Forward). Asks first about edits in the open photo. Replaces the view that is open.
  */
 export function openLibraryView(spec, { history = 'push', scrollTop = 0 } = {}) {
-    // A view opened without an order is read in the one chosen in the navigator (#671).
+    // A view opened without an order is read in the one chosen in the navigator (#671), and one without a filter shows what the
+    // view before showed (filter-menu.js).
     if (!spec.error && !spec.order) spec = { ...spec, order: state.nav.order };
+    if (!spec.error && !spec.media) spec = { ...spec, media: state.nav.media };
     if (!spec.error && isOpen(spec)) return;
     leavePhotoThen(() => beginView(spec, history, scrollTop), { onStay: keepAddress });
 }
@@ -452,9 +460,15 @@ function showAddress(scrollTop) {
 
 /**
  * Open the view the page's address names, if it names one: called as the page starts. Returns true if it
- * did, so that a remembered `?path` is left alone: a `?view` wins.
+ * did, so that a remembered `?path` is left alone: a `?view` wins. A page loaded or reloaded shows both photos and videos
+ * (the owner, 2026-11-08): the address loses its `media` first; Back and Forward within the page still show each view's own.
  */
 export function openViewFromAddress() {
+    const url = new URL(window.location.href);
+    if (url.searchParams.has('media')) {
+        url.searchParams.delete('media');
+        window.history.replaceState(window.history.state, '', url);
+    }
     const spec = viewSpecFromSearch(window.location.search);
     if (!spec) return false;
     openLibraryView(spec, { history: 'none' });
