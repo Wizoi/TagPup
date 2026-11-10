@@ -6,8 +6,8 @@ There are eight real migrations: the baseline (schema 32), which makes a NEW lib
 empty `photo_fingerprints`; 35, which adds `idx_embeddings_stamp`; 36, which adds `job_runs.parent`, `heartbeat` and
 `progress`; 37, which adds `photos.kind` and `change_files.patch` and `patch_before`; 38, which adds the empty
 `embedding_frames` and the two triggers that take a clip's frames with its photo and its vector; and 39, which adds
-`photos.width` and `height` and drops `idx_photo_people_name` (34 to 39 additive: no backup, and a change made before each
-stays undoable).
+`photos.width` and `height`, drops `idx_photo_people_name` and makes `idx_photos_clips`, the clips' ids (34 to 39
+additive: no backup, and a change made before each stays undoable).
 The runner is held to what it promises by SYNTHETIC steps after the latest real one (tests/migration_names.py):
 
 * one that adds takes nothing and is watched to change nothing that was there; one that destroys takes one backup, under
@@ -38,10 +38,10 @@ The runner is held to what it promises by SYNTHETIC steps after the latest real 
   meets the real 38: no backup, the table and its two triggers and nothing else, every vector byte for byte, the deletion
   still undoable, a second open a no-op; two processes opening it at once apply it once; killed part way it is still at 37
   and migrates at the next open; the app before 38 refuses it after. The owner's library at 38, with a photo deleted by a
-  journaled change, meets the real 39: no backup, the two columns NULL in every photo and the index gone, nothing else,
-  the deletion still undoable and the photo back with no size, a second open a no-op; a photo the index reads after it
-  records its picture's size, one never read or whose header gives none records none; two processes opening it at once
-  apply it once; killed part way it is still at 38 and migrates at the next open; the app before 39 refuses it after.
+  journaled change, meets the real 39: no backup, the two columns NULL in every photo, the one index gone and the clips'
+  made, nothing else, the deletion still undoable and the photo back with no size, a second open a no-op; a photo the index
+  reads after it records its picture's size, one never read or whose header gives none records none; a clip the index
+  reads after it is read through the clips' index, a photo is not; two processes opening it at once apply it once; killed part way it is still at 38 and migrates at the next open; the app before 39 refuses it after.
 * A library below the baseline is refused with a sentence before anything is written to it, whoever opens it.
 
 A step is declared once, in tests/migration_names.py, not in a list of names in every test that says which ran (#689). However
@@ -1261,7 +1261,7 @@ class TheOwnersLibraryAt38MeetsMigration39(Migrated):
     by this one (owner, 2026-11-09; DECISIONS, "MIGRATION 39: A PHOTO'S PICTURE SIZE")."""
 
     NAME = "a photo knows its picture size"
-    PHOTOS, DROPPED = ("table", "photos"), ("index", "idx_photo_people_name")
+    PHOTOS, DROPPED, ADDED = ("table", "photos"), ("index", "idx_photo_people_name"), ("index", "idx_photos_clips")
 
     def setUp(self):
         with migration_names.up_to(38):
@@ -1287,8 +1287,10 @@ class TheOwnersLibraryAt38MeetsMigration39(Migrated):
         self.assertEqual(39, self.version())
         after = self.objects()
         self.assertEqual({self.DROPPED}, set(objects) - set(after), "the index gone, nothing else")
+        self.assertEqual({self.ADDED: "CREATE INDEX idx_photos_clips ON photos(id) WHERE kind = 'video'"},
+                         {k: v for k, v in after.items() if k not in objects}, "the clips' index made, nothing else")
         self.assertEqual({k: v for k, v in objects.items() if k not in (self.PHOTOS, self.DROPPED)},
-                         {k: v for k, v in after.items() if k != self.PHOTOS}, "nothing else changed")
+                         {k: v for k, v in after.items() if k not in (self.PHOTOS, self.ADDED)}, "nothing else changed")
         self.assertEqual(["kind", "width", "height"], [row[1] for row in self.query("PRAGMA table_info(photos)")][-3:],
                          "added at the end")
         counts.update(schema_version=counts["schema_version"] + 1, changes=counts["changes"] + 1)
@@ -1334,6 +1336,23 @@ class TheOwnersLibraryAt38MeetsMigration39(Migrated):
                          conn.execute("SELECT id, width, height FROM photos WHERE id IN (?, ?, ?) ORDER BY id",
                                       (read, unparsed, unread)).fetchall())
 
+    def test_a_clip_read_after_it_is_read_through_the_clips_index_and_a_photo_is_not(self):
+        """The view's clip statement under the Videos filter (library_view.view_ids: `p.kind = ?`, bound) seeks the
+        clips' index and finds the clip the index records, never a photo."""
+        schema.ensure(self.db_path)
+        folder = os.path.join(self.home.root, "Harbour Regatta")
+        conn = db.connect(self.db_path)
+        self.addCleanup(conn.close)
+        fields = {"EXIF:DateTimeOriginal": "2024:06:02 10:00:00"}
+        clip = photo_rows.add_read(conn, os.path.join(folder, "regatta_start.mp4"), fields)
+        photo = photo_rows.add_read(conn, os.path.join(folder, "regatta_007.jpg"), fields)
+        conn.commit()
+        statement = "SELECT p.id FROM photos p WHERE p.kind = ? ORDER BY p.id"
+        self.assertIn("idx_photos_clips", "\n".join(row[3] for row in conn.execute("EXPLAIN QUERY PLAN " + statement, ("video",))))
+        found = [photo_id for (photo_id,) in conn.execute(statement, ("video",))]
+        self.assertIn(clip, found)
+        self.assertNotIn(photo, found)
+
     def test_two_processes_opening_it_at_once_apply_it_once(self):
         code = ("import sys; sys.path.insert(0, %r); from tagpup.store import schema; print(len(schema.ensure(%r)))"
                 % (ROOT, self.db_path))
@@ -1346,6 +1365,7 @@ class TheOwnersLibraryAt38MeetsMigration39(Migrated):
             answers.append(out.strip())
         self.assertEqual(1, sum(int(answer) for answer in answers), answers)
         self.assertEqual(39, self.version())
+        self.assertIn(self.ADDED, self.objects())
         self.assertEqual(self.as_39_leaves(self.before[2]), self.dump())
         self.assertEqual(["migration 39: " + self.NAME], [op for op, *_ in self.recorded() if op.startswith("migration 39")])
 
@@ -1358,7 +1378,7 @@ class TheOwnersLibraryAt38MeetsMigration39(Migrated):
 
             def killed(conn):
                 real.apply(conn)
-                os._exit(9)   # the power goes: the columns added and the index dropped, nothing committed
+                os._exit(9)   # the power goes: the columns added, one index dropped and one made, nothing committed
 
             schema.MIGRATIONS = tuple(m for m in schema.MIGRATIONS if m.version < 39) + (real._replace(apply=killed),)
             schema.ensure(%(path)r)
@@ -1369,9 +1389,11 @@ class TheOwnersLibraryAt38MeetsMigration39(Migrated):
         self.assertEqual(9, child.returncode, err)
         self.assertEqual(38, self.version())
         self.assertEqual(self.before, (self.objects(), self.counts(), self.dump()), "as it was")
+        self.assertNotIn(self.ADDED, self.objects())
         schema.forget()
         self.assertEqual([self.NAME], schema.ensure(self.db_path))
         self.assertEqual(39, self.version())
+        self.assertIn(self.ADDED, self.objects())
 
     def test_the_app_before_39_refuses_it_after(self):
         schema.ensure(self.db_path)
@@ -1474,6 +1496,9 @@ class ANewLibrary(unittest.TestCase):
         self.assertEqual([], db_rows(path, "SELECT name FROM sqlite_master WHERE name IN ('faces_pending', 'idx_faces_name',"
                                            " 'idx_photo_people_name')"),
                          "made at the baseline and taken to 39 by the same runner")
+        self.assertEqual([("CREATE INDEX idx_photos_clips ON photos(id) WHERE kind = 'video'",)],
+                         db_rows(path, "SELECT sql FROM sqlite_master WHERE name = 'idx_photos_clips'"),
+                         "the clips' index from migration 39, as a library migrated to 39 has it")
         self.assertEqual([("idx_embeddings_stamp",)], db_rows(path, "SELECT name FROM sqlite_master WHERE name = 'idx_embeddings_stamp'"),
                          "the index from migration 35, not the baseline")
         self.assertEqual([("face_embeddings",)], db_rows(path, "SELECT name FROM sqlite_master WHERE name = 'face_embeddings'"))
