@@ -16,11 +16,12 @@ from typing import List, Optional, Tuple
 
 from tagpup.core import fields, paths
 from tagpup.files import exiftool_session, field_values
-from tagpup.services import bulk_edit, file_changes, tagging
+from tagpup.services import file_changes, tagging
+from tagpup.services.bulk_edit import OPERATIONS, TAGS
 from tagpup.store import db, photos, taxonomy
 
 #: The move's change, as History names it: a bulk Tags edit, undone as one (bulk_edit.UNDO_CHECKS).
-OPERATION = bulk_edit.OPERATIONS[bulk_edit.TAGS]
+OPERATION = OPERATIONS[TAGS]
 #: What the move reads of each clip: its Windows Tags and every keyword field (tagging.KEYWORD_READ).
 READ = (fields.CLIP_CATEGORY,) + tagging.KEYWORD_READ
 #: Why a clip is left alone: no Windows Tags (none, an empty Xtra, or moved already).
