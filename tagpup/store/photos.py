@@ -670,6 +670,16 @@ def raw_rows(conn):
         yield paths.from_row(path, roots), json.loads(raw_json)
 
 
+def clip_rows(conn):
+    """[(id, path)] of every clip's row (a row of kind 'video', tagpup.files.images.is_clip), by id, the path native: the
+    clips the one-time move of Windows Tags reads (tagpup.services.windows_tags). Spelled `kind = 'video'`, as the clips'
+    partial index is (idx_photos_clips, migration 39), so it walks that index alone: `kind IN ('video')` is not read as
+    its WHERE and scans the table (EXPLAIN QUERY PLAN on the three live libraries, read-only, 2026-11-09)."""
+    roots = store_roots.roots_for(conn)
+    return [(photo_id, paths.from_row(path, roots)) for photo_id, path in conn.execute(
+        "SELECT id, path FROM photos WHERE kind = 'video' ORDER BY id")]
+
+
 def row_paths(conn):
     """{photo id: path as the row holds it} of every photo: what sweeping the cache compares its entries
     with. 68,000 short strings; one scan of the table, once per sweep."""

@@ -454,6 +454,8 @@ class AClipsWindowsTags(unittest.TestCase):
                                      "no Xtra left, and none given back of other texts")
                     xmp_only = data if packet is None else applied(data, clip_patch.patch(layout_of(data), packet))
                     self.assertEqual(xmp_only, self.tagged(cleared, WINDOWS_TAGS))
+                    self.assertEqual(xmp_only, self.tagged(cleared, WINDOWS_TAGS[::-1]),
+                                     "the texts as a read gives them, in any order (fields.same_read, #2802)")
 
     def test_an_xtra_the_patch_does_not_understand_is_the_rewrites_and_nothing_is_written(self):
         cleared = {
@@ -471,7 +473,6 @@ class AClipsWindowsTags(unittest.TestCase):
                 self.assertIsNone(self.tagged(data, (), OLD), "nor its XMP written without it")
         freed = {
             "a free box of other texts": xtra("Trips/Coast", kind=b"free"),
-            "a free box of the texts in another order": xtra(*reversed(WINDOWS_TAGS), kind=b"free"),
             "two free boxes of the texts": xtra(*WINDOWS_TAGS, kind=b"free") * 2,
             "an Xtra there again, Windows' Tags written since": xtra(*WINDOWS_TAGS, kind=b"free") + xtra("Trips/Coast"),
         }
