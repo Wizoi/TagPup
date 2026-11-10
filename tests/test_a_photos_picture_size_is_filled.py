@@ -4,7 +4,7 @@ one-off scripts/fill_picture_sizes.py over tagpup.services.picture_sizes, dry ru
 The rows are made as the index made them before 39 (store.photos.record_indexed with no size: NULL), the pictures by
 Pillow in a home of the test's own. A turned photo (Orientation 6) records its STORED pixels, the frame of its face boxes,
 as the index does (images.picture_size). A header that gives no size, a file changed since its row was read, a share
-asleep: the row keeps NULL and is counted. Stopped part-way (Ctrl+C, or a second one at once), the chunks written stand
+asleep: the row keeps NULL and is counted (and --apply exits 1). Stopped part-way (Ctrl+C, or a second one at once), the chunks written stand
 and a run again goes on; a second whole run writes nothing; a row an undo put back with no size is filled like any
 other. The dry run writes nothing, and --apply is refused while the app runs. Fictional names.
 """
@@ -14,7 +14,7 @@ import os
 import sys
 import threading
 import unittest
-from contextlib import closing
+from contextlib import closing, contextmanager
 from unittest import mock
 
 from PIL import Image
@@ -90,6 +90,34 @@ class PhotosIndexedBefore39(unittest.TestCase):
     def expected(self, *names):
         return {name: size if name in names else None for name, size in PICTURES}
 
+    @contextmanager
+    def share_asleep(self):
+        """Two more photos indexed before 39, pier.jpg and dunes.jpg, on a network share that does not answer while this
+        lasts (shares.Walk waits for it once, then counts it away); it wakes when this ends."""
+        share = os.path.join(self.home.root, "Share")
+        os.makedirs(share)
+        for name in ("pier.jpg", "dunes.jpg"):
+            path = os.path.join(share, name)
+            picture(path, (120, 80))
+            self.old_row(path)
+        asleep, under, real_stat = threading.Event(), os.path.normcase(share), os.stat
+        self.addCleanup(asleep.set)
+
+        def stat(path, *args, **kwargs):
+            if os.path.normcase(str(path)).startswith(under):
+                asleep.wait(2)
+                raise FileNotFoundError(2, "not found")
+            return real_stat(path, *args, **kwargs)
+        try:
+            with mock.patch.object(os, "stat", stat), \
+                    mock.patch.object(shares, "on_a_network_drive",
+                                      lambda path: os.path.normcase(str(path)).startswith(under)), \
+                    mock.patch.object(shares, "SHARE_WAIT", 0.05), mock.patch.object(shares, "AWAY_SECONDS", 0.2):
+                yield
+        finally:
+            asleep.set()
+            shares.forget()
+
 
 class APictureSizeFill(PhotosIndexedBefore39):
     def fill(self, **kwargs):
@@ -153,28 +181,10 @@ class APictureSizeFill(PhotosIndexedBefore39):
         self.assertEqual((2, 1), (filled.wrote, filled.counts["stale"]))
 
     def test_a_share_asleep_is_counted_away_and_a_run_later_fills_its_photos(self):
-        share = os.path.join(self.home.root, "Share")
-        os.makedirs(share)
-        for name in ("pier.jpg", "dunes.jpg"):
-            path = os.path.join(share, name)
-            picture(path, (120, 80))
-            self.old_row(path)
-        asleep, under, real_stat = threading.Event(), os.path.normcase(share), os.stat
-        self.addCleanup(asleep.set)
-
-        def stat(path, *args, **kwargs):
-            if os.path.normcase(str(path)).startswith(under):
-                asleep.wait(2)
-                raise FileNotFoundError(2, "not found")
-            return real_stat(path, *args, **kwargs)
-        with mock.patch.object(os, "stat", stat), \
-                mock.patch.object(shares, "on_a_network_drive", lambda path: os.path.normcase(str(path)).startswith(under)), \
-                mock.patch.object(shares, "SHARE_WAIT", 0.05), mock.patch.object(shares, "AWAY_SECONDS", 0.2):
+        with self.share_asleep():
             filled = self.fill()
         self.assertEqual((3, 2, 1), (filled.wrote, filled.counts["away"], len(filled.away)))
         self.assertEqual((None, None), (self.sizes()["pier.jpg"], self.sizes()["dunes.jpg"]))
-        asleep.set()
-        shares.forget()
         self.assertEqual(2, self.fill().wrote)
         self.assertEqual(((120, 80), (120, 80)), (self.sizes()["pier.jpg"], self.sizes()["dunes.jpg"]))
 
@@ -237,6 +247,17 @@ class TheScript(PhotosIndexedBefore39):
         self.assertIn("Not run: TagPup is running (1 app server(s))", said)
         self.assertEqual(self.expected(), self.sizes())
         self.assertFalse(os.path.exists(os.path.join(self.home.data, "backups")), "a snapshot was taken")
+
+    def test_apply_exits_1_when_a_share_did_not_answer_and_a_run_again_fills_its_photos(self):
+        with self.share_asleep():
+            code, said = self.run_script("--apply")
+        self.assertEqual(1, code)
+        self.assertIn("Wrote 3 row(s): their picture size recorded. Read 7 photo(s): sized 3, unreadable 2, away 2", said)
+        self.assertIn("1 network share(s) did not answer: run this again when they are back.", said)
+        code, said = self.run_script("--apply")
+        self.assertEqual(0, code)
+        self.assertIn("Wrote 2 row(s)", said)
+        self.assertNotIn("did not answer", said)
 
     def test_apply_takes_a_snapshot_once_a_day_and_says_what_it_wrote(self):
         code, said = self.run_script("--apply", "--limit", "1")

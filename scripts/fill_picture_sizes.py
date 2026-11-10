@@ -12,7 +12,8 @@ that changed since its row was read (stale: the index reads it again) and a phot
 first: it would read the share beside this run). A snapshot of the library is taken first unless one was taken today (the
 write only adds two columns' values to rows that had none). Ctrl+C stops it after the photo under way, writing the chunk
 read so far; a second Ctrl+C stops at once, and the chunks written stand. Run it again to go on: the photos filled are not
-read again. --limit N looks at N photos at most (the first live run: --limit 500).
+read again. --limit N looks at N photos at most (the first live run: --limit 500). It exits 1 when a network share did
+not answer (its photos keep no size: run it again once the share is back), 130 when stopped, 0 otherwise.
 
     .venv/Scripts/python.exe scripts/fill_picture_sizes.py --library photo_index
     .venv/Scripts/python.exe scripts/fill_picture_sizes.py --library photo_index --apply --limit 500
@@ -135,7 +136,7 @@ def apply(db_path, limit, out):
         out("%d network share(s) did not answer: run this again when they are back." % len(filled.away))
     if filled.stopped:
         out("Stopped after %d photo(s): run this again to go on." % filled.read)
-    return 130 if filled.stopped else 0
+    return 130 if filled.stopped else 1 if filled.away else 0
 
 
 def run(db_path, apply_, limit=None, sample=picture_sizes.SAMPLE, out=say):
