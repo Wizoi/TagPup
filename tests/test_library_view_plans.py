@@ -100,13 +100,16 @@ class Plans(unittest.TestCase):
         found = self.plan_of(self.ids(store.Source(store.PERSON, "People/Wren Halloway")))
         self.assertIn("idx_photo_people_tag (tag_id=?)", "\n".join("\n".join(lines) for _statement, lines in found))
 
-    def test_the_clip_statement_of_a_folder_a_keyword_and_a_person_scans_no_photos_and_the_whole_library_is_a_known_scan(self):
-        """view_ids reads a source's clips with `SELECT p.id FROM <from_> WHERE (<where>) AND p.kind = ? ORDER BY p.id`."""
+    def test_the_clip_statement_of_every_source_scans_no_photos(self):
+        """view_ids reads a source's clips with `SELECT p.id FROM <from_> WHERE (<where>) AND p.kind = ? ORDER BY p.id`; the
+        whole library's reads the clips' own index (migration 39, #2644), not every photo: on a copy of photo_index (2,179
+        clips of 61,797) the statement took 47 ms as a scan and 1 ms by the index, warm."""
         def clips(source):
             found = self.plan_of(lambda conn: store.view_ids(conn, source, 200000))
             return [(statement, lines) for statement, lines in found if "p.kind" in statement]
 
-        for name, source, index in (("folder", store.Source(store.FOLDER, self.folder, False), "idx_photo_folder_folder"),
+        for name, source, index in (("whole library", store.Source(store.ALL), "idx_photos_clips"),
+                                    ("folder", store.Source(store.FOLDER, self.folder, False), "idx_photo_folder_folder"),
                                     ("folder tree", store.Source(store.FOLDER, self.top, True), "idx_photos_path_nocase"),
                                     ("keyword", store.Source(store.KEYWORD, "Trips"), "idx_photo_tags_tag"),
                                     ("person", store.Source(store.PERSON, "People/Wren Halloway"), "idx_photo_people_tag"),
@@ -119,11 +122,6 @@ class Plans(unittest.TestCase):
                     self.assertIn(index, "\n".join(lines))
                     self.assertFalse([line for line in lines if line in ("SCAN p", "SCAN photos")],
                                      "a scan of photos: %s\n%s" % (statement, "\n".join(lines)))
-        # The whole-library view is a scan of photos, accepted: no index holds `kind` (a partial index
-        # `ON photos(id) WHERE kind = 'video'` would be a migration, the owner's call; finding on the pending list).
-        found = clips(store.Source(store.ALL))
-        self.assertEqual(1, len(found))
-        self.assertTrue([line for line in found[0][1] if line in ("SCAN p", "SCAN photos")], found[0][1])
 
     def test_id_plans_gives_each_statement_with_its_plan_for_the_measurement_script(self):
         conn = db.connect(db.readonly_uri(self.vl.path), uri=True)

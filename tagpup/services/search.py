@@ -490,6 +490,8 @@ class PhotoIndex:
                     "kind": meta.get("kind"),
                     "mtime": meta["mtime"],
                     "size": meta["size"],
+                    "width": meta.get("width"),
+                    "height": meta.get("height"),
                     "tags": meta.get("tags", []),
                     "captions": meta.get("captions", []),
                     "raw_metadata": meta.get("raw_metadata", {}),

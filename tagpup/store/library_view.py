@@ -14,8 +14,8 @@ the time does; a few rows hold a date written with dashes, which sort apart from
 all the same. The plans are SEARCHes, never a SCAN of photos, on a library of photo_index's scale
 (tests/test_library_view_plans.py): `idx_photos_taken` and `idx_photos_year` (migration 20) for the whole
 library, a year and a month; the path index for a folder and its subfolders; `photo_folder` for a folder
-alone; `photo_tags` through the tag tree's unique index for a keyword; `photo_people`'s name index for a
-person. A source whose photos are not in date order in an index is sorted -- a folder of 20,000 photos is
+alone; `photo_tags` through the tag tree's unique index for a keyword; `photo_people`'s tag index
+(`idx_photo_people_tag`) for a person. A source whose photos are not in date order in an index is sorted -- a folder of 20,000 photos is
 7 ms.
 
 Reads only. Every function does nothing useful on a library that has not had migrations 19 and 20 (`ready`
@@ -483,10 +483,11 @@ def view_ids(conn, source, cap, order=TAKEN):
     without its kind, in the same transaction (a folder of photos alone under Videos is 0 of its photos). The
     video ids are those of the source's photos whose kind is VIDEO, every one of the source's whatever `cap` cut, by id:
     the view's count by kind is their number and `total` less it, from the same snapshot and the same where as the list,
-    so the two cannot disagree (#2569). One more read of the source, of ids and kind alone; the whole library's is a scan
-    of photos, as no index holds the kind. Counted warm on the live photo_index (2026-11-07): the whole library 32-46 ms
-    -> 123-140 ms (the clip statement alone 85-99 ms, SCAN p); a top folder with subfolders about 196 -> 321 ms; a
-    14,838-photo keyword 92 -> 148 ms; a 14,838-photo person 33 -> 82 ms; a leaf folder, month, year unchanged."""
+    so the two cannot disagree (#2569). One more read of the source, of ids and kind alone; the whole library's reads the
+    clips' own index, idx_photos_clips (migration 39): on a copy of photo_index (2,179 clips) 1 ms, against 47 as the scan
+    of photos it was before. Counted warm on the live photo_index (2026-11-07, before the index): a top folder with
+    subfolders about 196 -> 321 ms; a 14,838-photo keyword 92 -> 148 ms; a 14,838-photo person 33 -> 82 ms; a leaf
+    folder, month, year unchanged."""
     db.begin(conn)
     whole = _source_scope(conn, source)
     scope = _of_kind(whole, source.only)

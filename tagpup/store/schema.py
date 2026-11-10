@@ -726,6 +726,25 @@ def _a_clips_frames_beside_its_vector(conn):
                  " BEGIN DELETE FROM embedding_frames WHERE photo_id = OLD.photo_id AND model = OLD.model; END")
 
 
+def _a_photo_knows_its_picture_size(conn):
+    """Migration 39 (owner, 2026-11-09; DECISIONS, "MIGRATION 39: A PHOTO'S PICTURE SIZE"): `photos.width` and `height`, the
+    picture's size in its stored pixels, the frame its face boxes are in (images.picture_size, read from the header by the
+    index of the photo), so that every "face in the background" rule can ask the share of the picture's shorter side a
+    face takes (clustering.is_background). NULL in every row there was, which reads as a size not read: no row holds one
+    to fill it from (raw_metadata names none), and the rows there were are filled by a one-off script that reads each
+    file's header, never here. A clip keeps NULL. And `idx_photo_people_name` goes: no statement needs it (the pairs of
+    name and id, person_ids._pairs, read photo_people faster without it, 26 ms against 38 on photo_index, 2026-11-09).
+    And `idx_photos_clips`, the clips' ids alone (a partial index, `WHERE kind = 'video'`), which a library view's clip
+    statement and its count under the Videos filter read instead of a scan of photos (#2644; DECISIONS 2026-11-08, "THE
+    PARTIAL INDEX ON CLIPS RIDES WITH THE NEXT MIGRATION THAT HAS ITS OWN REASON"; owner 2026-11-09: in 39). Spelled here,
+    not imported: a migration is frozen. Additive: two columns added at the end, NULL in every row there was, an index
+    dropped and one made, which move no row."""
+    conn.execute("ALTER TABLE photos ADD COLUMN width INTEGER")
+    conn.execute("ALTER TABLE photos ADD COLUMN height INTEGER")
+    conn.execute("DROP INDEX idx_photo_people_name")
+    conn.execute("CREATE INDEX idx_photos_clips ON photos(id) WHERE kind = 'video'")
+
+
 MIGRATIONS = (
     Migration(BASELINE, "the baseline: a new library, as migration 32 left one", _baseline, ADDITIVE,
               "makes every table, index and trigger of a new library in one transaction; a library below it is refused, not "
@@ -776,6 +795,14 @@ MIGRATIONS = (
               "them with the photo or the vector; nothing that was there changes, so no backup",
               (),
               (RowsKept("embeddings"),) + STANDARD),
+    # It touches no table (Migration, `touches`): two columns NULL in every row there was, which is what a row put back by
+    # the undo of a change made at 38 means (a size not read), and an index dropped and one made, which move no row. The
+    # watch holds every row as it was; `photos` and `photo_people` are counted by name.
+    Migration(39, "a photo knows its picture size", _a_photo_knows_its_picture_size, ADDITIVE,
+              "adds photos.width and height (NULL in every row there was), drops idx_photo_people_name, which no "
+              "statement needs, and makes idx_photos_clips, the clips' ids; nothing that was there changes, so no backup",
+              (),
+              (RowsKept("photos", "photo_people"),) + STANDARD),
 )
 
 LATEST = MIGRATIONS[-1].version
