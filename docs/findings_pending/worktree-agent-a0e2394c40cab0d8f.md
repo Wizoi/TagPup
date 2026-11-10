@@ -1,0 +1,8 @@
+# Findings of a branch
+
+Provisional numbers `B-n`: `tools/add_findings.py --take` gives each row its number in
+docs/findings.md when the main session merges the branch, and removes this file.
+
+| # | Found | Finding | Status |
+|---|---|---|---|
+| B-1 | 2026-11-09 | low: the wording of #2807's frame: eight places say a photo's recorded size is "the STORED pixels", literally wrong for a turned TIFF, whose header Pillow gives already turned (a TIFF stored 300 x 200 with Orientation 6 records 200 x 300, as `images.shown_shape` gives it, the frame its face boxes are in; tests/test_a_photos_picture_size_is_filled.py PICTURES): DECISIONS 2026-11-09 'MIGRATION 39: A PHOTO'S PICTURE SIZE' (2), ARCHITECTURE.md's `photos` row, DATABASE.md (the `width` row and migration 39's), schema.py's migration 39, store.photos.record_indexed, the CLI's index comment and services.picture_sizes. Live count, read-only 2026-11-09: 17 TIFF rows in photo_index, 0 in kr-track and renton_parkrun; their rows' raw_metadata holds no Orientation (0 of 17), so how many are turned is not known from the index. | decided: by design. The size recorded is the frame the face boxes are in, which is what (2) of the decision asks for ("the frame the face boxes are in"), and #2807 decided that frame; "stored pixels" in this code base names that frame, with the one TIFF exception stated once, where the frame is defined (`images.shown_shape`, `core/orientation.py`); writing the exception into the eight places would be one rule written eight times. Harmless for its only reader: the 2% rule reads `min(width, height)`, the same in either frame. DECISIONS 2026-11-09 'THE PICTURE-SIZE FILL IS RUN BY THE OWNER' names the TIFF case once. |
