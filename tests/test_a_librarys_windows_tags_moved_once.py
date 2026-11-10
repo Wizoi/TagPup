@@ -27,6 +27,7 @@ from test_file_journal import Crash, crash_at  # noqa: E402
 from tagpup.core import paths  # noqa: E402
 from tagpup.files import shares  # noqa: E402
 from tagpup.services import file_changes, tagging, windows_tags  # noqa: E402
+from tagpup.store import db, photos  # noqa: E402
 
 #: A tag the tree does not hold: its clip is left as it is and named by --show.
 UNKNOWN = "Trips/Lighthouse"
@@ -207,6 +208,21 @@ class TheMove(ALibrarysWindowsTagsMovedOnce):
         self.assertEqual(0, code, said)
         self.assertIn("Moved: wrote 1 clip file(s), 1 tag(s) added.", said)
         self.assert_moved(self.dock, ("Trips/Pier",))
+
+    def test_the_survey_reads_the_clips_by_their_own_index_not_a_scan_of_every_photo(self):
+        # 2,179 clips among 61,797 photos in the owner's largest library: the clips' partial index (idx_photos_clips,
+        # migration 39) is walked, not the table. `kind IN ('video')` scanned it.
+        conn = db.connect(db.readonly_uri(self.vl.path), uri=True)
+        statements = []
+        try:
+            conn.set_trace_callback(statements.append)
+            self.assertEqual(sorted(self.ids.values()), [photo_id for photo_id, _path in photos.clip_rows(conn)])
+            conn.set_trace_callback(None)
+            [statement] = [each for each in statements if "FROM photos" in each]
+            plan = "\n".join(row[3] for row in conn.execute("EXPLAIN QUERY PLAN " + statement))
+        finally:
+            conn.close()
+        self.assertIn("USING INDEX idx_photos_clips", plan)
 
     def test_apply_is_refused_while_the_app_runs_and_nothing_is_read_or_written(self):
         before = {path: self.read_bytes(path) for path in (self.jetty, self.dock)}

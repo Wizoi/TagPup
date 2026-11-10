@@ -402,8 +402,6 @@ FACE_KINDS = ("photo",)
 #: The kinds whose file a bake writes faces into (services.bake_after_index): never a clip (DECISIONS 2026-11-02,
 #: "THE OWNERS' PLANS", item 10; a clip's faces are no field its write may change, fields.CLIP_WRITES).
 BAKED_KINDS = ("photo",)
-#: The kinds that are clips (tagpup.files.images.is_clip).
-CLIP_KINDS = ("video",)
 
 
 def owes_a_vector(kind):
@@ -644,11 +642,13 @@ def raw_rows(conn):
 
 
 def clip_rows(conn):
-    """[(id, path)] of every clip's row (CLIP_KINDS), by id, the path native: the clips the one-time move of Windows
-    Tags reads (tagpup.services.windows_tags). One scan of the table, once a run."""
+    """[(id, path)] of every clip's row (a row of kind 'video', tagpup.files.images.is_clip), by id, the path native: the
+    clips the one-time move of Windows Tags reads (tagpup.services.windows_tags). Spelled `kind = 'video'`, as the clips'
+    partial index is (idx_photos_clips, migration 39), so it walks that index alone: `kind IN ('video')` is not read as
+    its WHERE and scans the table (EXPLAIN QUERY PLAN on the three live libraries, read-only, 2026-11-09)."""
     roots = store_roots.roots_for(conn)
     return [(photo_id, paths.from_row(path, roots)) for photo_id, path in conn.execute(
-        "SELECT id, path FROM photos WHERE " + sql_kind_in(CLIP_KINDS) + " ORDER BY id")]
+        "SELECT id, path FROM photos WHERE kind = 'video' ORDER BY id")]
 
 
 def row_paths(conn):
