@@ -36,6 +36,7 @@ SCENARIO = frozenset({
     "test_bulk_writes_start_from_the_file",
     "test_a_bake_is_planned_from_the_library",
     "test_a_caption_repeating_the_title_is_cleared",
+    "test_a_photos_picture_size_is_filled",
     "test_a_long_change_cut_off_is_settled_in_chunks",
     # The file journal and the writes it covers.
     "test_file_journal",
