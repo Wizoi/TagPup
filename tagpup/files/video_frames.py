@@ -29,7 +29,8 @@ it is a prerequisite of every process that asks (tagpup.config.ffmpeg_problem), 
 reached only through a check that it is there (tagpup.services.thumbnails).
 
 `streams` is the one ffprobe read of what a clip holds, its picture's and its sound's codec names (what a browser needs
-to play it is tagpup.files.convertible's to say): one ffprobe run, bounded as the frames are, failing as they do.
+to play it is tagpup.files.convertible's to say) and its length (what a conversion is checked by, tagpup.files.
+clip_convert): one ffprobe run, bounded as the frames are, failing as they do.
 """
 import json
 import logging
@@ -84,12 +85,14 @@ class Frames(NamedTuple):
 
 class Streams(NamedTuple):
     """What a video holds, by ffprobe's codec names: its first picture stream's (`video`; a cover picture is not one)
-    and its first sound stream's (`audio`, None when it has none); when they could not be read, None and None and why
-    (`problem`) and whose it is (`whose`), as Frames says them."""
+    and its first sound stream's (`audio`, None when it has none), and its length in seconds as its container gives it
+    (`duration`, None when it gives none); when they could not be read, None and None and why (`problem`) and whose it
+    is (`whose`), as Frames says them."""
     video: Optional[str]
     audio: Optional[str]
     problem: Optional[str]
     whose: Optional[str] = None
+    duration: Optional[float] = None
 
 
 def _refused(problem, whose=THE_MOMENT):
@@ -146,7 +149,8 @@ def streams(tools, path, seconds=DEFAULT_SECONDS):
     if problem:
         return Streams(None, None, *problem)
     done, problem = _run([tools.ffprobe, "-v", "error", "-show_entries",
-                          "stream=codec_type,codec_name:stream_disposition=attached_pic", "-of", "json", path],
+                          "stream=codec_type,codec_name:stream_disposition=attached_pic:format=duration", "-of", "json",
+                          path],
                          time.monotonic() + seconds, seconds)
     if problem:
         return Streams(None, None, *problem)
@@ -162,7 +166,11 @@ def streams(tools, path, seconds=DEFAULT_SECONDS):
         _log("ffprobe", err, path)
         return Streams(None, None, NOT_A_VIDEO, THE_FILE)
     sound = [s.get("codec_name") for s in found if s.get("codec_type") == "audio"]
-    return Streams(picture[0], sound[0] if sound else None, None)
+    try:
+        length = float((said.get("format") or {}).get("duration"))
+    except (TypeError, ValueError):
+        length = None
+    return Streams(picture[0], sound[0] if sound else None, None, duration=length if length and length > 0 else None)
 
 
 def _rate(said):
