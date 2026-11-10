@@ -92,9 +92,10 @@ All three libraries name the same models (ViT-SO400M-14-SigLIP2/webli and scrfd-
   census reads through services; a stage it cannot reach needs a store read or an ml helper of its own.
 - **The census strata count a photo's faces in play, not every face found** (#1528): named, or unnamed and not excluded
   (`services.identify.photos_waiting`); a library with many excluded faces reads low, and the census output says so.
-- **The whole-library view reads clips with a scan of `photos`** (#2644; DECISIONS 2026-11-08): 0.04 s for photo_index's
-  2,179 clips, so no index is made for it alone; the partial index on `kind = 'video'` rides with the next migration that
-  has its own reason. The plan test accepts the scan by name. A browser timing comes before any claim the click got slower.
+- **The whole-library view reads clips from `idx_photos_clips`** (#2644; migration 39, DECISIONS 2026-11-09): the partial
+  index `ON photos(id) WHERE kind = 'video'` holds the clips' ids alone; on a copy of photo_index the clip statement took 47
+  ms as a scan of photos and 1 ms by the index. The plan test asks every source's clip statement to scan no photos. Under
+  the Videos filter the whole library ordered by caption still walks `idx_photos_caption` past every photo (#2775).
 
 - **A Suggest offers a name by the cuts of the face model its run holds** (2026-10-20, phase 3 merge 3;
   `clustering.cuts_of(self.faces.key)`, `suggester`): a library switched mid-run ends on the model it began with, and
