@@ -109,11 +109,11 @@ class WhatAClipHolds(unittest.TestCase):
                          {name: video_frames.streams(TOOLS, path)[:3] for name, path in self.clips.items()})
 
     def test_a_file_that_is_no_video_is_the_files_and_a_share_asleep_starts_nothing(self):
-        self.assertEqual((None, None, video_frames.NOT_A_VIDEO, video_frames.THE_FILE),
+        self.assertEqual((None, None, video_frames.NOT_A_VIDEO, video_frames.THE_FILE, None),
                          video_frames.streams(TOOLS, self.notes))
         with mock.patch.object(shares, "stamp_of", return_value=shares.UNANSWERED), \
                 mock.patch.object(processes, "start", side_effect=AssertionError("ffprobe started on a share asleep")):
-            self.assertEqual((None, None, video_frames.SHARE_AWAY, video_frames.THE_MOMENT),
+            self.assertEqual((None, None, video_frames.SHARE_AWAY, video_frames.THE_MOMENT, None),
                              video_frames.streams(TOOLS, self.clips["harbour.mp4"]))
 
 
