@@ -252,18 +252,37 @@ class TheScript(PhotosIndexedBefore39):
         with self.share_asleep():
             code, said = self.run_script("--apply")
         self.assertEqual(1, code)
-        self.assertIn("Wrote 3 row(s): their picture size recorded. Read 7 photo(s): sized 3, unreadable 2, away 2", said)
+        self.assertIn("Wrote 3 row(s): their picture size recorded. Looked at 7 photo(s): sized 3, unreadable 2, away 2", said)
         self.assertIn("1 network share(s) did not answer: run this again when they are back.", said)
         code, said = self.run_script("--apply")
         self.assertEqual(0, code)
         self.assertIn("Wrote 2 row(s)", said)
         self.assertNotIn("did not answer", said)
 
+    def test_apply_exits_1_when_a_share_stopped_answering_during_a_header_read_and_a_run_again_fills_it(self):
+        real = shares.read_bounded
+        asleep = [True]
+
+        def read_bounded(path, read):
+            if asleep[0] and path.endswith("wide.jpg"):
+                return "away", None
+            return real(path, read)
+        with mock.patch.object(shares, "read_bounded", read_bounded):
+            code, said = self.run_script("--apply")
+        asleep[0] = False
+        self.assertEqual(1, code)
+        self.assertIn("did not answer: run this again when they are back.", said)
+        self.assertIsNone(self.sizes()["wide.jpg"])
+        code, said = self.run_script("--apply")
+        self.assertEqual(0, code)
+        self.assertIn("Wrote 1 row(s)", said)
+        self.assertNotIn("did not answer", said)
+
     def test_apply_takes_a_snapshot_once_a_day_and_says_what_it_wrote(self):
         code, said = self.run_script("--apply", "--limit", "1")
         self.assertEqual(0, code)
         self.assertIn("Snapshot: taken (daily", said)
-        self.assertIn("Wrote 1 row(s): their picture size recorded. Read 1 photo(s)", said)
+        self.assertIn("Wrote 1 row(s): their picture size recorded. Looked at 1 photo(s)", said)
         code, said = self.run_script("--apply")
         self.assertIn("Snapshot: today's stands", said)
         self.assertIn("Wrote 2 row(s)", said)

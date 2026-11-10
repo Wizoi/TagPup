@@ -127,16 +127,19 @@ def apply(db_path, limit, out):
             out("Stopped at once: the chunks written before stand (the photos read since the last are not recorded). "
                 "Run this again to go on.")
             return 130
-    out("Wrote %d row(s): their picture size recorded. Read %d photo(s): %s." % (filled.wrote, filled.read,
-                                                                                counted(filled.counts)))
+    out("Wrote %d row(s): their picture size recorded. Looked at %d photo(s): %s." % (filled.wrote, filled.read,
+                                                                                     counted(filled.counts)))
     if filled.wrote != filled.counts[picture_sizes.SIZED]:
         out("%d photo(s) sized were not written: their row was read again or changed meanwhile."
             % (filled.counts[picture_sizes.SIZED] - filled.wrote))
-    if filled.away:
-        out("%d network share(s) did not answer: run this again when they are back." % len(filled.away))
+    # A share that stopped answering DURING a header read is counted away but is not in filled.away (only the walk's
+    # own look fills that): either way the run is not whole.
+    not_answered = bool(filled.away or filled.counts[picture_sizes.AWAY])
+    if not_answered:
+        out("%d network share(s) did not answer: run this again when they are back." % max(len(filled.away), 1))
     if filled.stopped:
         out("Stopped after %d photo(s): run this again to go on." % filled.read)
-    return 130 if filled.stopped else 1 if filled.away else 0
+    return 130 if filled.stopped else 1 if not_answered else 0
 
 
 def run(db_path, apply_, limit=None, sample=picture_sizes.SAMPLE, out=say):
