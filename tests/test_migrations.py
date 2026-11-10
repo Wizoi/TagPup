@@ -1,12 +1,13 @@
 """The migration runner, and a library meeting a step it has not had (docs/DATABASE.md, "The baseline"; tagpup.store.schema).
 
-There are seven real migrations: the baseline (schema 32), which makes a NEW library whole (a library below it is refused);
+There are eight real migrations: the baseline (schema 32), which makes a NEW library whole (a library below it is refused);
 33, which moves each face's vector to `face_embeddings` under FaceNet's key and drops `faces.embedding`, the empty
 `faces_pending` and the redundant `idx_faces_name`, on a library kept at 32 and on a new one alike; 34, which adds the
 empty `photo_fingerprints`; 35, which adds `idx_embeddings_stamp`; 36, which adds `job_runs.parent`, `heartbeat` and
-`progress`; 37, which adds `photos.kind` and `change_files.patch` and `patch_before`; and 38, which adds the empty
-`embedding_frames` and the two triggers that take a clip's frames with its photo and its vector (34 to 38 additive: no backup,
-and a change made before each stays undoable).
+`progress`; 37, which adds `photos.kind` and `change_files.patch` and `patch_before`; 38, which adds the empty
+`embedding_frames` and the two triggers that take a clip's frames with its photo and its vector; and 39, which adds
+`photos.width` and `height`, drops `idx_photo_people_name` and makes `idx_photos_clips`, the clips' ids (34 to 39
+additive: no backup, and a change made before each stays undoable).
 The runner is held to what it promises by SYNTHETIC steps after the latest real one (tests/migration_names.py):
 
 * one that adds takes nothing and is watched to change nothing that was there; one that destroys takes one backup, under
@@ -36,7 +37,11 @@ The runner is held to what it promises by SYNTHETIC steps after the latest real 
   the next open; the app before 37 refuses it after. The owner's library at 37, with a photo deleted by a journaled change,
   meets the real 38: no backup, the table and its two triggers and nothing else, every vector byte for byte, the deletion
   still undoable, a second open a no-op; two processes opening it at once apply it once; killed part way it is still at 37
-  and migrates at the next open; the app before 38 refuses it after.
+  and migrates at the next open; the app before 38 refuses it after. The owner's library at 38, with a photo deleted by a
+  journaled change, meets the real 39: no backup, the two columns NULL in every photo, the one index gone and the clips'
+  made, nothing else, the deletion still undoable and the photo back with no size, a second open a no-op; a photo the index
+  reads after it records its picture's size, one never read or whose header gives none records none; a clip the index
+  reads after it is read through the clips' index, a photo is not; two processes opening it at once apply it once; killed part way it is still at 38 and migrates at the next open; the app before 39 refuses it after.
 * A library below the baseline is refused with a sentence before anything is written to it, whoever opens it.
 
 A step is declared once, in tests/migration_names.py, not in a list of names in every test that says which ran (#689). However
@@ -276,7 +281,7 @@ class AFailedCheck(Migrated):
 
 class TheRealMigrations(unittest.TestCase):
     def test_each_says_what_it_is_and_names_its_checks(self):
-        baseline, dropping, fingerprints, stamps, nesting, kinds, frames = schema.MIGRATIONS
+        baseline, dropping, fingerprints, stamps, nesting, kinds, frames, sizes = schema.MIGRATIONS
         self.assertEqual((32, schema.ADDITIVE), (baseline.version, baseline.kind))
         self.assertEqual((33, schema.DESTRUCTIVE, ("faces_pending", "faces", "face_embeddings"), "face vectors in face_embeddings"),
                          (dropping.version, dropping.kind, dropping.touches, dropping.name))
@@ -301,7 +306,12 @@ class TheRealMigrations(unittest.TestCase):
                          (frames.version, frames.kind, frames.touches, frames.name))
         self.assertIn("embedding_frames", journal.KEYS)
         self.assertIsNone(journal.schema_gap_blocker(37, 38))
-        self.assertEqual((schema.BASELINE, schema.LATEST, migration_names.BASE), (32, 38, 38))
+        # No table touched: two columns NULL in every row there was (a size not read) and an index dropped; a change made
+        # at 38 stays undoable.
+        self.assertEqual((39, schema.ADDITIVE, (), "a photo knows its picture size"),
+                         (sizes.version, sizes.kind, sizes.touches, sizes.name))
+        self.assertIsNone(journal.schema_gap_blocker(38, 39))
+        self.assertEqual((schema.BASELINE, schema.LATEST, migration_names.BASE), (32, 39, 39))
         for migration in schema.MIGRATIONS:
             self.assertIn(migration.kind, schema.KINDS)
             self.assertTrue(migration.why and "\n" not in migration.why)
@@ -1077,7 +1087,11 @@ class TheOwnersLibraryAt36MeetsMigration37(Migrated):
         self.assertEqual([], schema.ensure(self.db_path), "a second open applies nothing")
 
     def test_a_photo_added_after_it_is_a_photo_and_no_other_kind_is_stored(self):
-        """The writers of photo rows name no kind: the indexer's read and Suggest's row of a photo it never read."""
+        """The writers of photo rows name no kind: the indexer's read and Suggest's row of a photo it never read. They are
+        today's, which write a library at the latest schema only: it is taken on past 37 first."""
+        schema.ensure(self.db_path)
+        self.files_at_37 = file_journal.files_of(self.db_path, self.saved)
+        self.enterContext(migration_names.up_to(migration_names.BASE))
         schema.ensure(self.db_path)
         conn = db.connect(self.db_path)
         self.addCleanup(conn.close)
@@ -1091,7 +1105,7 @@ class TheOwnersLibraryAt36MeetsMigration37(Migrated):
             with self.subTest(kind=wrong), self.assertRaises(sqlite3.IntegrityError):
                 conn.execute("UPDATE photos SET kind = ? WHERE id = ?", (wrong, read))
         conn.rollback()
-        self.assertEqual(self.files_at_36, file_journal.files_of(self.db_path, self.saved), "the files read alike at 36 and 37")
+        self.assertEqual(self.files_at_36, self.files_at_37, "the files read alike at 36 and 37")
 
     def test_two_processes_opening_it_at_once_apply_it_once(self):
         code = ("import sys; sys.path.insert(0, %r); from tagpup.store import schema;"
@@ -1192,8 +1206,9 @@ class TheOwnersLibraryAt37MeetsMigration38(Migrated):
         self.assertEqual([], schema.ensure(self.db_path), "a second open applies nothing")
 
     def test_two_processes_opening_it_at_once_apply_it_once(self):
-        code = ("import sys; sys.path.insert(0, %r); from tagpup.store import schema; print(len(schema.ensure(%r)))"
-                % (ROOT, self.db_path))
+        code = ("import sys; sys.path.insert(0, %r); from tagpup.store import schema;"
+                " schema.MIGRATIONS = tuple(m for m in schema.MIGRATIONS if m.version <= 38); schema.LATEST = 38;"
+                " print(len(schema.ensure(%r)))" % (ROOT, self.db_path))   # each the app with 38 as its latest
         env = dict(os.environ, TAGPUP_HOME=self.home.root)
         running = [processes.start([sys.executable, "-c", code], env=env, stdout=-1, stderr=-1, text=True) for _ in range(2)]
         answers = []
@@ -1236,6 +1251,156 @@ class TheOwnersLibraryAt37MeetsMigration38(Migrated):
         with migration_names.up_to(37), self.assertRaises(schema.NewerLibrary) as refused:
             schema.ensure(self.db_path)
         self.assertEqual((38, 37), (refused.exception.found, refused.exception.known))
+        self.assertEqual(before, digest(self.db_path), "nothing written")
+
+
+class TheOwnersLibraryAt38MeetsMigration39(Migrated):
+    """Made and seeded by the app before 39, as the three live libraries are (at 38: 61,797, 2,070 and 1,309 photo rows,
+    2,179, 5 and 0 of them clips; 79,482, 2,825 and 1,076 rows in `photo_people`, `idx_photo_people_name` on each; no
+    picture size in any row; counted read-only 2026-11-09), with a photo deleted by a journaled change at 38, then opened
+    by this one (owner, 2026-11-09; DECISIONS, "MIGRATION 39: A PHOTO'S PICTURE SIZE")."""
+
+    NAME = "a photo knows its picture size"
+    PHOTOS, DROPPED, ADDED = ("table", "photos"), ("index", "idx_photo_people_name"), ("index", "idx_photos_clips")
+
+    def setUp(self):
+        with migration_names.up_to(38):
+            super().setUp()
+            self.whole = self.dump()
+            self.deletion = journal.apply(self.db_path, "delete", [journal.delete("photos", (self.ids["prize"],), {})]).change_id
+        self.assertEqual(38, self.version())
+        self.before = (self.objects(), self.counts(), self.dump())
+
+    objects = TheOwnersLibraryAt32MeetsMigration33.objects
+    counts = TheOwnersLibraryAt32MeetsMigration33.counts
+
+    @staticmethod
+    def as_39_leaves(dump):
+        """`dump` (a library at 38) as 39 leaves it: each photo with no size, stored as NULL."""
+        return dict(dump, photos=[row + (None, "null", None, "null") for row in dump["photos"]])
+
+    def test_it_adds_the_columns_drops_the_index_and_a_photo_deleted_at_38_comes_back_with_no_size(self):
+        objects, counts, dump = self.before
+        self.assertIn(self.DROPPED, objects)
+        self.assertTrue(dump["photo_people"], "people listed, as the owner's photos list them")
+        self.assertEqual([self.NAME], schema.ensure(self.db_path))
+        self.assertEqual(39, self.version())
+        after = self.objects()
+        self.assertEqual({self.DROPPED}, set(objects) - set(after), "the index gone, nothing else")
+        self.assertEqual({self.ADDED: "CREATE INDEX idx_photos_clips ON photos(id) WHERE kind = 'video'"},
+                         {k: v for k, v in after.items() if k not in objects}, "the clips' index made, nothing else")
+        self.assertEqual({k: v for k, v in objects.items() if k not in (self.PHOTOS, self.DROPPED)},
+                         {k: v for k, v in after.items() if k not in (self.PHOTOS, self.ADDED)}, "nothing else changed")
+        self.assertEqual(["kind", "width", "height"], [row[1] for row in self.query("PRAGMA table_info(photos)")][-3:],
+                         "added at the end")
+        counts.update(schema_version=counts["schema_version"] + 1, changes=counts["changes"] + 1)
+        self.assertEqual(counts, self.counts())
+        self.assertEqual(self.as_39_leaves(dump), self.dump(), "every row as it was, no photo with a size")
+        self.assertEqual([], backups(self.db_path), "an additive migration takes none")
+        operation, version, status, summary = self.recorded()[-1]
+        self.assertEqual(("migration 39: " + self.NAME, 38, "applied", schema.ADDITIVE),
+                         (operation, version, status, summary["kind"]))
+        self.assertNotIn("backup", summary)
+        self.assertIn("nothing that was there changed", summary["checks"])
+        self.assertIn("rows kept in photos, photo_people", summary["checks"])
+        conn = db.connect(db.readonly_uri(self.db_path), uri=True)
+        self.addCleanup(conn.close)
+        self.assertEqual([], journal.refusal(conn, self.deletion))
+        journal.undo(self.db_path, self.deletion)
+        self.assertEqual(self.as_39_leaves(self.whole), self.dump(), "the photo back, with all it took and no size")
+        schema.forget()
+        self.assertEqual([], schema.ensure(self.db_path), "a second open applies nothing")
+
+    def test_a_photo_read_after_it_records_its_picture_size_and_one_with_none_records_null(self):
+        """The index records the size its header gives (the stored pixels: 300 x 200 for a JPEG turned by Orientation 6);
+        a header that gives none (a file that is no picture), or a row Suggest makes of a photo never read, holds NULL,
+        never a size of 0."""
+        from PIL import Image
+        schema.ensure(self.db_path)
+        folder = os.path.join(self.home.root, "Harbour Regatta")
+        os.makedirs(folder, exist_ok=True)
+        turned, broken = os.path.join(folder, "regatta_004.jpg"), os.path.join(folder, "regatta_006.jpg")
+        exif = Image.Exif()
+        exif[0x0112] = 6
+        Image.new("RGB", (300, 200), "teal").save(turned, "JPEG", exif=exif)
+        with open(broken, "wb") as handle:
+            handle.write(b"no picture here")
+        conn = db.connect(self.db_path)
+        self.addCleanup(conn.close)
+        fields = {"XMP:Subject": ["Activity/Sailing"], "EXIF:DateTimeOriginal": "2024:06:02 10:00:00"}
+        read = photo_rows.add_read(conn, turned, fields)
+        unparsed = photo_rows.add_read(conn, broken, fields)
+        unread = photo_rows.add_unread(conn, os.path.join(folder, "regatta_005.jpg"))
+        conn.commit()
+        self.assertEqual([(read, 300, 200), (unparsed, None, None), (unread, None, None)],
+                         conn.execute("SELECT id, width, height FROM photos WHERE id IN (?, ?, ?) ORDER BY id",
+                                      (read, unparsed, unread)).fetchall())
+
+    def test_a_clip_read_after_it_is_read_through_the_clips_index_and_a_photo_is_not(self):
+        """The view's clip statement under the Videos filter (library_view.view_ids: `p.kind = ?`, bound) seeks the
+        clips' index and finds the clip the index records, never a photo."""
+        schema.ensure(self.db_path)
+        folder = os.path.join(self.home.root, "Harbour Regatta")
+        conn = db.connect(self.db_path)
+        self.addCleanup(conn.close)
+        fields = {"EXIF:DateTimeOriginal": "2024:06:02 10:00:00"}
+        clip = photo_rows.add_read(conn, os.path.join(folder, "regatta_start.mp4"), fields)
+        photo = photo_rows.add_read(conn, os.path.join(folder, "regatta_007.jpg"), fields)
+        conn.commit()
+        statement = "SELECT p.id FROM photos p WHERE p.kind = ? ORDER BY p.id"
+        self.assertIn("idx_photos_clips", "\n".join(row[3] for row in conn.execute("EXPLAIN QUERY PLAN " + statement, ("video",))))
+        found = [photo_id for (photo_id,) in conn.execute(statement, ("video",))]
+        self.assertIn(clip, found)
+        self.assertNotIn(photo, found)
+
+    def test_two_processes_opening_it_at_once_apply_it_once(self):
+        code = ("import sys; sys.path.insert(0, %r); from tagpup.store import schema; print(len(schema.ensure(%r)))"
+                % (ROOT, self.db_path))
+        env = dict(os.environ, TAGPUP_HOME=self.home.root)
+        running = [processes.start([sys.executable, "-c", code], env=env, stdout=-1, stderr=-1, text=True) for _ in range(2)]
+        answers = []
+        for each in running:
+            out, err = each.communicate(timeout=120)
+            self.assertEqual(0, each.returncode, err)
+            answers.append(out.strip())
+        self.assertEqual(1, sum(int(answer) for answer in answers), answers)
+        self.assertEqual(39, self.version())
+        self.assertIn(self.ADDED, self.objects())
+        self.assertEqual(self.as_39_leaves(self.before[2]), self.dump())
+        self.assertEqual(["migration 39: " + self.NAME], [op for op, *_ in self.recorded() if op.startswith("migration 39")])
+
+    def test_killed_part_way_it_is_still_at_38_and_migrates_at_the_next_open(self):
+        code = textwrap.dedent("""
+            import os, sys
+            sys.path.insert(0, %(root)r)
+            from tagpup.store import schema
+            [real] = [m for m in schema.MIGRATIONS if m.version == 39]
+
+            def killed(conn):
+                real.apply(conn)
+                os._exit(9)   # the power goes: the columns added, one index dropped and one made, nothing committed
+
+            schema.MIGRATIONS = tuple(m for m in schema.MIGRATIONS if m.version < 39) + (real._replace(apply=killed),)
+            schema.ensure(%(path)r)
+            """) % {"root": ROOT, "path": self.db_path}
+        child = processes.start([sys.executable, "-c", code], env=dict(os.environ, TAGPUP_HOME=self.home.root),
+                                stdout=-1, stderr=-1, text=True)
+        _out, err = child.communicate(timeout=120)
+        self.assertEqual(9, child.returncode, err)
+        self.assertEqual(38, self.version())
+        self.assertEqual(self.before, (self.objects(), self.counts(), self.dump()), "as it was")
+        self.assertNotIn(self.ADDED, self.objects())
+        schema.forget()
+        self.assertEqual([self.NAME], schema.ensure(self.db_path))
+        self.assertEqual(39, self.version())
+        self.assertIn(self.ADDED, self.objects())
+
+    def test_the_app_before_39_refuses_it_after(self):
+        schema.ensure(self.db_path)
+        before = digest(self.db_path)
+        with migration_names.up_to(38), self.assertRaises(schema.NewerLibrary) as refused:
+            schema.ensure(self.db_path)
+        self.assertEqual((39, 38), (refused.exception.found, refused.exception.known))
         self.assertEqual(before, digest(self.db_path), "nothing written")
 
 
@@ -1326,19 +1491,24 @@ class ANewLibrary(unittest.TestCase):
         schema.ensure(path)
         self.assertEqual([], backups(path))
         self.assertEqual([(0,)], db_rows(path, "SELECT COUNT(*) FROM changes"))
-        self.assertEqual([(32,), (33,), (34,), (35,), (36,), (37,), (38,)],
+        self.assertEqual([(32,), (33,), (34,), (35,), (36,), (37,), (38,), (39,)],
                          db_rows(path, "SELECT version FROM schema_version ORDER BY version"))
-        self.assertEqual([], db_rows(path, "SELECT name FROM sqlite_master WHERE name IN ('faces_pending', 'idx_faces_name')"),
-                         "made at the baseline and taken to 38 by the same runner")
+        self.assertEqual([], db_rows(path, "SELECT name FROM sqlite_master WHERE name IN ('faces_pending', 'idx_faces_name',"
+                                           " 'idx_photo_people_name')"),
+                         "made at the baseline and taken to 39 by the same runner")
+        self.assertEqual([("CREATE INDEX idx_photos_clips ON photos(id) WHERE kind = 'video'",)],
+                         db_rows(path, "SELECT sql FROM sqlite_master WHERE name = 'idx_photos_clips'"),
+                         "the clips' index from migration 39, as a library migrated to 39 has it")
         self.assertEqual([("idx_embeddings_stamp",)], db_rows(path, "SELECT name FROM sqlite_master WHERE name = 'idx_embeddings_stamp'"),
                          "the index from migration 35, not the baseline")
         self.assertEqual([("face_embeddings",)], db_rows(path, "SELECT name FROM sqlite_master WHERE name = 'face_embeddings'"))
         self.assertNotIn("embedding", [row[1] for row in db_rows(path, "PRAGMA table_info(faces)")])
         self.assertEqual(["parent", "heartbeat", "progress"], [row[1] for row in db_rows(path, "PRAGMA table_info(job_runs)")][-3:],
                          "the runs' columns from migration 36")
-        self.assertEqual("kind", [row[1] for row in db_rows(path, "PRAGMA table_info(photos)")][-1])
+        self.assertEqual(["kind", "width", "height"], [row[1] for row in db_rows(path, "PRAGMA table_info(photos)")][-3:],
+                         "the kind from migration 37, the picture's size from 39")
         self.assertEqual(["patch", "patch_before"], [row[1] for row in db_rows(path, "PRAGMA table_info(change_files)")][-2:],
-                         "the kind and the patch's record from migration 37")
+                         "the patch's record from migration 37")
 
     def test_made_by_two_processes_at_once_is_made_once(self):
         home = own_home.for_test(self)
@@ -1352,8 +1522,8 @@ class ANewLibrary(unittest.TestCase):
             out, err = each.communicate(timeout=120)
             self.assertEqual(0, each.returncode, err)
             answers.append(out.strip())
-        self.assertEqual(7, sum(int(answer) for answer in answers), answers)
-        self.assertEqual([(32,), (33,), (34,), (35,), (36,), (37,), (38,)],
+        self.assertEqual(8, sum(int(answer) for answer in answers), answers)
+        self.assertEqual([(32,), (33,), (34,), (35,), (36,), (37,), (38,), (39,)],
                          db_rows(path, "SELECT version FROM schema_version ORDER BY version"))
 
 

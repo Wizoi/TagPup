@@ -31,7 +31,7 @@ old to restore". Migration 33 (each face's vector to `face_embeddings`, keyed by
 (schema 33, counted 2026-10-18), and 34 to 38 after it: 37 (`photos.kind`, 'photo' in every row there was, and
 `change_files.patch` and `patch_before`; DECISIONS 2026-11-02, "VIDEO: THE OWNERS' PLANS AND THE OWNER'S ANSWERS", 4) and
 38 (`embedding_frames`; DECISIONS 2026-11-06, "MIGRATION 38") are additive. All three are at 38 (counted read-only
-2026-11-08): no migration is in flight. What an install needs (disk, one app first, no CLI index meanwhile): DATABASE.md,
+2026-11-09). Migration 39 (`photos.width` and `height`, NULL until read; `idx_photo_people_name` dropped; `idx_photos_clips` made; DECISIONS 2026-11-09, "MIGRATION 39") is IN FLIGHT: to be installed and run on the three libraries before another migration starts. What an install needs (disk, one app first, no CLI index meanwhile): DATABASE.md,
 section 10.
 
 ## The contract other domains rely on
