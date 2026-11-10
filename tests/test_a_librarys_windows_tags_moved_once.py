@@ -8,6 +8,10 @@ journal's keyword writer, one holding a Windows tag the tag tree does not hold; 
 read, in a home of its own (tests/test_a_clip_tagged_through_the_journal.ALibraryHoldingAClip). Skipped, saying so,
 without ffmpeg or ExifTool. Fictional tags only. The script did not exist before this file: each test fails on the
 trunk before it for want of it.
+
+ABranchOrNoPerson: three clips more, one holding a branch of the tree alone (Trips, when the tree has Trips/Coast), one a
+leaf beside a branch, one a tag under People the owner marked as holding no faces (the tree view's switch): each is left
+whole, as a clip holding a tag not in the tree is; the tests fail on the planner before it, which moved all three.
 """
 import os
 import shutil
@@ -27,6 +31,7 @@ from test_file_journal import Crash, crash_at  # noqa: E402
 from tagpup.core import paths  # noqa: E402
 from tagpup.files import shares  # noqa: E402
 from tagpup.services import file_changes, tagging, windows_tags  # noqa: E402
+from tagpup.services import tags as tags_service  # noqa: E402
 from tagpup.store import db, photos  # noqa: E402
 
 #: A tag the tree does not hold: its clip is left as it is and named by --show.
@@ -100,8 +105,8 @@ class TheMove(ALibrarysWindowsTagsMovedOnce):
 
         code, said = self.run_script()
         self.assertEqual(0, code, said)
-        self.assertIn("clips 4, to move 3, tags to add 5, no Windows Tags 0, a tag not in the tree 1, unreadable 0, "
-                      "away 0.", said)
+        self.assertIn("clips 4, to move 3, tags to add 5, no Windows Tags 0, a tag not in the tree 1, a branch or "
+                      "non-person tag 0, unreadable 0, away 0.", said)
         self.assertIn("A dry run: nothing was written. --apply moves the Windows Tags of 3 clip(s)", said)
         self.assertEqual(clips, {path: self.read_bytes(path) for path in clips}, "no clip written")
         self.assertEqual(journal, self.vl.rows("SELECT id, state FROM change_files WHERE change_id > ? ORDER BY id",
@@ -122,7 +127,7 @@ class TheMove(ALibrarysWindowsTagsMovedOnce):
         self.assertEqual(0, code, said)
         self.assertIn("Snapshot of the library:", said)
         self.assertIn("Moved: wrote 3 clip file(s), 5 tag(s) added. Left alone: 0 with no Windows Tags any more, 0 with "
-                      "a tag not in the tree, 0 unreadable, 0 away", said)
+                      "a tag not in the tree, 0 with a branch or non-person tag, 0 unreadable, 0 away", said)
         self.assert_moved(self.jetty, patched.WINDOWS_TAGS)
         self.assert_moved(self.slipway, ("Trips/Coast", "Trips/Harbour"))     # its own first: nothing it held is lost
         self.assert_moved(self.dock, ("Trips/Pier",))
@@ -233,6 +238,62 @@ class TheMove(ALibrarysWindowsTagsMovedOnce):
         self.assertIn("Not run: TagPup is running (1 app server(s)).", said)
         self.assertEqual(before, {path: self.read_bytes(path) for path in before})
         self.assertEqual([], self.changes())
+
+
+class ABranchOrNoPerson(ALibrarysWindowsTagsMovedOnce):
+    """Three clips more: Windows Tags naming a branch of the tree, a leaf beside a branch, and a tag under People that is
+    no person."""
+
+    #: A node under the face root the owner switched to holding no faces: a leaf, and no person.
+    CREW = "People/Harbour Crew"
+
+    def setUp(self):
+        super().setUp()
+        made = tags_service.create(self.vl.library, self.CREW)
+        self.assertTrue(made.ok, made.refused)
+        [(crew,)] = self.vl.rows("SELECT id FROM tag_taxonomy WHERE tag = ?", self.CREW)
+        switched = tags_service.set_flags(self.vl.library, crew, has_face=0)
+        self.assertEqual(1, switched.changed)
+        self.boatyard = self.copy("boatyard.mp4", ("Trips",))
+        self.pontoon = self.copy("pontoon.mp4", ("Trips/Pier", "Trips"))
+        self.crew = self.copy("crew.mp4", (self.CREW,))
+        self.ids.update(zip(("boatyard", "pontoon", "crew"), self.index(self.boatyard, self.pontoon, self.crew)))
+        self.left = (self.boatyard, self.pontoon, self.crew)
+
+    def test_a_dry_run_counts_them_apart_names_their_texts_with_show_alone_and_writes_nothing(self):
+        before = {path: self.read_bytes(path) for path in self.left}
+        db_bytes = self.read_bytes(self.vl.path)
+        code, said = self.run_script()
+        self.assertEqual(0, code, said)
+        self.assertIn("clips 7, to move 3, tags to add 5, no Windows Tags 0, a tag not in the tree 1, a branch or "
+                      "non-person tag 3, unreadable 0, away 0.", said)
+        self.assertNotIn("Trips", said, "a tag was said without --show")
+        self.assertEqual(before, {path: self.read_bytes(path) for path in before}, "no clip written")
+        self.assertEqual(db_bytes, self.read_bytes(self.vl.path), "the library's file as it was")
+
+        code, said = self.run_script("--show")
+        self.assertEqual(0, code, said)
+        self.assertIn("a branch or non-person tag: clip %d: Trips\n" % self.ids["boatyard"], said + "\n")
+        self.assertIn("a branch or non-person tag: clip %d: Trips\n" % self.ids["pontoon"], said + "\n",
+                      "the branch alone is named, not the leaf beside it")
+        self.assertIn("a branch or non-person tag: clip %d: %s" % (self.ids["crew"], self.CREW), said)
+
+    def test_apply_leaves_each_whole_its_windows_tags_where_they_were_and_moves_the_others(self):
+        code, said = self.run_script("--apply")
+        self.assertEqual(0, code, said)
+        self.assertIn("a branch or non-person tag 3", said)
+        self.assertIn("Moved: wrote 3 clip file(s), 5 tag(s) added.", said)
+        self.assertEqual(([], ["Trips"]), self.held(self.boatyard), "a branch alone: nothing written")
+        self.assertEqual(([], ["Trips/Pier", "Trips"]), self.held(self.pontoon),
+                         "a leaf beside a branch: left whole, as beside a tag not in the tree")
+        self.assertEqual(([], [self.CREW]), self.held(self.crew), "under People and no person: nothing written")
+        for name in ("boatyard", "pontoon", "crew"):
+            self.assertEqual([], self.tags_of(self.ids[name]), name)
+        self.assertEqual([], self.vl.rows("SELECT pt.photo_id FROM photo_tags pt JOIN tag_taxonomy t ON t.id = pt.tag_id"
+                                          " WHERE t.tag IN ('Trips', ?)", self.CREW),
+                         "no branch, and no tag under People that is no person, made a used tag")
+        self.assert_moved(self.jetty, patched.WINDOWS_TAGS)
+        self.assert_moved(self.dock, ("Trips/Pier",))
 
 
 if __name__ == "__main__":

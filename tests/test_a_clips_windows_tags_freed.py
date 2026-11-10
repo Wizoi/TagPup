@@ -30,7 +30,6 @@ from test_a_clip_tagged_through_the_journal import EXIFTOOL, ALibraryHoldingACli
 from tagpup.core import fields  # noqa: E402
 from tagpup.files import containers  # noqa: E402
 from tagpup.services import file_changes, windows_tags  # noqa: E402
-from tagpup.store import taxonomy  # noqa: E402
 
 WINDOWS_TAGS = patched.WINDOWS_TAGS
 
@@ -43,10 +42,10 @@ class AClipsWindowsTagsFreed(ALibraryHoldingAClip):
 
     def move(self, tree=None):
         """The move of the clip's Windows Tags through the journal, planned by the move's own planner from the tag tree
-        (`tree`, else the library's); its Result."""
-        tree = taxonomy.tags(self.vl.conn) if tree is None else tree
+        (`tree`, every tag of it a leaf, else the library's as the survey reads it); its Result."""
+        tree, writable = windows_tags.read_tree(self.vl.conn) if tree is None else (tree, tree)
         return file_changes.write_fields(self.vl.library, windows_tags.OPERATION, EXIFTOOL, [self.clip_path],
-                                         list(windows_tags.READ), windows_tags.planner(self.vl.library, tree))
+                                         list(windows_tags.READ), windows_tags.planner(self.vl.library, tree, writable))
 
     def windows_tags(self):
         """(the XMP:Subject, the Windows Tags) ExifTool reads of the clip now, the Category asked as the move asks it."""
