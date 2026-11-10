@@ -1,0 +1,9 @@
+# Findings of a branch
+
+Provisional numbers `B-n`: `tools/add_findings.py --take` gives each row its number in
+docs/findings.md when the main session merges the branch, and removes this file.
+
+| # | Found | Finding | Status |
+|---|---|---|---|
+| B-1 | 2026-11-09 | low: Files: review of the Windows-tags move: taxonomy.tags returns branches too, so a Windows text naming a branch (Trips, when the tree has Trips/Coast) passed the move's tree check and was written as a keyword on the clip; a text under a face root that is no person would have passed too. Live, read-only 2026-11-09, photo_index: 10 distinct Windows texts are branches, 464 uses on 447 clips; 0 texts under a face root are no person (the tree has 1 such node, under People with has_face off); kr-track's 5 clips hold no Xtra, renton_parkrun has none. | fixed: 116b8815 (the planner writes a leaf alone, under a face root a person alone; a clip holding any other text is left whole and counted as 'a branch or non-person tag', named by --show, the not-in-the-tree rule exactly; the tests fail on the code before it, which wrote 6 clips; wrote 0: dry run only, live 1,645 to move, 5,478 tags, 86 none, 1 not in tree, 447 branch or non-person, 0 unreadable, 0 away) |
+| B-2 | 2026-11-09 | low: Files: fixing the branch skip of the Windows-tags move: every one of the 10 branch texts it now holds back is already a used tag on photos (10,206 photo_tags rows in photo_index, read-only 2026-11-09; 11,660 rows name 37 branches in all), and #986 (owner 2026-10-09) says a group tag is legitimate on a photo; so the skip holds back 447 clips (1,812 of their tags) for a rule ('a branch is not put on a clip') the photos do not follow. Built as briefed; the alternative is to drop the branch half and keep only the face-root half. | open: owner to choose whether a branch text moves (as on the photos) or keeps its clip whole (as built) |
