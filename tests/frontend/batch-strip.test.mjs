@@ -97,6 +97,17 @@ describe("a batch the page did not start", () => {
     assert.deepEqual(sentences(ctx), []);
   });
 
+  test("a batch that ends between two polls ends on the true total, from the journal, not on the last count seen", async (t) => {
+    // The last poll saw 84 of 86; the final chunks were written before the batch left the list.
+    const world = { batches: [going({ photos: 86, done: 84, planned: 2 })], history: [{ id: 10, files: { done: 86 } }] };
+    const server = fakeServer(world).on("/api/history", () => ({ library: "library", changes: world.history }));
+    const ctx = await open(t, world, { server });
+    assert.match(strip(ctx).textContent, /84 of 86/);
+    world.batches = [];
+    await wait();
+    assert.deepEqual(sentences(ctx), ["bulk tags has ended (86 of 86 photos handled). Change 10 in History says what it wrote and can undo it."]);
+  });
+
   test("a batch asked to stop is said so, and its end is the stop sentence with its change", async (t) => {
     const world = { batches: [going({ state: "stopping", done: 25, planned: 35 })] };
     const ctx = await open(t, world);
