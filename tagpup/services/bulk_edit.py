@@ -224,12 +224,15 @@ def _write(library, edit, ids, exiftool_path):
     return out
 
 
-def _cannot_keep(present, sizes):
+def _cannot_keep(present, sizes, confirmed):
     """{photo id: why} of the photos that go through this PC, when this PC cannot keep their copies; {} when it can. `sizes`,
     {paths.key(path): bytes}, is what file_changes.file_stamps found; a file whose size it did not find is judged by the
-    delete's own read of it."""
+    delete's own read of it. A photo of `confirmed` (edit.for_good_ids) is left to its own delete: it still goes to the Bin
+    while the Bin has room for it, and is deleted for good after that (for_good is leave, never force)."""
     bins, through, largest = {}, [], 0
     for photo_id, path in present:
+        if photo_id in confirmed:
+            continue
         folder = paths.key(os.path.dirname(path))
         if folder not in bins:
             bins[folder] = recycle_bin.no_bin_reason(path)
@@ -278,9 +281,10 @@ def _delete(library, edit, present, out):
     Recycle Bin -- through this PC's where its place has none, #694 -- then its row, faces and thumbnail), under the one lock of
     changes of photo files, so that no write of one of them runs while it goes. A file gone already is counted missing and its
     row kept (sync reports it); one refused, or not moved (any step of going through this PC that failed), is an error, the
-    original and its row kept. Before the chunk copies anything through this PC, it asks whether this PC can keep the chunk's
-    copies (recycle_bin.can_copy_here: the Bin fills during a long job, #703); if not, those photos are errors with the
-    sentence and nothing of them is touched; the others go on. A clip goes as a photo does, up to recycle_bin.MOST_CLIP_BYTES;
+    original and its row kept. Before it copies anything through this PC, it asks once, for the whole delete, whether this PC can
+    keep the copies of the photos not confirmed for good (recycle_bin.can_copy_here: the Bin filled since the question, #703);
+    if not, those photos are errors with the sentence and nothing of them is touched; the others go on. One confirmed for good
+    goes through this PC while this PC's Bin keeps its copy, and for good after that (recycle_bin.recycle_through_this_pc). A clip goes as a photo does, up to recycle_bin.MOST_CLIP_BYTES;
     a larger one is deleted for good when it was among the files confirmed (edit.for_good_ids), its size counted in no copy; a
     clip is a chunk of its own: the lock is let go of before and after each clip, as after each chunk of photos, and a stop
     asked is taken there."""
@@ -294,7 +298,7 @@ def _delete(library, edit, present, out):
         out.errors.extend((photo_id, os.path.basename(path)[:MOST_TEXT], file_changes.AWAY_WHY)
                           for photo_id, path in present if states[paths.key(path)] == file_changes.AWAY)
         out.skipped_missing += sum(1 for _id, path in present if states[paths.key(path)] == file_changes.GONE)
-        refused = _cannot_keep(there, sizes)
+        refused = _cannot_keep(there, sizes, edit.for_good_ids)
         batch = batches.current()
         for n, (photo_id, path) in enumerate(there):
             # A chunk of photos holds the lock; a clip is a chunk of itself (its copy through this PC can take minutes).
