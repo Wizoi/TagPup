@@ -49,15 +49,30 @@ export function endedSentence(what, result) {
 }
 
 /**
- * What a batch that left the list ended in, from the last row seen of it. The row is as old as the last poll, so the counts are
- * said as seen then; the change (History) says what was written.
+ * What a batch that left the list ended in. The last row seen is as old as the last poll (the last chunks were written after it),
+ * so the journal is asked for the change's final counts (`final`, its files by state, from /api/history); only when it cannot be
+ * read are the counts said as seen then.
  */
-function batchLeftSentence(row) {
-    const seenAt = `${(row.done + row.conflict).toLocaleString()} of ${photosOf(row.photos)} handled when last seen`;
+function batchLeftSentence(row, final) {
+    const handled = final ? (final.done || 0) + (final.conflict || 0) : null;
+    const seenAt = handled === null
+        ? `${(row.done + row.conflict).toLocaleString()} of ${photosOf(row.photos)} handled when last seen`
+        : `${handled.toLocaleString()} of ${photosOf(row.photos)} handled`;
     if (row.state !== 'stopping') return `${row.operation} has ended (${seenAt}).`;
     return row.started === null || row.started === undefined
         ? `${row.operation} was cancelled before it began: nothing was written.`
         : `${row.operation} was stopped as asked (${seenAt}).`;
+}
+
+/** The files-by-state of the change `row` was, from the journal's history; null when it cannot be read or is not there. */
+async function finalCounts(row) {
+    if (!row.id) return null;
+    try {
+        const found = ((await api.json('/api/history?limit=100')).changes || []).find(change => change.id === row.id);
+        return found && found.files ? found.files : null;
+    } catch {
+        return null;
+    }
 }
 
 const batchKey = row => (row.ticket === null || row.ticket === undefined ? `c${row.id}` : `t${row.ticket}`);
@@ -166,12 +181,14 @@ async function pollBatches() {
     if (!sameBatchLibrary(asked, stripLibrary())) return pollBatches();       // the library changed while asking: those rows are another's
     state.rows = listed.filter(row => sameBatchLibrary(row.library, state.mine));
     const now = new Map(state.rows.map(row => [batchKey(row), row]));
-    for (const [key, row] of state.seen) {
-        if (now.has(key) || (state.ended && state.ended.byPage)) continue;
-        state.ended = { text: batchLeftSentence(row), problem: false };
+    const left = [...state.seen].filter(([key]) => !now.has(key)).map(([, row]) => row);
+    state.seen = now;      // before the journal is asked, so a poll in between does not find the same batch gone again
+    for (const row of left) {
+        if (state.ended && state.ended.byPage) continue;
+        state.ended = { text: batchLeftSentence(row, await finalCounts(row)), problem: false };
         sayEnded(state.ended.text);
     }
-    state.seen = now;
+    if (!sameBatchLibrary(asked, stripLibrary())) return pollBatches();
     if (!state.rows.length) state.note = '';
     drawBatches();
     pollAgain();
