@@ -4,7 +4,7 @@
     temp = clip_convert.temp_of(clip_convert.target_of(source))
     clip_convert.claimed(temp)                                          # True: the temp is this conversion's
     made = clip_convert.convert(tools, source, temp, streams, progress=lambda done, whole: ..., stop=threading.Event())
-    problem = clip_convert.verified(tools, source_streams, temp)       # None: the temp is the clip, whole
+    problem = clip_convert.verified(tools, source, streams, temp)     # None: the temp is the clip, whole
 
 What it writes: the picture re-encoded to H.264 at CRF 23 (ffmpeg's default quality, the owner's choice: about half the
 size of the old formats), 4:2:0 so every browser decodes it; the sound to AAC at 160 kb/s, or copied when it is AAC
@@ -37,6 +37,17 @@ its tree through tagpup.core.processes. A temp it could not remove (the share go
 the caller keeps its record for the settle to remove it. room_for refuses before anything runs when the volume has not
 room for the temp: ROOM times the original, a guess (a re-encode at CRF 23 is about half an old format's size; an MPEG-4
 Part 2 clip is already small, and its H.264 may be larger), plus a margin.
+
+What `verified` compares the copy's length with is the clip's own: the end of its last packet less its start
+(length_of), not the length its header gives. The two differ in real clips: each of the 62 photo_index .wmv of MPEG-4 v2
+picture and MP3 sound says in its ASF header a length about 2.02 s short of its packets (its play duration written
+without its 2 s preroll; ffmpeg converts every packet, so its copy came out exactly that much longer and was refused
+every run), and the 108 of WMV 8 picture say 0.47 to 3.59 s MORE than their packets hold (refused as well); 159 of the
+522 old clips read so were more than 0.5 s off their header (counted read-only, 2026-11-12). By its packets' end the copy
+of a real clip of each of the 9 kinds of old clip was within 0.17 s (measured on copies, 2026-11-12). The packets are read
+whole, not from a seek near the end: ffprobe's seek in an ASF file found no packet at random, about one run in eight, on
+the share and on a local copy alike, where the whole read gave one answer every time; the whole read is a second read
+of the original, after ffmpeg's (on the share, 1.8 GB in about 4 minutes cold, 2 s once read).
 
 Two at once share nothing but the folder: a second conversion of the same clip finds the temp claimed and is refused by
 its caller before ffmpeg runs (tagpup.services.convert).
@@ -280,19 +291,50 @@ def removed(temp):
     return TEMP_LEFT % why
 
 
-def verified(tools, source, temp):
-    """None when the file at `temp` is the clip whose streams are `source` (video_frames.Streams of the original), made
+def length_of(tools, path):
+    """The length in seconds of the clip at `path` as its packets give it: the end of its last packet (its time and its
+    own length) less the clip's start, by one ffprobe reading it whole (the module: not its header's length), within
+    VERIFY_SECONDS and a second for each READ_RATE bytes. None when it cannot be read."""
+    stamp = shares.stamp_of(path)
+    if not isinstance(stamp, tuple):
+        return None
+    try:
+        done = processes.run([tools.ffprobe, "-v", "error", "-show_entries",
+                              "packet=pts_time,dts_time,duration_time:format=start_time", "-of", "compact=p=0", path],
+                             stdin=subprocess.DEVNULL, capture_output=True, timeout=VERIFY_SECONDS + stamp[1] / READ_RATE)
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    if done.returncode != 0:
+        return None
+    ends, start = [], 0.0
+    for line in done.stdout.decode("utf-8", "replace").splitlines():
+        said = dict(part.split("=", 1) for part in line.split("|") if "=" in part)
+        try:
+            if "start_time" in said:
+                start = float(said["start_time"])
+                continue
+            at = said.get("pts_time") if said.get("pts_time") != "N/A" else said.get("dts_time")
+            if at is not None and at != "N/A":
+                ends.append(float(at) + (float(said["duration_time"]) if said.get("duration_time", "N/A") != "N/A" else 0))
+        except ValueError:
+            continue
+    return max(ends) - start if ends else None
+
+
+def verified(tools, path, source, temp):
+    """None when the file at `temp` is the clip at `path` whose streams are `source` (video_frames.Streams of it), made
     whole: its picture H.264 and its sound AAC (or none, when the original has none), its length within DURATION_SLACK of
-    the original's, and a picture of it decodes. Else why not, a sentence; the temp is the caller's to remove."""
+    the original's as its packets give it (length_of), and a picture of it decodes. Else why not, a sentence; the temp is
+    the caller's to remove."""
     made = video_frames.streams(tools, temp, VERIFY_SECONDS)
     if made.problem:
         return "its converted copy could not be read back (%s)" % made.problem
     if made.video != MADE_VIDEO or made.audio != (MADE_AUDIO if source.audio else None):
         return "its converted copy holds %s and %s, not %s and %s" % (made.video, made.audio, MADE_VIDEO,
                                                                        MADE_AUDIO if source.audio else "no sound")
-    if source.duration is None or made.duration is None or abs(made.duration - source.duration) > DURATION_SLACK:
-        return "its converted copy is %s s long and the original %s s" % (_seconds(made.duration),
-                                                                           _seconds(source.duration))
+    length = length_of(tools, path)
+    if length is None or made.duration is None or abs(made.duration - length) > DURATION_SLACK:
+        return "its converted copy is %s s long and the original %s s" % (_seconds(made.duration), _seconds(length))
     shown = video_frames.poster(tools, temp, seconds=VERIFY_SECONDS)
     if not shown.pictures:
         return "no picture of its converted copy decodes (%s)" % shown.problem

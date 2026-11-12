@@ -8,8 +8,8 @@ is another branch's.
 
 One clip, in order: refused before ffmpeg when its share is away, a file or a library row already holds its .mp4's
 name, a temp of a conversion under way is there, it is open in another program, its length cannot be read, or its
-drive has no room; then its temp claimed (clip_convert.claimed), converted, verified (its length within 0.5 s, a
-picture decodes), a marker `<temp>.ok` written beside it, THEN the original deleted through
+drive has no room; then its temp claimed (clip_convert.claimed), converted, verified (its length within 0.5 s of the
+original's packets', a picture decodes), a marker `<temp>.ok` written beside it, THEN the original deleted through
 tagpup.files.recycle_bin.delete_file (from a share, copied through this PC to its Recycle Bin), THEN the temp renamed
 to the .mp4's name and the marker removed. Never deleted for good: a delete refused (the Bin cannot keep the copy, a
 player holds the file) stops the whole run with the original and its verified temp kept.
@@ -183,7 +183,7 @@ def convert_one(tools, clip, state, size, stop=None, progress=None):
     """Do what `state` (state_of) asks of `clip`, an original of `size` bytes: an Outcome. See the module."""
     if state in (STALE_TEMP, VERIFIED):
         source = video_frames.streams(tools, clip.path) if state == VERIFIED else None
-        if source is not None and not source.problem and clip_convert.verified(tools, source, clip.temp) is None:
+        if source is not None and not source.problem and clip_convert.verified(tools, clip.path, source, clip.temp) is None:
             return _finish(clip, size)
         left = _forget_temp(clip.temp)
         if left:
@@ -207,7 +207,7 @@ def convert_one(tools, clip, state, size, stop=None, progress=None):
                                    deadline=clip_convert.deadline_for(size))
     if problem:
         return Outcome(False, problem)
-    problem = clip_convert.verified(tools, source, clip.temp) or _write_marker(clip.temp)
+    problem = clip_convert.verified(tools, clip.path, source, clip.temp) or _write_marker(clip.temp)
     if problem:
         return Outcome(False, problem + (_forget_temp(clip.temp) or ""))
     if stop is not None and stop.is_set():

@@ -14,9 +14,11 @@ import gc
 import hashlib
 import io
 import os
+import struct
 import sys
 import time
 import unittest
+import uuid
 import warnings
 from unittest import mock
 
@@ -49,8 +51,8 @@ EXIFTOOL = own_home.installed_exiftool()
 SAID = {"harbour.wmv": "Harbour at dusk", "jetty.wmv": "Jetty jumping", "launch.wmv": "Launch day"}
 
 
-def older(folder, name, picture=("-c:v", "wmv2"), sound=("-c:a", "wmav2"), created=None):
-    """A one-second clip at `folder`/`name` of ffmpeg's test pattern and a tone, in an older format, with SAID's title
+def older(folder, name, picture=("-c:v", "wmv2"), sound=("-c:a", "wmav2"), created=None, seconds=1):
+    """A clip of `seconds` at `folder`/`name` of ffmpeg's test pattern and a tone, in an older format, with SAID's title
     when it has one, and its container's creation time `created` (ISO 8601) when given."""
     os.makedirs(folder, exist_ok=True)
     target = os.path.join(folder, name)
@@ -58,11 +60,28 @@ def older(folder, name, picture=("-c:v", "wmv2"), sound=("-c:a", "wmav2"), creat
     described = ["-metadata", "title=" + title] if title else []
     described += ["-metadata", "creation_time=" + created] if created else []
     made = processes.run([TOOLS.ffmpeg, "-y", "-loglevel", "error", "-f", "lavfi", "-i", "testsrc=size=160x120:rate=10",
-                          "-f", "lavfi", "-i", "sine=frequency=440:sample_rate=22050", "-t", "1", "-pix_fmt", "yuv420p",
+                          "-f", "lavfi", "-i", "sine=frequency=440:sample_rate=22050", "-t", str(seconds), "-pix_fmt", "yuv420p",
                           "-map_metadata", "-1"] + list(picture) + list(sound) + described + [target],
                          capture_output=True)
     assert made.returncode == 0, made.stderr
     return target
+
+
+#: Where an ASF file's header says how long it plays: its File Properties object.
+FILE_PROPERTIES = uuid.UUID("8CABDCA1-A947-11CF-8EE4-00C00C205365").bytes_le
+
+
+def header_short(path, seconds):
+    """The ASF header of the .wmv at `path` made to say it plays `seconds` less than its packets do (negative: more), as
+    the 62 photo_index .wmv of MPEG-4 v2 picture and MP3 sound say about 2.02 s less (their play duration written without
+    their preroll) and the 108 of WMV 8 picture 0.47 to 3.59 s more: its File Properties object's play duration (after
+    its id, size, file id, file size, date and packet count; 100 ns)."""
+    with open(path, "r+b") as handle:
+        data = handle.read()
+        at = data.index(FILE_PROPERTIES) + 16 + 8 + 16 + 8 + 8 + 8
+        play, = struct.unpack_from("<Q", data, at)
+        handle.seek(at)
+        handle.write(struct.pack("<Q", play - int(seconds * 1e7)))
 
 
 def digest(path):
@@ -90,7 +109,7 @@ class OldClips(unittest.TestCase):
         os.makedirs(self.folder)
         self.pier = os.path.join(self.home.root, "Pier")
         photo(os.path.join(self.pier, "sail.jpg"), (30, 30, 200))
-        self.made = {name: older(self.folder, name, created=self.created) for name in self.names}
+        self.made = {name: self.make(name) for name in self.names}
         self.binned = []
         recycle_bin.forget_bin()
         self.addCleanup(recycle_bin.forget_bin)
@@ -101,6 +120,10 @@ class OldClips(unittest.TestCase):
             patcher.start()
             self.addCleanup(patcher.stop)
         self.index()
+
+    def make(self, name):
+        """The clip `name` in the folder Regatta, before the library indexes it."""
+        return older(self.folder, name, created=self.created)
 
     def reason(self, path):
         # The clips' folder is a share, as far as the test says; this PC's mirror folder is not.
@@ -238,6 +261,35 @@ class AnUndatedClip(OldClips):
         self.assertEqual(0, result.exit_code, result.output)
         self.index()
         self.assertIsNone(self.taken("harbour.mp4"), "the .wmv's ASF creation time was carried as a Date Taken")
+
+
+class AHeaderShortOfItsPackets(OldClips):
+    """A .wmv whose ASF header says it is 2.02 s shorter than its packets (62 photo_index .wmv): its copy holds every
+    packet, so it is as long as the packets, and is verified by them, not refused against the header every run."""
+    #: How much less than its packets (4 s) the header says.
+    short = 2.024
+
+    def make(self, name):
+        made = older(self.folder, name, seconds=4)
+        header_short(made, self.short)
+        return made
+
+    def test_it_is_converted_and_verified_by_its_packets(self):
+        header = video_frames.streams(TOOLS, self.made["harbour.wmv"]).duration
+        self.assertGreater(abs(header - 4), 1.5, "the header says the packets' length")
+
+        code, said = self.run_script("--apply")
+
+        self.assertEqual(0, code, said)
+        self.assertIn("Wrote 1 clip(s)", said)
+        self.assertEqual(["harbour.mp4"], self.listed())
+        self.assertGreater(video_frames.streams(TOOLS, os.path.join(self.folder, "harbour.mp4")).duration, 3.5)
+
+
+class AHeaderLongerThanItsPackets(AHeaderShortOfItsPackets):
+    """A .wmv whose ASF header says it is 2.4 s longer than its packets (as the 108 photo_index .wmv of WMV 8 picture say
+    0.47 to 3.59 s more): verified by its packets too."""
+    short = -2.4
 
 
 class KilledPartWay(OldClips):
