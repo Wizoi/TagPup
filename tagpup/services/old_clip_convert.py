@@ -6,6 +6,11 @@ title (their ASF Title, which ffmpeg carries as the MP4's title, read as the tit
 Description of blanks alone, counted 2026-11-12: nothing to carry). The journaled conversion behind the page's buttons
 is another branch's.
 
+A file with a video extension whose bytes are a JPEG's (it starts as one: field_values.JPEG_START) is a picture, not
+a clip, and is left as it is: the 27 .avi rows of photo_index are such (ffprobe reads each as jpeg_pipe, one mjpeg
+stream, no length; none of the other 602 starts so; counted read-only 2026-11-12), and were refused as 'its length
+cannot be read' every run. That they are rows of kind 'video' is a question about the library, not this script's.
+
 One clip, in order: refused before ffmpeg when its share is away, a file or a library row already holds its .mp4's
 name, a temp of a conversion under way is there, it is open in another program, its length cannot be read, or its
 drive has no room; then its temp claimed (clip_convert.claimed), converted, verified (its length within 0.5 s of the
@@ -30,13 +35,14 @@ import time
 from typing import NamedTuple, Optional
 
 from tagpup.core import paths
-from tagpup.files import clip_convert, convertible, lock_owners, recycle_bin, shares, video_frames
+from tagpup.files import clip_convert, convertible, field_values, lock_owners, recycle_bin, shares, video_frames
 from tagpup.store import db
 from tagpup.store import photos as store_photos
 
 #: What a clip is found as before anything is done to it (state_of).
 TO_CONVERT, STALE_TEMP, VERIFIED, TO_FINISH = "to convert", "a stale temp", "a verified temp", "a temp to rename"
 NAME_TAKEN, UNDER_WAY, DONE, GONE, AWAY = "name taken", "a conversion under way", "done", "original gone", "away"
+PICTURE = "a picture with a video extension"
 #: The states a run acts on, and those it leaves for a later run (the owner's to settle, or a share to wake).
 ACTED_ON = (TO_CONVERT, STALE_TEMP, VERIFIED, TO_FINISH)
 LEFT = (NAME_TAKEN, UNDER_WAY, AWAY)
@@ -130,6 +136,12 @@ def state_of(clip, rows_taken):
     if any(look == shares.UNANSWERED for look in looks):
         return AWAY, 0
     there = [isinstance(look, tuple) for look in looks]
+    if there[0]:
+        start = _start_of(clip.path)
+        if start is None:
+            return AWAY, 0
+        if start == field_values.JPEG_START:
+            return PICTURE, source[1]
     if not there[0]:
         if there[1] and there[3] and (_same(clip) or not there[2]):
             return TO_FINISH, 0
@@ -141,6 +153,16 @@ def state_of(clip, rows_taken):
     if there[1]:
         return (STALE_TEMP if time.time() - temp[0] > STALE else UNDER_WAY), source[1]
     return TO_CONVERT, source[1]
+
+
+def _start_of(path):
+    """The first bytes of the file at `path` (as many as a JPEG's start), by one bounded read; None when they cannot be
+    read just now."""
+    def first():
+        with open(path, "rb") as handle:
+            return handle.read(len(field_values.JPEG_START))
+    state, start = shares.bounded(os.path.dirname(path), first, shares.LISTING_WAIT)
+    return start if state == "ok" else None
 
 
 def _held_open(path):

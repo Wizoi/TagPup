@@ -292,6 +292,36 @@ class AHeaderLongerThanItsPackets(AHeaderShortOfItsPackets):
     short = -2.4
 
 
+class APictureNamedAsAClip(OldClips):
+    """A JPEG file named .avi, which the library holds as a clip (27 photo_index rows): left as it is, said apart from the
+    clips, and no reason for the run to end as if something were left."""
+    names = ("harbour.wmv", "regatta.avi")
+
+    def make(self, name):
+        if not name.endswith(".avi"):
+            return super().make(name)
+        return photo(os.path.join(self.folder, name), (200, 120, 30))
+
+    def test_it_is_counted_apart_and_left_as_it_is(self):
+        self.assertEqual(sorted(self.names), sorted(name for name in self.rows() if name in self.names),
+                         "the .avi was not indexed as a clip's row")
+        picture = digest(self.made["regatta.avi"])
+
+        code, said = self.run_script()
+        self.assertEqual(0, code, said)
+        self.assertIn("to convert 1", said)
+        self.assertIn("A picture with a video extension: left as it is (1)", said)
+
+        code, said = self.run_script("--apply")
+
+        self.assertEqual(0, code, said)
+        self.assertIn("Wrote 1 clip(s)", said)
+        self.assertIn("0 not converted", said)
+        self.assertIn("A picture with a video extension: left as it is (1)", said)
+        self.assertEqual(["harbour.mp4", "regatta.avi"], self.listed())
+        self.assertEqual(picture, digest(self.made["regatta.avi"]))
+
+
 class KilledPartWay(OldClips):
     def test_killed_after_the_marker_the_next_run_deletes_the_original_and_renames_the_copy(self):
         with mock.patch.object(recycle_bin, "delete_file", side_effect=KeyboardInterrupt):

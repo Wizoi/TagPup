@@ -43,6 +43,8 @@ STOPPED_BY_DELETE = ("Stopped: %s The clip's original and its verified copy are 
                      "run this again.")
 NEXT_SYNC = ("The library is not changed by this: the next sync of the whole library (TagPup's as it starts, or "
              "tagpup_cli.py sync --apply) removes the old rows and indexes the .mp4s.")
+PICTURES = ("A picture with a video extension: left as it is (%d): a JPEG file named as a clip, which the library holds "
+            "as a clip; nothing here changes it.")
 WROTE = ("Wrote %d clip(s): the original gone and the .mp4 in place; %d not converted (each said above, or passed over "
          "as counted in the first line). %s")
 MB = 1024 * 1024
@@ -92,6 +94,8 @@ def run(db_path, apply, out, limit=None, ids=None, also_part_2=False, stop=None)
     out("Originals to convert: %s in all, the largest %s. Each needs about 1.5 times its size free beside it, plus 1 GB "
         "(about %s for the largest), and is copied through this PC's Recycle Bin as it is deleted from a share."
         % (_mb(sum(sizes)), _mb(max(sizes or [0])), _mb(int(max(sizes or [0]) * 1.5) + 1024 * MB)))
+    if states[old.PICTURE]:
+        out(PICTURES % states[old.PICTURE])
     if not apply:
         out("A dry run: nothing was written. --apply converts them; the first run: --apply --limit 1, then --limit 5, "
             "then all.")
@@ -110,7 +114,7 @@ def run(db_path, apply, out, limit=None, ids=None, also_part_2=False, stop=None)
                                                   os.path.splitext(clip.path)[1].lower(), time.monotonic() - began)
         if outcome.stop:
             out("%s %s" % (said, STOPPED_BY_DELETE % outcome.stop))
-            out(WROTE % (wrote, left + 1, NEXT_SYNC))
+            _closing(out, wrote, left + 1, states[old.PICTURE])
             return 1
         if outcome.wrote:
             wrote += 1
@@ -119,11 +123,18 @@ def run(db_path, apply, out, limit=None, ids=None, also_part_2=False, stop=None)
         else:
             left += 1
             out("%s not converted: %s" % (said, outcome.problem))
-    out(WROTE % (wrote, left, NEXT_SYNC))
+    _closing(out, wrote, left, states[old.PICTURE])
     if stop.is_set():
         out("Stopped by Ctrl+C: run this again to continue.")
         return 130
     return 1 if left else 0
+
+
+def _closing(out, wrote, left, pictures):
+    """The run's last lines: what it wrote and left, and the pictures it left as they are."""
+    if pictures:
+        out(PICTURES % pictures)
+    out(WROTE % (wrote, left, NEXT_SYNC))
 
 
 def main(argv=None):
