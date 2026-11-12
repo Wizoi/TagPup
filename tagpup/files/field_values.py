@@ -497,7 +497,7 @@ def _landed(photo_path, scratch):
     """Move the new file ExifTool wrote at `scratch` over the photo, once its picture is the photo's (_same_picture),
     with os.replace: a move of a file beside it on its volume, never a copy. A picture that differs: the new file is
     removed and PictureChanged raised. The look is bounded (CHECK_SECONDS): a share that does not answer raises
-    NotAnswered, the photo as it was and the new file left beside it for the scratch rules (file_changes._removed_scratch).
+    NotAnswered, the photo as it was and the new file left beside it for the scratch rules (file_changes.removed_scratch).
     A move that fails (a photo marked read-only, one open in another program) leaves the photo untouched -- os.replace is
     one rename -- so the write removes its own new file, which would otherwise make the next write of the photo wait out
     the scratch rules and fail the same way, and raises an OSError of the same winerror (lock_owners.explain still names

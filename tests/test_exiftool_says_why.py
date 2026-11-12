@@ -9,7 +9,7 @@ caption, and so a name); the log has all of it.
 
 Real ExifTool: a file named as ExifTool names its temporary file, in the way of the
 write, is what makes it refuse. AFailedWrite's is written as each test begins: it may be another
-write's under way, and stays (file_changes._removed_scratch, rule 3; DECISIONS 2026-10-29), the
+write's under way, and stays (file_changes.removed_scratch, rule 3; DECISIONS 2026-10-29), the
 owner told to try again later; one an interrupted write left long ago is removed and the photo
 written (#2180).
 """
