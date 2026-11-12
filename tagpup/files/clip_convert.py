@@ -168,6 +168,18 @@ def convert(tools, source, temp, streams, progress=None, stop=None, deadline=Non
                threading.Thread(target=_lines, args=(child.stderr, said), daemon=True)]
     for reader in readers:
         reader.start()
+    try:
+        return _watched(child, readers, lines, said, source, temp, streams, progress, stop, deadline, stall)
+    finally:
+        for reader in readers:
+            reader.join(KILL_WAIT)
+        for pipe in (child.stdout, child.stderr):
+            pipe.close()
+
+
+def _watched(child, readers, lines, said, source, temp, streams, progress, stop, deadline, stall):
+    """convert's watch of its ffmpeg `child` to its end: None, or the problem (the temp removed or TEMP_LEFT said). The
+    caller closes the child's pipes once its readers ended."""
     problem, last, ending = None, time.monotonic(), False
     while True:
         try:
