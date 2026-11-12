@@ -1,7 +1,7 @@
 # People and faces: the state of the domain
 
 The domain's charter is `.claude/agents/tagpup-owner-people.md`: its Scope, the contract the other domains rely on, its
-invariants and guards, and its scenarios P1 to P7, P10 and P11. This page states each of the seven conditions of health
+invariants and guards, and its scenarios P1 to P7 and P10 to P12. This page states each of the seven conditions of health
 (docs/OWNERS.md) with its evidence and date. A condition not met is the domain's queue. Counted read-only 2026-11-08
 (`db.readonly_uri`; counts only, no name or path), unless a line carries another date.
 
@@ -43,18 +43,15 @@ faces, counted 2026-11-08), and no writer files a face without its vector, so ev
    the caption and title readers, Files' concern, in a People module) and #2740 (two Organize page tests are mapped to
    Views though they exercise People's `selection-panel.js` and `face-boxes.js`); both `low`, neither a reach-in into
    People's internals.
-2. **No rule written twice.** Met, but for the face in the background, below.
+2. **No rule written twice.** Met.
    - Who is a person and who a group: `person_ids.People`, alone. Who makes a new person: `face_people.made`, the tag first
      (#1252). The store's face writers refuse a name no node has.
    - The settings a detection is recorded under are held equal to those a face model is made from
      (`tests/test_service_faces.py`, ADetectionIsRecordedUnderTheModelsSettings).
-   - **The face in the background has three definitions, two of them still pixel rules**: `clustering.BACKGROUND_SHARE`
-     (2% of the picture's shorter side, DECISIONS 2026-11-02; one home since 5492cb67 as `clustering.is_background`, asked by
-     `services/faces.py` for the photo's panel, its boxes and its Add all); `clustering.BACKGROUND_AREA` (2,000 px, asked by
-     `face_tags._to_be_named` for Name faces from tags, `is_background_sized`); and `clustering.background_faces` (under a
-     tenth of the photo's largest face and under 2,000 px, asked by Suggest and by cluster-faces). The library stores no
-     picture size, so the two jobs read stored boxes and cannot ask the share; storing a picture size is a migration and the
-     owner's to answer (#2738, #2761, open `low`). Until then a face can be hidden on the photo and still named by the job.
+   - The face in the background has one definition, `clustering.is_background(box, size)`: under 2% of the shorter
+     side of the picture as the photo's row stores it (DECISIONS 2026-11-12). The photo's strip, Organize, Suggest,
+     cluster-faces and Name faces from tags each ask it with the stored size (`store.photos.picture_size`,
+     `store.faces.for_clustering`), never the file; a NULL size puts no face in the background (P12; #2738, #2761).
 3. **No hidden coupling.** Met. Clustering reads a photo's people as ids in a statement of its own (`store.photos.records(
    people_ids=True)`, #1372, #1373) and no reader takes ids for names. A page and the server share one table for filing a
    person (`person-filing-table`) and one matrix for who a face looks like (P11).
@@ -62,18 +59,20 @@ faces, counted 2026-11-08), and no writer files a face without its vector, so ev
    and only the doors take a typed name (`faces.who_is`, `face_people.made`). `Ref` and `Person` stay two: by design, below.
 5. **No branch without an instance.** Met. Kept, each with its user action or count: a typed name (the pages' New Person
    dialog and the face box's typed name; neither the CLI nor the MCP names a face); `Directory.of_name` and `of_reference`'s
-   bare-name arm (79 stored kr-track Suggest rows above, #1426); `is_background_sized` and `background_faces` (stored
-   boxes of 7,248 photo_index faces are left out of Suggest by the second, counted in #2761). A person at the top of the
+   bare-name arm (79 stored kr-track Suggest rows above, #1426); `is_background`'s NULL size, which puts no face in the
+   background (0 faces on such a photo, counted 2026-11-12; the user actions that make one: a Suggest look at a photo
+   the library has no row for, an undo that puts back a row from before migration 39, a header the indexer could not
+   read; DECISIONS 2026-11-12). A person at the top of the
    tag tree is legal (DECISIONS 2026-11-08, "A PERSON AT THE TOP OF THE TAG TREE IS LEGAL"): no branch refuses it and
    none is needed. The eleven people made bare at the top of kr-track in 2026-11 were merged under People on 2026-11-02
    (docs/watching.md #2360, the path that made them not found); none is left at the top of any library (0 nodes with the
    faces flag, no parent and no child, counted 2026-11-08).
 6. **Scenario tests, each file owned and mapped.** Met by the owner's bar (DECISIONS 2026-10-15, recommendation 1): P1 to
-   P7, P10 and P11 each have a file in `tests/owners.py`, and `tests/test_the_test_map.py` fails a file with no owner. The
+   P7 and P10 to P12 each have a file in `tests/owners.py`, and `tests/test_the_test_map.py` fails a file with no owner. The
    unit files that stay, and the rule each holds, are listed below.
 7. **No open data or wrong finding, and every low fixed or by design.** Met on `tools/add_findings.py --open` of
-   2026-11-08: 20 open, all `low`, none `data` or `wrong`. People's own open lows are #2738 and #2761 (the background
-   rule, waiting on the owner's answer about a stored picture size), #2740, #2741 and this page's #2739. #1 and #831, the
+   2026-11-08: 20 open, all `low`, none `data` or `wrong`. People's own open lows are #2740, #2741 and this page's #2739
+   (#2738 and #2761, the background rule, fixed by its one rule on 2026-11-12). #1 and #831, the
    faces of a sideways photo, are closed `decided:` (owner, 2026-10-16). Fixed and by design rows older than this page are
    in docs/history/ and below.
 
@@ -89,6 +88,10 @@ a tree edit; two cousins called alike; ignore, assign, restore and undo) are in 
 - **P11, one nearest person everywhere** (`tests/test_a_face_gets_one_nearest_person_everywhere.py`): Suggest, Identify, the
   strip, the boxes and Name faces from tags give a face the same nearest person; a person who changed over the years is
   compared by the faces of the face's own years, an undated face by every year (`FaceRows`, `in_era`).
+- **P12, a face in the background is one answer** (`tests/test_a_face_in_the_background_is_one_answer.py`): in a
+  library whose sizes are partly filled, a 45 x 45 face on a 2400 x 2300 photo whose row stores its size is hidden by
+  the strip and offered or named by none of Organize, Suggest, Name faces from tags and cluster-faces' elimination;
+  on a photo whose row stores no size it is shown, offered and named by every one (`clustering.is_background`).
 - **The naming queue.** Naming on the photo page is shown at once and written after it: the photo's write queue first, then
   the database, shown as it was if the write fails; faces clicked while the file is being written are written together as
   one write of the file for their people, then each face named (`web/tagpup/face-boxes.js`, `photo.js`;
@@ -258,6 +261,8 @@ shown, the tag where filed), `person-tag-form` (a person written as a tag path),
 
 One line each; the decision and its reasons are in docs/DECISIONS.md.
 
+- 2026-11-12: one rule of the face in the background, 2% of the stored picture size, everywhere; no stored size, no
+  background (DECISIONS 2026-11-12; #2738, #2761).
 - 2026-11-08: a person at the top of the tag tree is legal (DECISIONS 2026-11-08).
 - 2026-11-08: the 2% rule has one home, `clustering.is_background` (5492cb67); the job's pixel rule waits (#2738, #2761).
 - 2026-11-02: a face under 2% of the picture's shorter side is not shown on the photo (DECISIONS 2026-11-02).
