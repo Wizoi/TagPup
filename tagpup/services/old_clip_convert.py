@@ -21,8 +21,9 @@ player holds the file) stops the whole run with the original and its verified te
 
 A run killed part-way leaves one of: the original and a temp with no marker (the next run removes the temp once it is
 STALE, and converts again); the original and a verified temp with its marker (the next run verifies it again, deletes
-the original and renames it); no original and a verified temp with its marker (the next run renames it). A clip whose
-original is gone and whose .mp4 is there is done, and passed over.
+the original and renames it); no original and a verified temp with its marker (the next run renames it); the .mp4 in place
+and the marker left, its removal refused (the next run removes the marker). A clip whose original is gone and whose .mp4
+is there is done, and passed over.
 
 What the library does next (measured in tests/test_a_librarys_old_clips_converted.py with the real sync and index):
 nothing here writes the library. The next sync of the whole library (TagPup's catch-up as it starts, the daily sync, or
@@ -43,8 +44,9 @@ from tagpup.store import photos as store_photos
 TO_CONVERT, STALE_TEMP, VERIFIED, TO_FINISH = "to convert", "a stale temp", "a verified temp", "a temp to rename"
 NAME_TAKEN, UNDER_WAY, DONE, GONE, AWAY = "name taken", "a conversion under way", "done", "original gone", "away"
 PICTURE = "a picture with a video extension"
+MARKER_LEFT = "done, its marker left"
 #: The states a run acts on, and those it leaves for a later run (the owner's to settle, or a share to wake).
-ACTED_ON = (TO_CONVERT, STALE_TEMP, VERIFIED, TO_FINISH)
+ACTED_ON = (TO_CONVERT, STALE_TEMP, VERIFIED, TO_FINISH, MARKER_LEFT)
 LEFT = (NAME_TAKEN, UNDER_WAY, AWAY)
 
 #: Seconds a temp must not have been written for to be no conversion's: twice the time clip_convert stops an ffmpeg
@@ -57,6 +59,9 @@ HELD = "it is open in another program; close it and run this again"
 UNDER_WAY_SAID = "a temp of another conversion of it, written in the last %d s, is beside it" % STALE
 STOPPED_VERIFIED = "stopped with its copy verified and kept beside it: the next run finishes it"
 NOT_RENAMED = "its original is deleted and its verified copy could not be renamed into place (%s): run this again"
+MARKER_KEPT = "Its verified copy's marker beside it could not be removed (%s): the next run removes it."
+MARKER_REMOVED = "converted by an earlier run; the marker that run left beside it is removed."
+MARKER_NOT_REMOVED = "converted by an earlier run, whose marker beside it could not be removed (%s): run this again"
 
 
 class Clip(NamedTuple):
@@ -68,10 +73,11 @@ class Clip(NamedTuple):
 
 class Outcome(NamedTuple):
     """What became of one clip: `wrote` (the original gone, the .mp4 in place), the `problem` when not, and `stop` when
-    the run must stop (a delete refused: the sentence)."""
+    the run must stop (a delete refused: the sentence); `note`, a file it tidied, or one it left to tidy (wrote)."""
     wrote: bool
     problem: Optional[str] = None
     stop: Optional[str] = None
+    note: Optional[str] = None
     before: int = 0
     after: int = 0
 
@@ -145,7 +151,9 @@ def state_of(clip, rows_taken):
     if not there[0]:
         if there[1] and there[3] and (_same(clip) or not there[2]):
             return TO_FINISH, 0
-        return (DONE if there[2] and not _same(clip) else GONE), 0
+        if there[2] and not _same(clip):
+            return (MARKER_LEFT if there[3] and not there[1] else DONE), 0
+        return GONE, 0
     if not _same(clip) and (there[2] or paths.key(clip.target) in rows_taken):
         return NAME_TAKEN, source[1]
     if there[1] and there[3]:
@@ -203,6 +211,9 @@ def _forget_temp(temp):
 
 def convert_one(tools, clip, state, size, stop=None, progress=None):
     """Do what `state` (state_of) asks of `clip`, an original of `size` bytes: an Outcome. See the module."""
+    if state == MARKER_LEFT:
+        problem = _bounded(clip.temp, lambda: _remove_marker(clip.temp))
+        return Outcome(False, MARKER_NOT_REMOVED % problem) if problem else Outcome(False, note=MARKER_REMOVED)
     if state in (STALE_TEMP, VERIFIED):
         source = video_frames.streams(tools, clip.path) if state == VERIFIED else None
         if source is not None and not source.problem and clip_convert.verified(tools, clip.path, source, clip.temp) is None:
@@ -250,6 +261,7 @@ def _rename(clip, size):
     problem = _bounded(clip.temp, lambda: os.rename(clip.temp, clip.target))
     if problem:
         return Outcome(False, NOT_RENAMED % problem)
-    _bounded(clip.temp, lambda: _remove_marker(clip.temp))
+    kept = _bounded(clip.temp, lambda: _remove_marker(clip.temp))
     made = shares.stamp_of(clip.target)
-    return Outcome(True, before=size, after=made[1] if isinstance(made, tuple) else 0)
+    return Outcome(True, before=size, after=made[1] if isinstance(made, tuple) else 0,
+                   note=MARKER_KEPT % kept if kept else None)

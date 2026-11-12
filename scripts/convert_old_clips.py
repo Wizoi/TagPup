@@ -104,7 +104,7 @@ def run(db_path, apply, out, limit=None, ids=None, also_part_2=False, stop=None)
     out("Snapshot of the library: %s." % (", ".join(taken.details["taken"]) or "today's stands (%s)"
                                           % taken.details.get("today")))
     stop = stop or threading.Event()
-    began, wrote, left = time.monotonic(), 0, passed
+    began, wrote, left, marked = time.monotonic(), 0, passed, 0
     todo = acted[:limit] if limit else acted
     for number, (clip, state, size) in enumerate(todo, 1):
         if stop.is_set():
@@ -118,8 +118,11 @@ def run(db_path, apply, out, limit=None, ids=None, also_part_2=False, stop=None)
             return 1
         if outcome.wrote:
             wrote += 1
-            out("%s converted, %s to %s." % (said, _mb(outcome.before) if outcome.before else "(deleted earlier)",
-                                             _mb(outcome.after)))
+            marked += 1 if outcome.note else 0
+            out("%s converted, %s to %s.%s" % (said, _mb(outcome.before) if outcome.before else "(deleted earlier)",
+                                               _mb(outcome.after), " " + outcome.note if outcome.note else ""))
+        elif outcome.note:
+            out("%s %s" % (said, outcome.note))
         else:
             left += 1
             out("%s not converted: %s" % (said, outcome.problem))
@@ -127,7 +130,7 @@ def run(db_path, apply, out, limit=None, ids=None, also_part_2=False, stop=None)
     if stop.is_set():
         out("Stopped by Ctrl+C: run this again to continue.")
         return 130
-    return 1 if left else 0
+    return 1 if left or marked else 0
 
 
 def _closing(out, wrote, left, pictures):

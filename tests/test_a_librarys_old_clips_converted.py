@@ -419,6 +419,26 @@ class TheNameTaken(OldClips):
         self.assertEqual([], self.binned)
 
 
+class AMarkerLeft(OldClips):
+    """The marker beside a verified copy could not be removed after its rename (a share that refused it): the run says
+    so, and the next run finds the clip done with its marker left, and removes the marker."""
+
+    def test_a_marker_left_after_the_rename_is_said_and_removed_by_the_next_run(self):
+        marker = os.path.basename(old.marker_of(self.temp_of("harbour.wmv")))
+        with mock.patch.object(old, "_remove_marker", side_effect=PermissionError(13, "Access is denied")):
+            code, said = self.run_script("--apply")
+        self.assertEqual(1, code, said)
+        self.assertIn("Wrote 1 clip(s)", said)
+        self.assertIn("marker beside it could not be removed (Access is denied)", said)
+        self.assertEqual(["harbour.mp4", marker], self.listed())
+
+        code, said = self.run_script("--apply")
+
+        self.assertEqual(0, code, said)
+        self.assertIn(old.MARKER_REMOVED, said)
+        self.assertEqual(["harbour.mp4"], self.listed())
+
+
 class ALimit(OldClips):
     names = ("harbour.wmv", "jetty.wmv", "launch.wmv")
 
