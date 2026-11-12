@@ -71,7 +71,7 @@ RENAMES = ("smart rename", "rename after caption")
 #: The operation of a clip's conversion (tagpup.services.convert): one file, its path the original's, its new_path the
 #: converted clip's (None when the name is the same); fields_before the original's fingerprint, fields_after what the
 #: conversion carries and, once made, the converted copy's fingerprint (`made`). Settled by tagpup.services.convert alone
-#: (file_changes._finish), never undone (tagpup.services.journal.UNDO_CHECKS): the original is in the Recycle Bin.
+#: (file_changes._finish), never undone (tagpup.services.journal.UNDO_CHECKS): the original is deleted for good.
 CONVERT = "convert"
 
 
