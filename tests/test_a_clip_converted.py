@@ -41,12 +41,20 @@ FORMATS = {
     ".mp4": ("mpeg4", "aac", "mp4"),       # MPEG-4 Part 2 in an MP4: converted under its own name
 }
 TITLE = "Gulls over the slipway"
+#: When a camera made a clip: its container's creation time (an MP4's or a .mov's mvhd, read as QuickTime:CreateDate, in
+#: UTC), as every dated .mov of photo_index is dated (counted 2026-11-12).
+CREATED = "2019-05-04T17:00:00Z"
+#: A Date Taken in a clip's XMP, with its zone, as Adobe's tools wrote the 105 XMP-dated .mp4 of photo_index (counted
+#: 2026-11-12): the date the library reads first (tagpup.core.dates.CLIP_XMP_DATE_FIELDS).
+XMP_TAKEN = "2018:03:02 09:15:00-07:00"
 
 
-def make_clip(path, title=None):
-    """A one-second clip at `path` in the old format its extension names (FORMATS), with sound, titled `title`."""
+def make_clip(path, title=None, created=None):
+    """A one-second clip at `path` in the old format its extension names (FORMATS), with sound, titled `title`; `created`,
+    its container's creation time (a .wmv's ASF one is when its file was made: never its Date Taken)."""
     video, audio, container = FORMATS[os.path.splitext(path)[1]]
     titled = ["-metadata", "title=" + title] if title else []
+    titled += ["-metadata", "creation_time=" + created] if created else []
     made = processes.run([TOOLS.ffmpeg, "-y", "-loglevel", "error", "-f", "lavfi", "-i", "testsrc=size=160x120:rate=25",
                           "-f", "lavfi", "-i", "sine=frequency=440:sample_rate=22050", "-t", "1", "-c:v", video,
                           "-c:a", audio] + titled + ["-f", container, path], capture_output=True)
@@ -274,13 +282,15 @@ class Refused(AnOldClipInTheLibrary):
         self.assert_converted(self.source, self.photo_id, TITLE)
 
 
-def make_mov(path, crf):
-    """A one-second H.264 and AAC .mov at `path`, a clip that plays, at x264's quality `crf`: 0 (lossless, far larger
-    than the conversion's MP4) or 51 (smaller than it)."""
+def make_mov(path, crf, created=CREATED):
+    """A one-second H.264 and AAC clip that plays at `path`, a .mov (or an .mp4, by its extension), at x264's quality
+    `crf`: 0 (lossless, far larger than the conversion's MP4) or 51 (smaller than it); dated as a camera dates it, by its
+    container's creation time `created` (CREATED)."""
+    container = "mp4" if path.endswith(".mp4") else "mov"
     made = processes.run([TOOLS.ffmpeg, "-y", "-loglevel", "error", "-f", "lavfi", "-i", "testsrc=size=320x240:rate=25",
                           "-f", "lavfi", "-i", "sine=frequency=440:sample_rate=22050", "-t", "1", "-c:v", "libx264",
-                          "-preset", "ultrafast", "-crf", str(crf), "-pix_fmt", "yuv420p", "-c:a", "aac", "-f", "mov",
-                          path], capture_output=True)
+                          "-preset", "ultrafast", "-crf", str(crf), "-pix_fmt", "yuv420p", "-c:a", "aac",
+                          "-metadata", "creation_time=" + created, "-f", container, path], capture_output=True)
     assert made.returncode == 0, made.stderr
     return path
 
@@ -338,6 +348,47 @@ class ThePanelButtons(AnOldClipInTheLibrary):
         self.assertEqual(paths.key(target), paths.key(self.row_of(photo_id)[0]), "the row followed to the MP4")
         self.assertFalse(os.path.exists(source), "the .mov deleted for good")
         self.assertEqual([], self.leftovers())
+
+    def taken(self, photo_id):
+        (taken,), = self.vl.rows("SELECT taken FROM photos WHERE id = ?", photo_id)
+        return taken
+
+    def test_a_dated_mov_made_smaller_keeps_its_date_taken_in_the_row_and_in_the_mp4(self):
+        source, photo_id = self.mov("harbour.mov", 0)
+        taken = self.taken(photo_id)
+        self.assertTrue(taken, "the .mov is dated by its QuickTime:CreateDate")
+        said = self.ended(self.ask(photo_id, "shrink", source))
+        self.assertTrue(said["success"], said)
+        self.assertFalse(os.path.exists(source), "the .mov deleted for good")
+        self.assertEqual(taken, self.taken(photo_id), "the row's Date Taken is the .mov's")
+        target = clip_convert.target_of(source)
+        self.assertEqual(["2019:05:04 17:00:00"], fields.field_values(
+            self.held(target, "QuickTime:CreateDate").get("QuickTime:CreateDate")),
+            "the MP4 keeps the creation time other programs read ('Media created')")
+
+    def test_an_mp4_dated_in_its_xmp_made_smaller_keeps_that_date(self):
+        source, photo_id = self.mov("dock.mp4", 0)
+        dated = file_changes.write_fields(self.vl.library, "save", EXIFTOOL, [source], ["XMP:DateTimeOriginal"],
+                                          lambda _path, _held: file_changes.Plan(after={"XMP:DateTimeOriginal": XMP_TAKEN}))
+        self.assertEqual(1, dated.changed, dated.message())
+        self.assertEqual(XMP_TAKEN, self.taken(photo_id), "dated by its XMP, read before its QuickTime date")
+        said = self.ended(self.ask(photo_id, "shrink", source))
+        self.assertTrue(said["success"], said)
+        self.assertEqual(XMP_TAKEN, self.taken(photo_id), "the row's Date Taken is the one its XMP held")
+        self.assertEqual([XMP_TAKEN], fields.field_values(
+            self.held(source, "XMP:DateTimeOriginal").get("XMP:DateTimeOriginal")), "the MP4 holds it")
+
+    def test_a_wmv_holding_a_creation_time_is_converted_undated(self):
+        # A .wmv's ASF creation time is when its file was made, not its Date Taken (DECISIONS 2026-11-09, item 6).
+        source = make_clip(os.path.join(self.folder, "quay.wmv"), TITLE, created=CREATED)
+        photo_id = self.index(source)[0]
+        self.assertIsNone(self.taken(photo_id))
+        said = self.ended(self.ask(photo_id, "convert", source))
+        self.assertTrue(said["success"], said)
+        self.assertIsNone(self.taken(photo_id), "an undated old clip stays undated")
+        self.assertEqual([], [value for value in fields.field_values(self.held(
+            clip_convert.target_of(source), "QuickTime:CreateDate").get("QuickTime:CreateDate"))
+            if not str(value).startswith("0000")], "the MP4 holds no creation time")
 
     def test_a_mov_whose_mp4_is_no_smaller_is_left_as_it_is(self):
         source, photo_id = self.mov("harbour.mov", 51)

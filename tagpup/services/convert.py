@@ -19,13 +19,17 @@ How one conversion goes, the original kept until its copy is in place and holds 
    file or a row, one another conversion is converting.
 2. Planned (file_journal.CONVERT), one file: its path the original's, its new_path the MP4's (None for the same name),
    fields_before the original's fingerprint (file_changes.fingerprint), fields_after what it carries (`carry`: its tags,
-   title and the name it had; no caption, clip_convert); marked `writing`; the temp claimed (clip_convert.claimed).
+   title, the name it had and its Date Taken, as the library reads it of the original read whole; no caption,
+   clip_convert); marked `writing`; the temp claimed (clip_convert.claimed).
 3. ffmpeg, outside the lock (minutes); the temp verified, and its
    fingerprint recorded as `made`.
 4. Onward (_onward, the forward run's and the settle's alike), under the lock: the temp renamed into place (a same-name
    conversion deletes the original first, its name being the copy's); the row moved to the new name and made to say
    what the copy holds, in one transaction; the carry written into the copy (CARRIED, file_changes.write_fields: only
-   what differs); the original deleted LAST; marked done, the change finished.
+   what differs; the Date Taken into its XMP, as a clip's date is saved, fields.date_taken_fields, the date the library
+   reads first: an XMP date, or a .mov's Apple CreationDate, is not carried by ffmpeg, which carries a QuickTime
+   CreateDate only, clip_convert); the original deleted LAST; marked done, the change finished. The row's Date Taken
+   is so the original's before the original is deleted.
 
 The original is deleted FOR GOOD, never to a Recycle Bin (owner 2026-11-12: its copy is verified first; the Bin is for
 deletes), by one bounded call (_removed_for_good), and only while it is the file the conversion found (its fingerprint).
@@ -52,7 +56,7 @@ import logging
 import os
 import threading
 
-from tagpup.core import fields, paths, vocabulary
+from tagpup.core import dates, fields, paths, vocabulary
 from tagpup.core.result import CHANGED_ON_DISK, CHANGED_ON_DISK_SENTENCE, Conflict, NotFound, Result, Unavailable
 from tagpup.files import clip_convert, convertible, field_values, images, lock_owners, names, shares, video_frames
 from tagpup.services import batches, file_changes, tagging
@@ -65,8 +69,10 @@ logger = logging.getLogger(__name__)
 OPERATION = file_journal.CONVERT
 #: The change that writes what a conversion carries into its copy (file_changes.write_fields).
 CARRIED = "convert: tags carried"
-#: What the carry reads of the copy, and the conversion of the original: every keyword field, the title, the kept name.
-READ = tagging.KEYWORD_READ + tuple(fields.title_fields("")) + (fields.CLIP_TITLE, fields.PRESERVED_NAME)
+#: What the carry reads of the copy, and the conversion of the original: every keyword field, the title, the kept name,
+#: the XMP dates (a clip's write names no other: fields.CLIP_FIELDS).
+READ = (tagging.KEYWORD_READ + tuple(fields.title_fields("")) + (fields.CLIP_TITLE, fields.PRESERVED_NAME)
+        + dates.CLIP_XMP_DATE_FIELDS)
 #: The reason of the one-time convert of the old formats (convert_clip's `reason`).
 OLD_FORMAT = "old format"
 #: The reason of a clip that plays made smaller, an MP4 (the panel's Make smaller (MP4): a .mov over SmugMug's limit; owner
@@ -291,11 +297,13 @@ def _ready(library, exiftool_path, tools, source, reason):
         conn.close()
     if found is None:
         return NO_ROW
-    try:
-        with field_values.session(exiftool_path) as et:
-            held = field_values.read_one(et, source, list(READ) + [fields.CLIP_CATEGORY])
-    except field_values.Unreadable as e:
-        return UNREADABLE % e
+    read = {}
+    with field_values.session(exiftool_path) as et:
+        # Whole, in the indexer's shape: its Date Taken is the row's (dates.date_taken of what the indexer records).
+        whole = file_changes.read_whole(et, source, list(READ) + [fields.CLIP_CATEGORY], into=read)
+    if whole is None:
+        return UNREADABLE % "ExifTool could not read it"
+    held = read[paths.key(source)]
     if fields.field_values(held.get(fields.CLIP_CATEGORY)):
         return WINDOWS_TAGS
     try:
@@ -315,7 +323,7 @@ def _ready(library, exiftool_path, tools, source, reason):
         return room
     carry = {"tags": list(vocabulary.extract_tags({field: held.get(field) for field in fields.TAG_SOURCE_FIELDS})),
              "title": fields.own_title(held),
-             "name": names.preserved_name(held) or os.path.basename(source)}
+             "name": names.preserved_name(held) or os.path.basename(source), "date": dates.date_taken(whole)}
     return _Ready(found[0], stamp, streams, carry, clip_convert.target_of(source))
 
 
@@ -515,7 +523,8 @@ def _followed(library, exiftool_path, row, target):
 def _carrier(library, after):
     """The `plan_one` of the carry into a converted copy: of what the conversion carries (`after`'s `carry`), only what
     the copy does not hold already -- its tags (tagging.keywords_planner: the copy's kept, the carried added after), its
-    title, the name it had -- else skipped."""
+    title, the name it had, its Date Taken (in the XMP dates a clip's date is saved in, fields.date_taken_fields) -- else
+    skipped."""
     carry = after["carry"]
     tags_planner = tagging.keywords_planner(library, lambda _path, held_tags: (
         [tag for tag in carry["tags"] if tag not in held_tags], ()))
@@ -529,6 +538,8 @@ def _carrier(library, after):
             wanted.update(fields.title_fields(carry["title"]))
         if carry["name"] and names.preserved_name(held) != carry["name"]:
             wanted[fields.PRESERVED_NAME] = carry["name"]
+        if carry["date"] and dates.date_taken(held) != carry["date"]:
+            wanted.update(fields.held_dates(fields.date_taken_fields(carry["date"], clip=True), held))
         if not wanted:
             return file_changes.skip("its converted copy holds what it carries already")
         return file_changes.Plan(after=wanted, detail=sorted(wanted))

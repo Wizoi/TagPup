@@ -446,9 +446,11 @@ def record_keyword_fields(raw_meta, flat, hierarchical):
 
 
 def date_taken_value(date_taken):
-    """How a Date Taken set on the page is written: "2019-06-15T10:30:00" as
-    "2019:06:15 10:30:00", the way EXIF spells a date."""
-    return str(date_taken).replace("T", " ").replace("-", ":").strip()
+    """How a Date Taken is written: one set on the page, "2019-06-15T10:30:00", as "2019:06:15 10:30:00", the way EXIF
+    spells a date; one spelled so already (a clip's, carried into its converted copy: tagpup.services.convert) as it is,
+    its fraction and its zone kept ("2018:03:02 09:15:00-07:00": only the date's dashes are colons)."""
+    text = str(date_taken).strip().replace("T", " ", 1)
+    return text[:10].replace("-", ":") + text[10:]
 
 
 def date_taken_fields(date_taken, clip=False):
