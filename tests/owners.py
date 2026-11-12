@@ -49,6 +49,7 @@ SCENARIOS = {
     "P7": ("people", "Identify Faces: ignore, assign, restore and undo, against the real server."),
     "P10": ("people", "A library on its face model: a new photo is indexed and Suggested by it, the face under the floor not made, and Name faces from tags reads its vectors by its own cuts."),
     "P11": ("people", "The same face gets the same nearest person in Suggest, Identify, the strip, the boxes and Name faces from tags, a person who changed over the years by the faces of the face's own years, an undated face by every year."),
+    "P12": ("people", "A face in the background of its picture (under 2% of the shorter side the photo's row stores) is hidden by the strip and offered or named by none of Organize, Suggest, Name faces from tags and cluster-faces; on a photo of no stored size it is in the background nowhere."),
     "F1": ("files", "A photo write is journaled, one at a time, read back; a click three times writes once."),
     "F2": ("files", "The indexer writes nothing into a photo that does not decode; nothing is written into a folder the library does not hold."),
     "F3": ("files", "A bulk edit over many photos: dry run first, a crash or a stalled ExifTool part-way, then resume."),
@@ -183,6 +184,7 @@ _SCENARIO_FILES = {
     "P7": "test_identify_ignore_assign_restore_undo",
     "P10": "test_a_library_indexes_and_suggests_with_its_face_model",
     "P11": "test_a_face_gets_one_nearest_person_everywhere",
+    "P12": "test_a_face_in_the_background_is_one_answer",
     "V1": "test_library_views_scenarios test_a_view_of_photos_or_videos_alone scenario-a-view-of-photos-or-videos-alone "
           "test_photos_with_no_tag",
     "V2": "test_library_search",
