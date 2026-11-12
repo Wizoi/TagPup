@@ -66,6 +66,7 @@ import {
     wireRenameAndTimeShift
 } from './rename.js';
 import { wireSmartRenameOne } from './rename-one.js';
+import { wireClipConvert } from './clip-convert.js';
 
 // What a feature calls in a module above it (hooks.js).
 Object.assign(upper, {
@@ -179,6 +180,8 @@ document.addEventListener('DOMContentLoaded', () => {
     wireFaceBoxes();
     // A video in the photo panel: stopped when the panel is hidden, its failure said (media.js).
     wireMedia();
+    // Its Convert and Make smaller (MP4), beside its Delete (clip-convert.js).
+    wireClipConvert();
     wireEditToggles();
 
     wireDateTakenModal();

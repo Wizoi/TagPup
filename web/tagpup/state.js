@@ -170,6 +170,10 @@ export const state = {
     // The grouping box beside the open photo's name (rename-one.js): the photo it was filled for, what was put in it,
     // and the number of the request whose answer counts (a reply for a photo left since is dropped).
     smartRenameOne: { path: null, filled: '', asked: 0 },
+    // The clip panel's Convert and Make smaller (clip-convert.js): `offer`, what the buttons offer for the clip shown
+    // ({route, clip, mode, replaces}, replaces null until its plan is asked), and `live`, the clips (by id) whose
+    // conversion the server has taken or is being asked: {photo, from, ticket, library, note, cancelling}.
+    clipConvert: { offer: null, live: {} },
 
     // Abort controller for scan fetches
     scanAbortController: null,

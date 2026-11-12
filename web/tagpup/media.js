@@ -24,8 +24,10 @@
 // Switching library is another page: the video goes with it. A video's title, people and keywords are edited as a
 // photo's, and it is renamed and deleted as one is (a delete stops it first: photo.js deleteActivePhoto); Rotate and Date
 // Taken are inert while one is shown (stale.js applyPhotoStale, from its record's `writes`), as the server refuses them of a
-// clip. Zoom stands down because there is no picture.
+// clip. Zoom stands down because there is no picture. Its Convert and Make smaller follow the clip shown, Convert offered
+// from the plan read here (clip-convert.js).
 import { api } from './common/api.js';
+import { clipActionsFollow, offerConvert } from './clip-convert.js';
 import { mainImage, mainVideo, panelContent } from './elements.js';
 import { setStatus } from './status.js';
 
@@ -65,6 +67,7 @@ export function showMedia(photo, pictureUrl) {
     mainVideo.dataset.route = route;
     mainVideo.dataset.clip = String(photo.id);
     mainVideo.src = api.url(route);
+    clipActionsFollow();
 }
 
 /** Stop the video and let go of its stream: no src, and load() so the browser drops what it held. */
@@ -76,6 +79,7 @@ export function stopVideo() {
     delete mainVideo.dataset.route;
     delete mainVideo.dataset.clip;
     mainVideo.load();
+    clipActionsFollow();
 }
 
 const FORMAT = 'This video’s format cannot be played in this browser (an HEVC video needs the HEVC extension).';
@@ -97,7 +101,10 @@ function sayWhatItNeeds(route, clip, otherwise) {
     if (mainVideo.dataset.route !== route) return;
     api.fetch(`/api/clip/convert-plan?id=${encodeURIComponent(clip)}`).then(
         res => res.json().then(
-            body => sayOf(route, (body && (res.ok ? body.sentence : body.error)) || otherwise),
+            body => {
+                sayOf(route, (body && (res.ok ? body.sentence : body.error)) || otherwise);
+                if (res.ok) offerConvert(route, clip, body);
+            },
             () => sayOf(route, otherwise)),
         () => sayOf(route, otherwise),
     );

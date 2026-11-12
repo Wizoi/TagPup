@@ -160,7 +160,7 @@ _SCENARIO_FILES = {
     "F16": "test_a_clip_dated_through_the_journal",
     "F17": "test_a_tag_tree_edit_of_a_tag_a_clip_holds",
     "F18": "test_a_librarys_old_clips_converted",
-    "F19": "test_a_clip_converted",
+    "F19": "test_a_clip_converted clip-convert",
     "I1": "scenario-switching-library-mid-folder",
     "I2": "scenario-write-through-a-server-update test_server_drain",
     "I3": "test_install_app test_install_hands_over test_launcher_hands_over",
