@@ -5,21 +5,27 @@ into place). ONE-OFF: deleted after the owner's run; the journaled conversion be
 
 Dry run by default: the library opened read-only, every clip looked at, nothing written; it says how many by format,
 their size, how many have their .mp4's name taken, a temp or a verified temp left by an earlier run, and the room the
-run needs. With --apply, refused while TagPup runs or another run of it works on the library; a snapshot of the library first (one a day); then a line for each
-clip as it is done (its id, its format, the time so far, its size before and after). Ctrl+C stops the conversion under
+run needs. With --apply, refused while TagPup runs or another run of it works on the library; a snapshot of the
+library first (one a day); then a line for each clip as it is done (its id, its format, the time so far, its size
+before and after), and about every 30 s while one converts, how far it has come (the largest may take 20 minutes). Ctrl+C stops the conversion under
 way (its temp removed; the original as it was) and starts nothing new; run it again to continue. A delete refused stops
 the run, the original and its verified copy kept: by the Recycle Bin, empty it, then run it again; else run it again.
 
-The library is not written: the next sync of the whole library (TagPup's catch-up as it starts, the daily sync, or
-`tagpup_cli.py --db <library> sync --apply`) removes each old row (undoable from History) and indexes the .mp4.
+The library is not written: the sync of the whole library removes each old row (undoable from History) and indexes
+the .mp4. The owner runs it after the script (its last lines give the command): TagPup's catch-up as it starts skips a
+library synced whole within the last hour (watching.CATCH_UP_SKIP).
 
 --also-mpeg4-part-2 adds the .mp4/.mov/.m4v clips whose picture no browser plays (ffprobe reads every one: about 2,200
 on the share, minutes); one of them is replaced by an .mp4 of its own name.
 
-The first live run (the owner's, with TagPup stopped): --limit 1, look at that clip; then --limit 5; then all.
+The first live run (the owner's, with TagPup stopped): --limit 1, look at that clip (it plays, Explorer shows its Title,
+only its .mp4 is beside it, its 'Media created' is empty); then --limit 5; then all; then the sync.
 
     .venv/Scripts/python.exe scripts/convert_old_clips.py --library photo_index
     .venv/Scripts/python.exe scripts/convert_old_clips.py --library photo_index --apply --limit 1
+    .venv/Scripts/python.exe scripts/convert_old_clips.py --library photo_index --apply --limit 5
+    .venv/Scripts/python.exe scripts/convert_old_clips.py --library photo_index --apply
+    .venv/Scripts/python.exe tagpup_cli.py --db data/photo_index.db sync --apply
 """
 import argparse
 import collections
@@ -36,6 +42,7 @@ from tagpup import config as tagpup_config  # noqa: E402
 from tagpup import launcher  # noqa: E402
 from tagpup.core import byte_lock  # noqa: E402
 from tagpup.core.library import Library  # noqa: E402
+from tagpup.jobs import watching  # noqa: E402
 from tagpup.services import old_clip_convert as old, snapshots  # noqa: E402
 
 APP_RUNNING = ("Not run: TagPup is running (%d app server(s)). Close it first (from its tray or its window), then run "
@@ -44,12 +51,17 @@ STOPPED_BY_DELETE = ("Stopped: %s The clip's original and its verified copy are 
                      "run this again.")
 STOPPED_DELETE_FAILED = ("Stopped: %s The clip's original is kept, and its verified copy beside it: run this again "
                          "(once whatever held the original is closed).")
-NEXT_SYNC = ("The library is not changed by this: the next sync of the whole library (TagPup's as it starts, or "
-             "tagpup_cli.py sync --apply) removes the old rows and indexes the .mp4s.")
+NEXT_SYNC = ("The library is not changed by this. Now run the sync of the whole library yourself (TagPup's catch-up as "
+             "it starts skips a library synced whole within the last %d minutes); it removes the old rows (undoable from "
+             "History) and indexes the .mp4s:\n    .venv/Scripts/python.exe tagpup_cli.py --db \"%s\" sync --apply")
+LOOK_AT = ("Before the next run, look at clip %d in Explorer: it plays, its Title is shown, only its .mp4 is beside it (no "
+           "original, no .tagpup-convert file), and its 'Media created' is empty.")
+#: Seconds between the lines that say how far a conversion has come.
+PROGRESS_EVERY = 30
 PICTURES = ("A picture with a video extension: left as it is (%d): a JPEG file named as a clip, which the library holds "
             "as a clip; nothing here changes it.")
 WROTE = ("Wrote %d clip(s): the original gone and the .mp4 in place; %d not converted (each said above, or passed over "
-         "as counted in the first line). %s")
+         "as counted in the first line).")
 ANOTHER_RUN = "Not run: another run of this script is working on this library. Let it finish, or stop it, first."
 #: The lock a run with --apply holds beside the library's file, for as long as it runs (the system lets it go however
 #: the run ends): two runs never convert, delete or rename one clip at once.
@@ -125,20 +137,21 @@ def _converted(db_path, name, apply, out, limit, ids, also_part_2, stop):
     out("Snapshot of the library: %s." % (", ".join(taken.details["taken"]) or "today's stands (%s)"
                                           % taken.details.get("today")))
     stop = stop or threading.Event()
-    began, wrote, left, marked = time.monotonic(), 0, passed, 0
+    began, wrote, left, marked, last = time.monotonic(), 0, passed, 0, None
     todo = acted[:limit] if limit else acted
     for number, (clip, state, size) in enumerate(todo, 1):
         if stop.is_set():
             break
-        outcome = old.convert_one(tools, clip, state, size, stop=stop)
+        outcome = old.convert_one(tools, clip, state, size, stop=stop,
+                                  progress=_told(out, "clip %d (%s)" % (clip.photo_id, os.path.splitext(clip.path)[1].lower())))
         said = "%d of %d, clip %d (%s), %d s:" % (number, len(todo), clip.photo_id,
                                                   os.path.splitext(clip.path)[1].lower(), time.monotonic() - began)
         if outcome.stop:
             out("%s %s" % (said, (STOPPED_BY_DELETE if outcome.bin_refused else STOPPED_DELETE_FAILED) % outcome.stop))
-            _closing(out, wrote, left + 1, states[old.PICTURE])
+            _closing(out, db_path, wrote, left + 1, states[old.PICTURE])
             return 1
         if outcome.wrote:
-            wrote += 1
+            wrote, last = wrote + 1, clip.photo_id
             marked += 1 if outcome.note else 0
             out("%s converted, %s to %s.%s" % (said, _mb(outcome.before) if outcome.before else "(deleted earlier)",
                                                _mb(outcome.after), " " + outcome.note if outcome.note else ""))
@@ -147,18 +160,37 @@ def _converted(db_path, name, apply, out, limit, ids, also_part_2, stop):
         else:
             left += 1
             out("%s not converted: %s" % (said, outcome.problem))
-    _closing(out, wrote, left, states[old.PICTURE])
+    _closing(out, db_path, wrote, left, states[old.PICTURE])
+    if limit == 1 and last is not None:
+        out(LOOK_AT % last)
     if stop.is_set():
         out("Stopped by Ctrl+C: run this again to continue.")
         return 130
     return 1 if left or marked else 0
 
 
-def _closing(out, wrote, left, pictures):
-    """The run's last lines: what it wrote and left, and the pictures it left as they are."""
+def _told(out, clip):
+    """clip_convert.convert's progress hook for `clip` (its words): a line about every PROGRESS_EVERY s, how much of it
+    is converted and the time it has taken."""
+    began = time.monotonic()
+    said = [began]
+
+    def progress(done, whole):
+        now = time.monotonic()
+        if now - said[0] < PROGRESS_EVERY:
+            return
+        said[0] = now
+        out("  %s: %s converted, %d s so far." % (clip, "%d%%" % min(100, done * 100 / whole) if whole else
+                                                     "%d s" % done, now - began))
+    return progress
+
+
+def _closing(out, db_path, wrote, left, pictures):
+    """The run's last lines: what it wrote and left, the pictures it left as they are, and the sync to run."""
     if pictures:
         out(PICTURES % pictures)
-    out(WROTE % (wrote, left, NEXT_SYNC))
+    out(WROTE % (wrote, left))
+    out(NEXT_SYNC % (watching.CATCH_UP_SKIP // 60, db_path))
 
 
 def main(argv=None):

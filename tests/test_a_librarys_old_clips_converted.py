@@ -511,11 +511,17 @@ class ALimit(OldClips):
 
     def test_limit_1_then_5_converts_the_first_by_id_then_the_rest(self):
         first = min((item for item in self.rows().items() if item[0].endswith(".wmv")), key=lambda item: item[1][0])[0]
+        first_id = self.rows()[first][0]
 
-        code, said = self.run_script("--apply", "--limit", "1")
+        with mock.patch.object(script, "PROGRESS_EVERY", 0):    # a line about every 30 s: here every line
+            code, said = self.run_script("--apply", "--limit", "1")
         self.assertEqual(0, code, said)
         self.assertIn("Wrote 1 clip(s)", said)
         self.assertEqual([first], self.binned)
+        self.assertRegex(said, r"clip %d \(\.wmv\): \d+%% converted, \d+ s so far" % first_id)
+        # What the owner does next, from the script's own last lines: look at that clip, then sync the library.
+        self.assertIn("look at clip %d in Explorer" % first_id, said)
+        self.assertIn('tagpup_cli.py --db "%s" sync --apply' % self.library, said)
 
         code, said = self.run_script("--apply", "--limit", "5")
         self.assertEqual(0, code, said)
