@@ -52,6 +52,12 @@ whole, not from a seek near the end: ffprobe's seek in an ASF file found no pack
 the share and on a local copy alike, where the whole read gave one answer every time; the whole read is a second read
 of the original, after ffmpeg's (on the share, 1.8 GB in about 4 minutes cold, 2 s once read).
 
+On its disk before it is the caller's: ffmpeg does not flush what it wrote, so once it ended the temp is flushed
+(_flushed: one fsync, bounded on a share); one its disk will not take is a problem like any other (NOT_FLUSHED), the
+temp removed. The caller records the copy (its file id and size, `made`) only after convert and verified answered None,
+so a record of it names bytes on the disk: after a power cut, the next start's settle finds the temp it names whole, and
+may put it in place and delete the original by its file id alone, without reading it again (tagpup.services.convert).
+
 Two at once share nothing but the folder: a second conversion of the same clip finds the temp claimed and is refused by
 its caller before ffmpeg runs (tagpup.services.convert).
 """
@@ -114,6 +120,7 @@ STUCK = "ffmpeg made no progress for %d s (a share that stopped answering?) and 
 TOO_LONG = "the conversion passed its deadline and was stopped; the original is as it was"
 FAILED = "ffmpeg could not convert it (%s); the original is as it was"
 NOT_STARTED = "ffmpeg could not be started (%s); the original is as it was"
+NOT_FLUSHED = "its converted copy could not be written to its disk (%s); the original is as it was"
 TEMP_LEFT = " Its unfinished copy could not be removed just now (%s); it is removed when the change is settled."
 NO_ROOM = ("there is not room for its converted copy on the original's drive: about {:,} MB needed, {:,} MB free (1 GB "
            "kept spare); nothing was converted")
@@ -181,7 +188,8 @@ def convert(tools, source, temp, streams, progress=None, stop=None, deadline=Non
     """Convert the clip at `source` into `temp` (see the module). `streams` is video_frames.streams of the source, read
     by the caller (its sound decides copy or re-encode; its duration is the whole progress is told against). `progress(done,
     whole)` is told seconds converted and the whole; `stop` an Event asked between progress lines; `deadline` a
-    time.monotonic() after which it is stopped. `temp` is claimed by the caller (claimed). Returns None when ffmpeg finished and the temp is there to verify, else the problem,
+    time.monotonic() after which it is stopped. `temp` is claimed by the caller (claimed). Returns None when ffmpeg finished
+    and the temp is on its disk (_flushed) to verify, else the problem,
     the temp removed (or TEMP_LEFT said)."""
     args = arguments(tools, source, temp, streams.audio)
     try:
@@ -250,9 +258,24 @@ def _watched(child, readers, lines, said, source, temp, streams, progress, stop,
         logger.info("ffmpeg could not convert a clip: %s", unnamed(last_said[-1], [source, temp]) if last_said else
                     "it said nothing")
         problem = FAILED % ("exit code %s" % child.returncode)
+    if problem is None:
+        problem = _flushed(temp)
     if problem:
         return problem + (removed(temp) or "")
     return None
+
+
+def _flushed(temp):
+    """None once what ffmpeg wrote to the temp at `temp` is on its disk (os.fsync: ffmpeg flushes nothing, and a power cut
+    would leave a temp of the recorded name, file id and length holding short or zeroed bytes); else NOT_FLUSHED. One
+    bounded call (shares.bounded), not the share's look the next waits behind: its time is the file's size."""
+    def flush():
+        with open(temp, "r+b") as handle:
+            os.fsync(handle.fileno())
+    state, error = shares.bounded(os.path.dirname(temp), flush, VERIFY_SECONDS, waited_behind=False)
+    if state == "ok":
+        return None
+    return NOT_FLUSHED % ("the share did not answer" if state == "away" else (error.strerror or error))
 
 
 def _lines(stream, into):

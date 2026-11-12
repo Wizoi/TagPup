@@ -195,6 +195,35 @@ class CutShort(AnOldClipInTheLibrary):
                 self.assertFalse(os.path.exists(source), "the original deleted")
                 self.assert_converted(source, photo_id, TITLE)
 
+    def test_its_copy_is_on_its_disk_before_it_is_recorded_so_a_power_cut_after_the_record_finds_it_whole(self):
+        # ffmpeg does not flush: cut after the record and before the disk's cache was written, the copy's name, file id
+        # and length would be as recorded and its bytes not, and the next start's settle would put it in place and
+        # delete the original. The copy is flushed to its disk first; the settle trusts what was recorded.
+        real_fsync, real_set_after, flushed, recorded = os.fsync, file_journal.set_after, [], []
+
+        def fsync(fd):
+            real_fsync(fd)
+            flushed.append(os.fstat(fd).st_ino)
+
+        def set_after(conn, file_id, after):
+            if "made" in after:
+                recorded.append((after["made"]["ino"], list(flushed)))
+            return real_set_after(conn, file_id, after)
+
+        with mock.patch("os.fsync", side_effect=fsync), mock.patch.object(file_journal, "set_after", side_effect=set_after):
+            result = self.convert(self.source)
+        self.assertEqual(1, result.changed, result.message())
+        ((made, before_it),) = recorded
+        self.assertIn(made, before_it, "its copy flushed to its disk before it was recorded as made")
+
+    def test_a_copy_its_disk_will_not_take_is_removed_the_original_kept_and_nothing_recorded(self):
+        with mock.patch("os.fsync", side_effect=OSError(5, "Access is denied")):
+            result = self.convert(self.source)
+        self.assertEqual((0, clip_convert.NOT_FLUSHED % "Access is denied"), (result.changed, result.message()))
+        self.assert_as_it_was()
+        self.assertEqual([], [after for (after,) in self.vl.rows("SELECT fields_after FROM change_files")
+                              if "made" in json.loads(after or "{}")], "no copy recorded as made")
+
     def test_an_mp4_of_its_own_name_killed_between_its_delete_and_its_rename_is_put_in_place_by_the_settle(self):
         source, photo_id = self.clip("dock.mp4")
         self.killed_at("original deleted", source)

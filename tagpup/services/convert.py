@@ -21,7 +21,7 @@ How one conversion goes, the original kept until its copy is in place and holds 
    fields_before the original's fingerprint (file_changes.fingerprint), fields_after what it carries (`carry`: its tags,
    title, the name it had and its Date Taken, as the library reads it of the original read whole; no caption,
    clip_convert); marked `writing`; the temp claimed (clip_convert.claimed).
-3. ffmpeg, outside the lock (minutes); the temp verified, and its
+3. ffmpeg, outside the lock (minutes); the temp flushed to its disk and verified (clip_convert), and its
    fingerprint recorded as `made`.
 4. Onward (_onward, the forward run's and the settle's alike), under the lock: the temp renamed into place (a same-name
    conversion deletes the original first, its name being the copy's); the row moved to the new name and made to say
@@ -41,7 +41,9 @@ The copy is known by its file id (`made`'s ino; _is_copy): the carry writes into
 modified time but never its file id, nor does the rename into place; a volume that gives its files no file id is refused
 before anything is planned, as a rename refuses one (file_changes.rename).
 
-Interrupted part-way, the settle (file_changes._finish routes the change here, settle_change) goes by where `made` is:
+Interrupted part-way, the settle (file_changes._finish routes the change here, settle_change) goes by where `made` is,
+and trusts it without verifying the copy again: `made` is recorded only for a copy on its disk (clip_convert, 'On its
+disk'):
 nowhere, the temp is removed by the scratch rule (file_changes.removed_scratch: never one written in the last minutes)
 and the file taken out of the change (or a conflict, when the original changed); in the temp, the conversion is let go
 (temp removed, file taken out) unless a same-name original is gone already (then it is renamed into place); at the new
