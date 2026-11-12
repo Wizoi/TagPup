@@ -1,6 +1,6 @@
 """Convert a library's clips in an older format (.wmv .mpg .mpeg .avi .mod) to H.264 and AAC in an .mp4 of the same
 name, once (DECISIONS 2026-11-12; tagpup.services.old_clip_convert, which says how each clip is converted, verified,
-and its original sent to the Recycle Bin -- from a network share, copied through this PC -- before the .mp4 is renamed
+and its original deleted for good -- no Recycle Bin, the videos being backed up elsewhere -- before the .mp4 is renamed
 into place). ONE-OFF: deleted after the owner's run; the journaled conversion behind the page's buttons is another's.
 
 Dry run by default: the library opened read-only, every clip looked at, nothing written; it says how many by format,
@@ -9,7 +9,7 @@ run needs. With --apply, refused while TagPup runs; a snapshot of the library fi
 clip as it is done (its id, its format, the time so far, its size before and after), and about every 30 s while one
 converts, how far it has come (the largest may take 20 minutes). Ctrl+C stops the conversion under
 way (its temp removed; the original as it was) and starts nothing new; run it again to continue. A delete refused stops
-the run, the original and its verified copy kept: by the Recycle Bin, empty it, then run it again; else run it again.
+the run, the original and its verified copy kept (a player holds it, a share dropped): run it again.
 
 The library is not written: the sync of the whole library removes each old row (undoable from History) and indexes
 the .mp4. The owner runs it after the script (its last lines give the command): TagPup's catch-up as it starts skips a
@@ -46,9 +46,7 @@ from tagpup.services import old_clip_convert as old, snapshots  # noqa: E402
 
 APP_RUNNING = ("Not run: TagPup is running (%d app server(s)). Close it first (from its tray or its window), then run "
                "this again.")
-STOPPED_BY_DELETE = ("Stopped: %s The clip's original and its verified copy are both kept. Empty the Recycle Bin, then "
-                     "run this again.")
-STOPPED_DELETE_FAILED = ("Stopped: %s The clip's original is kept, and its verified copy beside it: run this again "
+STOPPED_DELETE_FAILED = ("Stopped: %s. The clip's original is kept, and its verified copy beside it: run this again "
                          "(once whatever held the original is closed).")
 NEXT_SYNC = ("The library is not changed by this. Now run the sync of the whole library yourself (TagPup's catch-up as "
              "it starts skips a library synced whole within the last %d minutes); it removes the old rows (undoable from "
@@ -106,14 +104,16 @@ def run(db_path, apply, out, limit=None, ids=None, also_part_2=False, stop=None)
     out("%s: %d clip(s) to look at (%s); %s." % (name, len(found), ", ".join("%s %d" % e for e in sorted(formats.items())),
                                                  ", ".join("%s %d" % e for e in sorted(states.items())) or "none"))
     out("Originals to convert: %s in all, the largest %s. Each needs about 1.5 times its size free beside it, plus 1 GB "
-        "(about %s for the largest), and is copied through this PC's Recycle Bin as it is deleted from a share."
+        "(about %s for the largest). Originals are deleted for good once their .mp4 is verified (they are "
+        "backed up elsewhere)."
         % (_mb(sum(sizes)), _mb(max(sizes or [0])), _mb(int(max(sizes or [0]) * 1.5) + 1024 * MB)))
     if states[old.PICTURE]:
         out(PICTURES % states[old.PICTURE])
     if not apply:
         out("A dry run: nothing was written. --apply converts them; the first run: --apply --limit 1, then --limit 5, "
-            "then all.")
+            "then all. Originals are deleted for good once their .mp4 is verified.")
         return 0
+    out("--apply: originals are deleted for good once their .mp4 is verified.")
     taken = snapshots.before_a_long_write(Library(db_path))
     out("Snapshot of the library: %s." % (", ".join(taken.details["taken"]) or "today's stands (%s)"
                                           % taken.details.get("today")))
@@ -128,7 +128,7 @@ def run(db_path, apply, out, limit=None, ids=None, also_part_2=False, stop=None)
         said = "%d of %d, clip %d (%s), %d s:" % (number, len(todo), clip.photo_id,
                                                   os.path.splitext(clip.path)[1].lower(), time.monotonic() - began)
         if outcome.stop:
-            out("%s %s" % (said, (STOPPED_BY_DELETE if outcome.bin_refused else STOPPED_DELETE_FAILED) % outcome.stop))
+            out("%s %s" % (said, STOPPED_DELETE_FAILED % outcome.stop))
             _closing(out, db_path, wrote, left + 1, states[old.PICTURE])
             return 1
         if outcome.wrote:
