@@ -78,6 +78,10 @@ function megabytes(bytes) {
 export const MOST_CLIP_BYTES = 2 * 1024 * 1024 * 1024;
 const GOOD_WHY = "a video over 2 GiB is too large for TagPup to copy to a Recycle Bin, and a file larger than its drive's Recycle Bin "
     + 'keeps, or on a Recycle Bin set to delete files at once, is not kept by it';
+// Why, when this PC's Recycle Bin -- which keeps the copies of files from places with no Recycle Bin of their own -- is full
+// (the delete-check's `bin_full`; owner, 2026-11-12).
+const BIN_FULL_WHY = "a file from a place with no Recycle Bin of its own (a network share) is copied to this PC's Recycle Bin, "
+    + "and this PC's Recycle Bin is full";
 export function bigClip(size) {
     return Number(size) > MOST_CLIP_BYTES;
 }
@@ -98,11 +102,14 @@ export function deleteQuestion(where, count, kinds = null) {
     // Files deleted for good (the delete-check's `for_good`, as many as the server counts): not copied, not sent to any Recycle Bin,
     // and said so here, before the second question names them (a start that did not confirm that deletes none of them).
     const good = Math.min((where && where.for_good && where.for_good.count) || 0, count - through);
+    // Those there only because this PC's Recycle Bin is full (`bin_full`) are said so.
+    const full = Math.min((where && where.bin_full) || 0, good);
+    const goodWhy = !full ? GOOD_WHY : full >= good ? BIN_FULL_WHY : `${GOOD_WHY}; or ${BIN_FULL_WHY}`;
     const goodWords = !good ? '' : good >= count
-        ? ` ${count === 1 ? 'It is' : 'They are'} deleted for good, not moved to a Recycle Bin and not copied to this PC (${GOOD_WHY}); `
+        ? ` ${count === 1 ? 'It is' : 'They are'} deleted for good, not moved to a Recycle Bin and not copied to this PC (${goodWhy}); `
             + 'you are asked next, by name.'
         : ` ${good.toLocaleString()} of them ${good === 1 ? 'is' : 'are'} deleted for good, not moved to a Recycle Bin and not copied to `
-            + `this PC (${GOOD_WHY}); you are asked next, by name.`;
+            + `this PC (${goodWhy}); you are asked next, by name.`;
     if (!through) {
         if (good >= count) return `${head}${goodWords}${rows}${job}`;
         const bin = good
@@ -130,14 +137,28 @@ export function deleteQuestion(where, count, kinds = null) {
  * The warning before files are deleted for good (DECISIONS 2026-11-08; a video over 2 GiB, 2026-11-02 item 7, whose copy through
  * this PC would be gigabytes over the share): `names` the file names the server gave (the delete-check's
  * `for_good.names`, as many as it names: selection.MOST_FOR_GOOD_NAMED; or the one file of the panel's delete), `count` how many
- * in all, the rest counted. The owner's OK is the only way the server deletes one for good; Cancel deletes nothing.
+ * in all, the rest counted. The owner's OK is the only way the server deletes one for good; Cancel deletes nothing. `binFull`:
+ * how many of them only because this PC's Recycle Bin, which keeps the copies of files from a share, is full (the reply's
+ * `bin_full`): the question then asks in those words (owner, 2026-11-12).
  */
-export function forGoodQuestion(names, count) {
+export function forGoodQuestion(names, count, binFull = 0) {
     const shown = names || [];
     const total = Math.max(count || 0, shown.length);
     const more = total - shown.length;
     const one = total === 1;
     const list = shown.map(name => `  ${name}`).join('\n') + (more > 0 ? `\n  and ${more.toLocaleString()} more` : '');
+    const full = Math.min(binFull || 0, total);
+    if (full) {
+        const which = full >= total ? (one ? 'This file is' : 'These files are')
+            : `${full.toLocaleString()} of these ${total.toLocaleString()} files ${full === 1 ? 'is' : 'are'}`;
+        const others = full >= total ? '' : ` The other ${(total - full).toLocaleString()} would not be kept by any Recycle Bin `
+            + '(larger than its drive\'s Recycle Bin keeps, a Recycle Bin set to delete files at once, or a video too large for '
+            + 'TagPup to copy to one).';
+        return 'The Recycle Bin is full: delete permanently instead?\n\n'
+            + `${which} in a place with no Recycle Bin of its own (a network share). Such files are copied to this PC's Recycle `
+            + `Bin, which is full. Deleted permanently, ${full === 1 ? 'it' : 'they'} cannot be restored.${others}`
+            + `\n\n${list}\n\nOK deletes ${one ? 'it' : 'them'} permanently; Cancel deletes nothing.`;
+    }
     return `${one ? 'This file' : 'These files'} would be deleted for good, not moved to the Recycle Bin: no Recycle Bin would `
         + `keep ${one ? 'it' : 'them'} (larger than ${one ? 'its' : 'their'} drive's Recycle Bin keeps, a Recycle Bin set to delete `
         + 'files at once, or a video too large for TagPup to copy to one).'

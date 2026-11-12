@@ -175,7 +175,7 @@ export async function deleteSelection() {
         // Files whose drive's Recycle Bin would not keep them are named, and deleted for good only on OK; the token is of that
         // answer, so a start that did not ask is refused by the server.
         const forGood = (where.for_good && where.for_good.count) || 0;
-        if (forGood && !confirm(forGoodQuestion(where.for_good.names, forGood))) return false;
+        if (forGood && !confirm(forGoodQuestion(where.for_good.names, forGood, where.bin_full))) return false;
         const desc = describeDelete(where, count, picked.kinds);
         const params = forGood ? { token: where.token, for_good: true } : { token: where.token };
         const clip = panelClipDeleted();

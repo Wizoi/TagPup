@@ -311,6 +311,41 @@ describe("a video's title, keywords, name and date are edited, and its turn is n
       "the status line says what the server did, never Ready");
   });
 
+  test("a share's clip this PC's full Recycle Bin would not keep: asked to delete permanently, OK resends, Cancel sends nothing", async (t) => {
+    // Owner, 2026-11-12: a full Bin asks instead of refusing (tagpup_routes.photo_delete, `bin_full: 1`).
+    const FULL = "Beach_Day_Long_Take.mp4 would be deleted for good, not moved to the Recycle Bin: this PC's Recycle Bin is full.";
+    const ctx = await viewWithAVideo(t);
+    answersInTurn(ctx, [
+      [{ success: false, error: FULL, not_kept: [NOT_KEPT], bin_full: 1 }, 400],
+      [{ success: true, for_good: true, through_this_pc: false,
+        message: "Deleted for good, as you confirmed: this PC's Recycle Bin is full." }, 200],
+    ]);
+    const questions = asked(ctx, [true, true]);
+    ctx.window.alert = (said) => assert.fail(`nothing failed, yet the page said: ${said}`);
+    await open(ctx, VIDEO);
+    click(ctx.window, el(ctx, "btn-delete-photo"));
+    await ctx.settle(120);
+    assert.equal(questions.length, 2);
+    assert.match(questions[1], /^The Recycle Bin is full: delete permanently instead\?/);
+    assert.match(questions[1], /a network share/);
+    assert.match(questions[1], /cannot be restored/);
+    assert.ok(questions[1].includes(NOT_KEPT), "it names the file");
+    assert.match(questions[1], /OK deletes it permanently; Cancel deletes nothing\.$/);
+    const sent = deletes(ctx).map((c) => c.body);
+    assert.deepEqual([sent.length, sent[0].for_good, sent[1].for_good], [2, undefined, true]);
+
+    const kept = await viewWithAVideo(t);
+    answersInTurn(kept, [[{ success: false, error: FULL, not_kept: [NOT_KEPT], bin_full: 1 }, 400]]);
+    const again = asked(kept, [true, false]);
+    kept.window.alert = (said) => assert.fail(`a Cancel is not a failure, yet the page said: ${said}`);
+    await open(kept, VIDEO);
+    click(kept.window, el(kept, "btn-delete-photo"));
+    await kept.settle(120);
+    assert.match(again[1], /^The Recycle Bin is full/);
+    assert.equal(deletes(kept).length, 1, "Cancel: nothing resent");
+    assert.equal(status(kept), "Nothing was deleted.");
+  });
+
   test("a clip opened again while its delete is out is asked of the server, which refuses it; the delete failed, it plays", async (t) => {
     // Only the server knows which file it is deleting (a range read of it as its original is removed makes the remove fail).
     const ctx = await viewWithAVideo(t);
