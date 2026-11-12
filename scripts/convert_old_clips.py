@@ -43,7 +43,8 @@ STOPPED_BY_DELETE = ("Stopped: %s The clip's original and its verified copy are 
                      "run this again.")
 NEXT_SYNC = ("The library is not changed by this: the next sync of the whole library (TagPup's as it starts, or "
              "tagpup_cli.py sync --apply) removes the old rows and indexes the .mp4s.")
-WROTE = "Wrote %d clip(s): the original gone and the .mp4 in place; %d not converted. %s"
+WROTE = ("Wrote %d clip(s): the original gone and the .mp4 in place; %d not converted (each said above, or passed over "
+         "as counted in the first line). %s")
 MB = 1024 * 1024
 
 
@@ -84,6 +85,7 @@ def run(db_path, apply, out, limit=None, ids=None, also_part_2=False, stop=None)
     states = collections.Counter(state for _clip, state, _size in found)
     formats = collections.Counter(os.path.splitext(clip.path)[1].lower() for clip, _s, _z in found)
     acted = [(clip, state, size) for clip, state, size in found if state in old.ACTED_ON]
+    passed = sum(states[state] for state in old.LEFT)
     sizes = [size for _clip, _state, size in acted]
     out("%s: %d clip(s) to look at (%s); %s." % (name, len(found), ", ".join("%s %d" % e for e in sorted(formats.items())),
                                                  ", ".join("%s %d" % e for e in sorted(states.items())) or "none"))
@@ -98,7 +100,7 @@ def run(db_path, apply, out, limit=None, ids=None, also_part_2=False, stop=None)
     out("Snapshot of the library: %s." % (", ".join(taken.details["taken"]) or "today's stands (%s)"
                                           % taken.details.get("today")))
     stop = stop or threading.Event()
-    began, wrote, left = time.monotonic(), 0, 0
+    began, wrote, left = time.monotonic(), 0, passed
     todo = acted[:limit] if limit else acted
     for number, (clip, state, size) in enumerate(todo, 1):
         if stop.is_set():
@@ -108,7 +110,7 @@ def run(db_path, apply, out, limit=None, ids=None, also_part_2=False, stop=None)
                                                   os.path.splitext(clip.path)[1].lower(), time.monotonic() - began)
         if outcome.stop:
             out("%s %s" % (said, STOPPED_BY_DELETE % outcome.stop))
-            out(WROTE % (wrote, 0, NEXT_SYNC))
+            out(WROTE % (wrote, left + 1, NEXT_SYNC))
             return 1
         if outcome.wrote:
             wrote += 1

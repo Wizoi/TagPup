@@ -2,9 +2,9 @@
 an older format (.wmv .mpg .mpeg .avi .mod: tagpup.files.convertible.OPENED says which containers a browser opens) made
 H.264 CRF 23 and AAC in an .mp4 of the same stem, beside the original (tagpup.files.clip_convert). No journal, no tag
 carry: the 629 such rows of photo_index hold no tag, person, face, date or suggestion (counted 2026-11-12); 503 hold a
-title (their ASF Title, which ffmpeg carries as the MP4's title, read as the title) and 45 a caption (their ASF
-Description, given to the conversion as the MP4's description item, since ffmpeg would carry it as a Comment nothing
-reads). The journaled conversion behind the page's buttons is another branch's.
+title (their ASF Title, which ffmpeg carries as the MP4's title, read as the title), and none a caption (45 hold an ASF
+Description of blanks alone, counted 2026-11-12: nothing to carry). The journaled conversion behind the page's buttons
+is another branch's.
 
 One clip, in order: refused before ffmpeg when its share is away, a file or a library row already holds its .mp4's
 name, a temp of a conversion under way is there, it is open in another program, its length cannot be read, or its
@@ -25,13 +25,11 @@ nothing here writes the library. The next sync of the whole library (TagPup's ca
 name, another size, no identity in either), so the old row is removed (journaled, undoable: its vector and frames with
 it) and the folder is queued, whose index gives the .mp4 a row of its own, its title read.
 """
-import json
 import os
 import time
 from typing import NamedTuple, Optional
 
 from tagpup.core import paths
-from tagpup.core import fields
 from tagpup.files import clip_convert, convertible, lock_owners, recycle_bin, shares, video_frames
 from tagpup.store import db
 from tagpup.store import photos as store_photos
@@ -39,8 +37,9 @@ from tagpup.store import photos as store_photos
 #: What a clip is found as before anything is done to it (state_of).
 TO_CONVERT, STALE_TEMP, VERIFIED, TO_FINISH = "to convert", "a stale temp", "a verified temp", "a temp to rename"
 NAME_TAKEN, UNDER_WAY, DONE, GONE, AWAY = "name taken", "a conversion under way", "done", "original gone", "away"
-#: The states a run acts on.
+#: The states a run acts on, and those it leaves for a later run (the owner's to settle, or a share to wake).
 ACTED_ON = (TO_CONVERT, STALE_TEMP, VERIFIED, TO_FINISH)
+LEFT = (NAME_TAKEN, UNDER_WAY, AWAY)
 
 #: Seconds a temp must not have been written for to be no conversion's: twice the time clip_convert stops an ffmpeg
 #: that made no progress (STALL), whose temp it then removes.
@@ -59,7 +58,6 @@ class Clip(NamedTuple):
     path: str
     target: str
     temp: str
-    description: str
 
 
 class Outcome(NamedTuple):
@@ -84,7 +82,9 @@ def marker_of(temp):
 def survey(library_path, ids=None, tools=None, also_part_2=False, on_probe=None):
     """[Clip] of the library at `library_path` to convert, by id: its clips in an older format, and with `also_part_2`
     each .mp4/.mov/.m4v clip whose picture or sound no browser plays (convertible.plan_for, its streams read by ffprobe
-    through `tools`; `on_probe(done, of)` told every hundred). Of `ids` alone when given. Opened read-only."""
+    through `tools`; `on_probe(done, of)` told every hundred), and each such clip whose original a run killed after
+    its delete left gone beside its verified temp (its marker there: the run finishes it). Of `ids` alone when given.
+    Opened read-only."""
     conn = db.connect(db.readonly_uri(library_path), uri=True)
     try:
         rows = [(photo_id, path) for photo_id, path in store_photos.clip_rows(conn) if ids is None or photo_id in ids]
@@ -93,31 +93,27 @@ def survey(library_path, ids=None, tools=None, also_part_2=False, on_probe=None)
             opened = [(photo_id, path) for photo_id, path in rows if not old_format(path)]
             for done, (photo_id, path) in enumerate(opened, 1):
                 held = video_frames.streams(tools, path)
-                if not held.problem and convertible.plan_for(os.path.splitext(path)[1], held.video,
-                                                             held.audio).action == convertible.REENCODE:
+                if held.problem:
+                    if _marked(path):
+                        chosen.append((photo_id, path))
+                elif convertible.plan_for(os.path.splitext(path)[1], held.video,
+                                          held.audio).action == convertible.REENCODE:
                     chosen.append((photo_id, path))
                 if on_probe is not None and (done % 100 == 0 or done == len(opened)):
                     on_probe(done, len(opened))
         clips = []
         for photo_id, path in sorted(chosen):
             target = clip_convert.target_of(path)
-            recorded = store_photos.row_as_recorded(conn, paths.stored(path))
-            clips.append(Clip(photo_id, path, target, clip_convert.temp_of(target), _description(recorded)))
+            clips.append(Clip(photo_id, path, target, clip_convert.temp_of(target)))
         taken = store_photos.rows_of(conn, [clip.target for clip in clips if not _same(clip)])
     finally:
         conn.close()
     return clips, {paths.key(target) for target in taken}
 
 
-def _description(recorded):
-    """The caption a clip's row read (its ASF Description: the first copy fields.DESCRIPTION_COPIES names), or ""."""
-    raw = recorded[3] if recorded else None
-    meta = json.loads(raw) if isinstance(raw, str) and raw else (raw or {})
-    for name in fields.DESCRIPTION_COPIES[0]:
-        value = meta.get(name)
-        if isinstance(value, str) and value.strip():
-            return value.strip()
-    return ""
+def _marked(path):
+    """Is the marker of a verified temp beside the clip at `path` (converted to an .mp4 of its own name)?"""
+    return isinstance(shares.stamp_of(marker_of(clip_convert.temp_of(clip_convert.target_of(path)))), tuple)
 
 
 def _same(clip):
@@ -208,7 +204,7 @@ def convert_one(tools, clip, state, size, stop=None, progress=None):
     if claim is not True:
         return Outcome(False, UNDER_WAY_SAID if claim is False else claim)
     problem = clip_convert.convert(tools, clip.path, clip.temp, source, progress=progress, stop=stop,
-                                   deadline=clip_convert.deadline_for(size), description=clip.description)
+                                   deadline=clip_convert.deadline_for(size))
     if problem:
         return Outcome(False, problem)
     problem = clip_convert.verified(tools, source, clip.temp) or _write_marker(clip.temp)
