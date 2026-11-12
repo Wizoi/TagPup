@@ -842,7 +842,7 @@ def clip_convert_start():
     """The panel's Convert (`mode` "convert", a clip that does not play) and Make smaller (MP4) (`mode` "shrink", one that
     does) of one clip, by its id: tagpup.services.convert.start, a batch of one on a thread of the server, answered at once
     with its `ticket` (the Activity strip lists it, Cancel by it); /api/clip/converted?ticket= says how it ended. Body
-    {"id", "mode", "stamp": {"mtime", "size"}, "for_good"?: true}."""
+    {"id", "mode", "stamp": {"mtime", "size"}}. The panel's confirm is convert-plan's `replaces`."""
     library = state.require()
     body = request.get_json(silent=True) or {}
     photo_id, mode = body.get("id"), body.get("mode")
@@ -853,7 +853,6 @@ def clip_convert_start():
         return responses.error(400, why or 'stamp must be {"mtime": number, "size": number}.')
     try:
         result = clip_conversion.start(library, state.exiftool(library), config.locate_ffmpeg, photo_id, mode, stamp,
-                                       body.get("for_good") is True,
                                        done=lambda source, how: _clip_converted(library, source, how))
     except responses.ANSWERED as why:
         return responses.of(why)
@@ -885,14 +884,14 @@ def _clip_converted(library, source, how):
     thread): convert_clip's Result, or what it raised. Converted: the folder maps follow it to its MP4 and take its stamp,
     and Suggest's looks are kept under the new name, as a Smart Rename does: {"success": true, "new_path", "renamed",
     "size_before", "size_after", "mtime", "size", "original_kept"?}. Refused: {"success": false, "error",
-    "changed_on_disk"?, "not_kept"?, "size_before"?, "size_after"?}."""
+    "changed_on_disk"?, "size_before"?, "size_after"?}."""
     if isinstance(how, BaseException):
         if isinstance(how, responses.ANSWERED):
             return {"success": False, "error": str(how)}
         logger.error("Error converting %s: %s", source, how, exc_info=how)
         return {"success": False, "error": "The video could not be converted (%s); the server's log says why."
                 % type(how).__name__}
-    sizes = {key: how.details[key] for key in ("size_before", "size_after", "not_kept") if key in how.details}
+    sizes = {key: how.details[key] for key in ("size_before", "size_after") if key in how.details}
     if not how.changed:
         return {"success": False, "error": how.message(), **responses.STATUS[how.refused_kind][1], **sizes}
     new_path = how.details["path"]

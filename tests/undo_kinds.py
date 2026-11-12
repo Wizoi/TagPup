@@ -71,5 +71,5 @@ LEFT = {
                                              "tests/test_retiring_the_old_photo_models_vectors.py"),
     convert.CARRIED: AS_SAVE,
     convert.OPERATION: ("a clip's conversion, planned by file_journal.plan and never undone (its sentence: the original "
-                        "is in the Recycle Bin)"),
+                        "is deleted)"),
 }

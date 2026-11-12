@@ -33,6 +33,10 @@ PLAYABLE_VIDEO = frozenset({"h264", "hevc", "vp9", "av1"})
 PLAYABLE_AUDIO = frozenset({"aac", "mp3", "opus", "flac"})
 
 CONVERT = "it plays here once it is converted (Convert to play)."
+#: What the panel asks before its button converts, by the clip's plan (its confirm; tagpup.services.convert: the original
+#: is deleted for good once its copy is verified, never sent to a Recycle Bin; owner 2026-11-12).
+REPLACES = {REENCODE: "Convert replaces the original: it is deleted for good once its MP4 is verified.",
+            NOTHING: "Make smaller replaces the original: it is deleted once the smaller copy is verified."}
 
 
 class Plan(NamedTuple):

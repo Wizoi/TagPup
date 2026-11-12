@@ -1,21 +1,21 @@
 """A clip of an old format converted to H.264 and AAC in an MP4 (F19; tagpup.services.convert, DECISIONS 2026-11-09, 'A
 CLIP IS CONVERTED ONLY WHEN THE OWNER CLICKS CONVERT'): its row followed to the MP4, what it carried written into the
-copy, the original sent to the Recycle Bin last, one change of History that is never undone.
+copy, the original deleted for good last (never to a Recycle Bin: owner 2026-11-12), one change of History that is
+never undone.
 
 What the owner lives through: the one-time convert of the old formats (.wmv, .mpg, .avi; and an .mp4 whose picture is
 MPEG-4 Part 2, converted under its own name), each clip one change; the run cut short at any step and settled at the next
-start; a clip open in a player, a full disk, ffmpeg failing, a Recycle Bin that will not take the original. The panel's
+start; a clip open in a player, a full disk, ffmpeg failing, an original that cannot be deleted. The panel's
 Convert and Make smaller (MP4) by id: answered at once with a ticket, a second click refused, Cancel on the ticket, a bulk
 edit waiting behind, a shrink no smaller left as it is, a button that is not the clip's plan refused (ThePanelButtons).
 
 Real one-second clips made by the machine's ffmpeg in each old format, recorded by the indexer's own read
-(test_a_clip_tagged_through_the_journal.ALibraryHoldingAClip), in a home of its own; the Recycle Bin is stood in for (the
-original is moved into a folder of the home), nothing reaches the owner's Bin. Skipped, saying so, without ffmpeg or
+(test_a_clip_tagged_through_the_journal.ALibraryHoldingAClip), in a home of its own; a conversion that reached for a Recycle Bin
+fails the test (AnOldClipInTheLibrary). Skipped, saying so, without ffmpeg or
 ExifTool. Fictional names only.
 """
 import json
 import os
-import shutil
 import sys
 import threading
 import unittest
@@ -55,22 +55,15 @@ def make_clip(path, title=None):
 
 
 class AnOldClipInTheLibrary(ALibraryHoldingAClip):
-    """The library of ALibraryHoldingAClip; the Recycle Bin a folder of the home (`binned`)."""
+    """The library of ALibraryHoldingAClip, where a conversion that reaches for a Recycle Bin fails the test: its original
+    is deleted for good."""
 
     def setUp(self):
         super().setUp()
-        self.bin = os.path.join(self.home.root, "Bin")
-        os.makedirs(self.bin)
-        self.binned = []
-        for patcher in (mock.patch.object(recycle_bin, "no_bin_reason", return_value=None),
-                        mock.patch.object(recycle_bin, "send_to_recycle_bin", side_effect=self.recycle)):
+        for name in ("delete_file", "send_to_recycle_bin"):
+            patcher = mock.patch.object(recycle_bin, name, side_effect=AssertionError("a conversion used the Recycle Bin"))
             patcher.start()
             self.addCleanup(patcher.stop)
-
-    def recycle(self, path):
-        self.binned.append(os.path.basename(path))
-        shutil.move(path, os.path.join(self.bin, os.path.basename(path)))
-        return True
 
     def clip(self, name, title=TITLE):
         """A clip `name` in the folder, made and recorded as the indexer reads it: (its path, its id)."""
@@ -106,13 +99,14 @@ class AnOldClipInTheLibrary(ALibraryHoldingAClip):
         self.assertEqual([name], fields.field_values(self.held(target, fields.PRESERVED_NAME).get(fields.PRESERVED_NAME)),
                          "the copy holds the name it had")
         self.assertEqual([], self.leftovers(), "no temp left")
-        self.assertIn(name, os.listdir(self.bin), "the original in the Recycle Bin")
+        if not paths.same(source, target):
+            self.assertFalse(os.path.exists(source), "the original deleted for good")
         return target
 
 
 class TheConversion(AnOldClipInTheLibrary):
 
-    def test_each_old_format_is_converted_its_row_followed_its_title_and_name_carried_the_original_binned(self):
+    def test_each_old_format_is_converted_its_row_followed_its_title_and_name_carried_the_original_deleted(self):
         for name in ("quay.wmv", "slipway.mpg", "breakwater.avi"):
             with self.subTest(name):
                 source, photo_id = self.clip(name)
@@ -143,7 +137,7 @@ class TheConversion(AnOldClipInTheLibrary):
         result = self.convert(source)
         self.assertEqual(1, result.changed, result.message())
         reply = self.post("history/%d/undo" % result.details["change"], {})
-        self.assertIn("not undone, the original is in the Recycle Bin", json.dumps(reply.get_json()))
+        self.assertIn("not undone, the original is deleted", json.dumps(reply.get_json()))
 
 
 class CutShort(AnOldClipInTheLibrary):
@@ -173,7 +167,6 @@ class CutShort(AnOldClipInTheLibrary):
         self.assertFalse(os.path.exists(clip_convert.target_of(self.source)), "no MP4")
         self.assertEqual([], self.leftovers(), "no temp left")
         self.assertEqual(paths.key(self.source), paths.key(self.row_of(self.photo_id)[0]), "the row where it was")
-        self.assertEqual([], self.binned)
 
     def test_killed_before_its_copy_was_recorded_the_temp_is_removed_and_the_original_kept(self):
         self.killed_at("temp verified")
@@ -197,7 +190,7 @@ class CutShort(AnOldClipInTheLibrary):
     def test_an_mp4_of_its_own_name_killed_between_its_delete_and_its_rename_is_put_in_place_by_the_settle(self):
         source, photo_id = self.clip("dock.mp4")
         self.killed_at("original deleted", source)
-        self.assertEqual(["dock.mp4" + clip_convert.SUFFIX], self.leftovers(), "the copy in its temp, the original binned")
+        self.assertEqual(["dock.mp4" + clip_convert.SUFFIX], self.leftovers(), "the copy in its temp, the original deleted")
         self.assertFalse(os.path.exists(source))
         self.settled()
         self.assert_converted(source, photo_id, TITLE)
@@ -221,26 +214,42 @@ class Refused(AnOldClipInTheLibrary):
         self.assertEqual([(file_journal.CONVERT, "failed")],
                          [(op, status) for _id, op, status in self.changes() if op == file_journal.CONVERT])
 
-    def test_a_recycle_bin_that_will_not_take_the_original_keeps_it_and_the_next_settle_deletes_it(self):
-        with mock.patch.object(recycle_bin, "send_to_recycle_bin", return_value=False):
+    def test_an_original_that_cannot_be_deleted_keeps_it_and_its_copy_and_the_next_settle_deletes_it(self):
+        with mock.patch.object(convert, "_removed_for_good", return_value="it is open in another program"):
             result = self.convert(self.source)
         self.assertEqual(1, result.changed, "the copy is in place")
         self.assertFalse(result.ok)
         self.assertIn("its original could not be deleted", result.details["original_kept"])
+        self.assertIn("it is open in another program", result.details["original_kept"])
         self.assertEqual(self.before, self.read_bytes(self.source), "the original kept")
         target = clip_convert.target_of(self.source)
         self.assertEqual(paths.key(target), paths.key(self.row_of(self.photo_id)[0]), "the row at the MP4")
+        self.assertEqual(("h264", "aac"), tuple(getattr(video_frames.streams(TOOLS, target), k) for k in ("video", "audio")),
+                         "the verified copy kept")
         file_changes.settle(self.vl.library, EXIFTOOL)
         self.assertFalse(os.path.exists(self.source), "the next settle deleted it")
         self.assert_converted(self.source, self.photo_id, TITLE)
 
-    def test_an_mp4_of_its_own_name_whose_original_the_bin_will_not_take_is_not_converted(self):
+    def test_an_mp4_of_its_own_name_whose_original_cannot_be_deleted_is_not_converted(self):
         source, photo_id = self.clip("dock.mp4")
         before = self.read_bytes(source)
-        with mock.patch.object(recycle_bin, "send_to_recycle_bin", return_value=False):
+        with mock.patch.object(convert, "_removed_for_good", return_value="it is open in another program"):
             result = self.convert(source)
-        self.assertEqual(0, result.changed, result.message())
+        self.assertEqual((0, convert.NOT_DELETED % "it is open in another program"), (result.changed, result.message()))
         self.assertEqual(before, self.read_bytes(source), "the original kept: its copy would take its name")
+        self.assertEqual([], self.leftovers())
+
+    def test_an_mp4_of_its_own_name_changed_while_it_was_converted_is_never_deleted(self):
+        source, _photo_id = self.clip("dock.mp4")
+
+        def changed(step):
+            if step == "temp verified":
+                with open(source, "ab") as handle:
+                    handle.write(b"another program's bytes")
+        with mock.patch.object(convert, "_reached", side_effect=changed):
+            result = self.convert(source)
+        self.assertEqual((0, convert.CHANGED), (result.changed, result.message()))
+        self.assertTrue(self.read_bytes(source).endswith(b"another program's bytes"), "the changed original kept")
         self.assertEqual([], self.leftovers())
 
     def test_a_second_library_holding_the_folder_converting_the_clip_meanwhile_is_refused_and_leaves_the_temp(self):
@@ -319,7 +328,7 @@ class ThePanelButtons(AnOldClipInTheLibrary):
                          (said["size_before"], said["size_after"], said["size"]), "the sizes and the MP4's stamp")
         self.assert_converted(source, photo_id, TITLE)
 
-    def test_a_large_mov_made_smaller_is_an_mp4_and_the_mov_is_binned(self):
+    def test_a_large_mov_made_smaller_is_an_mp4_and_the_mov_is_gone_for_good(self):
         source, photo_id = self.mov("harbour.mov", 0)
         said = self.ended(self.ask(photo_id, "shrink", source))
         self.assertTrue(said["success"], said)
@@ -327,7 +336,7 @@ class ThePanelButtons(AnOldClipInTheLibrary):
         target = clip_convert.target_of(source)
         self.assertEqual(("h264", "aac"), tuple(getattr(video_frames.streams(TOOLS, target), k) for k in ("video", "audio")))
         self.assertEqual(paths.key(target), paths.key(self.row_of(photo_id)[0]), "the row followed to the MP4")
-        self.assertEqual(["harbour.mov"], self.binned)
+        self.assertFalse(os.path.exists(source), "the .mov deleted for good")
         self.assertEqual([], self.leftovers())
 
     def test_a_mov_whose_mp4_is_no_smaller_is_left_as_it_is(self):
@@ -338,7 +347,7 @@ class ThePanelButtons(AnOldClipInTheLibrary):
         self.assertGreaterEqual(said["size_after"], said["size_before"])
         self.assertEqual(before, self.read_bytes(source), "the original as it was")
         self.assertFalse(os.path.exists(clip_convert.target_of(source)), "no MP4")
-        self.assertEqual(([], []), (self.leftovers(), self.binned))
+        self.assertEqual([], self.leftovers())
         self.assertEqual(paths.key(source), paths.key(self.row_of(photo_id)[0]))
 
     def test_a_mode_that_is_not_the_clips_plan_is_refused_before_ffmpeg(self):

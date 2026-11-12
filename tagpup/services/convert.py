@@ -13,19 +13,25 @@ a thread of the server (batches.claim), the request answered at once with its ti
 How one conversion goes, the original kept until its copy is in place and holds what it carried:
 1. Refused before ffmpeg runs, nothing planned: a clip away or gone, without a row, still holding Windows Tags (moved
    first: tagpup.services.windows_tags), open in another program, whose length cannot be read, whose plan is not its
-   reason's (NEEDS: a clip that plays is not converted, one that does not is not made smaller), with no room for its copy
-   on its drive, or larger than a Recycle Bin takes (recycle_bin.MOST_CLIP_BYTES) unless the owner confirmed `for_good`.
+   reason's (NEEDS: a clip that plays is not converted, one that does not is not made smaller), or with no room for its
+   copy on its drive.
    Under the lock of changes of photo files: one a cut-short change has still to settle, one whose converted name holds a
    file or a row, one another conversion is converting.
 2. Planned (file_journal.CONVERT), one file: its path the original's, its new_path the MP4's (None for the same name),
    fields_before the original's fingerprint (file_changes.fingerprint), fields_after what it carries (`carry`: its tags,
-   title and the name it had; no caption, clip_convert) and `for_good`; marked `writing`; the temp claimed (clip_convert.claimed).
+   title and the name it had; no caption, clip_convert); marked `writing`; the temp claimed (clip_convert.claimed).
 3. ffmpeg, outside the lock (minutes); the temp verified, and its
    fingerprint recorded as `made`.
 4. Onward (_onward, the forward run's and the settle's alike), under the lock: the temp renamed into place (a same-name
    conversion deletes the original first, its name being the copy's); the row moved to the new name and made to say
    what the copy holds, in one transaction; the carry written into the copy (CARRIED, file_changes.write_fields: only
-   what differs); the original deleted LAST, to the Recycle Bin; marked done, the change finished.
+   what differs); the original deleted LAST; marked done, the change finished.
+
+The original is deleted FOR GOOD, never to a Recycle Bin (owner 2026-11-12: its copy is verified first; the Bin is for
+deletes), by one bounded call (_removed_for_good), and only while it is the file the conversion found (its fingerprint).
+A delete that fails (a program holding it, a share that stopped answering) keeps the original and the copy: the file is
+left `writing` and the next settle deletes it (a same-name conversion, whose copy has no name of its own yet, is let go
+instead: its temp removed, the original kept).
 
 The copy is known by its file id (`made`'s ino; _is_copy): the carry writes into it in place, which changes its size and
 modified time but never its file id, nor does the rename into place; a volume that gives its files no file id is refused
@@ -35,9 +41,9 @@ Interrupted part-way, the settle (file_changes._finish routes the change here, s
 nowhere, the temp is removed by the scratch rule (file_changes.removed_scratch: never one written in the last minutes)
 and the file taken out of the change (or a conflict, when the original changed); in the temp, the conversion is let go
 (temp removed, file taken out) unless a same-name original is gone already (then it is renamed into place); at the new
-name, the rest of step 4 is done. A carry that fails, or a Recycle Bin that refuses the original, leaves the file
-`writing` and the original where it was, for the next settle. Never undone (journal.UNDO_CHECKS): the original is in the
-Recycle Bin.
+name, the rest of step 4 is done. A carry that fails, or an original that could not be deleted, leaves the file
+`writing` and the original where it was, for the next settle. Never undone (journal.UNDO_CHECKS): the original is
+deleted.
 
 The clip's vectors and frames are not carried over the conversion: its stamp changes and the indexer computes them again
 from the copy. Files are named by their photo's id, never by path.
@@ -48,7 +54,7 @@ import threading
 
 from tagpup.core import fields, paths, vocabulary
 from tagpup.core.result import CHANGED_ON_DISK, CHANGED_ON_DISK_SENTENCE, Conflict, NotFound, Result, Unavailable
-from tagpup.files import clip_convert, convertible, field_values, images, lock_owners, names, recycle_bin, shares, video_frames
+from tagpup.files import clip_convert, convertible, field_values, images, lock_owners, names, shares, video_frames
 from tagpup.services import batches, file_changes, tagging
 from tagpup.services import photos as photo_actions
 from tagpup.store import db, file_journal, photos
@@ -94,18 +100,20 @@ TEMP_TAKEN = ("an unfinished converted copy of it is there already (another conv
               "converted")
 CHANGED = "it changed while it was being converted; its converted copy was removed and the original is as it is"
 NOT_MADE = "its converted copy is not as it was made; it was removed and the original is as it was"
-NOT_IN_PLACE = ("its converted copy could not be put in its place (%s); the original is in the Recycle Bin and the copy is "
-                "put in place when the change is settled")
+NOT_IN_PLACE = ("its converted copy could not be put in its place (%s); the original is deleted and the copy is put in "
+                "place when the change is settled")
 NOT_RENAMED = "its converted copy could not be put in its place (%s); it was removed and the original is as it was"
 NOT_CARRIED = ("its tags, title or kept name could not be written into its converted copy (%s); the original is kept, "
                "and the change is finished when it is settled")
 ROW_THERE = "a row of the library is at its converted name already; both files are kept as they are"
-ORIGINAL_KEPT = ("it was converted, but its original could not be deleted (%s); the original is kept, and its delete is "
-                 "tried again when the change is settled")
+ORIGINAL_KEPT = ("it was converted, but its original could not be deleted (%s); the original and its verified copy "
+                 "are both kept, and the original is deleted when the change is settled (the next start)")
 CHANGED_SINCE = "it changed since it was converted: it holds neither what the conversion found nor its converted copy"
 PLAYS_ALREADY = "it plays as it is: it is made smaller (Make smaller), not converted; nothing was converted"
 DOES_NOT_PLAY = "it does not play as it is: it is converted (Convert), not made smaller; nothing was converted"
 NOT_SMALLER = "its MP4 came out no smaller than it is: left as it is"
+NOT_DELETED = ("its original could not be deleted (%s), so its converted copy, which takes its name, was removed; the "
+               "original is as it was")
 ASKED_ALREADY = "it is being converted already; wait for it to finish"
 NO_SUCH = "This server has no conversion %d (it may have been long ago, or before the server restarted)."
 
@@ -115,11 +123,6 @@ def _reached(step):
     patching it."""
 
 
-class _NotKept(str):
-    """recycle_bin.clip_not_kept's sentence, from _ready: the result names the clip (`not_kept`, as file_only.send does) for
-    the page to ask the owner, then send `for_good`."""
-
-
 class _Ready:
     """What a conversion found of the clip before it planned (_ready)."""
 
@@ -127,25 +130,22 @@ class _Ready:
         self.photo_id, self.stamp, self.streams, self.carry, self.target = photo_id, stamp, streams, carry, target
 
 
-def convert_clip(library, exiftool_path, tools, source, reason=OLD_FORMAT, for_good=False, progress=None, stop=None):
-    """Convert the clip at `source` of `library` (see the module), `tools` being config.locate_ffmpeg()'s. `for_good`: the
-    owner confirmed a clip over recycle_bin.MOST_CLIP_BYTES is deleted for good. `progress(done, whole)` in seconds;
+def convert_clip(library, exiftool_path, tools, source, reason=OLD_FORMAT, progress=None, stop=None):
+    """Convert the clip at `source` of `library` (see the module), `tools` being config.locate_ffmpeg()'s, its original
+    deleted for good once its copy is verified and in place. `progress(done, whole)` in seconds;
     `stop`, an Event: Cancel. A Result: `changed` 1 once the copy is in place, its row moved and what it carries written;
     refused with why, the original as it was, otherwise. `reason` is one of NEEDS: the clip's plan must be its own (a
     clip that plays is not converted, one that does not is not made smaller); made SMALLER, a copy no smaller than the
     original is removed and the clip refused NOT_SMALLER. details: `change` (its id or None), `reason`, `photo` (the
     photo's id), `path` (where its copy goes), `size_before` (the original's bytes), `size_after` (the copy's, in place;
-    the removed copy's for NOT_SMALLER), `not_kept` ([its name]) when it is refused for a Recycle Bin that would not keep
-    it, and `original_kept`, the sentence, when the copy is in place but the original could not be deleted (the
+    the removed copy's for NOT_SMALLER), and `original_kept`, the sentence, when the copy is in place but the original could not be deleted (the
     result is refused too: the CLI exits 1)."""
     result = Result(attempted=1)
     result.details.update(change=None, reason=reason, photo=None)
     source = paths.stored(source)
     file_changes.settle(library, exiftool_path)
-    ready = _ready(library, exiftool_path, tools, source, reason, for_good)
+    ready = _ready(library, exiftool_path, tools, source, reason)
     if isinstance(ready, str):
-        if isinstance(ready, _NotKept):
-            result.details["not_kept"] = [os.path.basename(source)]
         result.refuse(ready)
         return result
     target = ready.target
@@ -159,7 +159,7 @@ def convert_clip(library, exiftool_path, tools, source, reason=OLD_FORMAT, for_g
             return result
         change_id, (row,) = file_journal.plan(library.path, OPERATION, [{
             "photo_id": ready.photo_id, "path": source, "new_path": None if paths.same(source, target) else target,
-            "before": before, "after": {"carry": ready.carry, "for_good": bool(for_good)}}],
+            "before": before, "after": {"carry": ready.carry}}],
             summary={"photos": 1, "reason": reason})
         result.details["change"] = change_id
         try:
@@ -205,7 +205,7 @@ _converting = set()   # (library key, photo id) of the conversions asked of this
 _asked = {}           # (library key, ticket): [its thread, what `done` made of how it ended, or None while under way]
 
 
-def start(library, exiftool_path, find_ffmpeg, photo_id, mode, stamp, for_good=False, done=None):
+def start(library, exiftool_path, find_ffmpeg, photo_id, mode, stamp, done=None):
     """Convert the clip `photo_id` of `library` as the panel's button `mode` asks (MODES), on a thread of its own as a
     batch of one (batches.claim: listed on the Activity page's strip, cancelled by its ticket, waited for and stopped by an
     update's drain), so that the request returns at once and a closed tab loses nothing. `stamp`, (mtime, size), the clip
@@ -240,8 +240,7 @@ def start(library, exiftool_path, find_ffmpeg, photo_id, mode, stamp, for_good=F
     def work():
         try:
             with batches.claim(library, OPERATION, 1, on_line=in_line) as batch:
-                how = convert_clip(library, exiftool_path, tools, source, reason=MODES[mode], for_good=for_good,
-                                   stop=batch.stop)
+                how = convert_clip(library, exiftool_path, tools, source, reason=MODES[mode], stop=batch.stop)
         except Exception as e:   # told to the panel through `done`, the request answered already; or before it was
             if not lined.is_set():
                 said["raised"] = e
@@ -276,7 +275,7 @@ def outcome(library, ticket, wait=None):
     return held[1]
 
 
-def _ready(library, exiftool_path, tools, source, reason, for_good):
+def _ready(library, exiftool_path, tools, source, reason):
     """_Ready, or why the clip at `source` is not converted (a sentence), looked at before anything is planned."""
     if not images.is_clip(source):
         return NOT_A_CLIP
@@ -314,8 +313,6 @@ def _ready(library, exiftool_path, tools, source, reason, for_good):
     room = clip_convert.room_for(source, stamp[1])
     if room:
         return room
-    if recycle_bin.too_large_to_copy(source, stamp[1]) and not for_good:
-        return _NotKept(recycle_bin.clip_not_kept(source, stamp[1]))
     carry = {"tags": list(vocabulary.extract_tags({field: held.get(field) for field in fields.TAG_SOURCE_FIELDS})),
              "title": fields.own_title(held),
              "name": names.preserved_name(held) or os.path.basename(source)}
@@ -349,8 +346,8 @@ def _taken(library, source, target):
 def settle_change(library, change, exiftool_path):
     """Settle a conversion `change` a crash or an error left (file_changes._finish routes it here): a file `planned` was
     never begun and is taken out; one `writing` is carried onward (_onward). True when it is finished; False, released by
-    the caller, when a file is left `writing` (a share away, a temp written in the last minutes, a carry that failed, a
-    Recycle Bin that refused)."""
+    the caller, when a file is left `writing` (a share away, a temp written in the last minutes, a carry that failed, an
+    original that could not be deleted)."""
     settled = True
     for row in file_journal.files_of(library.path, change.id):
         if row.state == "planned":
@@ -389,9 +386,11 @@ def _onward(library, exiftool_path, row, forward, result, problem=None):
             if not forward and not gone:
                 return _given_up(library, row, temp, result, None)
             if forward:
-                kept = _deleted(source, row.after.get("for_good", False))
+                if file_changes.fingerprint(source) != row.before:
+                    return _given_up(library, row, temp, result, CHANGED)
+                kept = _removed_for_good(source)
                 if kept:
-                    return _given_up(library, row, temp, result, kept)
+                    return _given_up(library, row, temp, result, NOT_DELETED % kept)
                 _reached("original deleted")
         elif not forward:
             return _given_up(library, row, temp, result, None)
@@ -421,7 +420,7 @@ def _onward(library, exiftool_path, row, forward, result, problem=None):
         return False
     _reached("carried")
     if renamed and file_changes.fingerprint(source) == row.before:
-        kept = _deleted(source, row.after.get("for_good", False) if forward else False)
+        kept = _removed_for_good(source)
         if kept:
             _note(library, row, ORIGINAL_KEPT % kept)
             result.changed = 1
@@ -484,14 +483,13 @@ def _note(library, row, why):
                              label="%s: left writing" % row.named())
 
 
-def _deleted(source, for_good):
-    """None when the original at `source` was deleted (recycle_bin.delete_file: to its Recycle Bin, or for good when the
-    owner confirmed `for_good`); else why it is still there, a sentence."""
-    try:
-        recycle_bin.delete_file(source, for_good=for_good)
-    except (OSError, ValueError) as e:
-        return str(e)
-    return None
+def _removed_for_good(source):
+    """None when the original at `source` was deleted for good (never to a Recycle Bin: the module), by one call bounded
+    as a listing is (shares.bounded); else why it is still there, a phrase."""
+    state, error = shares.bounded(os.path.dirname(source), lambda: os.remove(source), shares.LISTING_WAIT)
+    if state == "ok":
+        return None
+    return "its share did not answer" if state == "away" else (getattr(error, "strerror", None) or str(error))
 
 
 def _followed(library, exiftool_path, row, target):

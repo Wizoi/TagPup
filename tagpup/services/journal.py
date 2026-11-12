@@ -110,9 +110,9 @@ UNDO_CHECKS = {
     "time shift": None,
     "rotate": None,
     "faces_from_tags": None,
-    # A clip's conversion: its original is in the Recycle Bin (tagpup.services.convert); the carry into its copy is a
+    # A clip's conversion: its original is deleted for good (tagpup.services.convert); the carry into its copy is a
     # write of fields as Save's.
-    convert.OPERATION: "change %(change)d (%(operation)s): not undone, the original is in the Recycle Bin",
+    convert.OPERATION: "change %(change)d (%(operation)s): not undone, the original is deleted",
     convert.CARRIED: None,
 }
 UNDO_CHECKS.update({operation: None for operation in bulk_edit.OPERATIONS.values()})
