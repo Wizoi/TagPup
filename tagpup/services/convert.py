@@ -14,8 +14,8 @@ How one conversion goes, the original kept until its copy is in place and holds 
    file or a row, one another conversion is converting.
 2. Planned (file_journal.CONVERT), one file: its path the original's, its new_path the MP4's (None for the same name),
    fields_before the original's fingerprint (file_changes.fingerprint), fields_after what it carries (`carry`: its tags,
-   title, the name it had and its caption) and `for_good`; marked `writing`; the temp claimed (clip_convert.claimed).
-3. ffmpeg, outside the lock (minutes), the caption given to it (clip_convert's `description`); the temp verified, and its
+   title and the name it had; no caption, clip_convert) and `for_good`; marked `writing`; the temp claimed (clip_convert.claimed).
+3. ffmpeg, outside the lock (minutes); the temp verified, and its
    fingerprint recorded as `made`.
 4. Onward (_onward, the forward run's and the settle's alike), under the lock: the temp renamed into place (a same-name
    conversion deletes the original first, its name being the copy's); the row moved to the new name and made to say
@@ -134,8 +134,7 @@ def convert_clip(library, exiftool_path, tools, source, reason=OLD_FORMAT, for_g
             raise
     try:
         problem = clip_convert.convert(tools, source, temp, ready.streams, progress=progress, stop=stop,
-                                       deadline=clip_convert.deadline_for(ready.stamp[1]),
-                                       description=ready.carry["description"])
+                                       deadline=clip_convert.deadline_for(ready.stamp[1]))
         if problem is None:
             problem = clip_convert.verified(tools, ready.streams, temp)
         if problem is None:
@@ -170,8 +169,6 @@ def _ready(library, exiftool_path, tools, source, for_good):
         conn.close()
     if found is None:
         return NO_ROW
-    kept = photos.read_tags(library.path, [source])
-    row_raw = kept[0][2] if kept else {}
     try:
         with field_values.session(exiftool_path) as et:
             held = field_values.read_one(et, source, list(READ) + [fields.CLIP_CATEGORY])
@@ -193,11 +190,9 @@ def _ready(library, exiftool_path, tools, source, for_good):
         return room
     if recycle_bin.too_large_to_copy(source, stamp[1]) and not for_good:
         return recycle_bin.clip_not_kept(source, stamp[1])
-    description = fields.field_values(row_raw.get("Description"))
     carry = {"tags": list(vocabulary.extract_tags({field: held.get(field) for field in fields.TAG_SOURCE_FIELDS})),
              "title": fields.own_title(held),
-             "name": names.preserved_name(held) or os.path.basename(source),
-             "description": str(description[0]).strip() if description else ""}
+             "name": names.preserved_name(held) or os.path.basename(source)}
     return _Ready(found[0], stamp, streams, carry, clip_convert.target_of(source))
 
 

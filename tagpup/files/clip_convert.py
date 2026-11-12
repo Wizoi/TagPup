@@ -11,11 +11,9 @@ size of the old formats), 4:2:0 so every browser decodes it; the sound to AAC at
 already (the 11 .mp4 clips of photo_index whose picture is MPEG-4 Part 2 carry AAC sound, counted 2026-11-09); the
 container's own metadata (`-map_metadata 0`: its creation time, its title) and the index at the front (`+faststart`, so
 the player starts before the whole file has come over a share). The clip's XMP is not carried by ffmpeg: its tags, title
-and kept name are written into the MP4 afterwards by the journaled write of a clip (tagpup.services.convert). Nor is a
-.wmv's caption, its ASF Description, which ffmpeg maps to the MP4's Comment, a field the reader does not read as a caption
-(measured on a generated .wmv, 2026-11-12; 45 photo_index .wmv rows hold one): the caller gives it (`description`) and it
-is written as the MP4's description item, which the reader reads (fields.DESCRIPTION_COPIES), since a clip's journaled
-write names no caption (fields.CLIP_WRITES). An MP4 made so takes that XMP by a patch in place: it holds no XMP box, its
+and kept name are written into the MP4 afterwards by the journaled write of a clip (tagpup.services.convert). No caption
+is carried: none of the 2,833 clips of photo_index holds one (its Description blank in every row, counted 2026-11-12),
+and a clip's journaled write names none (fields.CLIP_WRITES). An MP4 made so takes that XMP by a patch in place: it holds no XMP box, its
 moov before mdat, so the packet is appended at its end in a uuid box (tagpup.files.clip_patch, case 4; measured on a
 generated clip of each old format, 2026-11-12).
 
@@ -141,24 +139,23 @@ def deadline_for(size):
     return time.monotonic() + DEADLINE_FLOOR + size / READ_RATE
 
 
-def arguments(tools, source, temp, audio, description=""):
+def arguments(tools, source, temp, audio):
     """ffmpeg's arguments to convert `source` into `temp` (claimed: written over), whose sound is of codec `audio` (None:
-    none), with `description` as its description item when it is not empty (the module)."""
+    none)."""
     sound = ("-c:a", "copy") if audio in COPIED_AUDIO else AUDIO
-    described = ["-metadata", "description=" + description] if description else []
     return ([tools.ffmpeg, "-hide_banner", "-nostdin", "-nostats", "-v", "error", "-y", "-i", source,
              "-map", "0:V:0", "-map", "0:a:0?", "-sn", "-dn"] + list(VIDEO) + list(sound)
-            + ["-map_metadata", "0"] + described + ["-movflags", "+faststart", "-progress", "pipe:1", "-f", "mp4", temp])
+            + ["-map_metadata", "0", "-movflags", "+faststart", "-progress", "pipe:1", "-f", "mp4", temp])
 
 
-def convert(tools, source, temp, streams, progress=None, stop=None, deadline=None, stall=STALL, description=""):
+def convert(tools, source, temp, streams, progress=None, stop=None, deadline=None, stall=STALL):
     """Convert the clip at `source` into `temp` (see the module). `streams` is video_frames.streams of the source, read
     by the caller (its sound decides copy or re-encode; its duration is the whole progress is told against). `progress(done,
     whole)` is told seconds converted and the whole; `stop` an Event asked between progress lines; `deadline` a
-    time.monotonic() after which it is stopped; `description`, the caption written into it (the module). `temp` is
+    time.monotonic() after which it is stopped. `temp` is
     claimed by the caller (claimed). Returns None when ffmpeg finished and the temp is there to verify, else the problem,
     the temp removed (or TEMP_LEFT said)."""
-    args = arguments(tools, source, temp, streams.audio, description)
+    args = arguments(tools, source, temp, streams.audio)
     try:
         child = processes.start(args, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     except OSError as problem:
