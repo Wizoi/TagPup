@@ -157,7 +157,7 @@ class TheOrders(Library):
 
     def test_an_unknown_order_is_refused(self):
         with self.assertRaises(Refused):
-            self.ids("all", order="size")
+            self.ids("all", order="weight")
 
 
 class ThePlans(Library):
