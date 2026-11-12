@@ -363,6 +363,34 @@ describe("#674: Delete of a view's selection", () => {
     assert.match(stripSentence(ctx), /^Deleted 3 photos to the Recycle Bin, 1 of them for good;/);
   });
 
+  test("this PC's Recycle Bin is full: both questions say so, and OK starts the delete for good with the question's token", async (t) => {
+    // Owner, 2026-11-12: the share's files whose copies the full Bin would not keep are asked of, not refused (`bin_full`).
+    const ctx = await view(t, 40, { where: { ...FOR_GOOD(3, ["Pier_A.jpg", "Pier_B.jpg", "Pier_C.jpg"]), bin_full: 2 } });
+    ctx.bulk.edit = { op: "delete", total: 3, changed: 3, for_good: 3 };
+    for (const id of [2, 5, 9]) pick(ctx, id);
+    await remove(ctx);
+    assert.equal(ctx.questions.length, 2);
+    assert.match(ctx.questions[0], /a Recycle Bin that would keep it is full/);
+    assert.match(ctx.questions[1], /^The Recycle Bin is full: delete permanently instead\?/);
+    assert.match(ctx.questions[1], /2 of these 3 files are headed for a Recycle Bin that is full/);
+    assert.match(ctx.questions[1], /The other 1 would not be kept by any Recycle Bin/);
+    assert.ok(ctx.questions[1].includes("  Pier_B.jpg"));
+    assert.match(ctx.questions[1], /OK deletes them permanently; Cancel deletes nothing\.$/);
+    assert.deepEqual(plain(calls(ctx, "/api/library/bulk-edit")[0].body.params), { token: "t-three-for-good", for_good: true });
+  });
+
+  test("a Bin with room for some: the first question says how many are deleted for good and that the rest go to the Bin", async (t) => {
+    // The server weighs the files one after another, as the start deletes them (selection.where_deleted): 3 fit, 2 do not.
+    const ctx = await view(t, 40, { where: { ...FOR_GOOD(2, ["Shore_D.jpg", "Shore_E.jpg"]), total: 5, bin_full: 2 } });
+    ctx.bulk.edit = { op: "delete", total: 5, changed: 5, for_good: 2 };
+    for (const id of [2, 5, 9, 11, 14]) pick(ctx, id);
+    await remove(ctx);
+    assert.match(ctx.questions[0], /^Delete 5 photos\?/);
+    assert.match(ctx.questions[0], /2 of them are deleted for good, not moved to a Recycle Bin/);
+    assert.match(ctx.questions[0], /full by the time it comes to it/);
+    assert.match(ctx.questions[0], /The other 3 go to the Recycle Bin, where they can be restored\./);
+  });
+
   test("a clip over 2 GiB: the first question already says it is deleted for good, not that it goes to a Recycle Bin or is copied", async (t) => {
     const ctx = await view(t, 40, { where: { ...FOR_GOOD(1, ["Harbour_Swim_Long.mp4"]), through_this_pc: 1, copy_bytes: 4 * 1024 * 1024 } });
     for (const id of [2, 5, 9]) pick(ctx, id);

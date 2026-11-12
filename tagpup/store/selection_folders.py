@@ -63,6 +63,21 @@ def clips_over(conn, folder_ids, most_clip_bytes, most_named, ids=None, source=N
     return _files(conn, folder_ids, _CLIP_OVER, (library_view.VIDEO, most_clip_bytes), most_named, ids, source, excluded)
 
 
+def sizes_in(conn, folder_ids, most_clip_bytes, ids):
+    """{photo id: (photos.size, as the index last read it, its stored path, its folder id)} of the photos and clips of the
+    selection `ids` in `folder_ids` -- a clip over `most_clip_bytes` left out, clips_over's --: the files of one Recycle Bin
+    that a Delete's question weighs one after another when the Bin would not take them all at once
+    (tagpup.services.selection._not_binned). One read over the folders given; ids, sizes and paths."""
+    selected, params = library_view.selected_sql(conn, ids, None, ())
+    if selected is None or not folder_ids:
+        return {}
+    marks = ",".join("?" * len(folder_ids))
+    return {photo_id: (size, path, folder_id) for photo_id, size, path, folder_id in conn.execute(
+        "SELECT p.id, p.size, p.path, pf.folder_id FROM photo_folder pf JOIN photos p ON p.id = pf.photo_id"
+        " WHERE pf.folder_id IN (%s) AND pf.photo_id IN (%s) AND NOT %s" % (marks, selected, _CLIP_OVER),
+        tuple(folder_ids) + tuple(params) + (library_view.VIDEO, most_clip_bytes))}
+
+
 def _files(conn, folder_ids, condition, condition_args, most_named, ids, source, excluded):
     selected, params = library_view.selected_sql(conn, ids, source, excluded)
     if selected is None or not folder_ids:

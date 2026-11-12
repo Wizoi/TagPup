@@ -834,11 +834,12 @@ export function deleteActivePhoto() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(forGood ? { path, for_good: true } : { path })
     });
-    // A file its drive's Recycle Bin would not keep: the server named it and deleted nothing; asked, and only on OK, for good.
+    // A file its drive's Recycle Bin would not keep (or, from a share, this PC's full one: `bin_full`): the server named it and
+    // deleted nothing; asked, and only on OK, for good.
     const cancelled = { cancelled: true };
     send(false)
     .then(data => (!data.success && Array.isArray(data.not_kept)
-        ? (confirm(forGoodQuestion(data.not_kept, data.not_kept.length)) ? send(true) : cancelled) : data))
+        ? (confirm(forGoodQuestion(data.not_kept, data.not_kept.length, data.bin_full)) ? send(true) : cancelled) : data))
     .then(data => {
         if (data === cancelled) {
             statusDot.className = 'status-indicator-dot';
