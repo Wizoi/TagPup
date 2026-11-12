@@ -1,4 +1,4 @@
-"""A library's clips in an older format converted once to H.264 and AAC in an .mp4 (F38; ONE-OFF, deleted with
+"""A library's clips in an older format converted once to H.264 and AAC in an .mp4 (F18; ONE-OFF, deleted with
 scripts/convert_old_clips.py and tagpup/services/old_clip_convert.py after the owner's run, DECISIONS 2026-11-12).
 
 What the owner lives through: TagPup stopped, the script run dry, then `--apply --limit 1`, `--limit 5`, all; a run
