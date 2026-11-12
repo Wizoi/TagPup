@@ -217,6 +217,23 @@ class CutShort(AnOldClipInTheLibrary):
         ((made, before_it),) = recorded
         self.assertIn(made, before_it, "its copy flushed to its disk before it was recorded as made")
 
+    def test_the_time_its_copy_is_given_to_reach_its_disk_grows_with_the_copy(self):
+        # A large clip on a share takes longer to flush than 120 s would allow: refused, its ffmpeg minutes wasted.
+        asked = []
+        real_bounded = clip_convert.shares.bounded
+
+        def bounded(folder, call, seconds, **how):
+            asked.append(seconds)
+            return real_bounded(folder, call, seconds, **how)
+
+        with mock.patch.object(clip_convert.shares, "bounded", side_effect=bounded), \
+                mock.patch.object(clip_convert.os.path, "getsize", return_value=3 * 1024 ** 3):
+            temp = os.path.join(self.vl.pictures, "flush-probe.tmp")
+            with open(temp, "wb") as handle:
+                handle.write(b"x")
+            self.assertIsNone(clip_convert._flushed(temp))
+        self.assertEqual([clip_convert.VERIFY_SECONDS + 3 * 1024 ** 3 / clip_convert.READ_RATE], asked)
+
     def test_a_copy_its_disk_will_not_take_is_removed_the_original_kept_and_nothing_recorded(self):
         with mock.patch("os.fsync", side_effect=OSError(5, "Access is denied")):
             result = self.convert(self.source)

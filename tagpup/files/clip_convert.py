@@ -268,11 +268,17 @@ def _watched(child, readers, lines, said, source, temp, streams, progress, stop,
 def _flushed(temp):
     """None once what ffmpeg wrote to the temp at `temp` is on its disk (os.fsync: ffmpeg flushes nothing, and a power cut
     would leave a temp of the recorded name, file id and length holding short or zeroed bytes); else NOT_FLUSHED. One
-    bounded call (shares.bounded), not the share's look the next waits behind: its time is the file's size."""
+    bounded call (shares.bounded), not the share's look the next waits behind: its time is the file's size, so its bound is
+    VERIFY_SECONDS and a second for each READ_RATE bytes, as the other looks at the copy are (a 1.8 GB clip is not refused
+    for taking longer to reach a share's disk than a small one)."""
     def flush():
         with open(temp, "r+b") as handle:
             os.fsync(handle.fileno())
-    state, error = shares.bounded(os.path.dirname(temp), flush, VERIFY_SECONDS, waited_behind=False)
+    try:
+        wait = VERIFY_SECONDS + os.path.getsize(temp) / READ_RATE
+    except OSError as e:
+        return NOT_FLUSHED % (e.strerror or e)
+    state, error = shares.bounded(os.path.dirname(temp), flush, wait, waited_behind=False)
     if state == "ok":
         return None
     return NOT_FLUSHED % ("the share did not answer" if state == "away" else (error.strerror or error))
