@@ -49,13 +49,14 @@ EXIFTOOL = own_home.installed_exiftool()
 SAID = {"harbour.wmv": "Harbour at dusk", "jetty.wmv": "Jetty jumping", "launch.wmv": "Launch day"}
 
 
-def older(folder, name, picture=("-c:v", "wmv2"), sound=("-c:a", "wmav2")):
+def older(folder, name, picture=("-c:v", "wmv2"), sound=("-c:a", "wmav2"), created=None):
     """A one-second clip at `folder`/`name` of ffmpeg's test pattern and a tone, in an older format, with SAID's title
-    when it has one."""
+    when it has one, and its container's creation time `created` (ISO 8601) when given."""
     os.makedirs(folder, exist_ok=True)
     target = os.path.join(folder, name)
     title = SAID.get(name)
     described = ["-metadata", "title=" + title] if title else []
+    described += ["-metadata", "creation_time=" + created] if created else []
     made = processes.run([TOOLS.ffmpeg, "-y", "-loglevel", "error", "-f", "lavfi", "-i", "testsrc=size=160x120:rate=10",
                           "-f", "lavfi", "-i", "sine=frequency=440:sample_rate=22050", "-t", "1", "-pix_fmt", "yuv420p",
                           "-map_metadata", "-1"] + list(picture) + list(sound) + described + [target],
@@ -76,6 +77,8 @@ class OldClips(unittest.TestCase):
     (the home), and a photo in another folder under it (Pier): the setting of each scenario."""
 
     names = ("harbour.wmv",)
+    #: The creation time the clips' ASF header holds (None: none).
+    created = None
 
     def setUp(self):
         self.home = own_home.for_test(self, prefix="old_clips_")
@@ -87,7 +90,7 @@ class OldClips(unittest.TestCase):
         os.makedirs(self.folder)
         self.pier = os.path.join(self.home.root, "Pier")
         photo(os.path.join(self.pier, "sail.jpg"), (30, 30, 200))
-        self.made = {name: older(self.folder, name) for name in self.names}
+        self.made = {name: older(self.folder, name, created=self.created) for name in self.names}
         self.binned = []
         recycle_bin.forget_bin()
         self.addCleanup(recycle_bin.forget_bin)
@@ -119,6 +122,14 @@ class OldClips(unittest.TestCase):
         with contextlib.redirect_stdout(printed):
             code = script.main(["--library", self.library] + list(args))
         return code, printed.getvalue()
+
+    def taken(self, name):
+        """The Date Taken the library's row of the file `name` holds (None: undated)."""
+        conn = db.connect(db.readonly_uri(self.library), uri=True)
+        try:
+            return {os.path.basename(path): taken for path, taken in conn.execute("SELECT path, taken FROM photos")}[name]
+        finally:
+            conn.close()
 
     def rows(self):
         """{file name: (id, its captions as the row holds them)} as the library holds them."""
@@ -208,6 +219,25 @@ class OneClipEndToEnd(OldClips):
         self.assertIn("TagPup is running", said)
         self.assertEqual(["harbour.wmv"], self.listed())
         self.assertEqual([], self.binned)
+
+
+class AnUndatedClip(OldClips):
+    """A .wmv whose ASF header holds the time the file was made (387 of photo_index's 503 .wmv hold one, counted
+    2026-11-12; weeks to months after the capture): an older clip stays undated (DECISIONS 2026-11-09, item 6), and so
+    does its .mp4."""
+    created = "2004-06-15T10:20:30Z"
+
+    def test_the_mp4_of_a_wmv_holding_a_creation_time_is_indexed_undated(self):
+        self.assertIsNone(self.taken("harbour.wmv"), "the .wmv itself was dated")
+
+        code, said = self.run_script("--apply")
+
+        self.assertEqual(0, code, said)
+        self.assertEqual(["harbour.mp4"], self.listed())
+        result = CliRunner().invoke(tagpup_cli.cli, ["--db", self.library, "sync", "--apply"])
+        self.assertEqual(0, result.exit_code, result.output)
+        self.index()
+        self.assertIsNone(self.taken("harbour.mp4"), "the .wmv's ASF creation time was carried as a Date Taken")
 
 
 class KilledPartWay(OldClips):

@@ -9,8 +9,12 @@
 What it writes: the picture re-encoded to H.264 at CRF 23 (ffmpeg's default quality, the owner's choice: about half the
 size of the old formats), 4:2:0 so every browser decodes it; the sound to AAC at 160 kb/s, or copied when it is AAC
 already (the 11 .mp4 clips of photo_index whose picture is MPEG-4 Part 2 carry AAC sound, counted 2026-11-09); the
-container's own metadata (`-map_metadata 0`: its creation time, its title) and the index at the front (`+faststart`, so
-the player starts before the whole file has come over a share). The clip's XMP is not carried by ffmpeg: its tags, title
+container's own metadata (`-map_metadata 0`: its title) but NOT its creation time (`-metadata creation_time=`): a .wmv's
+ASF creation time is when the file was made, often weeks or months after the capture, and carried into the MP4's mvhd
+it is read as QuickTime:CreateDate, a Date Taken (tagpup.core.dates.CLIP_DATE_FIELDS), where an older clip stays undated
+(DECISIONS 2026-11-09, item 6); cleared, the MP4's QuickTime dates are all zero (measured on a generated .wmv carrying
+one, 2026-11-12). And the index at the front (`+faststart`, so the player starts before the whole file has come over a
+share). The clip's XMP is not carried by ffmpeg: its tags, title
 and kept name are written into the MP4 afterwards by the journaled write of a clip (tagpup.services.convert). Nor is a
 .wmv's caption, its ASF Description, which ffmpeg maps to the MP4's Comment, a field the reader does not read as a caption
 (measured on a generated .wmv, 2026-11-12; 45 photo_index .wmv rows hold one): the caller gives it (`description`) and it
@@ -58,6 +62,8 @@ SUFFIX = ".tagpup-convert"
 
 #: The picture: H.264 at CRF 23, ffmpeg's default (owner, 2026-11-09), 4:2:0 for every browser's decoder.
 VIDEO = ("-c:v", "libx264", "-crf", "23", "-preset", "medium", "-pix_fmt", "yuv420p")
+#: The container's metadata carried (its title), its creation time cleared: never a Date Taken (the module).
+METADATA = ("-map_metadata", "0", "-metadata", "creation_time=")
 #: The sound, re-encoded; or copied when it is one of COPIED_AUDIO.
 AUDIO = ("-c:a", "aac", "-b:a", "160k")
 COPIED_AUDIO = frozenset({"aac"})
@@ -148,7 +154,7 @@ def arguments(tools, source, temp, audio, description=""):
     described = ["-metadata", "description=" + description] if description else []
     return ([tools.ffmpeg, "-hide_banner", "-nostdin", "-nostats", "-v", "error", "-y", "-i", source,
              "-map", "0:V:0", "-map", "0:a:0?", "-sn", "-dn"] + list(VIDEO) + list(sound)
-            + ["-map_metadata", "0"] + described + ["-movflags", "+faststart", "-progress", "pipe:1", "-f", "mp4", temp])
+            + list(METADATA) + described + ["-movflags", "+faststart", "-progress", "pipe:1", "-f", "mp4", temp])
 
 
 def convert(tools, source, temp, streams, progress=None, stop=None, deadline=None, stall=STALL, description=""):
