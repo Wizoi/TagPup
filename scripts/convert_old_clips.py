@@ -5,9 +5,9 @@ into place). ONE-OFF: deleted after the owner's run; the journaled conversion be
 
 Dry run by default: the library opened read-only, every clip looked at, nothing written; it says how many by format,
 their size, how many have their .mp4's name taken, a temp or a verified temp left by an earlier run, and the room the
-run needs. With --apply, refused while TagPup runs or another run of it works on the library; a snapshot of the
-library first (one a day); then a line for each clip as it is done (its id, its format, the time so far, its size
-before and after), and about every 30 s while one converts, how far it has come (the largest may take 20 minutes). Ctrl+C stops the conversion under
+run needs. With --apply, refused while TagPup runs; a snapshot of the library first (one a day); then a line for each
+clip as it is done (its id, its format, the time so far, its size before and after), and about every 30 s while one
+converts, how far it has come (the largest may take 20 minutes). Ctrl+C stops the conversion under
 way (its temp removed; the original as it was) and starts nothing new; run it again to continue. A delete refused stops
 the run, the original and its verified copy kept: by the Recycle Bin, empty it, then run it again; else run it again.
 
@@ -40,7 +40,6 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import _root  # noqa: E402,F401
 from tagpup import config as tagpup_config  # noqa: E402
 from tagpup import launcher  # noqa: E402
-from tagpup.core import byte_lock  # noqa: E402
 from tagpup.core.library import Library  # noqa: E402
 from tagpup.jobs import watching  # noqa: E402
 from tagpup.services import old_clip_convert as old, snapshots  # noqa: E402
@@ -62,10 +61,6 @@ PICTURES = ("A picture with a video extension: left as it is (%d): a JPEG file n
             "as a clip; nothing here changes it.")
 WROTE = ("Wrote %d clip(s): the original gone and the .mp4 in place; %d not converted (each said above, or passed over "
          "as counted in the first line).")
-ANOTHER_RUN = "Not run: another run of this script is working on this library. Let it finish, or stop it, first."
-#: The lock a run with --apply holds beside the library's file, for as long as it runs (the system lets it go however
-#: the run ends): two runs never convert, delete or rename one clip at once.
-LOCK_SUFFIX = ".convert-old-clips.lock"
 MB = 1024 * 1024
 
 
@@ -91,25 +86,11 @@ def run(db_path, apply, out, limit=None, ids=None, also_part_2=False, stop=None)
     if not os.path.isfile(db_path):
         out("%s: there is no library at the path given." % name)
         return 1
-    held = None
     if apply:
         servers = launcher.running()
         if servers:
             out(APP_RUNNING % len(servers))
             return 1
-        held = byte_lock.Lock(db_path + LOCK_SUFFIX)
-        if not held.acquire():
-            out(ANOTHER_RUN)
-            return 1
-    try:
-        return _converted(db_path, name, apply, out, limit, ids, also_part_2, stop)
-    finally:
-        if held is not None:
-            held.release()
-
-
-def _converted(db_path, name, apply, out, limit, ids, also_part_2, stop):
-    """run's work once it may begin (with --apply, its lock held)."""
     tools = tagpup_config.locate_ffmpeg()
     if tools.problem:
         out("Not run: %s" % tools.problem)

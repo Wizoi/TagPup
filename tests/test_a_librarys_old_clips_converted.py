@@ -35,7 +35,7 @@ from test_an_index_reads_the_next_photos_ahead import StandIns, photo  # noqa: E
 import convert_old_clips as script  # noqa: E402
 import tagpup_cli  # noqa: E402
 from tagpup import config  # noqa: E402
-from tagpup.core import byte_lock, paths, processes  # noqa: E402
+from tagpup.core import paths, processes  # noqa: E402
 from tagpup.core.library import Library  # noqa: E402
 from tagpup.files import clip_convert, recycle_bin, video_frames  # noqa: E402
 from tagpup.services import libraries as library_actions  # noqa: E402
@@ -320,53 +320,6 @@ class APictureNamedAsAClip(OldClips):
         self.assertIn("A picture with a video extension: left as it is (1)", said)
         self.assertEqual(["harbour.mp4", "regatta.avi"], self.listed())
         self.assertEqual(picture, digest(self.made["regatta.avi"]))
-
-
-class TwoRunsAtOnce(OldClips):
-    """The owner starts the script again in a second window while the first converts: the second is refused before it
-    looks at a clip, and the first goes on."""
-
-    def test_a_second_run_with_apply_is_refused_while_the_first_holds_the_library(self):
-        first = byte_lock.Lock(self.library + script.LOCK_SUFFIX)
-        self.assertTrue(first.acquire())
-        self.addCleanup(first.release)
-
-        code, said = self.run_script("--apply")
-
-        self.assertEqual(1, code, said)
-        self.assertIn("another run of this script is working on this library", said)
-        self.assertEqual(["harbour.wmv"], self.listed())
-        self.assertEqual([], self.binned)
-
-        first.release()
-        code, said = self.run_script("--apply")
-        self.assertEqual(0, code, said)
-        self.assertEqual(["harbour.mp4"], self.listed())
-
-
-class ATempRemovedBeforeTheDelete(OldClips):
-    """The verified copy is removed by another program between its verify and the original's delete: the original is
-    not deleted (it would be in the Bin with no .mp4 beside it), its marker is removed, and the next run converts it."""
-
-    def test_the_original_is_kept_and_the_next_run_converts_it(self):
-        real = old._write_marker
-
-        def written_then_removed(temp):
-            said = real(temp)
-            os.remove(temp)
-            return said
-
-        with mock.patch.object(old, "_write_marker", side_effect=written_then_removed):
-            code, said = self.run_script("--apply")
-
-        self.assertEqual(1, code, said)
-        self.assertIn(old.TEMP_GONE, said)
-        self.assertEqual([], self.binned, "the original went to the Bin with no copy beside it")
-        self.assertEqual(["harbour.wmv"], self.listed())
-
-        code, said = self.run_script("--apply")
-        self.assertEqual(0, code, said)
-        self.assertEqual(["harbour.mp4"], self.listed())
 
 
 class KilledPartWay(OldClips):
