@@ -5,9 +5,9 @@ Windows block in the same patch: Explorer's Tags column goes blank for the clips
 was tagged, not taken) is not copied anywhere. One time only: nothing reads a clip's Windows Tags after it.
 
 A clip holding a Windows tag the tag tree does not hold is left as it is and counted (--show names it and its texts);
-add the tag to the tree, or leave it. So is a clip holding a Windows tag that is a branch of the tree (Trips, when the tree
-has Trips/Coast) or, under a people root, no person: a tag is put on a clip as a leaf. A clip is moved whole or left
-whole: one holding a leaf beside such a tag keeps all its Windows Tags. A clip holding no Windows Tags is left alone.
+add the tag to the tree, or leave it. So is a clip holding a Windows tag that is, under a people root, no person. A
+branch of the tree (Trips, when the tree has Trips/Coast) is a tag like another and moves (owner, 2026-11-12). A clip is
+moved whole or left whole: one holding a person beside such a tag keeps all its Windows Tags. A clip holding no Windows Tags is left alone.
 
 Dry run by default: every clip is read (ExifTool, read-only, the library opened read-only, nothing written, no change
 an earlier run left half done settled) and the counts said. With --apply, refused while TagPup runs; a snapshot of the
@@ -104,8 +104,8 @@ def shown(surveyed, out):
     asked for)."""
     for photo_id, texts in surveyed.not_in_tree:
         out("not in the tree: clip %d: %s" % (photo_id, "; ".join(texts)))
-    for photo_id, texts in surveyed.not_a_leaf:
-        out("a branch or non-person tag: clip %d: %s" % (photo_id, "; ".join(texts)))
+    for photo_id, texts in surveyed.not_a_person:
+        out("a non-person tag under People: clip %d: %s" % (photo_id, "; ".join(texts)))
     for what, ids in (("unreadable", surveyed.unreadable), ("away", surveyed.away)):
         if ids:
             out("%s: clips %s" % (what, ", ".join(map(str, ids))))
@@ -164,8 +164,8 @@ def run(db_path, apply, out, show=False, limit=None, ids=None):
             shown(surveyed, out)
         if not apply:
             out("A dry run: nothing was written. --apply moves the Windows Tags of %d clip(s) into their XMP (%d tag(s) "
-                "added) and frees their Windows block; a clip holding a tag not in the tree, or a branch or non-person "
-                "tag, is left as it is. The first "
+                "added) and frees their Windows block; a clip holding a tag not in the tree, or a non-person tag "
+                "under People, is left as it is. The first "
                 "run: --apply --limit 5, then --limit 50, then all." % (len(surveyed.to_move), surveyed.tags))
             return 0
         result = windows_tags.move(library, exiftool, surveyed, limit=limit, on_planned=progress.planned,
@@ -178,11 +178,11 @@ def run(db_path, apply, out, show=False, limit=None, ids=None):
             signal.signal(signal.SIGINT, before)
     counts = result.details["counts"]
     out("Moved: wrote %d clip file(s), %d tag(s) added. Left alone: %d with no Windows Tags any more, %d with a tag not "
-        "in the tree, %d with a branch or non-person tag, %d unreadable, %d away (their network share did not answer). "
+        "in the tree, %d with a non-person tag under People, %d unreadable, %d away (their network share did not answer). "
         "Refused by the writer (open in another program): %d. Conflicts: %d (changed since they were read; not "
         "written). Failed: %d."
         % (counts["wrote"], counts["tags added"], counts["no Windows Tags"], counts["a tag not in the tree"],
-           counts["a branch or non-person tag"], counts["unreadable"], counts["away"], counts["refused"],
+           counts["a non-person tag under People"], counts["unreadable"], counts["away"], counts["refused"],
            counts["conflicts"], counts["failed"]))
     if result.refused:
         out("Refused: %s" % result.refused)
@@ -204,7 +204,7 @@ def main(argv=None):
     parser.add_argument("--library", required=True, help="the library: its name in the data folder, or its .db file")
     parser.add_argument("--apply", action="store_true", help="write the clips; without it, read them and count")
     parser.add_argument("--show", action="store_true",
-                        help="name the clips by id, and the tags not in the tree or not a leaf")
+                        help="name the clips by id, and the tags not in the tree or no person under People")
     parser.add_argument("--limit", type=int, help="with --apply, move the first N clips to move (by id)")
     parser.add_argument("--ids", help="only these clips: ids, comma-separated")
     args = parser.parse_args(argv)
