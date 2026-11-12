@@ -54,6 +54,7 @@ SCENARIO = frozenset({
     "test_a_clip_dated_through_the_journal",
     "test_a_clip_renamed",
     "test_a_clip_deleted",
+    "test_a_clip_converted",
     "test_a_librarys_old_clips_converted",
     "test_an_adobe_clip_packet_edited_and_read_back",
     "test_time_shift",

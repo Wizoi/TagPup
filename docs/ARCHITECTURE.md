@@ -309,7 +309,10 @@ restore are AUTOINCREMENT (never reused). `History`/`undo` are in the CLI and th
 
 **One batch model** (`tagpup/services/batches.py`, `file_changes.write_fields`; owner, 2026-10-11). A batch of photo files -- more
 than 25 -- is the journaled change `write_fields` plans: its files' states in `change_files` are its progress, there is no table and
-no thread, and the request stays synchronous. It takes a claim (one batch at a time in a process, whichever library; eight may wait,
+no thread, and the request stays synchronous -- but for two the server carries out on a thread it owns, the request
+returning at once: a settle at a library's first open, and a clip's conversion (the panel's Convert and Make smaller (MP4),
+`convert.start`: a batch of one, minutes of ffmpeg that a closed tab must not lose; its ticket on the Activity strip, its end
+read at `/api/clip/converted`; a bulk edit asked meanwhile waits behind it, the strip showing its place). It takes a claim (one batch at a time in a process, whichever library; eight may wait,
 the next is refused saying how many are ahead; a waiting batch is lost by a restart, having written nothing), is refused above 5,000
 photos (`batches.MAX_BATCH`) unless it is the tag tree's rewrite (rename, delete, merge, a person's rename: no cap), and is written 25
 files a chunk: between chunks a writer that waits for the lock of changes of photo files is let in, and a batch asked to stop (Cancel

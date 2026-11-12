@@ -68,6 +68,11 @@ INTERNAL = (INDEX_BAKE,)
 #: library are sought by their change (its index), not scanned: 51,451 rows in photo_index, 85 ms warm and 6 s cold, of
 #: which 9 are renames (counted 2026-10-29); every rename-holding change of the three libraries is a "smart rename".
 RENAMES = ("smart rename", "rename after caption")
+#: The operation of a clip's conversion (tagpup.services.convert): one file, its path the original's, its new_path the
+#: converted clip's (None when the name is the same); fields_before the original's fingerprint, fields_after what the
+#: conversion carries and, once made, the converted copy's fingerprint (`made`). Settled by tagpup.services.convert alone
+#: (file_changes._finish), never undone (tagpup.services.journal.UNDO_CHECKS): the original is deleted for good.
+CONVERT = "convert"
 
 
 def not_internal(column):

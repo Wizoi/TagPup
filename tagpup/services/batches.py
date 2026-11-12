@@ -2,9 +2,12 @@
 "One batch model"; DECISIONS 2026-10-11).
 
 A batch is the change `file_changes.write_fields` plans: its files' states in `change_files` (planned, writing, done, conflict) ARE
-its progress, so there is no table and no thread of its own; the request that asked for it stays synchronous and is its place in line.
+its progress, so there is no table and no thread of its own; the request that asked for it stays synchronous and is its place in line. Two
+are carried out on a thread the server owns, the request returning at once: a settle at a library's first open
+(file_changes.settle_once) and a clip's conversion, a batch of one (tagpup.services.convert.start: minutes of ffmpeg, which a
+closed tab must not lose; the panel reads its place in line here and its end from the conversion).
 
-* **Claim.** More than CHUNK photos are a batch (`claim`). One runs at a time in a process, whichever library: two libraries can hold
+* **Claim.** More than CHUNK photos are a batch (`claim`), and a clip's conversion. One runs at a time in a process, whichever library: two libraries can hold
   one folder, and two batches planned from the files before the other wrote them. The next waits its turn, at most MOST_WAITING of
   them; one more is refused, saying how many are ahead. A batch still waiting when the server restarts is lost, by design: it had
   written nothing. Single saves and small writes are not batches; they wait on the lock of changes of photo files as always.
@@ -47,7 +50,7 @@ class Batch:
         self.stop = threading.Event()
         self.started = None
         self.change_id = None
-        #: The thread that claimed it, which carries it out: a request's, or the settle thread's (no request).
+        #: The thread that claimed it, which carries it out: a request's, or the settle's or a conversion's (no request).
         self.thread = threading.get_ident()
 
     @property
@@ -70,12 +73,13 @@ def current():
 
 
 @contextlib.contextmanager
-def claim(library, operation, photos, wait=True, change_id=None):
+def claim(library, operation, photos, wait=True, change_id=None, on_line=None):
     """Wait for this process's turn to carry out a batch of `photos` photos, and hold it. Conflict, nothing begun, when MOST_WAITING
     are waiting already; Refused when it was cancelled while it waited. Inside a batch's own claim it is that batch. Without `wait`
     (a caller holding the lock of changes of photo files, which the batch ahead needs) any batch ahead is a Conflict at once.
     `change_id`: the journal's change it carries out, known before it waits (a settle's: file_changes._settle_in_turn), so that
-    listing names it once, waiting."""
+    listing names it once, waiting. `on_line(batch)`: told the batch once it is in the line, before it waits (a conversion's
+    request answers with its ticket then, tagpup.services.convert.start)."""
     if current() is not None:
         yield current()
         return
@@ -88,6 +92,8 @@ def claim(library, operation, photos, wait=True, change_id=None):
             raise Conflict("%d photo batches are ahead of this one (one running, %d waiting). Try again when one has finished."
                            % (len(_line), len(_line) - 1))
         _line.append(batch)
+        if on_line is not None:
+            on_line(batch)
         if _closing:
             batch.stop.set()
         try:

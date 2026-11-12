@@ -26,6 +26,8 @@ NOT_WAITED_FOR = {
     "tagpup.jobs.watching": "the folder watcher is one of Background's tasks, stopped by the drain the same way",
     "tagpup.services.file_changes": "a settle on a thread is a batch, asked through batches (under_way's batches.sentences; "
                                     "a drain's batches.stop_all stops it at its chunk, or before it begins)",
+    "tagpup.services.convert": "a conversion's thread carries a batch of one, asked through batches as a settle's is (its "
+                               "stop is ffmpeg's: batches.stop_all kills ffmpeg, the original kept)",
 }
 
 #: Modules whose work `under_way` reads from the runtime it is handed, not by calling the module: {module: (the argument of

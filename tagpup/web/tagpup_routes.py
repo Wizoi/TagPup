@@ -26,6 +26,7 @@ from tagpup.core import fields, paths, renaming, vocabulary
 from tagpup.core.library import picker_name
 from tagpup.jobs import suggestions as suggestion_jobs
 from tagpup.services import bulk_edit
+from tagpup.services import convert as clip_conversion
 from tagpup.services import file_changes, file_only
 from tagpup.services import libraries as library_actions
 from tagpup.services import library_view
@@ -834,6 +835,81 @@ def clip_convert_plan():
         logger.error("Error asking what video %s needs to play: %s", photo_id, e, exc_info=True)
         return responses.error(500, "What the video needs to play could not be read (%s); the server's log says why."
                                % type(e).__name__)
+
+
+@routes.post("/api/clip/convert")
+def clip_convert_start():
+    """The panel's Convert (`mode` "convert", a clip that does not play) and Make smaller (MP4) (`mode` "shrink", one that
+    does) of one clip, by its id: tagpup.services.convert.start, a batch of one on a thread of the server, answered at once
+    with its `ticket` (the Activity strip lists it, Cancel by it); /api/clip/converted?ticket= says how it ended. Body
+    {"id", "mode", "stamp": {"mtime", "size"}}. The panel's confirm is convert-plan's `replaces`."""
+    library = state.require()
+    body = request.get_json(silent=True) or {}
+    photo_id, mode = body.get("id"), body.get("mode")
+    if type(photo_id) is not int or mode not in clip_conversion.MODES:
+        return responses.error(400, 'id must be a whole number, and mode "convert" or "shrink".')
+    stamp, why = _stamp_of(body.get("stamp"))
+    if why or stamp is None:
+        return responses.error(400, why or 'stamp must be {"mtime": number, "size": number}.')
+    try:
+        result = clip_conversion.start(library, state.exiftool(library), config.locate_ffmpeg, photo_id, mode, stamp,
+                                       done=lambda source, how: _clip_converted(library, source, how))
+    except responses.ANSWERED as why:
+        return responses.of(why)
+    except Exception as e:
+        logger.error("Error starting the conversion of video %s: %s", photo_id, e, exc_info=True)
+        return responses.error(500, "The video could not be converted (%s); the server's log says why." % type(e).__name__)
+    if result.refused:
+        return responses.refused(result)
+    return jsonify({"success": True, "ticket": result.details["ticket"], "library": library.name})
+
+
+@routes.get("/api/clip/converted")
+def clip_converted():
+    """How the conversion `ticket` (POST /api/clip/convert) ended: {"done": false} while it is under way; else {"done":
+    true} and what _clip_converted made of it. 404 for a ticket this server has none of."""
+    library = state.require()
+    ticket = request.args.get("ticket", "")
+    if not (ticket.isascii() and ticket.isdigit()):
+        return responses.error(400, "ticket must be a whole number")
+    try:
+        ended = clip_conversion.outcome(library, int(ticket))
+    except responses.ANSWERED as why:
+        return responses.of(why)
+    return jsonify({"done": False} if ended is None else {"done": True, **ended})
+
+
+def _clip_converted(library, source, how):
+    """What the panel reads of a conversion of the clip at `source` that ended, `how` (convert.start's `done`, on its
+    thread): convert_clip's Result, or what it raised. Converted: the folder maps follow it to its MP4 and take its stamp,
+    and Suggest's looks are kept under the new name, as a Smart Rename does: {"success": true, "new_path", "renamed",
+    "size_before", "size_after", "mtime", "size", "original_kept"?}. Refused: {"success": false, "error",
+    "changed_on_disk"?, "size_before"?, "size_after"?}."""
+    if isinstance(how, BaseException):
+        if isinstance(how, responses.ANSWERED):
+            return {"success": False, "error": str(how)}
+        logger.error("Error converting %s: %s", source, how, exc_info=how)
+        return {"success": False, "error": "The video could not be converted (%s); the server's log says why."
+                % type(how).__name__}
+    sizes = {key: how.details[key] for key in ("size_before", "size_after") if key in how.details}
+    if not how.changed:
+        return {"success": False, "error": how.message(), **responses.STATUS[how.refused_kind][1], **sizes}
+    new_path = how.details["path"]
+    renamed = not paths.same(source, new_path)
+    if renamed:
+        # What Suggest only looked at is kept under the names the files had (#547, #2415).
+        suggestion_jobs.runs_for(library).renamed({source: new_path})
+        records = _renamed_in_folders(library, source, new_path)
+    else:
+        records = [record for _held, record in folders.of(library).entries_for(source)]
+    written_stamp = photo_actions.file_stamp(new_path)
+    for record in records:
+        if written_stamp:
+            record["mtime"], record["size"] = written_stamp
+    reply = {"success": True, "new_path": new_path, "renamed": renamed, **sizes, **_stamp_reply(new_path)}
+    if how.details.get("original_kept"):
+        reply["original_kept"] = how.details["original_kept"]
+    return reply
 
 
 @routes.post("/api/photo/open-explorer")

@@ -333,7 +333,7 @@ def clip_plan(library, photo_id, find_ffmpeg):
     if held.problem:
         raise (Refused if held.whose == video_frames.THE_FILE else Unavailable)(held.problem)
     plan = convertible.plan_for(os.path.splitext(found.path)[1], held.video, held.audio)
-    return {"action": plan.action, "sentence": plan.reason}
+    return {"action": plan.action, "sentence": plan.reason, "replaces": convertible.REPLACES[plan.action]}
 
 
 def video_bytes(video, start, length):

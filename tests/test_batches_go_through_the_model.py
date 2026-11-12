@@ -50,6 +50,12 @@ SMALL = {
     "/api/photo/automatch": "one photo",
     "/api/photo/unmatch-all": "one photo",
     "/api/photo/rotate": "one photo; photos.rotate_photos takes any number through the same claim and chunks (no route sends more)",
+    # A route that settles the changes a crash left (file_changes.settle) reaches write_fields through the settle of a
+    # conversion cut short (convert.settle_change: one clip's carry, tagpup.services.convert.convert_clip's change).
+    "/api/folder/suggest-start": "the settle of a conversion cut short: one clip's carry (convert_clip's change)",
+    "/api/history/<int:change_id>/undo": "the settle of a conversion cut short: one clip's carry (convert_clip's change)",
+    "/api/settings": "the settle of a conversion cut short: one clip's carry (convert_clip's change)",
+    "/api/clip/convert": "one clip's carry into its MP4, inside the conversion's own batch of one (convert.start)",
 }
 
 

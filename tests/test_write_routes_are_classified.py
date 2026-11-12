@@ -52,6 +52,8 @@ ALLOWED = {
     "/api/folder/rename-photos": "renames files and re-points the photo row by id; faces, tags and vectors follow the photo id, "
                                  "which the plan and the apply are keyed by",
     "/api/photo/smart-rename": "one photo's Smart Rename (photos.smart_rename_one): rename-photos' renaming for a batch of one",
+    "/api/clip/convert": "converts one clip's file into an MP4 (tagpup.services.convert, a batch of one): its row moved by "
+                         "id, the tags, title and kept name it held carried; the same pictures, as a rotate's are",
     "/api/photo/rotate": "turns the file's Orientation (a TIFF's boxes too) and drops the photo's vectors; no name, tag or "
                          "exclusion, which are the columns the apply expects; a name decided from the vectors stays true of the same pixels",
 }

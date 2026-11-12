@@ -309,7 +309,7 @@ class XmpIsTheCopyRead(FilesCase):
 
     def test_a_photo_a_rename_cannot_write_is_an_error_and_keeps_its_tag_in_its_file_and_row(self):
         # ExifTool refuses the write for a scratch file in its way, which another write may own
-        # (file_changes._removed_scratch).
+        # (file_changes.removed_scratch).
         a = self.made("a.jpg", {"XMP:Subject": ["Beach"]})
         with open(exiftool_session.scratch_of(a), "wb") as handle:
             handle.write(b"left by another write")

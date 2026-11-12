@@ -9,13 +9,19 @@
 What it writes: the picture re-encoded to H.264 at CRF 23 (ffmpeg's default quality, the owner's choice: about half the
 size of the old formats), 4:2:0 so every browser decodes it; the sound to AAC at 160 kb/s, or copied when it is AAC
 already (the 11 .mp4 clips of photo_index whose picture is MPEG-4 Part 2 carry AAC sound, counted 2026-11-09); the
-container's own metadata (`-map_metadata 0`: its title) but NOT its creation time (`-metadata creation_time=`): a .wmv's
-ASF creation time is when the file was made, often weeks or months after the capture, and carried into the MP4's mvhd
-it is read as QuickTime:CreateDate, a Date Taken (tagpup.core.dates.CLIP_DATE_FIELDS), where an older clip stays undated
-(DECISIONS 2026-11-09, item 6); cleared, the MP4's QuickTime dates are all zero (measured on a generated .wmv carrying
-one, 2026-11-12). And the index at the front (`+faststart`, so the player starts before the whole file has come over a
+container's own metadata (`-map_metadata 0`: its title, and its creation time when it is the clip's Date Taken). The
+creation time is kept only from a container whose creation time IS one (DATED_TYPES: an MP4's or a .mov's mvhd, read as
+QuickTime:CreateDate, tagpup.core.dates.CLIP_DATE_FIELDS: every dated .mov of photo_index, 1,123, and 1,020 of its
+1,680 .mp4 are dated by it, counted 2026-11-12), so a clip made smaller keeps the date other programs read. Any other's
+is cleared (`-metadata creation_time=`, UNDATED): a .wmv's ASF creation time is when the file was made, often weeks or
+months after the capture, and carried into the MP4's mvhd it would be read as a Date Taken, where an older clip stays
+undated (DECISIONS 2026-11-09, item 6); cleared, the MP4's QuickTime dates are all zero (measured on a generated .wmv
+carrying one, 2026-11-12). The Date Taken the library reads is carried by the caller as well, into the copy's XMP
+(tagpup.services.convert: an XMP date, or a .mov's Apple CreationDate, an MP4 does not keep). And the index at the front (`+faststart`, so the player starts before the whole file has come over a
 share). The clip's XMP is not carried by ffmpeg: its tags, title
-and kept name are written into the MP4 afterwards by the journaled write of a clip (tagpup.services.convert). An MP4 made
+and kept name are written into the MP4 afterwards by the journaled write of a clip (tagpup.services.convert). No
+caption is carried: none of the 2,833 clips of photo_index holds one (its Description blank in every row, counted
+2026-11-12), and a clip's journaled write names none (fields.CLIP_WRITES). An MP4 made
 so takes that XMP by a patch in place: it holds no XMP box, its moov before mdat, so the packet is appended at its end in a uuid box (tagpup.files.clip_patch, case 4; measured on a
 generated clip of each old format, 2026-11-12).
 
@@ -46,6 +52,12 @@ whole, not from a seek near the end: ffprobe's seek in an ASF file found no pack
 the share and on a local copy alike, where the whole read gave one answer every time; the whole read is a second read
 of the original, after ffmpeg's (on the share, 1.8 GB in about 4 minutes cold, 2 s once read).
 
+On its disk before it is the caller's: ffmpeg does not flush what it wrote, so once it ended the temp is flushed
+(_flushed: one fsync, bounded on a share); one its disk will not take is a problem like any other (NOT_FLUSHED), the
+temp removed. The caller records the copy (its file id and size, `made`) only after convert and verified answered None,
+so a record of it names bytes on the disk: after a power cut, the next start's settle finds the temp it names whole, and
+may put it in place and delete the original by its file id alone, without reading it again (tagpup.services.convert).
+
 Two at once share nothing but the folder: a second conversion of the same clip finds the temp claimed and is refused by
 its caller before ffmpeg runs (tagpup.services.convert).
 """
@@ -59,7 +71,7 @@ import time
 from typing import Optional
 
 from tagpup.core import processes
-from tagpup.files import shares, video_frames
+from tagpup.files import images, shares, video_frames
 from tagpup.files.exiftool_session import unnamed
 
 logger = logging.getLogger(__name__)
@@ -70,8 +82,13 @@ SUFFIX = ".tagpup-convert"
 
 #: The picture: H.264 at CRF 23, ffmpeg's default (owner, 2026-11-09), 4:2:0 for every browser's decoder.
 VIDEO = ("-c:v", "libx264", "-crf", "23", "-preset", "medium", "-pix_fmt", "yuv420p")
-#: The container's metadata carried (its title), its creation time cleared: never a Date Taken (the module).
-METADATA = ("-map_metadata", "0", "-metadata", "creation_time=")
+#: The container's metadata carried: its title, and its creation time (the module).
+METADATA = ("-map_metadata", "0")
+#: The containers whose creation time is the clip's Date Taken, by tagpup.files.images.VIDEO_TYPES's type: an MP4's or a
+#: .mov's (an .m4v's too), kept in its copy. Another's is cleared (UNDATED).
+DATED_TYPES = frozenset({"video/mp4", "video/quicktime"})
+#: The creation time of a container not of DATED_TYPES cleared: never a Date Taken (the module).
+UNDATED = ("-metadata", "creation_time=")
 #: The sound, re-encoded; or copied when it is one of COPIED_AUDIO.
 AUDIO = ("-c:a", "aac", "-b:a", "160k")
 COPIED_AUDIO = frozenset({"aac"})
@@ -103,6 +120,7 @@ STUCK = "ffmpeg made no progress for %d s (a share that stopped answering?) and 
 TOO_LONG = "the conversion passed its deadline and was stopped; the original is as it was"
 FAILED = "ffmpeg could not convert it (%s); the original is as it was"
 NOT_STARTED = "ffmpeg could not be started (%s); the original is as it was"
+NOT_FLUSHED = "its converted copy could not be written to its disk (%s); the original is as it was"
 TEMP_LEFT = " Its unfinished copy could not be removed just now (%s); it is removed when the change is settled."
 NO_ROOM = ("there is not room for its converted copy on the original's drive: about {:,} MB needed, {:,} MB free (1 GB "
            "kept spare); nothing was converted")
@@ -159,16 +177,19 @@ def arguments(tools, source, temp, audio):
     """ffmpeg's arguments to convert `source` into `temp` (claimed: written over), whose sound is of codec `audio` (None:
     none)."""
     sound = ("-c:a", "copy") if audio in COPIED_AUDIO else AUDIO
+    dated = images.VIDEO_TYPES.get(os.path.splitext(source)[1].lower()) in DATED_TYPES
     return ([tools.ffmpeg, "-hide_banner", "-nostdin", "-nostats", "-v", "error", "-y", "-i", source,
              "-map", "0:V:0", "-map", "0:a:0?", "-sn", "-dn"] + list(VIDEO) + list(sound)
-            + list(METADATA) + ["-movflags", "+faststart", "-progress", "pipe:1", "-f", "mp4", temp])
+            + list(METADATA) + ([] if dated else list(UNDATED))
+            + ["-movflags", "+faststart", "-progress", "pipe:1", "-f", "mp4", temp])
 
 
 def convert(tools, source, temp, streams, progress=None, stop=None, deadline=None, stall=STALL):
     """Convert the clip at `source` into `temp` (see the module). `streams` is video_frames.streams of the source, read
     by the caller (its sound decides copy or re-encode; its duration is the whole progress is told against). `progress(done,
     whole)` is told seconds converted and the whole; `stop` an Event asked between progress lines; `deadline` a
-    time.monotonic() after which it is stopped. `temp` is claimed by the caller (claimed). Returns None when ffmpeg finished and the temp is there to verify, else the problem,
+    time.monotonic() after which it is stopped. `temp` is claimed by the caller (claimed). Returns None when ffmpeg finished
+    and the temp is on its disk (_flushed) to verify, else the problem,
     the temp removed (or TEMP_LEFT said)."""
     args = arguments(tools, source, temp, streams.audio)
     try:
@@ -237,9 +258,30 @@ def _watched(child, readers, lines, said, source, temp, streams, progress, stop,
         logger.info("ffmpeg could not convert a clip: %s", unnamed(last_said[-1], [source, temp]) if last_said else
                     "it said nothing")
         problem = FAILED % ("exit code %s" % child.returncode)
+    if problem is None:
+        problem = _flushed(temp)
     if problem:
         return problem + (removed(temp) or "")
     return None
+
+
+def _flushed(temp):
+    """None once what ffmpeg wrote to the temp at `temp` is on its disk (os.fsync: ffmpeg flushes nothing, and a power cut
+    would leave a temp of the recorded name, file id and length holding short or zeroed bytes); else NOT_FLUSHED. One
+    bounded call (shares.bounded), not the share's look the next waits behind: its time is the file's size, so its bound is
+    VERIFY_SECONDS and a second for each READ_RATE bytes, as the other looks at the copy are (a 1.8 GB clip is not refused
+    for taking longer to reach a share's disk than a small one)."""
+    def flush():
+        with open(temp, "r+b") as handle:
+            os.fsync(handle.fileno())
+    stamp = shares.stamp_of(temp)
+    if not isinstance(stamp, tuple):
+        return NOT_FLUSHED % "the share did not answer"
+    wait = VERIFY_SECONDS + stamp[1] / READ_RATE
+    state, error = shares.bounded(os.path.dirname(temp), flush, wait, waited_behind=False)
+    if state == "ok":
+        return None
+    return NOT_FLUSHED % ("the share did not answer" if state == "away" else (error.strerror or error))
 
 
 def _lines(stream, into):

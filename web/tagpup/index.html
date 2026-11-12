@@ -181,6 +181,11 @@
                                     <button id="btn-rotate-left" class="btn btn-secondary btn-sm" title="Rotate 90° Left">🔄 Rotate Left</button>
                                     <button id="btn-rotate-right" class="btn btn-secondary btn-sm" title="Rotate 90° Right">🔄 Rotate Right</button>
                                 </span>
+                                <!-- A clip's conversion to an MP4, each button shown when its plan offers it (web/tagpup/clip-convert.js). -->
+                                <button id="btn-clip-convert" class="btn btn-secondary btn-sm hidden" title="Convert this clip to an MP4 this browser plays">Convert</button>
+                                <button id="btn-clip-shrink" class="btn btn-secondary btn-sm hidden" title="Convert this clip to a smaller MP4">Make smaller (MP4)</button>
+                                <span id="clip-convert-note" class="clip-convert-note hidden" role="status"></span>
+                                <button id="btn-clip-convert-cancel" class="btn btn-secondary btn-sm hidden" title="Stop this conversion: the clip is left as it is">Cancel</button>
                                 <button id="btn-delete-photo" data-deletes class="btn btn-danger btn-sm" title="Delete (Move to Recycle Bin)">🗑️ Delete</button>
                             </div>
                         </div>

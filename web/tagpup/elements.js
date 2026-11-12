@@ -101,6 +101,11 @@ export const faceLayer = document.getElementById('face-layer');
 export const btnRotateLeft = document.getElementById('btn-rotate-left');
 export const btnRotateRight = document.getElementById('btn-rotate-right');
 export const btnDeletePhoto = document.getElementById('btn-delete-photo');
+// The clip panel's Convert, Make smaller (MP4), the line of one under way and its Cancel (clip-convert.js).
+export const btnClipConvert = document.getElementById('btn-clip-convert');
+export const btnClipShrink = document.getElementById('btn-clip-shrink');
+export const clipConvertNote = document.getElementById('clip-convert-note');
+export const btnClipConvertCancel = document.getElementById('btn-clip-convert-cancel');
 export const facesSection = document.getElementById('faces-section');
 
 export const detailPath = document.getElementById('detail-path');
