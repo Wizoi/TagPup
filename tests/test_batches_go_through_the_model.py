@@ -55,6 +55,7 @@ SMALL = {
     "/api/folder/suggest-start": "the settle of a conversion cut short: one clip's carry (convert_clip's change)",
     "/api/history/<int:change_id>/undo": "the settle of a conversion cut short: one clip's carry (convert_clip's change)",
     "/api/settings": "the settle of a conversion cut short: one clip's carry (convert_clip's change)",
+    "/api/clip/convert": "one clip's carry into its MP4, inside the conversion's own batch of one (convert.start)",
 }
 
 

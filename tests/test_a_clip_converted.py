@@ -278,7 +278,7 @@ def make_mov(path, crf):
 
 class ThePanelButtons(AnOldClipInTheLibrary):
     """The clip panel's Convert and Make smaller (MP4), by id (POST /api/clip/convert): a batch of one on a thread of the
-    server, the request answered at once with its ticket, how it ended read by the ticket (GET /api/clip/convert)."""
+    server, the request answered at once with its ticket, how it ended read by the ticket (/api/clip/converted)."""
 
     def ask(self, photo_id, mode, path, **changed):
         stamp = photo_actions.file_stamp(path)
@@ -289,7 +289,7 @@ class ThePanelButtons(AnOldClipInTheLibrary):
         self.assertEqual(200, reply.status_code, reply.get_json())
         ticket = reply.get_json()["ticket"]
         convert.outcome(self.vl.library, ticket, wait=120)
-        said = self.client.get("/library/api/clip/convert?ticket=%d" % ticket).get_json()
+        said = self.client.get("/library/api/clip/converted?ticket=%d" % ticket).get_json()
         self.assertTrue(said["done"], said)
         return said
 

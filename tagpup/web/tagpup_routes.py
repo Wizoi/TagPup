@@ -841,7 +841,7 @@ def clip_convert_plan():
 def clip_convert_start():
     """The panel's Convert (`mode` "convert", a clip that does not play) and Make smaller (MP4) (`mode` "shrink", one that
     does) of one clip, by its id: tagpup.services.convert.start, a batch of one on a thread of the server, answered at once
-    with its `ticket` (the Activity strip lists it, Cancel by it); GET /api/clip/convert?ticket= says how it ended. Body
+    with its `ticket` (the Activity strip lists it, Cancel by it); /api/clip/converted?ticket= says how it ended. Body
     {"id", "mode", "stamp": {"mtime", "size"}, "for_good"?: true}."""
     library = state.require()
     body = request.get_json(silent=True) or {}
@@ -865,8 +865,8 @@ def clip_convert_start():
     return jsonify({"success": True, "ticket": result.details["ticket"], "library": library.name})
 
 
-@routes.get("/api/clip/convert")
-def clip_convert_outcome():
+@routes.get("/api/clip/converted")
+def clip_converted():
     """How the conversion `ticket` (POST /api/clip/convert) ended: {"done": false} while it is under way; else {"done":
     true} and what _clip_converted made of it. 404 for a ticket this server has none of."""
     library = state.require()
