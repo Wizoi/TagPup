@@ -350,12 +350,13 @@ class Leftovers(Share):
 
 
 class AskedFirst(ThroughTheOwners):
-    def test_delete_check_asks_the_bin_counts_the_paths_too_long_and_refuses_what_would_overflow(self):
+    def test_delete_check_asks_the_bin_counts_the_paths_too_long_and_asks_to_delete_for_good_what_would_overflow(self):
         recycle_bin.forget_bin()
         self.addCleanup(recycle_bin.forget_bin)
         with mock.patch.dict(os.environ, {"TAGPUP_RECYCLE_BIN": "1,1,0"}):
             asked = self.client.post("/library/api/library/selection/delete-check", json={"selection": {"ids": self.on_share}}).get_json()
-        self.assertIn("Recycle Bin", asked["no_room"])
+        # A full Bin (owner, 2026-11-12): asked whether to delete permanently instead, not refused.
+        self.assertEqual((None, 3, 3, 0), (asked["no_room"], asked["for_good"]["count"], asked["bin_full"], asked["through_this_pc"]))
         self.assertEqual(0, asked["too_long"])
         deep = self.vl.photo(os.path.join("Share", *(["b" * 40] * 6)), "deep.jpg", real=True, size=(16, 16))
         asked = self.client.post("/library/api/library/selection/delete-check", json={"selection": {"ids": self.on_share + [deep]}}).get_json()

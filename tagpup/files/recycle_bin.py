@@ -532,7 +532,8 @@ def copies_not_kept(byte_count, largest, root=None, fresh=False):
     return None
 
 
-def _cannot_tell(e):
+def cannot_tell(e):
+    """The sentence when Windows could not say what this PC's Bin keeps (copies_not_kept raised `e`)."""
     return "Could not tell how much this PC's Recycle Bin can keep (%s). Nothing was deleted." % (getattr(e, "strerror", None) or e)
 
 
@@ -541,7 +542,7 @@ def room_for_copies(byte_count, largest, root=None, fresh=False):
     try:
         refused = copies_not_kept(byte_count, largest, root, fresh)
     except (OSError, AttributeError, ValueError) as e:
-        return _cannot_tell(e)
+        return cannot_tell(e)
     if refused is None:
         return None
     kind, why = refused
@@ -643,7 +644,7 @@ def recycle_through_this_pc(file_path, root=None, for_good=False):
     try:
         not_kept_here = copies_not_kept(size, size, root)
     except (OSError, AttributeError, ValueError) as e:
-        raise OSError(_cannot_tell(e)) from None
+        raise OSError(cannot_tell(e)) from None
     if not_kept_here:
         kind, why = not_kept_here
         if not for_good:

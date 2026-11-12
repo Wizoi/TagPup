@@ -160,13 +160,16 @@ def where_deleted(library, selection):
     "copy_bytes" (what those copies take, by the index's sizes; a clip over recycle_bin.MOST_CLIP_BYTES makes none and is
     counted in neither: it goes for good), "restores_to" (the folder the copies are put in, and so where
     Windows restores them: <Downloads>\\TagPup deleted from shares), "too_long" (how many of them would have a copy's path of
-    260 characters or more, and are left, #704), "no_room" (None, or the sentence when they cannot be copied and kept here:
-    Downloads synced to OneDrive, no room on its drive with 1 GB to spare, or this PC's Recycle Bin unable to keep them -- asked of
-    Windows now, #703, #706: nothing is to be asked then), "for_good": {"count", "names"} (the clips over
-    recycle_bin.MOST_CLIP_BYTES, on any drive, and the files on a drive whose Recycle Bin would not keep them -- larger than it
-    keeps, or a Bin set to delete at once, recycle_bin.keeps_up_to -- which are deleted for good only when the start says
-    `for_good`, its token then of that; the file names of the first
-    MOST_FOR_GOOD_NAMED; the token covers every one of them)}; the reasons as recycle_bin says them ("on a network share").
+    260 characters or more, and are left, #704), "no_room" (None, or the sentence when they cannot be copied here at all:
+    Downloads synced to OneDrive, no room on its drive with 1 GB to spare, or a Recycle Bin Windows cannot tell of, #703, #706:
+    nothing is to be asked then), "for_good": {"count", "names"} (the clips over recycle_bin.MOST_CLIP_BYTES, on any drive, the
+    files on a drive whose Recycle Bin would not keep them -- larger than it keeps, or a Bin set to delete at once,
+    recycle_bin.keeps_up_to --, and, when this PC's Recycle Bin would not keep the copies of the files with no Bin of their own
+    (recycle_bin.copies_not_kept, asked of Windows now: full, set to delete at once, or smaller than one), every one of those,
+    which are then not counted through this PC; all deleted for good only when the start says `for_good`, its token then of
+    that; the file names of the first MOST_FOR_GOOD_NAMED; the token covers every one of them), "bin_full" (how many of them are
+    for good only because this PC's Recycle Bin is full: the page asks "The Recycle Bin is full: delete permanently
+    instead?"; owner, 2026-11-12)}; the reasons as recycle_bin says them ("on a network share").
     Asked once a folder, never once a photo (a Select all of photo_index is 2,672 folders, about 2 s); a UNC path and a mapped
     drive are told by their spelling and the drive's type, without reading the share. Refused, as `resolve` refuses it, over
     batches.MAX_BATCH."""
@@ -175,29 +178,68 @@ def where_deleted(library, selection):
     try:
         counted, sizes, named = _weighed(conn, resolved.ids)
         reasons = collections.Counter()
-        copy_bytes = largest = 0
         binless = set()
         for folder_id, (path, _name) in named.items():
             reason = recycle_bin.no_bin_reason(path)
             if reason:
-                total, biggest, clips_over = sizes.get(folder_id) or (0, 0, 0)
+                _total, _biggest, clips_over = sizes.get(folder_id) or (0, 0, 0)
                 if counted[folder_id] > clips_over:
                     reasons[reason] += counted[folder_id] - clips_over
-                copy_bytes += total
-                largest = max(largest, biggest)
                 binless.add(folder_id)
         for_good, stored = _for_good(conn, resolved.ids, sizes, named, binless)
+        uncopied, uncopied_first, full, no_room = _not_copied(conn, resolved.ids, counted, sizes, binless, fresh=True)
     finally:
         conn.close()
-    through = sum(reasons.values())
+    through, copy_bytes, _largest = _through(counted, sizes, binless)
+    bin_full = len(uncopied - for_good) if full else 0
+    if uncopied:
+        # This PC's Bin would not keep the copies: every one of them goes for good, once confirmed, and none through this PC.
+        for_good, stored = for_good | uncopied, stored + uncopied_first
+        through, copy_bytes, reasons = 0, 0, collections.Counter()
     copied = [photo_id for photo_id in resolved.ids if photo_id not in for_good]
     too_long = _too_long(library, copied, binless, named) if through else 0
     names = sorted(paths.row_name(each) for each in stored)[:MOST_FOR_GOOD_NAMED]
     return {"total": len(resolved.ids), "token": token_of(resolved.ids, for_good), "folders": len(counted),
             "through_this_pc": through, "for_good": {"count": len(for_good), "names": names},
             "reasons": [{"reason": reason, "photos": photos} for reason, photos in reasons.most_common()],
-            "copy_bytes": copy_bytes, "restores_to": recycle_bin.mirror_root(), "too_long": too_long,
-            "no_room": recycle_bin.can_copy_here(copy_bytes, largest, fresh=True) if through else None}
+            "copy_bytes": copy_bytes, "restores_to": recycle_bin.mirror_root(), "too_long": too_long, "no_room": no_room,
+            "bin_full": bin_full}
+
+
+def _through(counted, sizes, binless):
+    """(how many photos of the folders `binless` go through this PC, the bytes of their copies, the largest), by the index's
+    sizes (`counted` and `sizes` _weighed's): a clip over recycle_bin.MOST_CLIP_BYTES makes no copy and is counted in none."""
+    through = copy_bytes = largest = 0
+    for folder_id in binless:
+        total, biggest, clips_over = sizes.get(folder_id) or (0, 0, 0)
+        through += max(counted[folder_id] - clips_over, 0)
+        copy_bytes += total
+        largest = max(largest, biggest)
+    return through, copy_bytes, largest
+
+
+def _not_copied(conn, photo_ids, counted, sizes, binless, fresh):
+    """(the ids of `photo_ids` a Delete deletes for good once confirmed because this PC's Recycle Bin would not keep the copies of
+    the files of the folders `binless` (recycle_bin.copies_not_kept, for all of them at once: every one of them but a clip over
+    recycle_bin.MOST_CLIP_BYTES, which is _for_good's), the stored paths of the first MOST_FOR_GOOD_NAMED, whether only because
+    it is full (recycle_bin.BIN_FULL), the sentence when no copy can be made at all -- no_room -- or None). `fresh`: ask Windows
+    the Bin's size now (the question), else what it said then and what was sent since (the start, deleted_for_good)."""
+    through, copy_bytes, largest = _through(counted, sizes, binless)
+    if not through:
+        return set(), [], False, None
+    cannot = recycle_bin.cannot_make_copies(copy_bytes)
+    if cannot:
+        return set(), [], False, cannot
+    try:
+        refused = recycle_bin.copies_not_kept(copy_bytes, largest, fresh=fresh)
+    except (OSError, AttributeError, ValueError) as e:
+        return set(), [], False, recycle_bin.cannot_tell(e)
+    if refused is None:
+        return set(), [], False, None
+    # A Bin keeping 0 bytes would keep none: every file of those folders but a clip over MOST_CLIP_BYTES (no new SQL).
+    ids, first = store_folders.larger_than(conn, sorted(binless), 0, recycle_bin.MOST_CLIP_BYTES, MOST_FOR_GOOD_NAMED,
+                                           photo_ids, None, ())
+    return set(ids), first, refused[0] == recycle_bin.BIN_FULL, None
 
 
 def _weighed(conn, photo_ids):
@@ -239,13 +281,15 @@ def _for_good(conn, photo_ids, sizes, named, binless):
 
 
 def deleted_for_good(library, photo_ids):
-    """The ids of `photo_ids` a Delete would delete for good now (_for_good), asked again at its start: a start confirmed for
-    good goes on only when these are the files its question named (token_of), and deletes for good none but these."""
+    """The ids of `photo_ids` a Delete would delete for good now (_for_good, _not_copied), asked again at its start: a start
+    confirmed for good goes on only when these are the files its question named (token_of), and deletes for good none but these.
+    This PC's Bin is not asked of Windows again: what it said for the question and what was sent since (11.8 s a question)."""
     conn = library_view.opened(library)
     try:
-        _counted, sizes, named = _weighed(conn, photo_ids)
+        counted, sizes, named = _weighed(conn, photo_ids)
         binless = {folder_id for folder_id, (path, _name) in named.items() if recycle_bin.no_bin_reason(path)}
-        return _for_good(conn, photo_ids, sizes, named, binless)[0]
+        found = _for_good(conn, photo_ids, sizes, named, binless)[0]
+        return found | _not_copied(conn, photo_ids, counted, sizes, binless, fresh=False)[0]
     finally:
         conn.close()
 
