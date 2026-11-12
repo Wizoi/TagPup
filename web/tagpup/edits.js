@@ -8,7 +8,9 @@ import { leafOf, photoAlreadyHas, tagProblem, textProblem } from './common/vocab
 import { upper } from './hooks.js';
 import { state } from './state.js';
 import { renameInSelection } from './selected.js';
-import { btnSaveDetails, inputAddPerson, inputAddTag, inputPhotoTitle } from './elements.js';
+import {
+    btnSaveDetails, inputAddPerson, inputAddTag, inputPhotoTitle, peopleDatalist, tagsDatalist
+} from './elements.js';
 import { setStatus } from './status.js';
 import { saveToLocalStorageCache } from './cache.js';
 import { dismissEntry, markEntry, pendingWrites, queueEntry, whereWritten } from './write-queue.js';
@@ -79,6 +81,13 @@ export function wireUnsavedEdits() {
 
     if (btnSaveDetails) btnSaveDetails.addEventListener('click', () => saveDetailEdits());
 
+    // A tag or person picked from the box's list is saved by the pick: the Enter that picked it was a second Enter short (#2834).
+    [[inputAddTag, tagsDatalist, { tags: true }], [inputAddPerson, peopleDatalist, { people: true }]].forEach(([box, list, fields]) => {
+        box.addEventListener('input', (e) => {
+            if (pickedFromList(e, box, list)) saveDetailEdits(fields);
+        });
+    });
+
     // Ctrl+S / Cmd+S. Captured, so it works from inside the field being typed in --
     // which is where you are when you reach for it -- and always kept from the
     // browser, whose Save Page dialog is never what was meant here.
@@ -100,26 +109,69 @@ export function wireUnsavedEdits() {
 }
 
 /**
+ * Was this `input` event a pick from the box's list? A key typed or a paste says how it came (`insertText`,
+ * `insertFromPaste`); a pick is the browser's own replacement of the text -- Chrome's event carries no inputType, Firefox's
+ * says `insertReplacementText` -- and leaves the box holding one of the list's entries exactly.
+ */
+export function pickedFromList(e, box, list) {
+    const how = e.inputType || '';
+    if (how && how !== 'insertReplacementText') return false;
+    const value = box.value;
+    return Boolean(value) && Array.from(list.options).some(option => option.value === value);
+}
+
+/**
  * Write what the panel holds and the photo does not, as one request.
  *
- * `fields` narrows it to what Enter or an Add button is about; the header's Save
+ * `fields` narrows it to what Enter, a pick from a list or an Add button is about; the header's Save
  * and Ctrl+S write everything. Resolves true once the photo holds what the panel
  * showed -- including when that needed no write -- and false when it does not, in
- * which case the typed text is left where it was.
+ * which case the typed text is given back to its box.
  *
- * It waits its turn in the photo write queue and reads the fields when it runs,
- * so a second call sees what the first one wrote.
+ * The text is taken when the save is asked for, for the photo open then, and the tag and person boxes are emptied
+ * at once: a key typed while the save waits its turn or is out is the start of the next tag, where it used to be
+ * added to the end of the one being saved and stay there (#2836). A second Enter finds the box empty and asks for nothing.
  */
 export function saveDetailEdits(fields = { title: true, tags: true, people: true }, intent = null) {
     // A retry names the photo and the text the failed save held (its entry's `intent`), not the panel as it is now.
     const path = intent ? intent.path : state.activePhotoPath;
-    // The fields belong to the photo they were typed on. Leaving waits for the queue, so a first save
-    // finds it open; if it does not, the text is not ours.
-    return queueWriteOf(path, (entry) => {
-        if (intent || samePath(state.activePhotoPath, path)) return writeDetailEdits(fields, { intent, path, entry });
-        entry.error = 'The photo is no longer open, so the text typed on it is gone';
-        return false;
+    if (!path) return Promise.resolve(true);
+    const taken = intent ? null : takeTyped(path, fields);
+    if (taken && !fields.title && !taken.tagText.trim() && !taken.personText.trim()) return Promise.resolve(true);
+    return queueWriteOf(path, async (entry) => {
+        let written = false;
+        try {
+            written = await writeDetailEdits(fields, { intent, taken, path, entry });
+            return written;
+        } finally {
+            if (taken && written === false) giveBack(taken, fields);
+        }
     }, `Save photo ${baseName(path)}`, (entry) => saveDetailEdits(fields, entry.intent || null));
+}
+
+/** The text a save is asked with, as the panel holds it now; the tag and person boxes it takes are emptied. */
+function takeTyped(path, fields) {
+    const taken = {
+        path,
+        title: inputPhotoTitle.value.trim(),
+        tagText: fields.tags ? inputAddTag.value : '',
+        personText: fields.people ? inputAddPerson.value : '',
+    };
+    if (fields.tags) inputAddTag.value = '';
+    if (fields.people) inputAddPerson.value = '';
+    updateSaveButton();
+    return taken;
+}
+
+/**
+ * A save that failed gives its text back to the box it came from, to be tried again -- while its photo is open and the
+ * box is empty. Text typed since is not overwritten; the failed save's Retry (the queue's status) still holds its own.
+ */
+function giveBack(taken, fields) {
+    if (!samePath(state.activePhotoPath, taken.path)) return;
+    if (fields.tags && !inputAddTag.value) inputAddTag.value = taken.tagText;
+    if (fields.people && !inputAddPerson.value) inputAddPerson.value = taken.personText;
+    updateSaveButton();
 }
 
 /**
@@ -286,10 +338,11 @@ export function redrawIfShowing(photo) {
 
 /**
  * Write what a save holds. `intent` is the text of a save that failed ({ path, title, tagText, personText }), written as it
- * was and not as the fields are now; without one it is read from the fields, and kept on `entry` so a Retry can write it
- * (findings #877). Once it is written, an earlier failed save of the photo is settled (findings #881).
+ * was and not as the fields are now; `taken` is the text the save was asked with, in the same shape (takeTyped); without
+ * either it is read from the fields. It is kept on `entry` so a Retry can write it (findings #877). Once it is written, an
+ * earlier failed save of the photo is settled (findings #881).
  */
-export async function writeDetailEdits(fields, { intent = null, path = state.activePhotoPath, entry = null } = {}) {
+export async function writeDetailEdits(fields, { intent = null, taken = null, path = state.activePhotoPath, entry = null } = {}) {
     const photo = path && state.folderPhotos.find(p => samePath(p.path, path));
     if (!photo) {
         if (!intent) return true;
@@ -302,9 +355,10 @@ export async function writeDetailEdits(fields, { intent = null, path = state.act
         return false;
     }
 
-    const typedTitle = intent ? intent.title : inputPhotoTitle.value.trim();
-    const tagText = intent ? intent.tagText : (fields.tags ? inputAddTag.value : '');
-    const personText = intent ? intent.personText : (fields.people ? inputAddPerson.value : '');
+    const asked = intent || taken;
+    const typedTitle = asked ? asked.title : inputPhotoTitle.value.trim();
+    const tagText = asked ? asked.tagText : (fields.tags ? inputAddTag.value : '');
+    const personText = asked ? asked.personText : (fields.people ? inputAddPerson.value : '');
     if (entry) entry.intent = { path, title: typedTitle, tagText, personText };
     const newTitle = fields.title && typedTitle !== String(photo.title || '').trim()
         ? typedTitle
@@ -349,7 +403,7 @@ export async function writeDetailEdits(fields, { intent = null, path = state.act
 
     const clearTyped = () => {
         if (!samePath(state.activePhotoPath, photo.path)) return;
-        // Only what was written: text typed while the request was out stays.
+        // Only what was written (a failed save's text given back, then retried): text typed while the request was out stays.
         if (fields.tags && inputAddTag.value === tagText) inputAddTag.value = '';
         if (fields.people && inputAddPerson.value === personText) inputAddPerson.value = '';
     };
