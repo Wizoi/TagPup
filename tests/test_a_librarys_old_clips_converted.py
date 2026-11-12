@@ -468,5 +468,59 @@ class MPEG4Part2(OldClips):
         self.assertEqual(("h264", "aac"), (streams.video, streams.audio))
 
 
+#: A stand-in for ffmpeg (a .cmd, as a program on PATH may be): it writes the pid of the Python it starts, tells one line
+#: of progress, and sleeps, writing nothing.
+STANDIN = """import os, sys, time
+with open(sys.argv[1], "w") as handle:
+    handle.write(str(os.getpid()))
+print("out_time_us=1000000", flush=True)
+time.sleep(120)
+"""
+
+
+class CtrlCTwiceDuringAConversion(unittest.TestCase):
+    """The owner presses Ctrl+C twice while a clip converts: the second raises KeyboardInterrupt in the script's thread,
+    inside the watch of ffmpeg. ffmpeg is ended with its tree and its temp removed before the interrupt goes on up; no
+    ffmpeg is left writing a temp beside the original after the script has ended."""
+
+    def test_the_interrupt_ends_ffmpeg_and_removes_its_temp(self):
+        home = own_home.for_test(self, prefix="old_clips_ctrl_c_")
+        folder = os.path.join(home.root, "Regatta")
+        os.makedirs(folder)
+        script_path, pid_file = os.path.join(home.root, "standin.py"), os.path.join(home.root, "ffmpeg.pid")
+        with open(script_path, "w", encoding="utf-8") as handle:
+            handle.write(STANDIN)
+        ffmpeg = os.path.join(home.root, "ffmpeg.cmd")
+        with open(ffmpeg, "w", encoding="utf-8") as handle:
+            handle.write('@echo off\r\n"%s" "%s" "%s"\r\n' % (sys.executable, script_path, pid_file))
+        source = os.path.join(folder, "harbour.wmv")
+        with open(source, "wb") as handle:
+            handle.write(b"\x00" * 64)
+        temp = clip_convert.temp_of(clip_convert.target_of(source))
+        self.assertIs(True, clip_convert.claimed(temp))
+
+        def interrupted(_done, _whole):
+            raise KeyboardInterrupt
+
+        tools = config.Ffmpeg(ffmpeg, ffmpeg, None)
+        streams = mock.Mock(audio=None, duration=10.0)
+        began = time.monotonic()
+        with self.assertRaises(KeyboardInterrupt):
+            clip_convert.convert(tools, source, temp, streams, progress=interrupted)
+        # Not ended, ffmpeg holds its pipes: the interrupt waited for the whole conversion (here the stand-in's 120 s).
+        self.assertLess(time.monotonic() - began, 60, "the interrupt waited for ffmpeg to end by itself")
+
+        with open(pid_file, encoding="utf-8") as handle:
+            pid = int(handle.read())
+        ended = time.monotonic() + 10
+        while processes.is_alive(pid) and time.monotonic() < ended:
+            time.sleep(0.1)
+        alive = processes.is_alive(pid)
+        if alive:
+            self.addCleanup(processes.kill_tree, pid)
+        self.assertFalse(alive, "ffmpeg was left running")
+        self.assertEqual(["harbour.wmv"], sorted(os.listdir(folder)), "its temp was left beside the original")
+
+
 if __name__ == "__main__":
     unittest.main()

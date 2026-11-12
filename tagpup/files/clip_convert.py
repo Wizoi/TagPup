@@ -29,7 +29,8 @@ How it fails, each as a plain problem (a sentence naming no file: a file's name 
 exception, and every failure removes the temp it made: ffmpeg cannot read the clip, or stops with an error (its last line
 logged, unnamed); it makes no progress for STALL seconds (a share that stopped answering: ffmpeg blocked in a read), or
 passes the caller's deadline, or the caller asks it to stop (`stop`, an Event: Cancel, an update's drain): killed with
-its tree through tagpup.core.processes. A temp it could not remove (the share gone meanwhile) is said in the problem, so
+its tree through tagpup.core.processes. An exception through the watch (a second Ctrl+C, raised in the caller's
+`progress`) ends ffmpeg's tree and removes the temp before it goes on up: no ffmpeg is left writing a temp nothing owns. A temp it could not remove (the share gone meanwhile) is said in the problem, so
 the caller keeps its record for the settle to remove it. room_for refuses before anything runs when the volume has not
 room for the temp: ROOM times the original, a guess (a re-encode at CRF 23 is about half an old format's size; an MPEG-4
 Part 2 clip is already small, and its H.264 may be larger), plus a margin.
@@ -181,6 +182,10 @@ def convert(tools, source, temp, streams, progress=None, stop=None, deadline=Non
         reader.start()
     try:
         return _watched(child, readers, lines, said, source, temp, streams, progress, stop, deadline, stall)
+    except BaseException:
+        _end(child)
+        removed(temp)
+        raise
     finally:
         for reader in readers:
             reader.join(KILL_WAIT)
