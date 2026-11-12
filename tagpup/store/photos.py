@@ -499,6 +499,14 @@ def stored_spelling(conn, photo_path):
     return store_roots.from_row(conn, row[0]) if row else None
 
 
+def picture_size(conn, photo_path):
+    """(width, height) of the picture of the photo at `photo_path` as its row stores it (photos.width, height, migration
+    39: the frame its face boxes are in), each None until read; None when the library has no row at that path. What
+    clustering.is_background is asked with: never a look at the file. One indexed lookup."""
+    where, params = store_roots.sql_equals(conn, "path", photo_path)
+    return conn.execute("SELECT width, height FROM photos WHERE " + where + " LIMIT 1", params).fetchone()
+
+
 def record_indexed(conn, photo_path, row, model=None, known=None, batch=None):
     """Record what indexing read of a photo or a clip: `row` has kind ('photo' when absent), mtime, size, width and
     height (the picture's, in its stored pixels: images.picture_size; none, or a header that gave 0, records NULL, a size

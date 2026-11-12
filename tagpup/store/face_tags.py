@@ -24,8 +24,8 @@ makes it a reference for later guesses (tagpup.services.identify.decided_faces, 
   decided face. With several such photos none is named by the tag (clustering or Identify Faces names them):
   naming the first would make it the reference the next is compared with, and the answer would depend on
   the order of the photos and on whether they came in one batch or one at a time. The count is the whole
-  library's, so it is the same either way. A face under clustering.BACKGROUND_AREA is never
-  named by the tag. Because of the gate, a face named by this rule is a keyword-confirmed reference only
+  library's, so it is the same either way. A face in the background of its picture (clustering.is_background, on
+  the photo's stored size) is never named by the tag. Because of the gate, a face named by this rule is a keyword-confirmed reference only
   when it passed it or the person had no decided face, so a stranger cannot seed a person.
 * With several faces or several people nothing is guessed from the tag alone. Given
   `references` -- the decided faces as (ids, names, unit vectors), tagpup.services.identify.
@@ -80,7 +80,7 @@ class Plan:
     cosine to their decided faces at or above the library's naming cut, from its offer cut to its naming cut, and below
     its offer cut (those are left; clustering.cuts_of the library's face model); `not_decidable_yet`, the person has no decided face and several photos with a face to be named,
     all left; `unreadable_face`, a face with no embedding to compare, left; `background_sized`,
-    faces under clustering.BACKGROUND_AREA that were not counted as faces to be named."""
+    faces in the background of their picture (clustering.is_background) that were not counted as faces to be named."""
 
     def __init__(self):
         self.named = []
@@ -127,6 +127,16 @@ def _faces_of(conn, photo_ids):
     return found
 
 
+def _sizes_of(conn, photo_ids):
+    """{photo id: (width, height)} of those photos' stored pictures (photos.width, height; each None until read)."""
+    found = {}
+    for chunk in _chunks(photo_ids):
+        for photo_id, width, height in conn.execute(
+                "SELECT id, width, height FROM photos WHERE id IN (%s)" % ",".join("?" * len(chunk)), chunk):
+            found[photo_id] = (width, height)
+    return found
+
+
 def _embeddings(conn, face_ids, key):
     """{face id: its vector under the face model `key`} of those of `face_ids` that have one."""
     found = {}
@@ -165,22 +175,23 @@ def _not_taken_off(conn, free, faces_here):
     return [person for person in free if person.id not in taken]
 
 
-def _small(box_json):
-    """Is a face's stored box (JSON) a speck: under clustering.BACKGROUND_AREA?"""
+def _background(box_json, size):
+    """Is a face's stored box (JSON) in the background of its picture, `size` the photo's stored (width, height)
+    (clustering.is_background)?"""
     try:
-        return clustering.is_background_sized(json.loads(box_json))
+        return clustering.is_background(json.loads(box_json), size)
     except (TypeError, ValueError):
         return False
 
 
-def _to_be_named(faces_here):
-    """({id: name_source} of the faces nobody has named, ruled out or called nobody, specks left out,
-    how many specks that was)."""
+def _to_be_named(faces_here, size):
+    """({id: name_source} of the faces nobody has named, ruled out or called nobody, those in the background of the
+    picture of stored `size` left out, how many were left out so)."""
     found, specks = {}, 0
     for face_id, person, source, excluded, box in faces_here:
         if person or excluded or source == BY_HAND:
             continue
-        if _small(box):
+        if _background(box, size):
             specks += 1
         else:
             found[face_id] = source
@@ -205,18 +216,19 @@ def _decided_of(conn, person, key):
 
 def _photos_to_be_named(conn, person):
     """How many photos -- 2 at most: it is asked whether there is one or several -- have a face to be named
-    (unnamed, not excluded, not called nobody, no speck) and `person` (a Ref with the node's id) among their keyword people. By
+    (unnamed, not excluded, not called nobody, not in the background) and `person` (a Ref with the node's id) among their
+    keyword people. By
     the people's node index (idx_photo_people_tag), one person at a time, and from each of their photos to its faces
     by idx_faces_photo_id: left to itself SQLite drove the join from the library's 190,000 unnamed faces
     (idx_faces_identify), each probing photo_people, and the count took 134 ms a person (#844; the same join as
     tagpup.store.faces.UNDER_FROM_PHOTOS, #644)."""
     seen = set()
-    for photo_id, box in conn.execute(
-            "SELECT pp.photo_id, f.box FROM photo_people pp CROSS JOIN faces f INDEXED BY idx_faces_photo_id"
-            " ON f.photo_id = pp.photo_id"
+    for photo_id, box, width, height in conn.execute(
+            "SELECT pp.photo_id, f.box, p.width, p.height FROM photo_people pp CROSS JOIN photos p ON p.id = pp.photo_id"
+            " CROSS JOIN faces f INDEXED BY idx_faces_photo_id ON f.photo_id = pp.photo_id"
             " WHERE pp.tag_id = ? AND pp.source = 'keyword' AND f.name IS NULL AND f.excluded = 0"
             " AND COALESCE(f.name_source, '') <> 'manual'", (person.id,)):
-        if photo_id not in seen and not _small(box):
+        if photo_id not in seen and not _background(box, (width, height)):
             seen.add(photo_id)
             if len(seen) > 1:
                 break
@@ -361,11 +373,12 @@ def plan(conn, photo_ids=None, references=None, cache=None, on_step=None):
         on_step("reading", 0, 1)
     people_of = _keyword_people(conn, None if photo_ids is None else sorted(set(photo_ids)))
     faces_of = _faces_of(conn, sorted(people_of))
+    sizes = _sizes_of(conn, sorted(people_of))
     open_ones = []   # (photo id, unnamed face ids, free people) still to be compared
     singles = []     # (photo id, face id, person, name_source): one face, one person
     for photo_id in sorted(people_of):
         here = faces_of.get(photo_id, [])
-        unnamed, specks = _to_be_named(here)
+        unnamed, specks = _to_be_named(here, sizes.get(photo_id))
         free = _not_taken_off(conn, _free_people(people_of[photo_id], here), here)
         if not unnamed or not free:
             continue
