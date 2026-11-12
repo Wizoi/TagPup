@@ -7,7 +7,7 @@ photos of a year whose date names no month of it (`year_other`); a month; or ANY
 union: the rows a person selected in the navigator, phase 9 #672 -- one statement, a photo in two of
 them once); or a SEARCH (phase 9e): the photos in ALL OF a list of sources, ANY OF another and NONE OF a third, and
 -- once the library has its word index -- matching the words typed, again one statement. Every source is ordered by when the photo was taken and then by id, those with no date at
-the end (by id), unless another order is asked (ORDERS: Date Taken, file name or caption, either way).
+the end (by id), unless another order is asked (ORDERS: Date Taken, file name, caption or file size, either way).
 
 `taken` is the text ExifTool gave ("2024:06:01 10:00:00", with a zone after it in a few), which sorts as
 the time does; a few rows hold a date written with dashes, which sort apart from the rest and are paged
@@ -62,12 +62,14 @@ Search = collections.namedtuple("Search", "all_of any_of none_of words", default
 #: The orders a source is read in (phase 9, #671, #714): by Date Taken -- the photos with none AFTER the dated ones in both
 #: directions, by id in the order's direction --, by file name, or by caption -- the photos with none after the captioned
 #: ones in both directions, as the undated are --, the names and captions without case (NOCASE, as the indexes hold
-#: them), either way; ties broken by id, in the order's direction.
-TAKEN, TAKEN_DESC, NAME, NAME_DESC, CAPTION, CAPTION_DESC = (
-    "taken", "taken-desc", "name", "name-desc", "caption", "caption-desc")
-ORDERS = (TAKEN, TAKEN_DESC, NAME, NAME_DESC, CAPTION, CAPTION_DESC)
+#: them), either way --, or by file size in bytes (`photos.size`, the file as last read: the owner, 2026-11-12, to find the
+#: largest clips), either way, a photo whose size was never read after those whose size was; ties broken by id, in the
+#: order's direction.
+TAKEN, TAKEN_DESC, NAME, NAME_DESC, CAPTION, CAPTION_DESC, SIZE, SIZE_DESC = (
+    "taken", "taken-desc", "name", "name-desc", "caption", "caption-desc", "size", "size-desc")
+ORDERS = (TAKEN, TAKEN_DESC, NAME, NAME_DESC, CAPTION, CAPTION_DESC, SIZE, SIZE_DESC)
 #: The orders read last first.
-DESCENDING = (TAKEN_DESC, NAME_DESC, CAPTION_DESC)
+DESCENDING = (TAKEN_DESC, NAME_DESC, CAPTION_DESC, SIZE_DESC)
 
 #: The index migration 22 makes: the photos by file name, without case, then id.
 NAME_INDEX = "idx_photos_name"
@@ -435,7 +437,9 @@ def all_ids(conn, source, cap, order=TAKEN):
     """([photo id] of the whole source in the order asked, how many photos the source holds): at most `cap`
     ids, the total counted when the source holds more. Two statements at most, one per phase, each an index-ordered
     read of ids alone -- the keyset page's order without the keyset. By name, one: the name index walked in order. By
-    caption, the caption index walked in order, the captioned and then those with none."""
+    caption, the caption index walked in order, the captioned and then those with none. By size, one, sorted: no index
+    holds the size, and the source's rows are read and sorted (`NULLS LAST`: a row made before its file was read --
+    store.photos.ensure_row, faces or a vector stored first -- has none)."""
     scope = _scope(conn, source)
     if scope is None:
         return [], 0
@@ -455,6 +459,11 @@ def _ids_of(conn, scope, cap, order):
             ids += [photo_id for (photo_id,) in conn.execute(
                 "SELECT p.id FROM %s WHERE %s AND %s IS NULL ORDER BY p.id%s LIMIT ?" % (from_, where, key, way),
                 list(params) + [cap + 1 - len(ids)])]
+    elif order in (SIZE, SIZE_DESC):
+        way = " DESC" if order in DESCENDING else ""
+        ids = [photo_id for (photo_id,) in conn.execute(
+            "SELECT p.id FROM %s WHERE (%s) ORDER BY p.size%s NULLS LAST, p.id%s LIMIT ?"
+            % (scope.from_, scope.where, way, way), list(scope.params) + [cap + 1])]
     else:
         way = " DESC" if order == TAKEN_DESC else ""
         ids = [photo_id for (photo_id,) in conn.execute(
