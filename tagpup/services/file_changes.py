@@ -66,7 +66,7 @@ and asks whether it is to stop: a stopped batch withdraws the files it did not r
 **A share that stops answering** in a write (ExifTool does not answer for a file) stops it the same way, at that file, for any
 write: never a conflict, since the file under way holds what it held or what it was to hold (_Stalled, _share_stopped). The
 scratch file ExifTool leaves beside it, which refuses every later write of it, is removed by the next write of it, which then
-tries once more (_removed_scratch, #2180).
+tries once more (removed_scratch, #2180).
 
 **A write whose picture changed** (field_values.PictureChanged, the picture check of #2377): its new file was removed and the
 photo is as it was, so it is written once more, logged and counted (`pictures_refused` in the result's details); a second
@@ -892,7 +892,7 @@ def _carry(et, library, row, origin, target, finished, on_failure, wrote=None, n
     saving = _saving(library, row)
     failed = _written(et, row, target, saving)
     if exiftool_session.scratch_in_the_way(failed):
-        left = _removed_scratch(row.path, stamp, interrupted)
+        left = removed_scratch(row.path, stamp, interrupted)
         if left is None:
             failed = _written(et, row, target, saving)      # once: a second failure is the write's own
         elif left == SCRATCH_UNDER_WAY:
@@ -998,17 +998,17 @@ def _by_bytes(library, row):
 #: How long ago the scratch file of a photo must have been written for it to be no write's under way: longer than any
 #: ExifTool command of TagPup's runs, since each is killed, its process with it, at that deadline (exiftool_session).
 SCRATCH_STALE = exiftool_session.DEFAULT_TIMEOUT
-#: Why _removed_scratch leaves a scratch file written in the last SCRATCH_STALE seconds; the owner is told to try again.
+#: Why removed_scratch leaves a scratch file written in the last SCRATCH_STALE seconds; the owner is told to try again.
 SCRATCH_UNDER_WAY = "it was written in the last %d s, by a write that may be under way" % SCRATCH_STALE
 
 
 def _counted_so_far():
-    """(scratch files _removed_scratch removed, writes whose picture changed made again: _carry) in this thread so far."""
+    """(scratch files removed_scratch removed, writes whose picture changed made again: _carry) in this thread so far."""
     return getattr(_running, "scratch_removed", 0), getattr(_running, "pictures_refused", 0)
 
 
 def _said_removed(result, since):
-    """`result`, saying how many scratch files _removed_scratch removed (`scratch_removed`) and how many writes whose
+    """`result`, saying how many scratch files removed_scratch removed (`scratch_removed`) and how many writes whose
     picture changed were discarded and made again (`pictures_refused`) in this thread since `since` (_counted_so_far)."""
     removed, refused = (now - then for now, then in zip(_counted_so_far(), since))
     if removed:
@@ -1019,8 +1019,9 @@ def _said_removed(result, since):
     return result
 
 
-def _removed_scratch(path, saw, interrupted):
-    """Remove the scratch file an interrupted write of the photo at `path` left beside it (exiftool_session.scratch_of),
+def removed_scratch(path, saw, interrupted, scratch=None):
+    """Remove the scratch file an interrupted write of the photo at `path` left beside it (`scratch`; by default
+    exiftool_session.scratch_of, ExifTool's; a conversion's temp file, tagpup.services.convert),
     which made ExifTool refuse this write ("Temporary file already exists"; #2180): None when it was removed, and the
     write is made once more; else why it was left (SCRATCH_UNDER_WAY: the owner is told to try again later). Only when
     all four of these hold (DECISIONS 2026-10-29): 1. it is that photo's, never one a listing found; 2. the photo is there
@@ -1033,7 +1034,7 @@ def _removed_scratch(path, saw, interrupted):
     looks answered (shares.stamp_of: a share away is not "no scratch file"). It is ExifTool's file, not the photo: the
     photo and its row are untouched here. Logged; counted in a write's or an undo's result
     (_said_removed), not in the settle of a change left `writing` (_finish), which has no result to carry it."""
-    scratch = exiftool_session.scratch_of(path)
+    scratch = exiftool_session.scratch_of(path) if scratch is None else scratch
     left, photo = shares.stamp_of(scratch), shares.stamp_of(path)
     if not isinstance(left, tuple) or not isinstance(photo, tuple):
         why = "it or its photo could not be looked at"
@@ -1112,21 +1113,27 @@ def _read_now(et, row, target, stall_stops):
 
 
 def _read_whole(et, row, read):
-    """The file `row` just wrote, read back whole: its raw_metadata in the shape the indexer
-    records (metadata.raw_metadata), what it holds of the change's fields put in `read`
-    (for _read_back). None, and nothing put in `read`, when the read fails or ExifTool reports
-    an error reading it: the row then records the fields written, stamped only where it
-    described the file before."""
+    """The file `row` just wrote, read back whole (read_whole), what it holds of the change's fields put in `read` (for
+    _read_back)."""
+    return read_whole(et, row.path, list(row.after), read, row.named())
+
+
+def read_whole(et, path, fields_read=(), into=None, named="a file"):
+    """The file at `path`, read whole in the session `et`: its raw_metadata in the shape the indexer records
+    (metadata.raw_metadata), and what it holds of `fields_read` put in `into` ({paths.key(path): held}). None, and nothing
+    put in `into`, when the read fails or ExifTool reports an error reading it: the row then records the fields written,
+    stamped only where it described the file before. `named`, the file as a log line names it (never its path)."""
     records = {}
     try:
-        held = field_values.read(et, [row.path], list(row.after), fields.METADATA_FIELDS, records)
+        held = field_values.read(et, [path], list(fields_read), fields.METADATA_FIELDS, records)
     except Exception as e:
-        logger.warning("%s: could not read it back whole: %s", row.named(), e)
+        logger.warning("%s: could not read it back whole: %s", named, e)
         return None
-    now, record = held.get(paths.key(row.path)), records.get(paths.key(row.path))
+    now, record = held.get(paths.key(path)), records.get(paths.key(path))
     if now is None or isinstance(now, Exception) or record is None or any(record.get(k) for k in metadata.READ_ERROR_KEYS):
         return None
-    read[paths.key(row.path)] = now
+    if into is not None:
+        into[paths.key(path)] = now
     return metadata.raw_metadata(record)
 
 
@@ -1212,7 +1219,7 @@ class Renamed:
     change_id: Optional[int] = None
 
 
-def _fingerprint(path):
+def fingerprint(path):
     """What a file is known by wherever a rename left it: its size and modified time,
     which renaming does not change, and its file id (st_ino: NTFS's file index), which
     renaming on one volume keeps too and a copy never shares. A copy keeps the size and
@@ -1296,7 +1303,7 @@ def _holds(path, row):
     are what the plan recorded, or the journal's last write of it left."""
     if path is None or not row.before:
         return False
-    return _fingerprint(path) == row.before
+    return fingerprint(path) == row.before
 
 
 @roots_service.canonical_args(both=("renames", "aside"))
@@ -1322,7 +1329,7 @@ def rename(library, operation, renames, aside, exiftool_path=None, summary=None)
     for old in moves:
         if unsettled(old):
             raise names.RenameFailed(unsettled(old), [])
-    fingerprints = {old: _fingerprint(old) for old in moves}
+    fingerprints = {old: fingerprint(old) for old in moves}
     if any(found and not found["ino"] for found in fingerprints.values()):
         # A renamed file is known by its file id; without one a copy cannot be told from it.
         raise names.RenameFailed("this volume gives its files no file id, so a renamed file could not be told "
@@ -1554,6 +1561,10 @@ def _finish(library, change, exiftool_path):
     takes the lock (let_others_in), and a settle asked to stop (_settle_turn) stops, its files not reached left as they
     are for the next start (_put_off), the change unfinished. A settle that cannot take its turn is left whole."""
     undoing = change.undoing
+    if change.operation == file_journal.CONVERT and not undoing:
+        # One clip, settled by where its copy is (tagpup.services.convert); never undone (journal.UNDO_CHECKS).
+        from tagpup.services import convert
+        return convert.settle_change(library, change, exiftool_path)
     renames, changed = _pending(library, change)
     try:
         with _settle_turn(library, change, len(changed)) as stop:
@@ -1576,6 +1587,10 @@ def _pending(library, change):
     writing or done."""
     pending = [row for row in file_journal.files_of(library.path, change.id)
                if row.state in (("writing", "done") if change.undoing else ("planned", "writing"))]
+    if change.operation == file_journal.CONVERT:
+        # A conversion's clip is no rename of the renames' settle (its new_path is the converted copy's), and its
+        # original is refused to every other write until the conversion is settled (_unsettled).
+        return [], pending
     return [row for row in pending if row.is_rename], [row for row in pending if not row.is_rename]
 
 
