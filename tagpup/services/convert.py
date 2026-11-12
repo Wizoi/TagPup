@@ -6,9 +6,14 @@ CONVERTED ONLY WHEN THE OWNER CLICKS CONVERT'; tagpup.files.clip_convert runs ff
 One function for every caller (the one-time convert of the old formats, a clip's own button, a playable MOV made smaller):
 `reason` alone tells them apart, in the change's summary.
 
+The panel's two buttons (start, POST /api/clip/convert): Convert, for a clip that does not play (OLD_FORMAT), and Make
+smaller (MP4), for one that does (SMALLER; a copy no smaller is removed, the clip left as it is). Each is a batch of one on
+a thread of the server (batches.claim), the request answered at once with its ticket; no bulk convert (owner 2026-11-12).
+
 How one conversion goes, the original kept until its copy is in place and holds what it carried:
 1. Refused before ffmpeg runs, nothing planned: a clip away or gone, without a row, still holding Windows Tags (moved
-   first: tagpup.services.windows_tags), open in another program, whose length cannot be read, with no room for its copy
+   first: tagpup.services.windows_tags), open in another program, whose length cannot be read, whose plan is not its
+   reason's (NEEDS: a clip that plays is not converted, one that does not is not made smaller), with no room for its copy
    on its drive, or larger than a Recycle Bin takes (recycle_bin.MOST_CLIP_BYTES) unless the owner confirmed `for_good`.
    Under the lock of changes of photo files: one a cut-short change has still to settle, one whose converted name holds a
    file or a row, one another conversion is converting.
@@ -39,11 +44,13 @@ from the copy. Files are named by their photo's id, never by path.
 """
 import logging
 import os
+import threading
 
 from tagpup.core import fields, paths, vocabulary
-from tagpup.core.result import Result
-from tagpup.files import clip_convert, field_values, images, lock_owners, names, recycle_bin, shares, video_frames
-from tagpup.services import file_changes, tagging
+from tagpup.core.result import CHANGED_ON_DISK, CHANGED_ON_DISK_SENTENCE, Conflict, NotFound, Result, Unavailable
+from tagpup.files import clip_convert, convertible, field_values, images, lock_owners, names, recycle_bin, shares, video_frames
+from tagpup.services import batches, file_changes, tagging
+from tagpup.services import photos as photo_actions
 from tagpup.store import db, file_journal, photos
 
 logger = logging.getLogger(__name__)
@@ -56,6 +63,18 @@ CARRIED = "convert: tags carried"
 READ = tagging.KEYWORD_READ + tuple(fields.title_fields("")) + (fields.CLIP_TITLE, fields.PRESERVED_NAME)
 #: The reason of the one-time convert of the old formats (convert_clip's `reason`).
 OLD_FORMAT = "old format"
+#: The reason of a clip that plays made smaller, an MP4 (the panel's Make smaller (MP4): a .mov over SmugMug's limit; owner
+#: 2026-11-12). Its copy is kept only when it is smaller than the original (NOT_SMALLER).
+SMALLER = "made smaller"
+#: What the clip panel's two buttons ask (POST /api/clip/convert's `mode`): the reason each converts with.
+MODES = {"convert": OLD_FORMAT, "shrink": SMALLER}
+#: What the clip's plan (convertible.plan_for, from the streams _ready reads) must be for each reason: Convert is for a
+#: clip that does not play, Make smaller for one that does.
+NEEDS = {OLD_FORMAT: convertible.REENCODE, SMALLER: convertible.NOTHING}
+#: The conversions of this process kept for the panel to read once they have ended (outcome), the last ones.
+MOST_KEPT = 50
+#: The name of a conversion's thread (start), with its library's.
+CONVERT_THREAD = "ConvertThread %s"
 
 #: The steps of a conversion, in order; `_reached` is told of each.
 STEPS = ("temp verified", "renamed", "rows followed", "carried", "original deleted")
@@ -84,11 +103,21 @@ ROW_THERE = "a row of the library is at its converted name already; both files a
 ORIGINAL_KEPT = ("it was converted, but its original could not be deleted (%s); the original is kept, and its delete is "
                  "tried again when the change is settled")
 CHANGED_SINCE = "it changed since it was converted: it holds neither what the conversion found nor its converted copy"
+PLAYS_ALREADY = "it plays as it is: it is made smaller (Make smaller), not converted; nothing was converted"
+DOES_NOT_PLAY = "it does not play as it is: it is converted (Convert), not made smaller; nothing was converted"
+NOT_SMALLER = "its MP4 came out no smaller than it is: left as it is"
+ASKED_ALREADY = "it is being converted already; wait for it to finish"
+NO_SUCH = "This server has no conversion %d (it may have been long ago, or before the server restarted)."
 
 
 def _reached(step):
     """A step of a conversion is done (STEPS). Nothing happens here; the tests stop the conversion at each step by
     patching it."""
+
+
+class _NotKept(str):
+    """recycle_bin.clip_not_kept's sentence, from _ready: the result names the clip (`not_kept`, as file_only.send does) for
+    the page to ask the owner, then send `for_good`."""
 
 
 class _Ready:
@@ -102,19 +131,25 @@ def convert_clip(library, exiftool_path, tools, source, reason=OLD_FORMAT, for_g
     """Convert the clip at `source` of `library` (see the module), `tools` being config.locate_ffmpeg()'s. `for_good`: the
     owner confirmed a clip over recycle_bin.MOST_CLIP_BYTES is deleted for good. `progress(done, whole)` in seconds;
     `stop`, an Event: Cancel. A Result: `changed` 1 once the copy is in place, its row moved and what it carries written;
-    refused with why, the original as it was, otherwise. details: `change` (its id or None), `reason`, `photo` (the
-    photo's id), and `original_kept`, the sentence, when the copy is in place but the original could not be deleted (the
+    refused with why, the original as it was, otherwise. `reason` is one of NEEDS: the clip's plan must be its own (a
+    clip that plays is not converted, one that does not is not made smaller); made SMALLER, a copy no smaller than the
+    original is removed and the clip refused NOT_SMALLER. details: `change` (its id or None), `reason`, `photo` (the
+    photo's id), `path` (where its copy goes), `size_before` (the original's bytes), `size_after` (the copy's, in place;
+    the removed copy's for NOT_SMALLER), `not_kept` ([its name]) when it is refused for a Recycle Bin that would not keep
+    it, and `original_kept`, the sentence, when the copy is in place but the original could not be deleted (the
     result is refused too: the CLI exits 1)."""
     result = Result(attempted=1)
     result.details.update(change=None, reason=reason, photo=None)
     source = paths.stored(source)
     file_changes.settle(library, exiftool_path)
-    ready = _ready(library, exiftool_path, tools, source, for_good)
+    ready = _ready(library, exiftool_path, tools, source, reason, for_good)
     if isinstance(ready, str):
+        if isinstance(ready, _NotKept):
+            result.details["not_kept"] = [os.path.basename(source)]
         result.refuse(ready)
         return result
-    result.details["photo"] = ready.photo_id
     target = ready.target
+    result.details.update(photo=ready.photo_id, path=target, size_before=ready.stamp[1])
     temp = clip_convert.temp_of(target)
     with file_changes.exclusively():
         why = _taken(library, source, target)
@@ -143,9 +178,13 @@ def convert_clip(library, exiftool_path, tools, source, reason=OLD_FORMAT, for_g
                                        deadline=clip_convert.deadline_for(ready.stamp[1]))
         if problem is None:
             problem = clip_convert.verified(tools, source, ready.streams, temp)
+        made = file_changes.fingerprint(temp) if problem is None else None
+        if made is not None and reason == SMALLER and made["size"] >= ready.stamp[1]:
+            result.details["size_after"] = made["size"]
+            problem, made = NOT_SMALLER, None     # not recorded: _onward removes the temp and lets the clip go
         if problem is None:
             _reached("temp verified")
-            row.after = dict(row.after, made=file_changes.fingerprint(temp))
+            row.after = dict(row.after, made=made)
             db.write_with_connection(library.path, lambda conn: file_journal.set_after(conn, row.id, row.after),
                                      label="change %d: its copy made" % change_id)
         with file_changes.exclusively():
@@ -153,13 +192,91 @@ def convert_clip(library, exiftool_path, tools, source, reason=OLD_FORMAT, for_g
                 file_journal.finish(library.path, change_id)
             else:
                 file_journal.release(library.path, change_id)
+            if result.changed:
+                result.details["size_after"] = file_changes.fingerprint(target)["size"]
     except BaseException:
         file_journal.release(library.path, change_id)
         raise
     return result
 
 
-def _ready(library, exiftool_path, tools, source, for_good):
+_asked_lock = threading.Lock()
+_converting = set()   # (library key, photo id) of the conversions asked of this process and not yet ended
+_asked = {}           # (library key, ticket): [its thread, what `done` made of how it ended, or None while under way]
+
+
+def start(library, exiftool_path, find_ffmpeg, photo_id, mode, stamp, for_good=False, done=None):
+    """Convert the clip `photo_id` of `library` as the panel's button `mode` asks (MODES), on a thread of its own as a
+    batch of one (batches.claim: listed on the Activity page's strip, cancelled by its ticket, waited for and stopped by an
+    update's drain), so that the request returns at once and a closed tab loses nothing. `stamp`, (mtime, size), the clip
+    as the page's record had it: a clip changed since (a second window, or the panel's own MP4 made already) is refused
+    CHANGED_ON_DISK. Raises Unavailable without ffmpeg, as photos.video does (NotFound, Conflict, Unavailable,
+    paths.RootsError), Conflict (ASKED_ALREADY) while this process converts it already, and batches.claim's Conflict when
+    too many batches wait. A Result: refused, or details `ticket` and `path` (the clip's). When it ends, `done(path, how)`
+    -- how: convert_clip's Result, or what it raised -- is run on the thread and what it returns kept for outcome()."""
+    tools = find_ffmpeg()
+    if tools.problem:
+        raise Unavailable(tools.problem)
+    source = photo_actions.video(library, photo_id).path
+    result = Result(attempted=1)
+    if photo_actions.changed_on_disk(source, stamp):
+        result.refuse(CHANGED_ON_DISK_SENTENCE, CHANGED_ON_DISK)
+        return result
+    asked = (library.key, photo_id)
+    with _asked_lock:
+        if asked in _converting:
+            raise Conflict("The video was not converted: %s." % ASKED_ALREADY)
+        _converting.add(asked)
+    lined, said = threading.Event(), {}
+
+    def in_line(batch):
+        with _asked_lock:
+            said["ticket"] = batch.ticket
+            _asked[(library.key, batch.ticket)] = [threading.current_thread(), None]
+            for old in list(_asked)[:-MOST_KEPT]:
+                del _asked[old]
+        lined.set()
+
+    def work():
+        try:
+            with batches.claim(library, OPERATION, 1, on_line=in_line) as batch:
+                how = convert_clip(library, exiftool_path, tools, source, reason=MODES[mode], for_good=for_good,
+                                   stop=batch.stop)
+        except Exception as e:   # told to the panel through `done`, the request answered already; or before it was
+            if not lined.is_set():
+                said["raised"] = e
+                lined.set()
+                return
+            how = e
+        finally:
+            with _asked_lock:
+                _converting.discard(asked)
+        ended = done(source, how)
+        with _asked_lock:
+            if (library.key, said["ticket"]) in _asked:
+                _asked[(library.key, said["ticket"])][1] = ended
+
+    threading.Thread(target=work, name=CONVERT_THREAD % library.name, daemon=True).start()
+    lined.wait()
+    if "raised" in said:
+        raise said["raised"]
+    result.details.update(ticket=said["ticket"], path=source)
+    return result
+
+
+def outcome(library, ticket, wait=None):
+    """What `done` made of how the conversion `ticket` of `library` ended (start), or None while it is under way; with
+    `wait`, seconds to wait for it first (a test). NotFound for a ticket this process has none of (MOST_KEPT)."""
+    with _asked_lock:
+        held = _asked.get((library.key, ticket))
+    if held is None:
+        raise NotFound(NO_SUCH % ticket)
+    if wait:
+        held[0].join(wait)
+    return held[1]
+
+
+def _ready(library, exiftool_path, tools, source, reason, for_good):
     """_Ready, or why the clip at `source` is not converted (a sentence), looked at before anything is planned."""
     if not images.is_clip(source):
         return NOT_A_CLIP
@@ -191,11 +308,14 @@ def _ready(library, exiftool_path, tools, source, for_good):
         return streams.problem
     if streams.duration is None:
         return clip_convert.NO_LENGTH
+    plan = convertible.plan_for(os.path.splitext(source)[1], streams.video, streams.audio)
+    if plan.action != NEEDS[reason]:
+        return PLAYS_ALREADY if plan.action == convertible.NOTHING else DOES_NOT_PLAY
     room = clip_convert.room_for(source, stamp[1])
     if room:
         return room
     if recycle_bin.too_large_to_copy(source, stamp[1]) and not for_good:
-        return recycle_bin.clip_not_kept(source, stamp[1])
+        return _NotKept(recycle_bin.clip_not_kept(source, stamp[1]))
     carry = {"tags": list(vocabulary.extract_tags({field: held.get(field) for field in fields.TAG_SOURCE_FIELDS})),
              "title": fields.own_title(held),
              "name": names.preserved_name(held) or os.path.basename(source)}
