@@ -332,13 +332,16 @@ def _ready(library, exiftool_path, tools, source, reason):
 
 def _taken(library, source, target):
     """Why the clip at `source` may not be converted to `target` now, under the lock of changes of photo files, or None:
-    a cut-short change has it still to settle, a file or a row is at `target` (another name), another conversion of it is
-    not finished."""
+    a cut-short change has it still to settle, a file or a row is at `target` (another name; AWAY when its share did not
+    answer), another conversion of it is not finished."""
     why = file_changes.unsettled(source)
     if why:
         return why
     if not paths.same(source, target):
-        if shares.stamp_of(target) is not None:
+        there = shares.stamp_of(target)
+        if there is shares.UNANSWERED:
+            return AWAY
+        if there is not None:
             return NAME_TAKEN
         conn = db.connect(db.readonly_uri(library.path), uri=True)
         try:

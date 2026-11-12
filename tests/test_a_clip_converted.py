@@ -29,7 +29,7 @@ from view_library import ViewLibrary  # noqa: E402
 
 from tagpup.core import fields, paths, processes  # noqa: E402
 from tagpup.core.result import Result  # noqa: E402
-from tagpup.files import clip_convert, field_values, metadata, recycle_bin, video_frames  # noqa: E402
+from tagpup.files import clip_convert, field_values, metadata, recycle_bin, shares, video_frames  # noqa: E402
 from tagpup.services import batches, convert, file_changes, tagging  # noqa: E402
 from tagpup.services import photos as photo_actions  # noqa: E402
 from tagpup.store import file_journal, photos  # noqa: E402
@@ -289,6 +289,17 @@ class Refused(AnOldClipInTheLibrary):
         self.assertEqual((0, convert.CHANGED), (result.changed, result.message()))
         self.assertTrue(self.read_bytes(source).endswith(b"another program's bytes"), "the changed original kept")
         self.assertEqual([], self.leftovers())
+
+    def test_a_share_that_does_not_answer_at_its_converted_name_is_said_away_not_taken(self):
+        real, target = shares.stamp_of, clip_convert.target_of(self.source)
+
+        def stamp_of(path, *args, **kwargs):
+            return shares.UNANSWERED if paths.same(path, target) else real(path, *args, **kwargs)
+        with mock.patch.object(shares, "stamp_of", side_effect=stamp_of), mock.patch.object(clip_convert, "convert") as ffmpeg:
+            result = self.convert(self.source)
+        self.assertEqual((0, convert.AWAY), (result.changed, result.message()))
+        ffmpeg.assert_not_called()
+        self.assertEqual(self.before, self.read_bytes(self.source))
 
     def test_a_second_library_holding_the_folder_converting_the_clip_meanwhile_is_refused_and_leaves_the_temp(self):
         # Two libraries hold the folder; while the first converts the clip, the second is asked to convert it too.
