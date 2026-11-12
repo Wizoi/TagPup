@@ -33,6 +33,7 @@ from tagpup.core.result import NotFound, Result
 from tagpup.services import (
     baking,
     bulk_edit,
+    convert,
     face_batch,
     face_people,
     file_changes,
@@ -109,6 +110,10 @@ UNDO_CHECKS = {
     "time shift": None,
     "rotate": None,
     "faces_from_tags": None,
+    # A clip's conversion: its original is in the Recycle Bin (tagpup.services.convert); the carry into its copy is a
+    # write of fields as Save's.
+    convert.OPERATION: "change %(change)d (%(operation)s): not undone, the original is in the Recycle Bin",
+    convert.CARRIED: None,
 }
 UNDO_CHECKS.update({operation: None for operation in bulk_edit.OPERATIONS.values()})
 UNDO_CHECKS.update({operation: None for operation in face_batch.DESCRIPTIONS.values()})
