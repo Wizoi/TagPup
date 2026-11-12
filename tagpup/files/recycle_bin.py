@@ -28,8 +28,11 @@ Downloads, not to the share. Before copying, the drive of that folder must have 
 
 And a copy is made only where it would be KEPT (the owner's review, #703-#706; `can_copy_here`): Windows makes room in a full
 Recycle Bin by purging its OLDEST items for good, so the Bin of the Downloads volume must hold what it holds, the copies, and
-BIN_MARGIN of its capacity (its per-volume MaxCapacity; a Bin set to NukeOnDelete keeps nothing and refuses all, and a file larger
-than the Bin is refused); the Bin's size is asked of Windows (SHQueryRecycleBinW: 11.8 s for 3,353 items here) once, then counted
+BIN_MARGIN of its capacity (its per-volume MaxCapacity; a Bin set to NukeOnDelete keeps nothing, and a file larger than the Bin
+is not kept either). A Bin that would not keep the copies -- full, set to delete at once, or smaller than one -- is
+`copies_not_kept`: the file is then deleted for good where it is only when the owner was told so and confirmed it (the one
+confirm path of `for_good`, NotKept with `full` when the Bin is full: the page asks "The Recycle Bin is full: delete
+permanently instead?"; owner, 2026-11-12), else refused untouched; no copy is made. The Bin's size is asked of Windows (SHQueryRecycleBinW: 11.8 s for 3,353 items here) once, then counted
 on by what this process sends (`note_binned`), and asked again after BIN_FRESH. A copy whose path would be MAX_PATH or more is
 refused up front (SHFileOperation takes none). A Downloads folder under OneDrive is refused: a copy would be synced to the cloud
 before it was recycled. A `.partial` a crash left for the same name is taken away on the way in.
@@ -465,8 +468,13 @@ def would_keep(size, kept):
 
 
 class NotKept(OSError):
-    """A file the Recycle Bin of its drive would not keep (keeps_up_to), asked to be deleted without `for_good`: nothing
-    was touched. The page names it and asks; confirmed, it is deleted for good."""
+    """A file the Recycle Bin of its drive would not keep (keeps_up_to) -- or, from a place with no Bin, this PC's Bin would not
+    keep its copy (copies_not_kept) --, asked to be deleted without `for_good`: nothing was touched. The page names it and asks;
+    confirmed, it is deleted for good. `full`: this PC's Bin is only full (BIN_FULL), so the page asks in those words."""
+
+    def __init__(self, sentence, full=False):
+        super().__init__(sentence)
+        self.full = full
 
 
 def not_kept(file_path, kept):
@@ -497,28 +505,48 @@ def _remove_for_good(source):
                       % (e.strerror or e)) from None
 
 
-def room_for_copies(byte_count, largest, root=None, fresh=False):
+#: What copies_not_kept says of this PC's Recycle Bin: full (Windows would make room by purging its oldest items for good), or
+#: keeping none of the copies (set to delete at once, or smaller than one of them).
+BIN_FULL, BIN_KEEPS_NONE = "full", "keeps none"
+
+
+def copies_not_kept(byte_count, largest, root=None, fresh=False):
     """None when the Bin of the copies' volume will keep `byte_count` more of copies (the largest `largest`) and what it holds,
-    with BIN_MARGIN of its capacity spare; else the sentence. `fresh`: ask Windows the Bin's size now (the question before a
-    delete), else trust what was asked within BIN_FRESH and what was sent since."""
+    with BIN_MARGIN of its capacity spare; else (BIN_FULL or BIN_KEEPS_NONE, the phrase of why). Raises OSError (AttributeError,
+    ValueError) when Windows cannot say. `fresh`: ask Windows the Bin's size now (the question before a delete), else trust what
+    was asked within BIN_FRESH and what was sent since."""
     root = root or mirror_root()
-    try:
-        mount = _volume_root(root)
-        capacity, nuke = _bin_settings(mount)
-        used = _bin_used(mount, fresh)
-    except (OSError, AttributeError, ValueError) as e:
-        return "Could not tell how much this PC's Recycle Bin can keep (%s). Nothing was deleted." % (getattr(e, "strerror", None) or e)
+    mount = _volume_root(root)
+    capacity, nuke = _bin_settings(mount)
+    used = _bin_used(mount, fresh)
     if nuke:
-        return ("This PC's Recycle Bin on %s deletes files at once (it is set not to keep them), so a copy would not be kept. "
-                "Nothing was deleted." % mount)
+        return BIN_KEEPS_NONE, "this PC's Recycle Bin on %s deletes files at once (it is set not to keep them)" % mount
     if largest > capacity:
-        return ("A file of %s is larger than this PC's Recycle Bin on %s (%s), which could not keep it. Nothing was deleted."
-                % (_mb(largest), mount, _mb(capacity)))
+        return BIN_KEEPS_NONE, ("a file of %s is larger than this PC's Recycle Bin on %s (%s), which could not keep it"
+                                % (_mb(largest), mount, _mb(capacity)))
     if used + byte_count > capacity * (1 - BIN_MARGIN):
-        return ("This PC's Recycle Bin on %s cannot keep the copies: it holds %s of %s, and the copies are %s. Windows would make room "
-                "by deleting its oldest items for good. Empty the Recycle Bin, or delete fewer photos. Nothing was deleted."
-                % (mount, _mb(used), _mb(capacity), _mb(byte_count)))
+        return BIN_FULL, ("this PC's Recycle Bin on %s is full: it holds %s of %s, and %s %s; Windows would make room by "
+                          "deleting its oldest items for good"
+                          % (mount, _mb(used), _mb(capacity), "the copy is" if byte_count == largest else "the copies are",
+                             _mb(byte_count)))
     return None
+
+
+def _cannot_tell(e):
+    return "Could not tell how much this PC's Recycle Bin can keep (%s). Nothing was deleted." % (getattr(e, "strerror", None) or e)
+
+
+def room_for_copies(byte_count, largest, root=None, fresh=False):
+    """None when the Bin of the copies' volume will keep them (copies_not_kept); else the sentence that refuses them."""
+    try:
+        refused = copies_not_kept(byte_count, largest, root, fresh)
+    except (OSError, AttributeError, ValueError) as e:
+        return _cannot_tell(e)
+    if refused is None:
+        return None
+    kind, why = refused
+    advice = "Empty the Recycle Bin, or delete fewer photos. " if kind == BIN_FULL else ""
+    return "%s%s. %sNothing was deleted." % (why[0].upper(), why[1:], advice)
 
 
 def _cloud_synced(folder):
@@ -530,15 +558,21 @@ def _cloud_synced(folder):
     return None
 
 
-def can_copy_here(byte_count, largest, root=None, fresh=False):
-    """None when copies of `byte_count` (the largest `largest`) can be made under the mirror folder and kept by this PC's Recycle
-    Bin; else the sentence: Downloads synced to OneDrive, no room on its drive, a Bin that would not keep them (#703, #706)."""
+def cannot_make_copies(byte_count, root=None):
+    """None when copies of `byte_count` can be made under the mirror folder; else the sentence: Downloads synced to OneDrive, or
+    no room on its drive (#703, #706). Whether this PC's Bin keeps them is copies_not_kept's."""
     root = root or mirror_root()
     synced = _cloud_synced(root)
     if synced:
         return ("The Downloads folder is under OneDrive (%s): a copy of a deleted photo would be synced to the cloud before it was "
                 "recycled. Nothing was deleted." % synced)
-    return room_for(byte_count, root) or room_for_copies(byte_count, largest, root, fresh)
+    return room_for(byte_count, root)
+
+
+def can_copy_here(byte_count, largest, root=None, fresh=False):
+    """None when copies of `byte_count` (the largest `largest`) can be made under the mirror folder and kept by this PC's Recycle
+    Bin; else the sentence: cannot_make_copies, or a Bin that would not keep them (room_for_copies)."""
+    return cannot_make_copies(byte_count, root) or room_for_copies(byte_count, largest, root, fresh)
 
 
 def too_long(target):
@@ -590,9 +624,11 @@ def _take_away(path):
         pass
 
 
-def recycle_through_this_pc(file_path, root=None):
+def recycle_through_this_pc(file_path, root=None, for_good=False):
     """Delete `file_path`, in a place with no Recycle Bin, through this PC (the module's docstring): copy, check, the copy to this
-    PC's Recycle Bin, then the original. Returns where the copy was put (so where Windows restores it). Raises ValueError for a
+    PC's Recycle Bin, then the original. Returns (where the copy was put -- so where Windows restores it --, None), or, when this
+    PC's Bin would not keep the copy (copies_not_kept) and `for_good` (the owner was told and confirmed), (None, why it was deleted
+    for good): it is then removed where it is, no copy made; unconfirmed, NotKept, nothing touched. Raises ValueError for a
     path that is no photo or clip file (problem) and OSError, with a sentence, for any step that failed: the original is then left where it
     is (and, when only its own delete failed, is there twice: the error says so)."""
     why, long = _judged(file_path)
@@ -601,9 +637,19 @@ def recycle_through_this_pc(file_path, root=None):
     source = paths.stored(file_path)
     root = root or mirror_root()
     size = os.path.getsize(source)
-    refused = can_copy_here(size, size, root)
+    refused = cannot_make_copies(size, root)
     if refused:
         raise OSError(refused)
+    try:
+        not_kept_here = copies_not_kept(size, size, root)
+    except (OSError, AttributeError, ValueError) as e:
+        raise OSError(_cannot_tell(e)) from None
+    if not_kept_here:
+        kind, why = not_kept_here
+        if not for_good:
+            raise NotKept(_not_kept_said(source, why), full=kind == BIN_FULL)
+        _remove_for_good(source)
+        return None, BIN_FULL_WHY if kind == BIN_FULL else COPY_NOT_KEPT
     _clear_partials(mirror_of(source, root))
     target = _free_name(mirror_of(source, root))
     long = too_long(target)
@@ -636,7 +682,7 @@ def recycle_through_this_pc(file_path, root=None):
     except OSError as e:
         raise OSError("A copy is in this PC's Recycle Bin, but the original could not be deleted (%s): it is still where it was, so "
                       "the file is there twice." % (e.strerror or e)) from None
-    return target
+    return target, None
 
 
 _under_delete_lock = threading.Lock()
@@ -682,6 +728,8 @@ def delete_file(file_path, for_good=False):
 #: Why a file was deleted for good, as the reply says it after "Deleted for good, as you confirmed: ".
 BIN_WOULD_NOT_KEEP = "the Recycle Bin of its drive would not keep it"
 CLIP_NOT_COPIED = "a video this large is not copied to a Recycle Bin"
+BIN_FULL_WHY = ("this PC's Recycle Bin, which keeps the copies of files from places with no Recycle Bin, is full")
+COPY_NOT_KEPT = ("this PC's Recycle Bin, which keeps the copies of files from places with no Recycle Bin, would not keep its copy")
 
 
 def _delete_file(file_path, for_good):
@@ -702,8 +750,9 @@ def _delete_file(file_path, for_good):
             return {"through_this_pc": False, "reason": None, "copy": None, "for_good": True, "why_for_good": CLIP_NOT_COPIED}
     reason = no_bin_reason(file_path)
     if reason:
-        return {"through_this_pc": True, "reason": reason, "copy": recycle_through_this_pc(file_path), "for_good": False,
-                "why_for_good": None}
+        copy, why_for_good = recycle_through_this_pc(file_path, for_good=for_good)
+        return {"through_this_pc": copy is not None, "reason": reason, "copy": copy, "for_good": copy is None,
+                "why_for_good": why_for_good}
     try:
         size, kept = os.path.getsize(source), keeps_up_to(source)
     except OSError as e:

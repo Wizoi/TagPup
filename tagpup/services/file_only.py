@@ -232,12 +232,13 @@ def delete(photo_path, for_good=False):
 def send(photo_path, for_good, result):
     """recycle_bin.delete_file(photo_path, for_good) into `result`: what it did in its details (`through_this_pc`,
     `no_bin_reason`, `copy`, `for_good`, `why_for_good`), and the dict; or None, `result` refused -- a file deleted for good
-    only once confirmed, unconfirmed (recycle_bin.NotKept: details `not_kept`, its name) -- or failed. The one way a delete of one file is told."""
+    only once confirmed, unconfirmed (recycle_bin.NotKept: details `not_kept`, its name, and `bin_full`, 1 when only this PC's Bin is full) -- or failed. The one way a delete of one file is told."""
     try:
         went = recycle_bin.delete_file(photo_path, for_good=for_good)
     except recycle_bin.NotKept as e:
         result.refuse(str(e))
         result.details["not_kept"] = [os.path.basename(photo_path)]
+        result.details["bin_full"] = 1 if e.full else 0
         return None
     except Exception as e:
         result.fail(photo_path, e)
