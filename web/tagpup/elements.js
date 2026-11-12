@@ -104,6 +104,7 @@ export const btnDeletePhoto = document.getElementById('btn-delete-photo');
 export const facesSection = document.getElementById('faces-section');
 
 export const detailPath = document.getElementById('detail-path');
+export const detailFileSize = document.getElementById('detail-file-size');
 // Smart Rename of the open photo: the grouping box beside its name and its button (rename-one.js).
 export const inputSmartRenameOne = document.getElementById('input-smart-rename-one');
 export const btnSmartRenameOne = document.getElementById('btn-smart-rename-one');

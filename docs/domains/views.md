@@ -29,7 +29,7 @@ All three libraries name the same models (ViT-SO400M-14-SigLIP2/webli and scrfd-
 
 | Contract | Guard |
 |---|---|
-| Order: Date Taken, file name or caption key, either way, then the photo id in the order's direction; photos with no key after, by id | `tests/test_library_views_scenarios.py` (V1: every kind of source, both ways, across pages), `tests/test_library_union_and_order.py`, `tests/test_caption_order.py` |
+| Order: Date Taken, file name, caption key or file size, either way, then the photo id in the order's direction; photos with no key after, by id | `tests/test_library_views_scenarios.py` (V1: every kind of source, both ways, across pages), `tests/test_library_union_and_order.py`, `tests/test_caption_order.py`; by size: `test_library_views_scenarios.py` (TheLargestFilesFirst) |
 | The list: one order, no photo twice, none skipped; `total` counts a photo once | V1; `tests/test_selection_scenarios.py` (V5, V7) |
 | Reads only; ids and cards separate reads; caps `MAX_IDS`, `MAX_CARDS`, `MAX_MEMBERS` | V1, `tests/test_library_view.py`, `tests/test_library_view_plans.py` |
 | A search ANDs its terms and never ranks; nothing typed is FTS5 syntax | `tests/test_library_search.py` (V2), `tests/test_camera_words.py` |
@@ -96,6 +96,11 @@ All three libraries name the same models (ViT-SO400M-14-SigLIP2/webli and scrfd-
   index `ON photos(id) WHERE kind = 'video'` holds the clips' ids alone; on a copy of photo_index the clip statement took 47
   ms as a scan of photos and 1 ms by the index. The plan test asks every source's clip statement to scan no photos. Under
   the Videos filter the whole library ordered by caption still walks `idx_photos_caption` past every photo (#2775).
+- **The order by file size reads its source's rows and sorts them** (the owner, 2026-11-12: no index of `photos.size`,
+  no migration): measured warm, read-only on photo_index (62,451 rows, 2026-11-12), the whole library 150 ms against 33
+  by Date Taken -- the one source that scans `photos` -- its clips alone 12 ms (`idx_photos_clips`), the largest top folder
+  with its subfolders 245 ms as by Date Taken, a 15,397-photo keyword or person 80-100 ms, a year 6 ms. An index
+  `ON photos(size, id)` would make the whole library a walk; it is the owner's to ask for.
 
 - **A Suggest offers a name by the cuts of the face model its run holds** (2026-10-20, phase 3 merge 3;
   `clustering.cuts_of(self.faces.key)`, `suggester`): a library switched mid-run ends on the model it began with, and

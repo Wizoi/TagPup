@@ -11,8 +11,9 @@ TOTAL; `cards` turns any list of ids into cards.
 
 * **Order**: by Date Taken (`photos.taken`, ExifTool's text, which sorts as time does) and then id; photos with
   no date after them, by id -- or, asked (`order`, store.ORDERS), newest first (the undated still after the dated,
-  by id from the highest), by file name either way (ties by id), or by caption either way (ties by id; photos with no
-  caption after the captioned, by id in the order's direction, as the undated are). Never by file time. The page
+  by id from the highest), by file name either way (ties by id), by caption either way (ties by id; photos with no
+  caption after the captioned, by id in the order's direction, as the undated are), or by file size either way (ties by
+  id; a size never read after the rest). Never by file time. The page
   holds the list and asks for the cards of the ids near its window.
 * **A card** is small: id, file name, native path, taken, whether the photo is recorded damaged, and the
   thumbnail's URL by id (tagpup.services.thumbnails). One batch read of the columns it needs: no

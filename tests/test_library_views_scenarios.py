@@ -9,6 +9,9 @@ QuickTime ones, a date of zeros none), carded as a video, counted under
 its folder and its month by the navigator, found by its file name, and answered the placeholder thumbnail, not kept.
 Every view says how many of its photos are clips (#2569): `videos` beside `total`, the same where in the same read, a clip in
 two members of a union once, a view of clips alone, an empty one, and a cut list's clips the whole source's.
+The owner looks for the biggest clips (2026-11-12): Videos and File size, largest first, lists the clips by their files' sizes,
+equal sizes by id in the order's direction, scrolled window by window with none twice or skipped, a cut list the head of the
+whole, and a row whose file was never read (Suggest's) after the rest either way.
 V8: a view's cards, its ids and the page's cached scan are read again after the index, a rename, a bulk tag or the CLI
 wrote the library: the card says what the disk says, the keyword view lists what the write tagged, the folder scan is
 let go. The find route reads a path literally: `_` and `%` are not wildcards.
@@ -20,6 +23,7 @@ person and a month among the sources; TheOrder's dated-then-undated order), and 
           p.id%s` -> `ORDER BY p.taken%s`) fails scrolls_equal_dates_across_page_boundaries (descending, by keyword and by
           folder with its subfolders).
   Lifted: the undated read dropped from all_ids (`if len(ids) <= cap and not scope.dated:` -> `if False:`) fails the same test.
+  New: on the code before the size order every TheLargestFilesFirst test fails, `order=size` answered 400.
   Lifted: store.photo_id_of matching with `path LIKE ?` instead of paths.sql_equals (`_` and `%` wildcards) fails
           underscore_and_percent_are_not_wildcards.
   Lifted: #341, the page went on showing a scan from before the photos were read: the scan is kept with the photos
@@ -168,6 +172,73 @@ class ScrollingALibraryOfEqualDates(Views):
         self.assertEqual(([], 0), tuple(self.ids(kind="keyword", value="No/Such/Tag")[key] for key in ("ids", "total")))
         for tag in ("Trips/%", "Trips/_oast", "Trips/O'Brien"):
             self.assertEqual([], self.ids(kind="keyword", value=tag)["ids"], tag)
+
+
+class TheLargestFilesFirst(Views):
+    def file(self, folder, name, size, tags=()):
+        """A file of `size` bytes at `folder`/`name` under Pictures, recorded as the indexer records its read."""
+        path = os.path.join(self.vl.pictures, folder, name)
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "wb") as handle:
+            handle.write(bytes(size))
+        return self.vl.photo(folder, name, tags=tags)
+
+    def setUp(self):
+        super().setUp()
+        file = self.file
+        self.mid_clip = file("Coast", "swim.mp4", 5000, tags=["Trips/Coast"])
+        self.small_photo = file("Coast", "dawn.jpg", 1000, tags=["Trips/Coast"])
+        self.big_clip = file("Lake", "regatta.mov", 9000)
+        self.big_photo = file("Coast", "pier.jpg", 7000)
+        self.twin_clip = file(os.path.join("Coast", "Day 2"), "ferry.mp4", 9000, tags=["Trips/Coast"])   # as big as the regatta
+        self.small_clip = file("Lake", "reel.mp4", 2000)
+        self.mid_photo = file("Lake", "jetty.jpg", 3000, tags=["Trips/Coast"])
+        self.never_read = self.vl.unread("Coast", "never read.jpg")   # the row Suggest makes: no size
+        self.size = dict(self.vl.rows("SELECT id, size FROM photos"))
+        self.coast = os.path.join(self.vl.pictures, "Coast")
+
+    def ordered(self, held, descending):
+        """`held` by size and then id, the order's way, a size never read after the rest."""
+        sized = sorted((each for each in held if self.size[each] is not None), key=lambda each: (self.size[each], each),
+                       reverse=descending)
+        return sized + sorted((each for each in held if self.size[each] is None), reverse=descending)
+
+    def test_videos_largest_first_are_the_biggest_clips_first_in_every_view_across_the_pages(self):
+        self.assertEqual(None, self.size[self.never_read])
+        listed, shown = self.scroll(kind="all", media="video", order="size-desc")
+        self.assertEqual([self.twin_clip, self.big_clip, self.mid_clip, self.small_clip], listed,
+                         "the biggest clip first; two as big, the later first")
+        self.assertEqual(listed, shown)
+        sources = (dict(kind="all"), dict(kind="folder", folder=self.coast, recursive="1"), dict(kind="folder", folder=self.coast),
+                   dict(kind="keyword", value="Trips"))
+        for query in sources:
+            for media in ("", "video", "photo"):
+                held = set(self.ids(media=media, **query)["ids"])
+                for order, descending in (("size", False), ("size-desc", True)):
+                    with self.subTest(query=query, media=media, order=order):
+                        listed, shown = self.scroll(media=media, order=order, **query)
+                        self.assertEqual(listed, shown, "the cards are the ids, in order, none twice, none skipped")
+                        self.assertEqual(self.ordered(held, descending), listed)
+        everything = self.ids(kind="all", order="size")["ids"]
+        self.assertEqual(([self.small_photo, self.small_clip], self.never_read), (everything[:2], everything[-1]))
+        self.assertEqual(self.never_read, self.ids(kind="all", order="size-desc")["ids"][-1], "never read: last either way")
+
+    def test_a_cut_list_is_the_head_of_the_largest_and_a_file_that_grew_moves_in_the_next_read(self):
+        whole = self.ids(kind="all", order="size-desc")["ids"]
+        with mock.patch.object(library_view, "MAX_IDS", 3):
+            cut = self.ids(kind="all", order="size-desc")
+        self.assertEqual((whole[:3], 8, False), (cut["ids"], cut["total"], cut["complete"]))
+        # The small clip is rewritten bigger than every other file and read again by the index.
+        self.file("Lake", "reel.mp4", 12000)
+        self.assertEqual(self.small_clip, self.ids(kind="all", media="video", order="size-desc")["ids"][0])
+
+    def test_an_order_by_size_is_named_in_the_reply_and_another_spelling_is_a_sentence(self):
+        self.assertEqual("size-desc", self.ids(kind="all", order="size-desc")["order"])
+        for order in ("largest", "size-asc", "Size"):
+            with self.subTest(order=order):
+                reply = self.get("/api/library/ids", query_string={"kind": "all", "order": order})
+                self.assertEqual(400, reply.status_code)
+                self.assertIn("size, size-desc", reply.get_json()["error"])
 
 
 class AClipAmongThePhotosOfAFolder(Views):

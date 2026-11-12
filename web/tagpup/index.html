@@ -206,6 +206,8 @@
                                 <div class="detail-item">
                                     <span class="detail-label">File Path</span>
                                     <span class="detail-value clickable" id="detail-path"></span>
+                                    <!-- The file's size as the library last read it (photo.js showPhoto; what Sort by's File size orders by). -->
+                                    <span class="detail-value one-line" id="detail-file-size"></span>
                                     <!-- Smart Rename of this photo alone: the grouping its name holds, to edit; its number is kept (web/tagpup/rename-one.js). -->
                                     <div class="title-edit-container" data-writes="name">
                                         <input type="text" id="input-smart-rename-one" placeholder="Grouping" title="The grouping of this photo's name: change it and press Smart Rename. The photo keeps its number.">
@@ -346,6 +348,7 @@
                                                 <button type="button" role="menuitemradio" aria-checked="false" tabindex="-1" data-field="taken">Date Taken</button>
                                                 <button type="button" role="menuitemradio" aria-checked="false" tabindex="-1" data-field="caption">Caption</button>
                                                 <button type="button" role="menuitemradio" aria-checked="false" tabindex="-1" data-field="name">File name</button>
+                                                <button type="button" role="menuitemradio" aria-checked="false" tabindex="-1" data-field="size">File size</button>
                                             </div>
                                             <div role="separator" class="radio-menu-separator"></div>
                                             <div role="group" aria-labelledby="sort-menu-direction">

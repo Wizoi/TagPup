@@ -1,7 +1,8 @@
 // TagPup's page: Sort by, in a library view's floating header (#714; docs/ARCHITECTURE.md, phase 9, the owner's second review).
 //
 // The button opens a small menu of two sections, as Windows Live Photo Gallery's does: the field -- Date Taken, Caption, File
-// name -- and the direction -- Ascending, Descending -- each a group of radio items showing the current choice. A choice reads
+// name, File size -- and the direction -- Ascending, Descending; for File size, Smallest first, Largest first (the field's own
+// words, library-source.js directionLabel) -- each a group of radio items showing the current choice. A choice reads
 // the view again in that order (library-view.js openLibraryView: a new place in the history, so Back returns to the order before,
 // and the address keeps `order`), and the views opened after it are read in it (state.nav.order, set as the view opens).
 // Choosing what is already chosen closes the menu and asks for nothing.
@@ -11,15 +12,19 @@
 import { state } from './state.js';
 import { btnSortBy, sortByCurrent, sortMenu } from './elements.js';
 import { openLibraryView } from './library-view.js';
-import { SORT_FIELDS, orderLabel, orderOf, orderParts } from './library-source.js';
+import { SORT_FIELDS, directionLabel, orderLabel, orderOf, orderParts } from './library-source.js';
 import { radioMenu } from './radio-menu.js';
 
-/** Each item checked or not, as `order` is read. */
+/** Each item checked or not, as `order` is read; the directions said as its field says them. */
 function markChecked(order) {
     const { field, descending } = orderParts(order);
     for (const item of menu.items()) {
         const checked = item.dataset.field ? item.dataset.field === field : (item.dataset.direction === 'desc') === descending;
         item.setAttribute('aria-checked', checked ? 'true' : 'false');
+        if (item.dataset.direction) {
+            const said = directionLabel(field, item.dataset.direction === 'desc');
+            item.textContent = said.charAt(0).toUpperCase() + said.slice(1);
+        }
     }
 }
 

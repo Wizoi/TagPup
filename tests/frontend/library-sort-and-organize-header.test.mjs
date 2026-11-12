@@ -143,7 +143,7 @@ describe("#714: Sort by, in the header: the field and the direction", () => {
     assert.equal(button(ctx).getAttribute("aria-expanded"), "true");
     const groups = [...menu(ctx).querySelectorAll("[role='group']")];
     assert.deepEqual(groups.map((g) => [...g.querySelectorAll("[role='menuitemradio']")].map((i) => i.textContent)),
-      [["Date Taken", "Caption", "File name"], ["Ascending", "Descending"]]);
+      [["Date Taken", "Caption", "File name", "File size"], ["Ascending", "Descending"]]);
     assert.deepEqual(groups.map((g) => ctx.document.getElementById(g.getAttribute("aria-labelledby")).textContent), ["Sort by", "Order"]);
     assert.deepEqual(checked(ctx), ["File name", "Descending"]);
     assert.equal(ctx.document.activeElement, item(ctx, "File name"), "the focus on the field chosen");
@@ -285,6 +285,26 @@ describe("#714: Sort by, in the header: the field and the direction", () => {
       assert.equal(lastOrder(ctx), order === "taken" ? null : order);
       assert.equal(button(ctx).getAttribute("aria-label"), `Sort by: ${label}`);
     }
+  });
+
+  test("Videos, File size, Largest first: the order the server is asked, said in the field's own words", async (t) => {
+    const ctx = await loadViewPage(t, { search: "?view=all&media=video&order=taken-desc" });
+    click(ctx.window, button(ctx));
+    click(ctx.window, item(ctx, "File size"));
+    await ctx.settle();
+    assert.equal(lastOrder(ctx), "size-desc", "the direction kept");
+    assert.equal(button(ctx).getAttribute("aria-label"), "Sort by: File size, largest first");
+    click(ctx.window, button(ctx));
+    assert.deepEqual(checked(ctx), ["File size", "Largest first"]);
+    click(ctx.window, item(ctx, "Smallest first"));
+    await ctx.settle();
+    assert.equal(ctx.window.location.search.includes("order=size"), true);
+    assert.equal(lastOrder(ctx), "size");
+    click(ctx.window, button(ctx));
+    click(ctx.window, item(ctx, "Date Taken"));
+    await ctx.settle();
+    click(ctx.window, button(ctx));
+    assert.deepEqual(checked(ctx), ["Date Taken", "Ascending"], "another field's directions in their own words again");
   });
 
   test("a view whose address is no view: Sort by is off and opens nothing", async (t) => {
