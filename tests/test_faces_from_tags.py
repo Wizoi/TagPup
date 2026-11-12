@@ -18,6 +18,7 @@ import sys
 import unittest
 
 import numpy as np
+from PIL import Image
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import own_home  # noqa: E402
@@ -276,14 +277,6 @@ class TheTagAloneIsTrustedAsFarAsTheFaceLooksLikeThem(Case):
         self.tag(photo, "People/" + WREN)
         self.assertEqual(WREN, self.name(face), "Wren has no decided face of her own")
 
-    def test_a_background_sized_face_is_never_named_by_the_tag(self):
-        photo = self.photo("frame_008.jpg")
-        speck = self.face(photo, at(0), box=[0, 0, 40, 40])
-        self.tag(photo, "People/" + WREN)
-        self.assertIsNone(self.name(speck))
-        counts = from_tags(self.library).details["counts"]
-        self.assertEqual(0, counts["faces"])
-
     def test_a_second_run_names_nothing_the_first_would_not(self):
         self.decided(0)
         both = self.photo("frame_009.jpg", ["People/" + WREN, "People/" + ODA])
@@ -402,8 +395,12 @@ class APersonWithNoDecidedFace(Case):
         self.assertEqual([], self.named(), "a batch named what one at a time did not")
 
     def test_the_other_photos_of_the_person_need_a_face_to_be_named_to_count(self):
-        # A photo whose face is a speck, or already named, or ruled out, is not one that waits.
+        # A photo whose face is in the background of its picture (30 px on a 2500 x 2000 picture: under 2% of 2,000),
+        # or already named, or ruled out, is not one that waits. Its picture is on disk when it is read, so its row
+        # stores the size the rule is asked with.
         (first,) = self.several(1)
+        os.makedirs(self.folder, exist_ok=True)
+        Image.new("RGB", (2500, 2000), (70, 90, 110)).save(os.path.join(self.folder, "not_waiting.jpg"), "JPEG")
         other = self.photo("not_waiting.jpg", ["People/" + ODA])
         self.face(other, at(90), box=[0, 0, 30, 30])
         self.assertEqual(1, from_tags(self.library, apply=True).changed)

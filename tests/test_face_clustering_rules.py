@@ -300,26 +300,8 @@ class TestSameNameConflictInOnePhoto(FaceClusteringTestBase):
 
 
 class TestBackgroundFaceFiltering(FaceClusteringTestBase):
-    def test_a_tiny_background_face_is_never_named_by_elimination(self):
-        """Noise faces are excluded from the process-of-elimination matching.
-
-        Under 10% of the largest face AND under 2000px counts as background. Without
-        the filter the leftover "Bob Roe" tag would be handed to the tiny face simply
-        because it is the only unassigned face left.
-        """
-        jane, stranger = identity_vector(1), identity_vector(3)
-        anchor_photo = self.add_photo("anchor.jpg", people=["Jane Doe"])
-        self.add_face(anchor_photo, jane)
-
-        photo = self.add_photo("crowd.jpg", people=["Jane Doe", "Bob Roe"])
-        big = self.add_face(photo, near(jane, 7), box=(0, 0, 400, 400))       # 160000
-        tiny = self.add_face(photo, stranger, box=(0, 0, 20, 20))             # 400
-
-        self.resolve()
-        self.assertEqual(self.name_of(big), "Jane Doe")
-        self.assertIsNone(
-            self.name_of(tiny), "a background face was handed the leftover name"
-        )
+    # A face in the background of its stored picture keeps no name by elimination, and one on a picture of no
+    # stored size is not in the background: tests/test_a_face_in_the_background_is_one_answer.py (P12).
 
     def test_a_tiny_face_can_still_be_matched_with_high_confidence(self):
         """The counterpart: the final pass ignores the size filter.
@@ -338,24 +320,6 @@ class TestBackgroundFaceFiltering(FaceClusteringTestBase):
 
         self.resolve()
         self.assertEqual(self.name_of(tiny), "Jane Doe")
-
-    def test_a_large_face_is_kept_even_beside_a_much_larger_one(self):
-        jane = identity_vector(1)
-        anchor_photo = self.add_photo("anchor.jpg", people=["Jane Doe"])
-        self.add_face(anchor_photo, jane)
-
-        photo = self.add_photo("pair.jpg", people=["Jane Doe"])
-        big = self.add_face(photo, near(jane, 9), box=(0, 0, 400, 400))
-        medium = self.add_face(photo, near(jane, 10), box=(0, 0, 100, 100))   # 10000 > 2000
-
-        self.resolve()
-        # Both are valid candidates, so the same-name conflict rule clears both;
-        # the point here is that `medium` was not silently dropped as noise.
-        self.assertNotIn(
-            "background", str(self.traces().get(medium, {}).get("resolution_method", ""))
-        )
-        self.assertIsNotNone(big)
-
 
 class TestProcessOfElimination(FaceClusteringTestBase):
     # The one face left taking the one person left: test_clustering_meets_naming (#1374).

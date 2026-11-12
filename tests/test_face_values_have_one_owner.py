@@ -125,7 +125,7 @@ SORTS_OF_OTHER_THINGS = {
     os.path.join("tagpup", "services", "faces.py"): 3,
     os.path.join("tagpup", "services", "identify.py"): 6,   # RANKS_FACES's one among them
     os.path.join("tagpup", "services", "suggester.py"): 4,
-    os.path.join("tagpup", "store", "face_tags.py"): 5,
+    os.path.join("tagpup", "store", "face_tags.py"): 4,   # the plan sorts its photos once
 }
 READS_CLUSTERING = re.compile(r"from tagpup\.core import [^\n]*\bclustering\b|\bimport clustering\b"
                               r"|from tagpup\.core\.clustering import|import tagpup\.core\.clustering\b")

@@ -34,7 +34,6 @@ RULES = (
     ("a PhotoEmbeddings that makes vectors is the runtime's", RUNTIME, r"PhotoEmbeddings\((?!None\b)", ()),
     # The libraries a home holds were listed twice, runtime and the picker (#2758).
     ("the home's libraries are listed by the runtime", RUNTIME, r"def home_libraries\(", ()),
-    ("a background face is decided in clustering", CLUSTERING, r"0\.10?\s*\*\s*max_area|area\s*<\s*2000", ()),
     ("a face crop is encoded by images", IMAGES, r"format\s*=\s*['\"]JPEG['\"]", ()),
     # The tutorial's seeding copies a PNG without its metadata: a file, not a photo.
     ("a photo is opened by tagpup.files", None, r"Image\.open\(|exif_transpose\(|MAX_IMAGE_PIXELS",
@@ -222,15 +221,6 @@ class NobodyElseSpellsIt(unittest.TestCase):
 
 class TheOwnersValues(unittest.TestCase):
     """Each rule's owner says it as the rule is."""
-
-    def test_the_background_face(self):
-        from tagpup.core import clustering
-        big, small, middling = [0, 0, 100, 100], [0, 0, 20, 20], [0, 0, 40, 60]
-        self.assertEqual({1}, clustering.background_faces([big, small, middling]))
-        self.assertEqual(set(), clustering.background_faces([[0, 0, 400, 400], [0, 0, 50, 50]]))   # not small outright
-        self.assertEqual(set(), clustering.background_faces([small]))   # alone in its photo
-        self.assertEqual(set(), clustering.background_faces([]))
-        self.assertEqual({1}, clustering.background_faces([big, None]))
 
     def test_the_face_crop_and_the_opened_photo(self):
         from PIL import Image

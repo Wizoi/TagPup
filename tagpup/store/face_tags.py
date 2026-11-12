@@ -372,11 +372,11 @@ def plan(conn, photo_ids=None, references=None, cache=None, on_step=None):
     if on_step is not None:
         on_step("reading", 0, 1)
     people_of = _keyword_people(conn, None if photo_ids is None else sorted(set(photo_ids)))
-    faces_of = _faces_of(conn, sorted(people_of))
-    sizes = _sizes_of(conn, sorted(people_of))
+    tagged = sorted(people_of)
+    faces_of, sizes = _faces_of(conn, tagged), _sizes_of(conn, tagged)
     open_ones = []   # (photo id, unnamed face ids, free people) still to be compared
     singles = []     # (photo id, face id, person, name_source): one face, one person
-    for photo_id in sorted(people_of):
+    for photo_id in tagged:
         here = faces_of.get(photo_id, [])
         unnamed, specks = _to_be_named(here, sizes.get(photo_id))
         free = _not_taken_off(conn, _free_people(people_of[photo_id], here), here)
