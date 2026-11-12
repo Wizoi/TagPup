@@ -2,12 +2,11 @@
 scripts/convert_old_clips.py and tagpup/services/old_clip_convert.py after the owner's run, DECISIONS 2026-11-12).
 
 What the owner lives through: TagPup stopped, the script run dry, then `--apply --limit 1`, `--limit 5`, all; a run
-killed part-way (Ctrl+C twice, a closed window, a crash) and run again; a Recycle Bin that fills; then TagPup started,
+killed part-way (Ctrl+C twice, a closed window, a crash) and run again; a delete that is refused; then TagPup started,
 whose sync of the whole library takes in the .mp4s. Each scenario runs the script as the owner does (its `main` or its
 `run`) against a library of a home of its own, made by the real indexer (tagpup_cli.py index, StandIns for the models)
-from clips the machine's ffmpeg generates: a .wmv of WMV 8 picture and WMA sound, with an ASF title (fictional). The clips' folder is a share as far as the test says (no Recycle Bin of its own), the Recycle Bin is stood
-in for (the copy is taken away) and the mirror is a folder of the home: nothing reaches the owner's Bin. Skipped, saying
-so, without ffmpeg or ExifTool.
+from clips the machine's ffmpeg generates: a .wmv of WMV 8 picture and WMA sound, with an ASF title (fictional). Each original is deleted for good (the owner's decision, DECISIONS 2026-11-12: no Recycle Bin). Skipped, saying so,
+without ffmpeg or ExifTool.
 """
 import contextlib
 import gc
@@ -35,9 +34,9 @@ from test_an_index_reads_the_next_photos_ahead import StandIns, photo  # noqa: E
 import convert_old_clips as script  # noqa: E402
 import tagpup_cli  # noqa: E402
 from tagpup import config  # noqa: E402
-from tagpup.core import paths, processes  # noqa: E402
+from tagpup.core import processes  # noqa: E402
 from tagpup.core.library import Library  # noqa: E402
-from tagpup.files import clip_convert, recycle_bin, video_frames  # noqa: E402
+from tagpup.files import clip_convert, video_frames  # noqa: E402
 from tagpup.services import libraries as library_actions  # noqa: E402
 from tagpup.services import old_clip_convert as old  # noqa: E402
 from tagpup.services import settings as library_settings  # noqa: E402
@@ -110,29 +109,14 @@ class OldClips(unittest.TestCase):
         self.pier = os.path.join(self.home.root, "Pier")
         photo(os.path.join(self.pier, "sail.jpg"), (30, 30, 200))
         self.made = {name: self.make(name) for name in self.names}
-        self.binned = []
-        recycle_bin.forget_bin()
-        self.addCleanup(recycle_bin.forget_bin)
-        for patcher in (mock.patch.object(recycle_bin, "no_bin_reason", side_effect=self.reason),
-                        mock.patch("tagpup.files.recycle_bin.send_to_recycle_bin", side_effect=self.recycle),
-                        mock.patch.object(recycle_bin, "mirror_root", return_value=os.path.join(self.home.root, "Mirror")),
-                        mock.patch("tagpup.launcher.running", return_value=[])):
-            patcher.start()
-            self.addCleanup(patcher.stop)
+        patcher = mock.patch("tagpup.launcher.running", return_value=[])
+        patcher.start()
+        self.addCleanup(patcher.stop)
         self.index()
 
     def make(self, name):
         """The clip `name` in the folder Regatta, before the library indexes it."""
         return older(self.folder, name, created=self.created)
-
-    def reason(self, path):
-        # The clips' folder is a share, as far as the test says; this PC's mirror folder is not.
-        return recycle_bin.NETWORK if paths.key(path).startswith(paths.key(self.folder)) else None
-
-    def recycle(self, path):
-        self.binned.append(os.path.basename(path))
-        os.remove(path)
-        return True
 
     def index(self):
         result = CliRunner().invoke(tagpup_cli.cli, ["--db", self.library, "index", self.folder, self.pier])
@@ -171,7 +155,6 @@ class OldClips(unittest.TestCase):
         streams = video_frames.streams(TOOLS, made)
         self.assertEqual(("h264", "aac"), (streams.video, streams.audio), "the .mp4 is not H.264 and AAC")
         self.assertFalse(os.path.exists(self.made[name]), "the original is still there")
-        self.assertIn(name, self.binned, "the original did not go to the Recycle Bin")
 
     def temp_of(self, name):
         return clip_convert.temp_of(clip_convert.target_of(self.made[name]))
@@ -194,11 +177,10 @@ class ADryRun(OldClips):
         self.assertEqual(0, os.path.getsize(wal) if os.path.exists(wal) else 0, "a frame was written to the library")
         self.assertEqual(files, {name: digest(path) for name, path in self.made.items()}, "a clip was written")
         self.assertEqual(sorted(self.names), self.listed(), "a file was left beside the clips")
-        self.assertEqual([], self.binned)
 
 
 class OneClipEndToEnd(OldClips):
-    def test_a_clip_is_converted_its_original_binned_and_the_next_sync_and_index_take_in_the_mp4(self):
+    def test_a_clip_is_converted_its_original_deleted_for_good_and_the_next_sync_and_index_take_in_the_mp4(self):
         old_id = self.rows()["harbour.wmv"][0]
 
         code, said = self.run_script("--apply")
@@ -241,7 +223,6 @@ class OneClipEndToEnd(OldClips):
         self.assertEqual(1, code)
         self.assertIn("TagPup is running", said)
         self.assertEqual(["harbour.wmv"], self.listed())
-        self.assertEqual([], self.binned)
 
 
 class AnUndatedClip(OldClips):
@@ -324,7 +305,7 @@ class APictureNamedAsAClip(OldClips):
 
 class KilledPartWay(OldClips):
     def test_killed_after_the_marker_the_next_run_deletes_the_original_and_renames_the_copy(self):
-        with mock.patch.object(recycle_bin, "delete_file", side_effect=KeyboardInterrupt):
+        with mock.patch.object(old, "_remove_original", side_effect=KeyboardInterrupt):
             code, said = self.run_script("--apply")
         self.assertEqual(130, code, said)
         temp = self.temp_of("harbour.wmv")
@@ -339,13 +320,13 @@ class KilledPartWay(OldClips):
         self.assert_converted("harbour.wmv")
 
     def test_killed_after_the_delete_the_next_run_renames_the_copy(self):
-        real = recycle_bin.delete_file
+        real = old._remove_original
 
-        def deleted_then_killed(path, for_good=False):
-            real(path, for_good)
+        def deleted_then_killed(path):
+            real(path)
             raise KeyboardInterrupt
 
-        with mock.patch.object(recycle_bin, "delete_file", side_effect=deleted_then_killed):
+        with mock.patch.object(old, "_remove_original", side_effect=deleted_then_killed):
             code, said = self.run_script("--apply")
         self.assertEqual(130, code, said)
         temp = self.temp_of("harbour.wmv")
@@ -378,46 +359,36 @@ class KilledPartWay(OldClips):
         self.assert_converted("harbour.wmv")
 
 
-class TheRecycleBinFull(OldClips):
+class ADeleteRefused(OldClips):
+    """The original's delete refused (a player holding it, a share refusing it): the run stops saying so and to run it
+    again, the original and its verified copy kept; run again, it finishes."""
     names = ("harbour.wmv", "jetty.wmv")
 
-    def test_a_full_recycle_bin_stops_the_run_keeping_the_original_and_its_verified_copy(self):
-        recycle_bin.forget_bin()
-        with mock.patch.dict(os.environ, {"TAGPUP_RECYCLE_BIN": "10,10,0"}):
+    def test_it_stops_with_the_real_sentence_keeping_the_original_and_its_verified_copy(self):
+        real = os.remove
+
+        def refused(path, *args, **kwargs):
+            if path.endswith(".wmv"):
+                raise PermissionError(13, "Access is denied")
+            return real(path, *args, **kwargs)
+
+        with mock.patch.object(os, "remove", side_effect=refused):
             code, said = self.run_script("--apply")
-        recycle_bin.forget_bin()
 
         self.assertEqual(1, code, said)
-        self.assertIn(script.STOPPED_BY_DELETE.split("%s ")[1], said)
+        self.assertIn("the original could not be deleted (Access is denied)", said)
+        self.assertIn("original is kept", said)
+        self.assertIn("run this again", said)
+        self.assertNotIn("Recycle Bin", said)
         temp = self.temp_of("harbour.wmv")
         self.assertEqual(sorted(["harbour.wmv", "jetty.wmv", os.path.basename(temp),
-                                 os.path.basename(old.marker_of(temp))]), self.listed())
-        self.assertEqual([], self.binned)
+                                 os.path.basename(old.marker_of(temp))]), self.listed(), "the second clip was started")
 
-        code, said = self.run_script("--apply")   # the Bin emptied
+        code, said = self.run_script("--apply")   # whatever held it closed
+
         self.assertEqual(0, code, said)
         self.assertIn("Wrote 2 clip(s)", said)
         self.assertEqual(["harbour.mp4", "jetty.mp4"], self.listed())
-
-
-class ADeleteRefusedElsewhere(OldClips):
-    """The original's delete refused by something other than the Recycle Bin (a player holding it, a share refusing the
-    delete after the copy went to the Bin): the run stops saying so and to run it again, not to empty the Bin."""
-
-    def test_it_stops_with_the_real_sentence_and_both_kept(self):
-        sentence = ("A copy is in this PC's Recycle Bin, but the original could not be deleted (Access is denied): it is "
-                    "still where it was, so the file is there twice.")
-        with mock.patch.object(recycle_bin, "delete_file", side_effect=OSError(sentence)):
-            code, said = self.run_script("--apply")
-
-        self.assertEqual(1, code, said)
-        self.assertIn(sentence, said)
-        self.assertIn("original is kept", said)
-        self.assertIn("run this again", said)
-        self.assertNotIn("Empty the Recycle Bin", said)
-        temp = self.temp_of("harbour.wmv")
-        self.assertEqual(sorted(["harbour.wmv", os.path.basename(temp), os.path.basename(old.marker_of(temp))]),
-                         self.listed())
 
 
 class TheNameTaken(OldClips):
@@ -436,7 +407,6 @@ class TheNameTaken(OldClips):
         self.assertIn("name taken 2", said)
         self.assertIn("Wrote 0 clip(s)", said)
         self.assertEqual(files, {name: digest(os.path.join(self.folder, name)) for name in self.listed()})
-        self.assertEqual([], self.binned)
 
 
 class AMarkerLeft(OldClips):
@@ -470,7 +440,8 @@ class ALimit(OldClips):
             code, said = self.run_script("--apply", "--limit", "1")
         self.assertEqual(0, code, said)
         self.assertIn("Wrote 1 clip(s)", said)
-        self.assertEqual([first], self.binned)
+        self.assertNotIn(first, self.listed(), "the first clip's original is still there")
+        self.assertEqual(2, len([name for name in self.listed() if name.endswith(".wmv")]), "more than one was converted")
         self.assertRegex(said, r"clip %d \(\.wmv\): \d+%% converted, \d+ s so far" % first_id)
         # What the owner does next, from the script's own last lines: look at that clip, then sync the library.
         self.assertIn("look at clip %d in Explorer" % first_id, said)
@@ -495,13 +466,13 @@ class MPEG4Part2(OldClips):
         code, said = self.run_script("--apply")
         self.assertIn("Wrote 0 clip(s)", said, "without --also-mpeg4-part-2 it is not looked at")
 
-        real = recycle_bin.delete_file
+        real = old._remove_original
 
-        def deleted_then_killed(path, for_good=False):
-            real(path, for_good)
+        def deleted_then_killed(path):
+            real(path)
             raise KeyboardInterrupt
 
-        with mock.patch.object(recycle_bin, "delete_file", side_effect=deleted_then_killed):
+        with mock.patch.object(old, "_remove_original", side_effect=deleted_then_killed):
             code, said = self.run_script("--apply", "--also-mpeg4-part-2")
         self.assertEqual(130, code, said)
 

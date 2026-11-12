@@ -15,10 +15,10 @@ One clip, in order: refused before ffmpeg when its share is away, a file or a li
 name, a temp of a conversion under way is there, it is open in another program, its length cannot be read, or its
 drive has no room; then its temp claimed (clip_convert.claimed), converted, verified (its length within 0.5 s of the
 original's packets', a picture decodes), a marker `<temp>.ok` written beside it, THEN the original deleted through
-tagpup.files.recycle_bin.delete_file (from a share, copied through this PC to its Recycle Bin), THEN the temp renamed
-to the .mp4's name and the marker removed. Never deleted for good: a delete refused (the Bin cannot keep the copy, a
-player holds the file) stops the whole run with the original and its verified temp kept, and says whether it was the
-Bin's refusal (`bin_refused`: emptying the Bin lets the next run through) or another (its own sentence).
+deleted FOR GOOD (os.remove, one call bounded by tagpup.files.shares.bounded; no Recycle Bin: the owner's decision of
+2026-11-12, the videos being backed up elsewhere), THEN the temp renamed to the .mp4's name and the marker removed. A
+delete refused (a player holds the file, a share dropped) stops the whole run with the original and its verified temp
+kept, and says its own sentence.
 
 A run killed part-way leaves one of: the original and a temp with no marker (the next run removes the temp once it is
 STALE, and converts again); the original and a verified temp with its marker (the next run verifies it again, deletes
@@ -37,7 +37,7 @@ import time
 from typing import NamedTuple, Optional
 
 from tagpup.core import paths
-from tagpup.files import clip_convert, convertible, field_values, lock_owners, recycle_bin, shares, video_frames
+from tagpup.files import clip_convert, convertible, field_values, lock_owners, shares, video_frames
 from tagpup.store import db
 from tagpup.store import photos as store_photos
 
@@ -58,6 +58,7 @@ MARKER = ".ok"
 
 HELD = "it is open in another program; close it and run this again"
 UNDER_WAY_SAID = "a temp of another conversion of it, written in the last %d s, is beside it" % STALE
+NOT_DELETED = "the original could not be deleted (%s)"
 STOPPED_VERIFIED = "stopped with its copy verified and kept beside it: the next run finishes it"
 NOT_RENAMED = "its original is deleted and its verified copy could not be renamed into place (%s): run this again"
 MARKER_KEPT = "Its verified copy's marker beside it could not be removed (%s): the next run removes it."
@@ -74,13 +75,11 @@ class Clip(NamedTuple):
 
 class Outcome(NamedTuple):
     """What became of one clip: `wrote` (the original gone, the .mp4 in place), the `problem` when not, and `stop` when
-    the run must stop (a delete refused: the sentence, `bin_refused` when this PC's Recycle Bin refused the copy);
-    `note`, a file it tidied, or one it left to tidy (wrote)."""
+    the run must stop (a delete refused: the sentence); `note`, a file it tidied, or one it left to tidy (wrote)."""
     wrote: bool
     problem: Optional[str] = None
     stop: Optional[str] = None
     note: Optional[str] = None
-    bin_refused: bool = False
     before: int = 0
     after: int = 0
 
@@ -252,24 +251,16 @@ def convert_one(tools, clip, state, size, stop=None, progress=None):
 
 
 def _finish(clip, size):
-    """The original deleted through the one delete (never for good), then the verified temp renamed into place."""
-    try:
-        recycle_bin.delete_file(clip.path)
-    except (OSError, ValueError) as refused:
-        return Outcome(False, stop=str(refused), bin_refused=_bins(refused, size))
+    """The original deleted for good, then the verified temp renamed into place."""
+    problem = _remove_original(clip.path)
+    if problem:
+        return Outcome(False, stop=NOT_DELETED % problem)
     return _rename(clip, size)
 
 
-#: What recycle_bin.recycle_through_this_pc says when this PC's Recycle Bin did not take the copy.
-BIN_DID_NOT_TAKE = "Recycle Bin would not take the copy"
-
-
-def _bins(refused, size):
-    """Was the delete of an original of `size` bytes refused by this PC's Recycle Bin, so that emptying it lets the next
-    run through: the Bin did not take the copy, or can_copy_here refused it (the same sentence, asked again). Not a
-    NotKept: a Bin set to delete at once, or a clip larger than it keeps, is not helped by emptying it."""
-    said = str(refused)
-    return BIN_DID_NOT_TAKE in said or said == recycle_bin.can_copy_here(size, size)
+def _remove_original(path):
+    """The original at `path` deleted for good by one bounded call; None when it is gone, else why not (a phrase)."""
+    return _bounded(path, lambda: os.remove(path))
 
 
 def _rename(clip, size):
