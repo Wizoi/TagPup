@@ -46,15 +46,19 @@ export const MAX_ADDRESS = 100000;
 
 /**
  * The orders a view is read in (#671, #714), as the address and the server name them: a field and, `-desc`, the direction --
- * by Date Taken (photos with none after the dated ones, either way), by file name, or by caption (photos with none after the
- * captioned ones, either way). `taken` is the order an address that names none has; an address of the first review's four
- * orders reads as it did.
+ * by Date Taken (photos with none after the dated ones, either way), by file name, by caption (photos with none after the
+ * captioned ones, either way), or by file size (the owner, 2026-11-12: Videos and Largest first are the biggest clips first).
+ * `taken` is the order an address that names none has; an address of the first review's four orders reads as it did.
  */
-export const LIBRARY_ORDERS = ['taken', 'taken-desc', 'name', 'name-desc', 'caption', 'caption-desc'];
+export const LIBRARY_ORDERS = ['taken', 'taken-desc', 'name', 'name-desc', 'caption', 'caption-desc', 'size', 'size-desc'];
 export const DEFAULT_ORDER = 'taken';
-/** The fields a view is sorted by, as Sort by's menu names them and in its order (sort-menu.js). */
+/**
+ * The fields a view is sorted by, as Sort by's menu names them and in its order (sort-menu.js); `ways`, how a field's two
+ * directions are said when "ascending" and "descending" say less than its own words.
+ */
 export const SORT_FIELDS = [
     { field: 'taken', label: 'Date Taken' }, { field: 'caption', label: 'Caption' }, { field: 'name', label: 'File name' },
+    { field: 'size', label: 'File size', ways: ['smallest first', 'largest first'] },
 ];
 
 /** { field, descending } of an order (one that is none is the default). */
@@ -68,11 +72,17 @@ export function orderOf(field, descending) {
     return `${field}${descending ? '-desc' : ''}`;
 }
 
-/** What an order is called: "Date Taken, ascending". */
+/** How a field's direction is said: "ascending", or the field's own words ("largest first"). */
+export function directionLabel(field, descending) {
+    const named = SORT_FIELDS.find(each => each.field === field);
+    return ((named && named.ways) || ['ascending', 'descending'])[descending ? 1 : 0];
+}
+
+/** What an order is called: "Date Taken, ascending", "File size, largest first". */
 export function orderLabel(order) {
     const { field, descending } = orderParts(order);
     const named = SORT_FIELDS.find(each => each.field === field);
-    return `${named ? named.label : field}, ${descending ? 'descending' : 'ascending'}`;
+    return `${named ? named.label : field}, ${directionLabel(field, descending)}`;
 }
 
 /**

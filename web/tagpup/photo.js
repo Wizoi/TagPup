@@ -11,7 +11,7 @@ import { clearPhotoFaces, nameFaceAs, showPhotoFaces } from './face-boxes.js';
 import { state } from './state.js';
 import {
     btnCancelDateModal, btnCarryForward, btnCloseDateModal, btnEditDateTaken, btnSaveDateModal,
-    dateTakenModal, detailCamera, detailCameraItem, detailDateTaken, detailPath, detailPeople, detailsPanel, detailTags,
+    dateTakenModal, detailCamera, detailCameraItem, detailDateTaken, detailFileSize, detailPath, detailPeople, detailsPanel, detailTags,
     btnAddAllFaces, emptyState, facesSection, facesStrip, facesSummary, folderViewContent, folderViewHeader,
     folderViewStats, inputAddPerson, inputAddTag, inputDateTaken,
     inputPhotoTitle, mainImage, panelContent, photoList, statusDot, statusText
@@ -21,7 +21,7 @@ import { isJustLooking, libraryName } from './looking.js';
 import { pictureCheckSaid, whereWritten } from './write-queue.js';
 import { forgetCachedPhoto, saveToLocalStorageCache } from './cache.js';
 import {
-    exifDateToIso, formatFriendlyDateSingle, getCurrentDateTimeIso,
+    exifDateToIso, fileSizeSaid, formatFriendlyDateSingle, getCurrentDateTimeIso,
     getFolderDateStats, parseExifDateToLocalDate, takenOf
 } from './format.js';
 import { namesAPerson, normalizeTag, updateTagsDatalist } from './tags.js';
@@ -373,6 +373,7 @@ export function showPhoto(path) {
     // Render values. A photo whose file is gone has no picture to ask for; a video is played in the image's place (media.js).
     showMedia(photo, photo.missing ? '' : photoFileUrl(photo, 800));
     detailPath.textContent = photo.path;
+    detailFileSize.textContent = fileSizeSaid(photo.size);
     let dateVal = "Unknown";
     const shownDate = takenOf(photo) && parseExifDateToLocalDate(takenOf(photo));
     if (shownDate) dateVal = formatFriendlyDateSingle(shownDate, getFolderDateStats());

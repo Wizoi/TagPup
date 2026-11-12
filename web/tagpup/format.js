@@ -1,4 +1,4 @@
-// TagPup's page: how it words a photo's name and when it was taken.
+// TagPup's page: how it words a photo's name, when it was taken and how big its file is.
 import { state } from './state.js';
 
 /** When a photo was taken, as the server says (`taken`, from tagpup.core.dates):
@@ -6,6 +6,16 @@ import { state } from './state.js';
  *  date the file was last modified for the date it was taken (#67). */
 export function takenOf(photo) {
     return (photo && photo.taken) || null;
+}
+
+/** A file's size as a person reads it: "820 KB", "3.4 MB", "1.2 GB" (of 1,024); "" for a size not read. */
+export function fileSizeSaid(bytes) {
+    if (!Number.isFinite(bytes) || bytes < 0) return '';
+    const units = ['bytes', 'KB', 'MB', 'GB', 'TB'];
+    let at = 0;
+    let shown = bytes;
+    while (shown >= 1024 && at < units.length - 1) { shown /= 1024; at += 1; }
+    return `${at === 0 || shown >= 100 ? Math.round(shown) : shown.toFixed(1)} ${units[at]}`;
 }
 
 export function parseExifDateToLocalDate(rawStr) {
