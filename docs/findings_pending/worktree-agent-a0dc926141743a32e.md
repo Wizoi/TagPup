@@ -1,0 +1,10 @@
+# Findings of a branch
+
+Provisional numbers `B-n`: `tools/add_findings.py --take` gives each row its number in
+docs/findings.md when the main session merges the branch, and removes this file.
+
+| # | Found | Finding | Status |
+|---|---|---|---|
+| B-1 | 2026-11-12 | wrong: Convert cut 2: a clip's row holds no codec (photo_index's 2,833 clip rows hold no CompressorID or codec key in raw_metadata, counted 2026-11-12), so the 13 MPEG-4 Part 2 clips the one-time convert must find (DECISIONS 2026-11-09) can be found only by ffprobe of each .mp4/.mov/.m4v clip (2,204 in photo_index): the CLI's dry run must probe them, a share's worth of ffprobe runs, with progress lines and a share asleep counted as away. Not recounted: the brief forbids ffmpeg on a real file. | open |
+| B-2 | 2026-11-12 | wrong: Convert cut 2: unverified whether an MP4 made by clip_convert (`-movflags +faststart`, moov before mdat, no free box) takes the carry's XMP (tags, title, PreservedFileName) by a patch in place: in_place.patch_clip returns None for a clip it cannot place, and the carry's write_fields would then be refused (images.CLIP_NOT_PATCHED), the row's tags and title lost from the row by follow_fields(whole). To check on a generated clip first; if not, reserve room at the convert (ffmpeg `-moov_size`, or a free box) before the carry is built on it. | open |
+| B-3 | 2026-11-12 | low: Convert cut 2: 45 .wmv rows of photo_index hold an ASF Description (a caption; 503 hold an ASF Title), counted 2026-11-12; a clip's write names no caption (fields.CLIP_WRITES), so the carry writes none, and the caption survives only if ffmpeg's `-map_metadata 0` maps it to a field the reader reads. To check on a generated .wmv and say in the dry run. | open |
