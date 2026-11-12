@@ -22,7 +22,8 @@ Bin's refusal (`bin_refused`: emptying the Bin lets the next run through) or ano
 
 A run killed part-way leaves one of: the original and a temp with no marker (the next run removes the temp once it is
 STALE, and converts again); the original and a verified temp with its marker (the next run verifies it again, deletes
-the original and renames it); no original and a verified temp with its marker (the next run renames it); the .mp4 in place
+the original and renames it); the original and the marker alone, its temp gone before the delete (looked at again just
+before it: the marker removed, the original kept, the next run converts it); no original and a verified temp with its marker (the next run renames it); the .mp4 in place
 and the marker left, its removal refused (the next run removes the marker). A clip whose original is gone and whose .mp4
 is there is done, and passed over.
 
@@ -60,6 +61,9 @@ HELD = "it is open in another program; close it and run this again"
 UNDER_WAY_SAID = "a temp of another conversion of it, written in the last %d s, is beside it" % STALE
 STOPPED_VERIFIED = "stopped with its copy verified and kept beside it: the next run finishes it"
 NOT_RENAMED = "its original is deleted and its verified copy could not be renamed into place (%s): run this again"
+TEMP_GONE = ("its verified copy is gone from beside it (removed by another program?), so its original is kept and its "
+             "marker removed: run this again")
+TEMP_UNSEEN = "its verified copy could not be looked at just before its original's delete (%s); both are kept: run this again"
 MARKER_KEPT = "Its verified copy's marker beside it could not be removed (%s): the next run removes it."
 MARKER_REMOVED = "converted by an earlier run; the marker that run left beside it is removed."
 MARKER_NOT_REMOVED = "converted by an earlier run, whose marker beside it could not be removed (%s): run this again"
@@ -252,7 +256,14 @@ def convert_one(tools, clip, state, size, stop=None, progress=None):
 
 
 def _finish(clip, size):
-    """The original deleted through the one delete (never for good), then the verified temp renamed into place."""
+    """The original deleted through the one delete (never for good), then the verified temp renamed into place; not
+    when the temp is gone by now (another program removed it): the original kept, the marker removed."""
+    temp = shares.stamp_of(clip.temp)
+    if temp is None:
+        left = _bounded(clip.temp, lambda: _remove_marker(clip.temp))
+        return Outcome(False, TEMP_GONE + (" (its marker could not be removed: %s)" % left if left else ""))
+    if not isinstance(temp, tuple):
+        return Outcome(False, TEMP_UNSEEN % ("the share did not answer" if temp == shares.UNANSWERED else "unreadable"))
     try:
         recycle_bin.delete_file(clip.path)
     except (OSError, ValueError) as refused:
