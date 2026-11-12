@@ -142,7 +142,7 @@ def convert_clip(library, exiftool_path, tools, source, reason=OLD_FORMAT, for_g
         problem = clip_convert.convert(tools, source, temp, ready.streams, progress=progress, stop=stop,
                                        deadline=clip_convert.deadline_for(ready.stamp[1]))
         if problem is None:
-            problem = clip_convert.verified(tools, ready.streams, temp)
+            problem = clip_convert.verified(tools, source, ready.streams, temp)
         if problem is None:
             _reached("temp verified")
             row.after = dict(row.after, made=file_changes.fingerprint(temp))

@@ -4,17 +4,21 @@
     temp = clip_convert.temp_of(clip_convert.target_of(source))
     clip_convert.claimed(temp)                                          # True: the temp is this conversion's
     made = clip_convert.convert(tools, source, temp, streams, progress=lambda done, whole: ..., stop=threading.Event())
-    problem = clip_convert.verified(tools, source_streams, temp)       # None: the temp is the clip, whole
+    problem = clip_convert.verified(tools, source, streams, temp)     # None: the temp is the clip, whole
 
 What it writes: the picture re-encoded to H.264 at CRF 23 (ffmpeg's default quality, the owner's choice: about half the
 size of the old formats), 4:2:0 so every browser decodes it; the sound to AAC at 160 kb/s, or copied when it is AAC
 already (the 11 .mp4 clips of photo_index whose picture is MPEG-4 Part 2 carry AAC sound, counted 2026-11-09); the
-container's own metadata (`-map_metadata 0`: its creation time, its title) and the index at the front (`+faststart`, so
-the player starts before the whole file has come over a share). The clip's XMP is not carried by ffmpeg: its tags, title
-and kept name are written into the MP4 afterwards by the journaled write of a clip (tagpup.services.convert). No caption
-is carried: none of the 2,833 clips of photo_index holds one (its Description blank in every row, counted 2026-11-12),
-and a clip's journaled write names none (fields.CLIP_WRITES). An MP4 made so takes that XMP by a patch in place: it holds no XMP box, its
-moov before mdat, so the packet is appended at its end in a uuid box (tagpup.files.clip_patch, case 4; measured on a
+container's own metadata (`-map_metadata 0`: its title) but NOT its creation time (`-metadata creation_time=`): a .wmv's
+ASF creation time is when the file was made, often weeks or months after the capture, and carried into the MP4's mvhd
+it is read as QuickTime:CreateDate, a Date Taken (tagpup.core.dates.CLIP_DATE_FIELDS), where an older clip stays undated
+(DECISIONS 2026-11-09, item 6); cleared, the MP4's QuickTime dates are all zero (measured on a generated .wmv carrying
+one, 2026-11-12). And the index at the front (`+faststart`, so the player starts before the whole file has come over a
+share). The clip's XMP is not carried by ffmpeg: its tags, title
+and kept name are written into the MP4 afterwards by the journaled write of a clip (tagpup.services.convert). No
+caption is carried: none of the 2,833 clips of photo_index holds one (its Description blank in every row, counted
+2026-11-12), and a clip's journaled write names none (fields.CLIP_WRITES). An MP4 made
+so takes that XMP by a patch in place: it holds no XMP box, its moov before mdat, so the packet is appended at its end in a uuid box (tagpup.files.clip_patch, case 4; measured on a
 generated clip of each old format, 2026-11-12).
 
 Where: a temp file beside the original, on its volume (`<stem>.mp4.tagpup-convert`, temp_of), never over it: a rename
@@ -27,10 +31,22 @@ How it fails, each as a plain problem (a sentence naming no file: a file's name 
 exception, and every failure removes the temp it made: ffmpeg cannot read the clip, or stops with an error (its last line
 logged, unnamed); it makes no progress for STALL seconds (a share that stopped answering: ffmpeg blocked in a read), or
 passes the caller's deadline, or the caller asks it to stop (`stop`, an Event: Cancel, an update's drain): killed with
-its tree through tagpup.core.processes. A temp it could not remove (the share gone meanwhile) is said in the problem, so
+its tree through tagpup.core.processes. An exception through the watch (a second Ctrl+C, raised in the caller's
+`progress`) ends ffmpeg's tree and removes the temp before it goes on up: no ffmpeg is left writing a temp nothing owns. A temp it could not remove (the share gone meanwhile) is said in the problem, so
 the caller keeps its record for the settle to remove it. room_for refuses before anything runs when the volume has not
 room for the temp: ROOM times the original, a guess (a re-encode at CRF 23 is about half an old format's size; an MPEG-4
 Part 2 clip is already small, and its H.264 may be larger), plus a margin.
+
+What `verified` compares the copy's length with is the clip's own: the end of its last packet less its start
+(length_of), not the length its header gives. The two differ in real clips: each of the 62 photo_index .wmv of MPEG-4 v2
+picture and MP3 sound says in its ASF header a length about 2.02 s short of its packets (its play duration written
+without its 2 s preroll; ffmpeg converts every packet, so its copy came out exactly that much longer and was refused
+every run), and the 108 of WMV 8 picture say 0.47 to 3.59 s MORE than their packets hold (refused as well); 159 of the
+522 old clips read so were more than 0.5 s off their header (counted read-only, 2026-11-12). By its packets' end the copy
+of a real clip of each of the 9 kinds of old clip was within 0.17 s (measured on copies, 2026-11-12). The packets are read
+whole, not from a seek near the end: ffprobe's seek in an ASF file found no packet at random, about one run in eight, on
+the share and on a local copy alike, where the whole read gave one answer every time; the whole read is a second read
+of the original, after ffmpeg's (on the share, 1.8 GB in about 4 minutes cold, 2 s once read).
 
 Two at once share nothing but the folder: a second conversion of the same clip finds the temp claimed and is refused by
 its caller before ffmpeg runs (tagpup.services.convert).
@@ -56,6 +72,8 @@ SUFFIX = ".tagpup-convert"
 
 #: The picture: H.264 at CRF 23, ffmpeg's default (owner, 2026-11-09), 4:2:0 for every browser's decoder.
 VIDEO = ("-c:v", "libx264", "-crf", "23", "-preset", "medium", "-pix_fmt", "yuv420p")
+#: The container's metadata carried (its title), its creation time cleared: never a Date Taken (the module).
+METADATA = ("-map_metadata", "0", "-metadata", "creation_time=")
 #: The sound, re-encoded; or copied when it is one of COPIED_AUDIO.
 AUDIO = ("-c:a", "aac", "-b:a", "160k")
 COPIED_AUDIO = frozenset({"aac"})
@@ -145,15 +163,14 @@ def arguments(tools, source, temp, audio):
     sound = ("-c:a", "copy") if audio in COPIED_AUDIO else AUDIO
     return ([tools.ffmpeg, "-hide_banner", "-nostdin", "-nostats", "-v", "error", "-y", "-i", source,
              "-map", "0:V:0", "-map", "0:a:0?", "-sn", "-dn"] + list(VIDEO) + list(sound)
-            + ["-map_metadata", "0", "-movflags", "+faststart", "-progress", "pipe:1", "-f", "mp4", temp])
+            + list(METADATA) + ["-movflags", "+faststart", "-progress", "pipe:1", "-f", "mp4", temp])
 
 
 def convert(tools, source, temp, streams, progress=None, stop=None, deadline=None, stall=STALL):
     """Convert the clip at `source` into `temp` (see the module). `streams` is video_frames.streams of the source, read
     by the caller (its sound decides copy or re-encode; its duration is the whole progress is told against). `progress(done,
     whole)` is told seconds converted and the whole; `stop` an Event asked between progress lines; `deadline` a
-    time.monotonic() after which it is stopped. `temp` is
-    claimed by the caller (claimed). Returns None when ffmpeg finished and the temp is there to verify, else the problem,
+    time.monotonic() after which it is stopped. `temp` is claimed by the caller (claimed). Returns None when ffmpeg finished and the temp is there to verify, else the problem,
     the temp removed (or TEMP_LEFT said)."""
     args = arguments(tools, source, temp, streams.audio)
     try:
@@ -167,6 +184,10 @@ def convert(tools, source, temp, streams, progress=None, stop=None, deadline=Non
         reader.start()
     try:
         return _watched(child, readers, lines, said, source, temp, streams, progress, stop, deadline, stall)
+    except BaseException:
+        _end(child)
+        removed(temp)
+        raise
     finally:
         for reader in readers:
             reader.join(KILL_WAIT)
@@ -271,19 +292,50 @@ def removed(temp):
     return TEMP_LEFT % why
 
 
-def verified(tools, source, temp):
-    """None when the file at `temp` is the clip whose streams are `source` (video_frames.Streams of the original), made
+def length_of(tools, path):
+    """The length in seconds of the clip at `path` as its packets give it: the end of its last packet (its time and its
+    own length) less the clip's start, by one ffprobe reading it whole (the module: not its header's length), within
+    VERIFY_SECONDS and a second for each READ_RATE bytes. None when it cannot be read."""
+    stamp = shares.stamp_of(path)
+    if not isinstance(stamp, tuple):
+        return None
+    try:
+        done = processes.run([tools.ffprobe, "-v", "error", "-show_entries",
+                              "packet=pts_time,dts_time,duration_time:format=start_time", "-of", "compact=p=0", path],
+                             stdin=subprocess.DEVNULL, capture_output=True, timeout=VERIFY_SECONDS + stamp[1] / READ_RATE)
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    if done.returncode != 0:
+        return None
+    ends, start = [], 0.0
+    for line in done.stdout.decode("utf-8", "replace").splitlines():
+        said = dict(part.split("=", 1) for part in line.split("|") if "=" in part)
+        try:
+            if "start_time" in said:
+                start = float(said["start_time"])
+                continue
+            at = said.get("pts_time") if said.get("pts_time") != "N/A" else said.get("dts_time")
+            if at is not None and at != "N/A":
+                ends.append(float(at) + (float(said["duration_time"]) if said.get("duration_time", "N/A") != "N/A" else 0))
+        except ValueError:
+            continue
+    return max(ends) - start if ends else None
+
+
+def verified(tools, path, source, temp):
+    """None when the file at `temp` is the clip at `path` whose streams are `source` (video_frames.Streams of it), made
     whole: its picture H.264 and its sound AAC (or none, when the original has none), its length within DURATION_SLACK of
-    the original's, and a picture of it decodes. Else why not, a sentence; the temp is the caller's to remove."""
+    the original's as its packets give it (length_of), and a picture of it decodes. Else why not, a sentence; the temp is
+    the caller's to remove."""
     made = video_frames.streams(tools, temp, VERIFY_SECONDS)
     if made.problem:
         return "its converted copy could not be read back (%s)" % made.problem
     if made.video != MADE_VIDEO or made.audio != (MADE_AUDIO if source.audio else None):
         return "its converted copy holds %s and %s, not %s and %s" % (made.video, made.audio, MADE_VIDEO,
                                                                        MADE_AUDIO if source.audio else "no sound")
-    if source.duration is None or made.duration is None or abs(made.duration - source.duration) > DURATION_SLACK:
-        return "its converted copy is %s s long and the original %s s" % (_seconds(made.duration),
-                                                                           _seconds(source.duration))
+    length = length_of(tools, path)
+    if length is None or made.duration is None or abs(made.duration - length) > DURATION_SLACK:
+        return "its converted copy is %s s long and the original %s s" % (_seconds(made.duration), _seconds(length))
     shown = video_frames.poster(tools, temp, seconds=VERIFY_SECONDS)
     if not shown.pictures:
         return "no picture of its converted copy decodes (%s)" % shown.problem
