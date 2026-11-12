@@ -22,6 +22,10 @@ How one conversion goes, the original kept until its copy is in place and holds 
    what the copy holds, in one transaction; the carry written into the copy (CARRIED, file_changes.write_fields: only
    what differs); the original deleted LAST, to the Recycle Bin; marked done, the change finished.
 
+The copy is known by its file id (`made`'s ino; _is_copy): the carry writes into it in place, which changes its size and
+modified time but never its file id, nor does the rename into place; a volume that gives its files no file id is refused
+before anything is planned, as a rename refuses one (file_changes.rename).
+
 Interrupted part-way, the settle (file_changes._finish routes the change here, settle_change) goes by where `made` is:
 nowhere, the temp is removed by the scratch rule (file_changes.removed_scratch: never one written in the last minutes)
 and the file taken out of the change (or a conflict, when the original changed); in the temp, the conversion is let go
@@ -63,6 +67,8 @@ NOT_A_CLIP = "it is not a video; nothing was converted"
 UNREADABLE = "its metadata could not be read (%s); nothing was converted"
 WINDOWS_TAGS = "it still holds Windows Tags: move the Windows Tags first; nothing was converted"
 HELD_OPEN = "it is open in another program; close it and try again; nothing was converted"
+NO_FILE_ID = ("its drive gives its files no file id, so its converted copy could not be told from another file; nothing "
+              "was converted")
 NAME_TAKEN = "a file or a row is there already under its converted name; nothing was converted"
 UNDER_WAY = "it is being converted already, or a conversion of it cut short is still to be settled; nothing was converted"
 TEMP_TAKEN = ("an unfinished converted copy of it is there already (another conversion, or one cut short); nothing was "
@@ -113,8 +119,8 @@ def convert_clip(library, exiftool_path, tools, source, reason=OLD_FORMAT, for_g
     with file_changes.exclusively():
         why = _taken(library, source, target)
         before = file_changes.fingerprint(source)
-        if why or before is None:
-            result.refuse(why or GONE)
+        if why or before is None or not before["ino"]:
+            result.refuse(why or (GONE if before is None else NO_FILE_ID))
             return result
         change_id, (row,) = file_journal.plan(library.path, OPERATION, [{
             "photo_id": ready.photo_id, "path": source, "new_path": None if paths.same(source, target) else target,
@@ -248,8 +254,8 @@ def _onward(library, exiftool_path, row, forward, result, problem=None):
     renamed = row.new_path is not None
     temp = clip_convert.temp_of(target)
     made = row.after.get("made")
-    in_temp = made is not None and file_changes.fingerprint(temp) == made
-    in_target = made is not None and not in_temp and file_changes.fingerprint(target) == made
+    in_temp = _is_copy(temp, made)
+    in_target = not in_temp and _is_copy(target, made)
     if not in_temp and not in_target:
         left = clip_convert.removed(temp) if forward else _stale_temp_removed(row, temp)
         if left:
@@ -306,6 +312,15 @@ def _onward(library, exiftool_path, row, forward, result, problem=None):
     file_journal.mark(library.path, [row.id], "done")
     result.changed = 1
     return True
+
+
+def _is_copy(path, made):
+    """Is the file at `path` the conversion's copy, `made` its fingerprint when ffmpeg had made it: the same file id (the
+    module: the carry and the rename keep it, a volume without file ids is never converted)."""
+    if made is None:
+        return False
+    found = file_changes.fingerprint(path)
+    return found is not None and found["ino"] == made["ino"]
 
 
 def _stale_temp_removed(row, temp):
