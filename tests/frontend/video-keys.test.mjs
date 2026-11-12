@@ -82,6 +82,8 @@ test("a text field and the modifiers leave the arrows alone", async (t) => {
   press(ctx.window, ctx.video, "ArrowRight", { metaKey: true });
   const field = ctx.document.getElementById("input-add-tag");
   field.focus();
+  field.value = "Sun";
+  field.setSelectionRange(0, 0);
   press(ctx.window, field, "ArrowRight");
   await flush(ctx.window, 6);
   assert.equal(ctx.video.currentTime, 20);

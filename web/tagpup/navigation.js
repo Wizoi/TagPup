@@ -2,7 +2,7 @@
 import { state } from './state.js';
 import { dialogOpen } from './common/dialog.js';
 import { imageZoomOpen } from './common/image-zoom.js';
-import { mainVideo, photoList, photoSearch } from './elements.js';
+import { inputAddPerson, inputAddTag, mainVideo, photoList, photoSearch } from './elements.js';
 import { hasUnsavedEdits, leavePhotoThen, openPhotoWrite } from './edits.js';
 import { carryTagsForward, openLibraryPhoto, selectPhoto } from './photo.js';
 import { libraryStepTarget } from './library-source.js';
@@ -66,6 +66,21 @@ export function keystrokeBelongsToField(el) {
     return el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.isContentEditable;
 }
 
+/**
+ * Does Left or Right in the tag or person box step to the photo before or after (#2835)? Only where the caret has nowhere to
+ * go: Left at the start, Right at the end, either in an empty box. A selection is the box's to collapse, Shift selects,
+ * Ctrl and Alt move by words; Up and Down walk the box's list. Text left in the box is asked about, as leaving always does.
+ */
+export function arrowStepsFromBox(e) {
+    const box = e.target;
+    if (box !== inputAddTag && box !== inputAddPerson) return false;
+    if (e.shiftKey || e.ctrlKey || e.metaKey || e.altKey || e.isComposing) return false;
+    if (box.selectionStart !== box.selectionEnd) return false;
+    if (e.key === 'ArrowLeft') return box.selectionStart === 0;
+    if (e.key === 'ArrowRight') return box.selectionEnd === box.value.length;
+    return false;
+}
+
 /** Is focus in something that takes the arrow keys for itself (marked `data-own-keys` in the page)? */
 export function ownsItsKeys(el) {
     return Boolean(el && typeof el.closest === 'function' && el.closest('[data-own-keys]'));
@@ -75,7 +90,7 @@ export function wireKeyboard() {
     document.addEventListener('keydown', (e) => {
         if (state.leavePrompt) return;   // "Save changes?" is open; its keys are its own
         if (dialogOpen()) return;        // so are any other dialog's (web/common/dialog.js)
-        if (keystrokeBelongsToField(document.activeElement)) return;
+        if (keystrokeBelongsToField(document.activeElement) && !arrowStepsFromBox(e)) return;
 
         // Ctrl+D copies the previous photo's tags onto this one, so that tagging a
         // shoot is: tag the first, then arrow across and repeat. It is checked
