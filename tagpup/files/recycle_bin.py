@@ -519,7 +519,11 @@ def copies_not_kept(byte_count, largest, root=None, fresh=False):
     root = root or mirror_root()
     mount = _volume_root(root)
     capacity, nuke = _bin_settings(mount)
-    used = _bin_used(mount, fresh)
+    return _refusal(mount, capacity, nuke, _bin_used(mount, fresh), byte_count, largest)
+
+
+def _refusal(mount, capacity, nuke, used, byte_count, largest):
+    """copies_not_kept's answer of the Bin of `mount`, of `capacity` bytes holding `used`: the one rule of what a Bin keeps."""
     if nuke:
         return BIN_KEEPS_NONE, "this PC's Recycle Bin on %s deletes files at once (it is set not to keep them)" % mount
     if largest > capacity:
@@ -531,6 +535,31 @@ def copies_not_kept(byte_count, largest, root=None, fresh=False):
                           % (mount, _mb(used), _mb(capacity), "the copy is" if byte_count == largest else "the copies are",
                              _mb(byte_count)))
     return None
+
+
+def kept_in_turn(sizes, root=None):
+    """[None, or why it is not kept -- BIN_FULL or BIN_KEEPS_NONE --, for each of `sizes`]: what the Bin of the volume of `root`
+    (the copies' folder when None) does with files of these sizes sent to it one after another, as a bulk Delete's start sends
+    them: each weighed alone (copies_not_kept of one file) with what the ones before it put in the Bin counted, so the Bin keeps
+    each while it has room for it and not the others. The Bin's size as last asked (copies_not_kept, `fresh`, just before)
+    and what was sent since. Raises OSError (AttributeError, ValueError) as copies_not_kept does."""
+    root = root or mirror_root()
+    mount = _volume_root(root)
+    capacity, nuke = _bin_settings(mount)
+    used = _bin_used(mount)
+    found = []
+    for size in sizes:
+        refused = _refusal(mount, capacity, nuke, used, size, size)
+        if refused is None:
+            used += size
+        found.append(refused[0] if refused else None)
+    return found
+
+
+def bin_volume(folder):
+    """Which Recycle Bin a file of `folder` goes to -- or its copy, when `folder` is the copies' (mirror_root) --: the key of its
+    volume, as copies_not_kept and note_binned weigh it. Raises OSError (AttributeError, ValueError) when Windows cannot say."""
+    return paths.key(_volume_root(folder))
 
 
 def cannot_tell(e):

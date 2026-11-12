@@ -61,13 +61,14 @@ class BinFull(unittest.TestCase):
         body = {"path": path, "for_good": True} if for_good else {"path": path}
         return self.client.post("/library/api/photo/delete", json=body)
 
-    def check(self):
-        reply = self.client.post("/library/api/library/selection/delete-check", json={"selection": {"ids": self.on_share}})
+    def check(self, ids=None):
+        reply = self.client.post("/library/api/library/selection/delete-check",
+                                 json={"selection": {"ids": ids or self.on_share}})
         self.assertEqual(200, reply.status_code, reply.get_json())
         return reply.get_json()
 
-    def start(self, params):
-        return self.client.post("/library/api/library/bulk-edit", json={"op": "delete", "selection": {"ids": self.on_share},
+    def start(self, params, ids=None):
+        return self.client.post("/library/api/library/bulk-edit", json={"op": "delete", "selection": {"ids": ids or self.on_share},
                                                                          "params": params})
 
     def test_the_panels_delete_asks_and_only_ok_deletes_it_for_good(self):
@@ -98,18 +99,41 @@ class BinFull(unittest.TestCase):
         room = (capacity, int(capacity * (1 - recycle_bin.BIN_MARGIN)) - int(1.5 * size), False)
         with mock.patch.object(recycle_bin, "_test_bin", return_value=room):
             asked = self.check()
-            self.assertEqual((None, 2, 2, 0), (asked["no_room"], asked["for_good"]["count"], asked["bin_full"],
+            # What the start will do, told before it: the first copy goes to the Bin, the second is deleted for good.
+            self.assertEqual((None, 1, 1, 1), (asked["no_room"], asked["for_good"]["count"], asked["bin_full"],
                                                asked["through_this_pc"]))
-            self.assertEqual(sorted(os.path.basename(each) for each in files), asked["for_good"]["names"])
+            self.assertEqual([os.path.basename(files[1])], asked["for_good"]["names"])
             refused = self.start({"token": asked["token"]})
             self.assertEqual(409, refused.status_code, "a start that did not confirm is refused, nothing begun")
             self.assertEqual(self.on_share, self.held(self.on_share))
             done = self.start({"token": asked["token"], "for_good": True}).get_json()
         self.assertEqual((2, 1, 0), (done["changed"], done["for_good"], done["error_count"]), done)
         self.assertEqual(1, len(self.binned), "the Bin keeps what it has room for: for_good is leave, never force")
+        self.assertEqual(os.path.basename(files[0]), os.path.basename(self.binned[0]), "the one the question said goes to the Bin")
         self.assertEqual([], self.held(self.on_share))
         self.assertFalse([each for each in files if os.path.exists(each)])
 
+
+    def test_the_bulk_question_tells_the_split_its_start_makes_when_the_bin_has_room_for_some(self):
+        # The reviewer's case scaled down: the Bin at 90,000 of 104,566 MB and 3,000 photos of 10,000 MB, about 2,800 of which it
+        # has room for. Here five photos on a local drive, its Bin with room for three and a half: the question says three go to
+        # the Bin and two are deleted for good, and the start does exactly that.
+        ids = [self.vl.photo("Lake Folder", "shore%d.jpg" % n, taken="2024:05:0%d 10:00:00" % (n + 1), real=True, size=(16, 16))
+               for n in range(5)]
+        files = [self.vl.path_of(each) for each in ids]
+        size = max(os.path.getsize(each) for each in files)
+        capacity = 1 << 30
+        room = (capacity, int(capacity * (1 - recycle_bin.BIN_MARGIN)) - int(3.5 * size), False)
+        with mock.patch.object(recycle_bin, "_test_bin", return_value=room):
+            asked = self.check(ids)
+            self.assertEqual((5, 2, 2, 0), (asked["total"], asked["for_good"]["count"], asked["bin_full"],
+                                            asked["through_this_pc"]), asked)
+            self.assertEqual(sorted(os.path.basename(each) for each in files[3:]), asked["for_good"]["names"],
+                             "the last two, in the order the start deletes them")
+            done = self.start({"token": asked["token"], "for_good": True}, ids).get_json()
+        self.assertEqual((5, 2, 0), (done["changed"], done["for_good"], done["error_count"]), done)
+        self.assertEqual([paths.key(each) for each in files[:3]], [paths.key(each) for each in self.binned])
+        self.assertEqual([], self.held(ids))
 
     def test_a_photo_on_a_local_drive_whose_own_bin_is_nearly_full_asks_and_only_ok_deletes_it_for_good(self):
         path = self.vl.path_of(self.on_disk[0])

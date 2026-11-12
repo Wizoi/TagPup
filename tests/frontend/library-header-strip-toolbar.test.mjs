@@ -379,6 +379,18 @@ describe("#674: Delete of a view's selection", () => {
     assert.deepEqual(plain(calls(ctx, "/api/library/bulk-edit")[0].body.params), { token: "t-three-for-good", for_good: true });
   });
 
+  test("a Bin with room for some: the first question says how many are deleted for good and that the rest go to the Bin", async (t) => {
+    // The server weighs the files one after another, as the start deletes them (selection.where_deleted): 3 fit, 2 do not.
+    const ctx = await view(t, 40, { where: { ...FOR_GOOD(2, ["Shore_D.jpg", "Shore_E.jpg"]), total: 5, bin_full: 2 } });
+    ctx.bulk.edit = { op: "delete", total: 5, changed: 5, for_good: 2 };
+    for (const id of [2, 5, 9, 11, 14]) pick(ctx, id);
+    await remove(ctx);
+    assert.match(ctx.questions[0], /^Delete 5 photos\?/);
+    assert.match(ctx.questions[0], /2 of them are deleted for good, not moved to a Recycle Bin/);
+    assert.match(ctx.questions[0], /full by the time it comes to it/);
+    assert.match(ctx.questions[0], /The other 3 go to the Recycle Bin, where they can be restored\./);
+  });
+
   test("a clip over 2 GiB: the first question already says it is deleted for good, not that it goes to a Recycle Bin or is copied", async (t) => {
     const ctx = await view(t, 40, { where: { ...FOR_GOOD(1, ["Harbour_Swim_Long.mp4"]), through_this_pc: 1, copy_bytes: 4 * 1024 * 1024 } });
     for (const id of [2, 5, 9]) pick(ctx, id);

@@ -80,8 +80,8 @@ const GOOD_WHY = "a video over 2 GiB is too large for TagPup to copy to a Recycl
     + 'keeps, or on a Recycle Bin set to delete files at once, is not kept by it';
 // Why, when this PC's Recycle Bin -- which keeps the copies of files from places with no Recycle Bin of their own -- is full
 // (the delete-check's `bin_full`; owner, 2026-11-12).
-const BIN_FULL_WHY = "a Recycle Bin that would keep it is full: the one of its drive, or, for a file from a place with no Recycle Bin "
-    + "of its own (a network share), this PC's Recycle Bin, which keeps its copy";
+const BIN_FULL_WHY = "a Recycle Bin that would keep it is full, or full by the time it comes to it: the one of its drive, or, for a "
+    + "file from a place with no Recycle Bin of its own (a network share), this PC's Recycle Bin, which keeps its copy";
 export function bigClip(size) {
     return Number(size) > MOST_CLIP_BYTES;
 }
