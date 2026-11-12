@@ -318,6 +318,7 @@ _BITBUCKET = r"Software\Microsoft\Windows\CurrentVersion\Explorer\BitBucket\Volu
 
 _bin_lock = threading.Lock()
 _bin_seen = {}      # {volume key: [when asked (monotonic), bytes Windows said, bytes this process sent since]}
+_bin_asked = [0]    # how many times Windows was asked a Bin's size (a count, not a time: the clock's tick is 15 ms)
 
 
 def forget_bin():
@@ -404,6 +405,7 @@ def _bin_used(mount, fresh=False):
     size = _bin_size(mount)
     with _bin_lock:
         _bin_seen[key] = [time.monotonic(), size, 0]
+        _bin_asked[0] += 1
     return size
 
 
@@ -661,8 +663,12 @@ def _one_not_kept(size, folder, fresh):
     one file, whose refusal is the owner's question and whose OK deletes for good: the owner may have emptied the Bin since it
     was asked (one query, and only when it looks full). Not `fresh`: a bulk Delete's file, weighed by what its start asked
     (selection.deleted_for_good) and what the run has sent since, not one query a file."""
+    with _bin_lock:
+        asked = _bin_asked[0]
     refused = copies_not_kept(size, size, folder)
-    if fresh and refused and refused[0] == BIN_FULL:
+    with _bin_lock:
+        just_asked = _bin_asked[0] != asked      # the reading that found it full was taken now: as fresh as one asked again
+    if fresh and refused and refused[0] == BIN_FULL and not just_asked:
         refused = copies_not_kept(size, size, folder, fresh=True)
     return refused
 

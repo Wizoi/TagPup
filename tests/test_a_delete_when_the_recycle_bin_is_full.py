@@ -180,6 +180,17 @@ class BinFull(unittest.TestCase):
                 self.assertEqual(1, len(self.binned))
                 self.assertFalse(os.path.exists(path))
 
+    def test_the_first_delete_over_a_full_bin_asks_windows_for_its_size_once(self):
+        # The Bin not yet asked (a start, or ten minutes since): the reading that finds it full is already fresh, and a query of the
+        # Bin can take seconds, so it is not made a second time before the question is put.
+        path = self.vl.path_of(self.on_disk[0])
+        recycle_bin.forget_bin()
+        with mock.patch.dict(os.environ, FULL), \
+                mock.patch.object(recycle_bin, "_bin_size", wraps=recycle_bin._bin_size) as queried:
+            asked = self.delete_one(path)
+        self.assertEqual(1, asked.get_json().get("bin_full"), asked.get_json())
+        self.assertEqual(1, queried.call_count)
+
     def test_a_bulk_start_weighs_the_bin_as_it_is_now_not_as_its_question_found_it(self):
         selection = {"ids": self.on_disk}
         files = [self.vl.path_of(each) for each in self.on_disk]
