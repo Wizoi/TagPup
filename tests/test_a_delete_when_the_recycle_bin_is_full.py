@@ -22,6 +22,7 @@ from tagpup.core import paths  # noqa: E402
 from tagpup.files import recycle_bin  # noqa: E402
 
 FULL = {"TAGPUP_RECYCLE_BIN": "10,10,0"}     # a Bin of 10 MB holding 10 MB: full
+EMPTIED = {"TAGPUP_RECYCLE_BIN": "10,0,0"}  # the same Bin, emptied in Explorer
 
 
 class BinFull(unittest.TestCase):
@@ -137,6 +138,44 @@ class BinFull(unittest.TestCase):
         self.assertEqual(200, reply.status_code, reply.get_json())
         self.assertFalse(reply.get_json()["for_good"])
         self.assertEqual([path], self.binned)
+
+    def test_a_bin_emptied_after_the_panel_said_it_was_full_takes_the_next_delete(self):
+        # Delete -> "The Recycle Bin is full" -> Cancel -> the owner empties the Bin in Explorer -> Delete again at once, well
+        # within the ten minutes the Bin's size is remembered: the Bin is asked again, and the photo goes to it.
+        for path in (self.vl.path_of(self.on_disk[0]), self.vl.path_of(self.on_share[0])):
+            with self.subTest(on_share=path.startswith(self.share)):
+                self.binned.clear()
+                recycle_bin.forget_bin()        # a scenario of its own: the Bin not yet asked
+                with mock.patch.dict(os.environ, FULL):
+                    asked = self.delete_one(path)
+                self.assertEqual(1, asked.get_json().get("bin_full"), asked.get_json())
+                with mock.patch.dict(os.environ, EMPTIED):
+                    reply = self.delete_one(path)
+                self.assertEqual(200, reply.status_code, reply.get_json())
+                self.assertFalse(reply.get_json()["for_good"], "binned: not 'full' over an empty Bin")
+                self.assertEqual(1, len(self.binned))
+                self.assertFalse(os.path.exists(path))
+
+    def test_a_bulk_start_weighs_the_bin_as_it_is_now_not_as_its_question_found_it(self):
+        selection = {"ids": self.on_disk}
+        files = [self.vl.path_of(each) for each in self.on_disk]
+        with mock.patch.dict(os.environ, FULL):
+            asked = self.client.post("/library/api/library/selection/delete-check", json={"selection": selection}).get_json()
+        self.assertEqual((2, 2), (asked["for_good"]["count"], asked["bin_full"]))
+        # The owner empties the Bin and only then presses OK, within the ten minutes: the start sees the Bin as it is now, and
+        # deletes nothing for good it was not told of.
+        with mock.patch.dict(os.environ, EMPTIED):
+            refused = self.client.post("/library/api/library/bulk-edit", json={
+                "op": "delete", "selection": selection, "params": {"token": asked["token"], "for_good": True}})
+            self.assertEqual(409, refused.status_code, refused.get_json())
+            self.assertIn("Recycle Bin", refused.get_json()["error"])
+            self.assertTrue(all(os.path.exists(each) for each in files), "nothing deleted for good over an emptied Bin")
+            again = self.client.post("/library/api/library/selection/delete-check", json={"selection": selection}).get_json()
+            self.assertEqual((0, 0), (again["for_good"]["count"], again["bin_full"]))
+            done = self.client.post("/library/api/library/bulk-edit", json={
+                "op": "delete", "selection": selection, "params": {"token": again["token"]}}).get_json()
+        self.assertEqual((2, 0, 0), (done["changed"], done["for_good"], done["error_count"]), done)
+        self.assertEqual(2, len(self.binned))
 
     def test_the_bulk_question_names_local_photos_when_their_bin_is_nearly_full_and_only_a_confirmed_start_deletes_them(self):
         files = [self.vl.path_of(each) for each in self.on_disk]

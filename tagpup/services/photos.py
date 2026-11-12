@@ -776,7 +776,7 @@ def shift_date_taken(library, photo_paths, minutes, exiftool_path):
 
 
 @roots_service.canonical_args("photo_path")
-def delete(library, photo_path, for_good=False):
+def delete(library, photo_path, for_good=False, fresh=True):
     """Send a photo or a clip to the Recycle Bin, and forget it: its row, faces, cached
     embedding (a clip's frames with it) and thumbnail or poster. Clicking Delete (Organize's,
     and each photo or clip of a library view's bulk Delete).
@@ -795,7 +795,8 @@ def delete(library, photo_path, for_good=False):
     "TagPup deleted from shares", the copy checked, the copy to this PC's Recycle Bin, then the
     original -- and any step that fails leaves it, and its rows, where they are. A file its own drive's Bin would not
     keep is deleted for good only with `for_good`, else refused untouched (file_only.send: details `not_kept`). The rows go
-    only once the file is.
+    only once the file is. `fresh` (recycle_bin.delete_file's): False for each file of a bulk Delete, whose start asked the
+    Bins once.
 
     details: `removed`, the rows removed from each table (None for such a photo);
     `file_only` and `with_rows`, 1 for the way it was done; `through_this_pc`, `no_bin_reason`
@@ -809,10 +810,10 @@ def delete(library, photo_path, for_good=False):
         return result
     _held, loose = libraries.split(library, [photo_path])
     if loose:
-        result = file_only.delete(photo_path, for_good)
+        result = file_only.delete(photo_path, for_good, fresh)
         result.details.update({file_only.FILE_ONLY: result.changed, file_only.WITH_ROWS: 0})
         return result
-    if file_only.send(photo_path, for_good, result) is None:
+    if file_only.send(photo_path, for_good, result, fresh) is None:
         return result
     result.changed = 1
     # The thumbnail goes with the photo: its id is read first, while the row is there to name it.

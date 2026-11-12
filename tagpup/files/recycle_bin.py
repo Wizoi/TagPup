@@ -33,7 +33,8 @@ is not kept either). A Bin that would not keep the copies -- full, set to delete
 `copies_not_kept`: the file is then deleted for good where it is only when the owner was told so and confirmed it (the one
 confirm path of `for_good`, NotKept with `full` when the Bin is full: the page asks "The Recycle Bin is full: delete
 permanently instead?"; owner, 2026-11-12), else refused untouched; no copy is made. The Bin's size is asked of Windows (SHQueryRecycleBinW: 11.8 s for 3,353 items here) once, then counted
-on by what this process sends (`note_binned`), and asked again after BIN_FRESH. A copy whose path would be MAX_PATH or more is
+on by what this process sends (`note_binned`), and asked again after BIN_FRESH -- and before a delete of one file says the Bin is
+full or deletes it for good because it is (`delete_file`'s `fresh`: it may have been emptied since). A copy whose path would be MAX_PATH or more is
 refused up front (SHFileOperation takes none). A Downloads folder under OneDrive is refused: a copy would be synced to the cloud
 before it was recycled. A `.partial` a crash left for the same name is taken away on the way in.
 
@@ -625,11 +626,24 @@ def _take_away(path):
         pass
 
 
-def recycle_through_this_pc(file_path, root=None, for_good=False):
+def _one_not_kept(size, folder, fresh):
+    """copies_not_kept of one file of `size` into the Bin of the volume of `folder`. `fresh`: a Bin that looks full by the size
+    remembered (up to BIN_FRESH old, and what was sent since) is asked of Windows again before that is acted on -- a delete of
+    one file, whose refusal is the owner's question and whose OK deletes for good: the owner may have emptied the Bin since it
+    was asked (one query, and only when it looks full). Not `fresh`: a bulk Delete's file, weighed by what its start asked
+    (selection.deleted_for_good) and what the run has sent since, not one query a file."""
+    refused = copies_not_kept(size, size, folder)
+    if fresh and refused and refused[0] == BIN_FULL:
+        refused = copies_not_kept(size, size, folder, fresh=True)
+    return refused
+
+
+def recycle_through_this_pc(file_path, root=None, for_good=False, fresh=True):
     """Delete `file_path`, in a place with no Recycle Bin, through this PC (the module's docstring): copy, check, the copy to this
     PC's Recycle Bin, then the original. Returns (where the copy was put -- so where Windows restores it --, None), or, when this
     PC's Bin would not keep the copy (copies_not_kept) and `for_good` (the owner was told and confirmed), (None, why it was deleted
-    for good): it is then removed where it is, no copy made; unconfirmed, NotKept, nothing touched. Raises ValueError for a
+    for good): it is then removed where it is, no copy made; unconfirmed, NotKept, nothing touched (`fresh`: _one_not_kept's).
+    Raises ValueError for a
     path that is no photo or clip file (problem) and OSError, with a sentence, for any step that failed: the original is then left where it
     is (and, when only its own delete failed, is there twice: the error says so)."""
     why, long = _judged(file_path)
@@ -642,7 +656,7 @@ def recycle_through_this_pc(file_path, root=None, for_good=False):
     if refused:
         raise OSError(refused)
     try:
-        not_kept_here = copies_not_kept(size, size, root)
+        not_kept_here = _one_not_kept(size, root, fresh)
     except (OSError, AttributeError, ValueError) as e:
         raise OSError(cannot_tell(e)) from None
     if not_kept_here:
@@ -713,7 +727,7 @@ def being_deleted(file_path):
         return key in _under_delete
 
 
-def delete_file(file_path, for_good=False):
+def delete_file(file_path, for_good=False, fresh=True):
     """Delete a photo or clip FILE the one way every delete of one takes (#694): to its own Recycle Bin, or -- where its place has none
     -- through this PC (recycle_through_this_pc). {"through_this_pc": bool, "reason": why its place has no Bin or None, "copy":
     where the copy was put, or None, "for_good": bool, "why_for_good": the phrase of why it was deleted for good, or None}.
@@ -721,9 +735,9 @@ def delete_file(file_path, for_good=False):
     `for_good` (the owner was told and confirmed), else NotKept, nothing touched: a clip over MOST_CLIP_BYTES on any drive
     (too_large_to_copy: removed where it is, no copy made, no Bin asked), and a file its own drive's Bin would not keep
     (keeps_up_to). The file is under delete (being_deleted) until this returns or raises: the panel's delete and each of a bulk
-    Delete's alike."""
+    Delete's alike. `fresh`: a Bin that looks full is asked again first (_one_not_kept); a bulk Delete's file says False."""
     with _deleting(file_path):
-        return _delete_file(file_path, for_good)
+        return _delete_file(file_path, for_good, fresh)
 
 
 #: Why a file was deleted for good, as the reply says it after "Deleted for good, as you confirmed: ".
@@ -734,7 +748,7 @@ BIN_FULL_WHY = ("this PC's Recycle Bin, which keeps the copies of files from pla
 COPY_NOT_KEPT = ("this PC's Recycle Bin, which keeps the copies of files from places with no Recycle Bin, would not keep its copy")
 
 
-def _delete_file(file_path, for_good):
+def _delete_file(file_path, for_good, fresh):
     why, long = _judged(file_path)
     if why:
         raise ValueError(why)
@@ -752,7 +766,7 @@ def _delete_file(file_path, for_good):
             return {"through_this_pc": False, "reason": None, "copy": None, "for_good": True, "why_for_good": CLIP_NOT_COPIED}
     reason = no_bin_reason(file_path)
     if reason:
-        copy, why_for_good = recycle_through_this_pc(file_path, for_good=for_good)
+        copy, why_for_good = recycle_through_this_pc(file_path, for_good=for_good, fresh=fresh)
         return {"through_this_pc": copy is not None, "reason": reason, "copy": copy, "for_good": copy is None,
                 "why_for_good": why_for_good}
     try:
@@ -766,7 +780,7 @@ def _delete_file(file_path, for_good):
         _remove_for_good(source)
         return {"through_this_pc": False, "reason": None, "copy": None, "for_good": True, "why_for_good": BIN_WOULD_NOT_KEEP}
     try:
-        refused = copies_not_kept(size, size, os.path.dirname(source))
+        refused = _one_not_kept(size, os.path.dirname(source), fresh)
     except (OSError, AttributeError, ValueError) as e:
         raise OSError(cannot_tell(e)) from None
     if refused and refused[0] == BIN_FULL:

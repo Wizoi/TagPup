@@ -226,7 +226,7 @@ def _not_copied(conn, photo_ids, counted, sizes, binless, fresh):
     the files of the folders `binless` (recycle_bin.copies_not_kept, for all of them at once: every one of them but a clip over
     recycle_bin.MOST_CLIP_BYTES, which is _for_good's), the stored paths of the first MOST_FOR_GOOD_NAMED, whether only because
     it is full (recycle_bin.BIN_FULL), the sentence when no copy can be made at all -- no_room -- or None). `fresh`: ask Windows
-    the Bin's size now (the question), else what it said then and what was sent since (the start, deleted_for_good)."""
+    the Bin's size now."""
     through, copy_bytes, largest = _through(counted, sizes, binless)
     if not through:
         return set(), [], False, None
@@ -319,14 +319,16 @@ def _for_good(conn, photo_ids, sizes, named, binless):
 def deleted_for_good(library, photo_ids):
     """The ids of `photo_ids` a Delete would delete for good now (_for_good, _not_copied), asked again at its start: a start
     confirmed for good goes on only when these are the files its question named (token_of), and deletes for good none but these.
-    This PC's Bin is not asked of Windows again: what it said for the question and what was sent since (11.8 s a question)."""
+    The Bins' sizes are asked of Windows again, as the question asked them: a Bin emptied since the question is seen (and the
+    start refused, to be asked again), never deleted into for good from a size remembered; each file of the run is then weighed
+    by this reading and what the run sent since (recycle_bin.delete_file's `fresh`)."""
     conn = library_view.opened(library)
     try:
         counted, sizes, named = _weighed(conn, photo_ids)
         binless = {folder_id for folder_id, (path, _name) in named.items() if recycle_bin.no_bin_reason(path)}
         found = _for_good(conn, photo_ids, sizes, named, binless)[0]
-        return (found | _not_copied(conn, photo_ids, counted, sizes, binless, fresh=False)[0]
-                | _own_bin_full(conn, photo_ids, sizes, named, binless, fresh=False)[0])
+        return (found | _not_copied(conn, photo_ids, counted, sizes, binless, fresh=True)[0]
+                | _own_bin_full(conn, photo_ids, sizes, named, binless, fresh=True)[0])
     finally:
         conn.close()
 

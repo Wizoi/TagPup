@@ -255,9 +255,9 @@ CHANGED = ("The selection changed since you were asked (photos came into it or l
 
 #: What it says when the photos are the same but not the files that would be deleted for good: a drive's Recycle Bin set
 #: otherwise, or a file's size changed, since the question.
-FOR_GOOD_CHANGED = ("The files that would be deleted for good are not the ones you were warned of (a drive's Recycle Bin "
-                    "setting or a file's size changed since you were asked): nothing was deleted. Ask again: click Delete "
-                    "once more.")
+FOR_GOOD_CHANGED = ("The files that would be deleted for good are not the ones you were warned of (how full a Recycle Bin "
+                    "is, its setting, or a file's size changed since you were asked): nothing was deleted. Ask again: click "
+                    "Delete once more.")
 
 
 def refuse_if_changed(edit, photo_ids, token_of, deleted_for_good):
@@ -312,7 +312,7 @@ def _delete(library, edit, present, out):
                 out.errors.append((photo_id, name, refused[photo_id][:MOST_TEXT]))
                 continue
             # Deleted for good only if it was among the files confirmed: one grown past its Bin since is refused.
-            result = photo_actions.delete(library, path, photo_id in edit.for_good_ids)
+            result = photo_actions.delete(library, path, photo_id in edit.for_good_ids, fresh=False)
             if result.ok and result.changed:
                 out.changed += 1
                 out.for_good += 1 if result.details.get("for_good") else 0

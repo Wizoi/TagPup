@@ -216,12 +216,12 @@ def rename(renames, aside):
     return file_changes.Renamed(done, moved_aside, 0, [], None)
 
 
-def delete(photo_path, for_good=False):
+def delete(photo_path, for_good=False, fresh=True):
     """Send a photo to the Recycle Bin -- through this PC where its place has none (recycle_bin.delete_file, #694) -- and forget
     nothing: it has no row. details: `removed` None; `through_this_pc`, `no_bin_reason`, `copy` and `for_good` as recycle_bin
     says them."""
     result = Result(attempted=1)
-    went = send(photo_path, for_good, result)
+    went = send(photo_path, for_good, result, fresh)
     if went is None:
         return result
     result.changed = 1
@@ -229,12 +229,12 @@ def delete(photo_path, for_good=False):
     return result
 
 
-def send(photo_path, for_good, result):
-    """recycle_bin.delete_file(photo_path, for_good) into `result`: what it did in its details (`through_this_pc`,
+def send(photo_path, for_good, result, fresh=True):
+    """recycle_bin.delete_file(photo_path, for_good, fresh) into `result`: what it did in its details (`through_this_pc`,
     `no_bin_reason`, `copy`, `for_good`, `why_for_good`), and the dict; or None, `result` refused -- a file deleted for good
     only once confirmed, unconfirmed (recycle_bin.NotKept: details `not_kept`, its name, and `bin_full`, 1 when only this PC's Bin is full) -- or failed. The one way a delete of one file is told."""
     try:
-        went = recycle_bin.delete_file(photo_path, for_good=for_good)
+        went = recycle_bin.delete_file(photo_path, for_good=for_good, fresh=fresh)
     except recycle_bin.NotKept as e:
         result.refuse(str(e))
         result.details["not_kept"] = [os.path.basename(photo_path)]
