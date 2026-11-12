@@ -252,11 +252,11 @@ class Asking(Delete):
                          sorted(paths.key(path) for path in asked))
 
     def test_the_bin_of_a_drive_is_asked_once_for_all_its_folders(self):
-        # Two folders on this PC's one drive: its Bin's settings are read once for the question, not once a folder (a Select all
+        # Two folders on this PC's one drive: its Bin's settings are read twice for the question (what it keeps, how full it is), not once a folder (a Select all
         # of photo_index is about 2,600 folders on two drives).
         with mock.patch.object(recycle_bin, "_bin_settings", wraps=recycle_bin._bin_settings) as settings:
             self.assertEqual(35, self.check(ALL)["total"])
-        self.assertEqual(1, settings.call_count)
+        self.assertEqual(2, settings.call_count, "once for what the Bin keeps, once for how full it is: neither once a folder")
 
     def test_over_the_bulk_cap_this_pc_only_and_nonsense(self):
         with mock.patch.object(batches, "MAX_BATCH", 10):

@@ -1,7 +1,8 @@
 """A delete of files from a place with no Recycle Bin of its own (a network share) when this PC's Recycle Bin, which keeps their
 copies, is full (owner, 2026-11-12): the page asks "The Recycle Bin is full: delete permanently instead?" rather than refusing; OK
 deletes those files for good, Cancel (no resend) deletes nothing, and the Bin stays the default while it has room. One confirm
-path: the one of a file its own drive's Bin would not keep (recycle_bin.NotKept, `for_good`).
+path: the one of a file its own drive's Bin would not keep (recycle_bin.NotKept, `for_good`). A file on a LOCAL drive whose own Bin
+is nearly full is asked of the same way (owner, 2026-11-12): never refused, never sent to the Bin unweighed.
 
 The Recycle Bin is the test's: `send_to_recycle_bin` removes the copy and says so, which folders have none is the test's to say,
 and the Bin's size is the test home's (TAGPUP_RECYCLE_BIN) or stood in; nothing reaches the owner's Recycle Bin. Photos are real
@@ -40,6 +41,8 @@ class BinFull(unittest.TestCase):
         self.addCleanup(reason_patch.stop)
         self.on_share = [self.vl.photo("Harbour Share", "pier%d.jpg" % n, taken="2024:03:0%d 10:00:00" % (n + 1), real=True,
                                        size=(16, 16)) for n in range(2)]
+        self.on_disk = [self.vl.photo("Home Folder", "garden%d.jpg" % n, taken="2024:04:0%d 10:00:00" % (n + 1), real=True,
+                                      size=(16, 16)) for n in range(2)]
 
     def reason(self, path):
         return recycle_bin.NETWORK if paths.key(path).startswith(paths.key(self.share)) else None
@@ -104,6 +107,51 @@ class BinFull(unittest.TestCase):
         self.assertEqual((2, 1, 0), (done["changed"], done["for_good"], done["error_count"]), done)
         self.assertEqual(1, len(self.binned), "the Bin keeps what it has room for: for_good is leave, never force")
         self.assertEqual([], self.held(self.on_share))
+        self.assertFalse([each for each in files if os.path.exists(each)])
+
+
+    def test_a_photo_on_a_local_drive_whose_own_bin_is_nearly_full_asks_and_only_ok_deletes_it_for_good(self):
+        path = self.vl.path_of(self.on_disk[0])
+        with mock.patch.dict(os.environ, FULL):
+            reply = self.delete_one(path)
+            self.assertEqual(400, reply.status_code, reply.get_json())
+            body = reply.get_json()
+            self.assertEqual(([os.path.basename(path)], 1), (body.get("not_kept"), body.get("bin_full")))
+            self.assertIn("is full", body["error"])
+            self.assertTrue(os.path.exists(path), "asked, not deleted: Cancel (no resend) leaves it")
+            self.assertEqual([], self.binned, "never sent to the Bin unweighed")
+            self.assertEqual(self.on_disk, self.held(self.on_disk))
+            done = self.delete_one(path, for_good=True)
+        self.assertEqual(200, done.status_code, done.get_json())
+        said = done.get_json()
+        self.assertEqual((True, False), (said["for_good"], said["through_this_pc"]))
+        self.assertIn("Deleted for good, as you confirmed", said["message"])
+        self.assertFalse(os.path.exists(path))
+        self.assertEqual([], self.binned, "deleted where it was, no Bin touched")
+        self.assertEqual(self.on_disk[1:], self.held(self.on_disk))
+
+    def test_a_local_photo_goes_to_its_bin_while_the_bin_has_room(self):
+        path = self.vl.path_of(self.on_disk[0])
+        with mock.patch.dict(os.environ, {"TAGPUP_RECYCLE_BIN": "1024,1,0"}):
+            reply = self.delete_one(path)
+        self.assertEqual(200, reply.status_code, reply.get_json())
+        self.assertFalse(reply.get_json()["for_good"])
+        self.assertEqual([path], self.binned)
+
+    def test_the_bulk_question_names_local_photos_when_their_bin_is_nearly_full_and_only_a_confirmed_start_deletes_them(self):
+        files = [self.vl.path_of(each) for each in self.on_disk]
+        selection = {"ids": self.on_disk}
+        with mock.patch.dict(os.environ, FULL):
+            asked = self.client.post("/library/api/library/selection/delete-check", json={"selection": selection}).get_json()
+            self.assertEqual((2, 2, 0), (asked["for_good"]["count"], asked["bin_full"], asked["through_this_pc"]), asked)
+            refused = self.client.post("/library/api/library/bulk-edit", json={
+                "op": "delete", "selection": selection, "params": {"token": asked["token"]}})
+            self.assertEqual(409, refused.status_code, "a start that did not confirm is refused, nothing begun")
+            self.assertTrue(all(os.path.exists(each) for each in files))
+            done = self.client.post("/library/api/library/bulk-edit", json={
+                "op": "delete", "selection": selection, "params": {"token": asked["token"], "for_good": True}}).get_json()
+        self.assertEqual((2, 2, 0), (done["changed"], done["for_good"], done["error_count"]), done)
+        self.assertEqual([], self.binned)
         self.assertFalse([each for each in files if os.path.exists(each)])
 
 

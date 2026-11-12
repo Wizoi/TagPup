@@ -188,10 +188,13 @@ def where_deleted(library, selection):
                 binless.add(folder_id)
         for_good, stored = _for_good(conn, resolved.ids, sizes, named, binless)
         uncopied, uncopied_first, full, no_room = _not_copied(conn, resolved.ids, counted, sizes, binless, fresh=True)
+        own_full, own_first = _own_bin_full(conn, resolved.ids, sizes, named, binless, fresh=True)
     finally:
         conn.close()
     through, copy_bytes, _largest = _through(counted, sizes, binless)
-    bin_full = len(uncopied - for_good) if full else 0
+    bin_full = (len(uncopied - for_good) if full else 0) + len(own_full - for_good - uncopied)
+    # A file whose own drive's Bin is full is asked of like one whose copy this PC's Bin would not keep (owner, 2026-11-12).
+    for_good, stored = for_good | own_full, stored + own_first
     if uncopied:
         # This PC's Bin would not keep the copies: every one of them goes for good, once confirmed, and none through this PC.
         for_good, stored = for_good | uncopied, stored + uncopied_first
@@ -242,6 +245,39 @@ def _not_copied(conn, photo_ids, counted, sizes, binless, fresh):
     return set(ids), first, refused[0] == recycle_bin.BIN_FULL, None
 
 
+def _own_bin_full(conn, photo_ids, sizes, named, binless, fresh):
+    """({the ids of `photo_ids` in folders of a drive with a Recycle Bin of its own that is full -- recycle_bin.copies_not_kept,
+    for all of that drive's files at once, BIN_FULL: Windows would purge the Bin's oldest items for good to take them --, the
+    stored paths of the first MOST_FOR_GOOD_NAMED}). A drive whose Bin Windows cannot tell of is left out (the delete of each of
+    its files asks again, and refuses it untouched). Each drive's Bin is asked once. `fresh`: as _not_copied's."""
+    by_mount = {}       # {mount key: [folder ids, their bytes, the largest, a folder of it]}
+    for folder_id, (path, _name) in named.items():
+        if folder_id in binless:
+            continue
+        try:
+            mount = paths.key(recycle_bin.bin_mount(path))
+        except OSError:
+            continue
+        total, biggest, clips_over = sizes.get(folder_id) or (0, 0, 0)
+        held = by_mount.setdefault(mount, [[], 0, 0, path])
+        held[0].append(folder_id)
+        held[1] += total
+        held[2] = max(held[2], biggest)
+    full_folders = []
+    for folder_ids, total, biggest, path in by_mount.values():
+        try:
+            refused = recycle_bin.copies_not_kept(total, biggest, path, fresh)
+        except (OSError, AttributeError, ValueError):
+            continue
+        if refused and refused[0] == recycle_bin.BIN_FULL:
+            full_folders.extend(folder_ids)
+    if not full_folders:
+        return set(), []
+    ids, first = store_folders.larger_than(conn, sorted(full_folders), 0, recycle_bin.MOST_CLIP_BYTES, MOST_FOR_GOOD_NAMED,
+                                           photo_ids, None, ())
+    return set(ids), first
+
+
 def _weighed(conn, photo_ids):
     """({folder id: photos of `photo_ids` in it}, {folder id: (their bytes, the largest)}, {folder id: (path, name)}): what
     where_deleted and deleted_for_good ask of each folder."""
@@ -289,7 +325,8 @@ def deleted_for_good(library, photo_ids):
         counted, sizes, named = _weighed(conn, photo_ids)
         binless = {folder_id for folder_id, (path, _name) in named.items() if recycle_bin.no_bin_reason(path)}
         found = _for_good(conn, photo_ids, sizes, named, binless)[0]
-        return found | _not_copied(conn, photo_ids, counted, sizes, binless, fresh=False)[0]
+        return (found | _not_copied(conn, photo_ids, counted, sizes, binless, fresh=False)[0]
+                | _own_bin_full(conn, photo_ids, sizes, named, binless, fresh=False)[0])
     finally:
         conn.close()
 

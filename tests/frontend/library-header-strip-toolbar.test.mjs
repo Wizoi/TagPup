@@ -370,9 +370,9 @@ describe("#674: Delete of a view's selection", () => {
     for (const id of [2, 5, 9]) pick(ctx, id);
     await remove(ctx);
     assert.equal(ctx.questions.length, 2);
-    assert.match(ctx.questions[0], /this PC's Recycle Bin is full/);
+    assert.match(ctx.questions[0], /a Recycle Bin that would keep it is full/);
     assert.match(ctx.questions[1], /^The Recycle Bin is full: delete permanently instead\?/);
-    assert.match(ctx.questions[1], /2 of these 3 files are in a place with no Recycle Bin of its own/);
+    assert.match(ctx.questions[1], /2 of these 3 files are headed for a Recycle Bin that is full/);
     assert.match(ctx.questions[1], /The other 1 would not be kept by any Recycle Bin/);
     assert.ok(ctx.questions[1].includes("  Pier_B.jpg"));
     assert.match(ctx.questions[1], /OK deletes them permanently; Cancel deletes nothing\.$/);

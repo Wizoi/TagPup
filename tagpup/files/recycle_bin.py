@@ -424,7 +424,7 @@ def _mb(byte_count):
 def keeps_up_to(path):
     """The largest file, in bytes, the Recycle Bin of the volume `path` is on (where its links lead) keeps: its capacity
     (_bin_settings), 0 when it is set to delete at once. Raises OSError when Windows cannot say."""
-    return _keeps(_bin_mount(path))
+    return _keeps(bin_mount(path))
 
 
 def keeps_up_to_by_folder(folders):
@@ -434,7 +434,7 @@ def keeps_up_to_by_folder(folders):
     by_mount, found = {}, {}
     for folder in folders:
         try:
-            mount = _bin_mount(folder)
+            mount = bin_mount(folder)
             key = paths.key(mount)
             if key not in by_mount:
                 by_mount[key] = _keeps(mount)
@@ -444,7 +444,7 @@ def keeps_up_to_by_folder(folders):
     return found
 
 
-def _bin_mount(path):
+def bin_mount(path):
     """The volume whose Recycle Bin a file at `path` would go to (where its links lead). Raises OSError."""
     try:
         return _mount_point(_real(paths.stored(path)))
@@ -729,6 +729,7 @@ def delete_file(file_path, for_good=False):
 #: Why a file was deleted for good, as the reply says it after "Deleted for good, as you confirmed: ".
 BIN_WOULD_NOT_KEEP = "the Recycle Bin of its drive would not keep it"
 CLIP_NOT_COPIED = "a video this large is not copied to a Recycle Bin"
+OWN_BIN_FULL_WHY = "the Recycle Bin of its drive is full"
 BIN_FULL_WHY = ("this PC's Recycle Bin, which keeps the copies of files from places with no Recycle Bin, is full")
 COPY_NOT_KEPT = ("this PC's Recycle Bin, which keeps the copies of files from places with no Recycle Bin, would not keep its copy")
 
@@ -764,8 +765,20 @@ def _delete_file(file_path, for_good):
             raise NotKept(not_kept(source, kept))
         _remove_for_good(source)
         return {"through_this_pc": False, "reason": None, "copy": None, "for_good": True, "why_for_good": BIN_WOULD_NOT_KEEP}
+    try:
+        refused = copies_not_kept(size, size, os.path.dirname(source))
+    except (OSError, AttributeError, ValueError) as e:
+        raise OSError(cannot_tell(e)) from None
+    if refused and refused[0] == BIN_FULL:
+        # Its own drive's Bin keeps the file but is nearly full: Windows would purge its oldest items for good to take it. Asked, as
+        # a share's file is when this PC's Bin is full (owner, 2026-11-12): never sent to the Bin unweighed.
+        if not for_good:
+            raise NotKept(_not_kept_said(source, refused[1]), full=True)
+        _remove_for_good(source)
+        return {"through_this_pc": False, "reason": None, "copy": None, "for_good": True, "why_for_good": OWN_BIN_FULL_WHY}
     if not send_to_recycle_bin(file_path):
         raise OSError("Failed to move file to Recycle Bin")
+    note_binned(os.path.dirname(source), size)
     return {"through_this_pc": False, "reason": None, "copy": None, "for_good": False, "why_for_good": None}
 
 

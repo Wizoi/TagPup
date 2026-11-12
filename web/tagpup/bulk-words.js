@@ -80,8 +80,8 @@ const GOOD_WHY = "a video over 2 GiB is too large for TagPup to copy to a Recycl
     + 'keeps, or on a Recycle Bin set to delete files at once, is not kept by it';
 // Why, when this PC's Recycle Bin -- which keeps the copies of files from places with no Recycle Bin of their own -- is full
 // (the delete-check's `bin_full`; owner, 2026-11-12).
-const BIN_FULL_WHY = "a file from a place with no Recycle Bin of its own (a network share) is copied to this PC's Recycle Bin, "
-    + "and this PC's Recycle Bin is full";
+const BIN_FULL_WHY = "a Recycle Bin that would keep it is full: the one of its drive, or, for a file from a place with no Recycle Bin "
+    + "of its own (a network share), this PC's Recycle Bin, which keeps its copy";
 export function bigClip(size) {
     return Number(size) > MOST_CLIP_BYTES;
 }
@@ -155,8 +155,9 @@ export function forGoodQuestion(names, count, binFull = 0) {
             + '(larger than its drive\'s Recycle Bin keeps, a Recycle Bin set to delete files at once, or a video too large for '
             + 'TagPup to copy to one).';
         return 'The Recycle Bin is full: delete permanently instead?\n\n'
-            + `${which} in a place with no Recycle Bin of its own (a network share). Such files are copied to this PC's Recycle `
-            + `Bin, which is full. Deleted permanently, ${full === 1 ? 'it' : 'they'} cannot be restored.${others}`
+            + `${which} headed for a Recycle Bin that is full: the one of the file's own drive, or, for a file in a place with no `
+            + "Recycle Bin of its own (a network share), this PC's Recycle Bin, which keeps its copy. "
+            + `Deleted permanently, ${full === 1 ? 'it' : 'they'} cannot be restored.${others}`
             + `\n\n${list}\n\nOK deletes ${one ? 'it' : 'them'} permanently; Cancel deletes nothing.`;
     }
     return `${one ? 'This file' : 'These files'} would be deleted for good, not moved to the Recycle Bin: no Recycle Bin would `
