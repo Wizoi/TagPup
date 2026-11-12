@@ -210,7 +210,7 @@ describe("keys pressed in a card's inner controls act on the card (#571)", () =>
     box.focus();
     ctx.key(box, "Enter");
     await ctx.settle(100);
-    assert.deepEqual(ctx.photosAsked, [1003]);
+    assert.deepEqual(ctx.photosAsked, [1003, 1002]);
   });
 
   test("a title being typed keeps all its keys", async (t) => {
@@ -255,7 +255,7 @@ describe("Enter and Space", () => {
     ctx.cardById(1006).focus();
     ctx.key(ctx.focused(), "Enter");
     await ctx.settle(100);
-    assert.deepEqual(ctx.photosAsked, [1006]);
+    assert.deepEqual(ctx.photosAsked, [1006, 1005]);
     assert.equal(ctx.state.library.activeId, 1006);
     assert.ok(!ctx.document.getElementById("panel-content").classList.contains("hidden"));
   });
@@ -271,7 +271,7 @@ describe("Enter and Space", () => {
     assert.equal(ctx.focused(), ctx.document.getElementById("thumbnails-grid"), "the focus waits on the grid: a place is not focusable");
     ctx.key(ctx.focused(), "Enter");
     await ctx.settle(100);
-    assert.deepEqual(ctx.photosAsked, [1399]);
+    assert.deepEqual(ctx.photosAsked, [1399, 1398]);
   });
 
   test("Space selects the photo, and again takes it away; the card and the count say so", async (t) => {

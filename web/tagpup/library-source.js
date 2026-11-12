@@ -453,6 +453,7 @@ export function newLibrary(spec) {
         inflight: new Map(),          // batch number -> { ids, lo, hi, controller }
         batches: 0, timer: 0, retryTimer: 0, more: false, baseline: null, rearms: 0,
         activeId: null, wantedId: null, lastId: null, openToken: 0,
+        previous: null,               // { of, tags, from }: the photo before the open one `of`, as the library holds it (photo.js)
         sel: newIdSelection(),        // what is selected, by photo id (selected.js): survives Refresh view and edits
     };
 }
