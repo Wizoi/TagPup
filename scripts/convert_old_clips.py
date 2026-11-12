@@ -7,8 +7,8 @@ Dry run by default: the library opened read-only, every clip looked at, nothing 
 their size, how many have their .mp4's name taken, a temp or a verified temp left by an earlier run, and the room the
 run needs. With --apply, refused while TagPup runs; a snapshot of the library first (one a day); then a line for each
 clip as it is done (its id, its format, the time so far, its size before and after). Ctrl+C stops the conversion under
-way (its temp removed; the original as it was) and starts nothing new; run it again to continue. A delete the Recycle
-Bin refuses stops the run, the original and its verified copy kept: empty the Recycle Bin, then run it again.
+way (its temp removed; the original as it was) and starts nothing new; run it again to continue. A delete refused stops
+the run, the original and its verified copy kept: by the Recycle Bin, empty it, then run it again; else run it again.
 
 The library is not written: the next sync of the whole library (TagPup's catch-up as it starts, the daily sync, or
 `tagpup_cli.py --db <library> sync --apply`) removes each old row (undoable from History) and indexes the .mp4.
@@ -41,6 +41,8 @@ APP_RUNNING = ("Not run: TagPup is running (%d app server(s)). Close it first (f
                "this again.")
 STOPPED_BY_DELETE = ("Stopped: %s The clip's original and its verified copy are both kept. Empty the Recycle Bin, then "
                      "run this again.")
+STOPPED_DELETE_FAILED = ("Stopped: %s The clip's original is kept, and its verified copy beside it: run this again "
+                         "(once whatever held the original is closed).")
 NEXT_SYNC = ("The library is not changed by this: the next sync of the whole library (TagPup's as it starts, or "
              "tagpup_cli.py sync --apply) removes the old rows and indexes the .mp4s.")
 PICTURES = ("A picture with a video extension: left as it is (%d): a JPEG file named as a clip, which the library holds "
@@ -113,7 +115,7 @@ def run(db_path, apply, out, limit=None, ids=None, also_part_2=False, stop=None)
         said = "%d of %d, clip %d (%s), %d s:" % (number, len(todo), clip.photo_id,
                                                   os.path.splitext(clip.path)[1].lower(), time.monotonic() - began)
         if outcome.stop:
-            out("%s %s" % (said, STOPPED_BY_DELETE % outcome.stop))
+            out("%s %s" % (said, (STOPPED_BY_DELETE if outcome.bin_refused else STOPPED_DELETE_FAILED) % outcome.stop))
             _closing(out, wrote, left + 1, states[old.PICTURE])
             return 1
         if outcome.wrote:

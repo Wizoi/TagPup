@@ -17,7 +17,8 @@ drive has no room; then its temp claimed (clip_convert.claimed), converted, veri
 original's packets', a picture decodes), a marker `<temp>.ok` written beside it, THEN the original deleted through
 tagpup.files.recycle_bin.delete_file (from a share, copied through this PC to its Recycle Bin), THEN the temp renamed
 to the .mp4's name and the marker removed. Never deleted for good: a delete refused (the Bin cannot keep the copy, a
-player holds the file) stops the whole run with the original and its verified temp kept.
+player holds the file) stops the whole run with the original and its verified temp kept, and says whether it was the
+Bin's refusal (`bin_refused`: emptying the Bin lets the next run through) or another (its own sentence).
 
 A run killed part-way leaves one of: the original and a temp with no marker (the next run removes the temp once it is
 STALE, and converts again); the original and a verified temp with its marker (the next run verifies it again, deletes
@@ -73,11 +74,13 @@ class Clip(NamedTuple):
 
 class Outcome(NamedTuple):
     """What became of one clip: `wrote` (the original gone, the .mp4 in place), the `problem` when not, and `stop` when
-    the run must stop (a delete refused: the sentence); `note`, a file it tidied, or one it left to tidy (wrote)."""
+    the run must stop (a delete refused: the sentence, `bin_refused` when this PC's Recycle Bin refused the copy);
+    `note`, a file it tidied, or one it left to tidy (wrote)."""
     wrote: bool
     problem: Optional[str] = None
     stop: Optional[str] = None
     note: Optional[str] = None
+    bin_refused: bool = False
     before: int = 0
     after: int = 0
 
@@ -253,8 +256,20 @@ def _finish(clip, size):
     try:
         recycle_bin.delete_file(clip.path)
     except (OSError, ValueError) as refused:
-        return Outcome(False, stop=str(refused))
+        return Outcome(False, stop=str(refused), bin_refused=_bins(refused, size))
     return _rename(clip, size)
+
+
+#: What recycle_bin.recycle_through_this_pc says when this PC's Recycle Bin did not take the copy.
+BIN_DID_NOT_TAKE = "Recycle Bin would not take the copy"
+
+
+def _bins(refused, size):
+    """Was the delete of an original of `size` bytes refused by this PC's Recycle Bin, so that emptying it lets the next
+    run through: the Bin did not take the copy, or can_copy_here refused it (the same sentence, asked again). Not a
+    NotKept: a Bin set to delete at once, or a clip larger than it keeps, is not helped by emptying it."""
+    said = str(refused)
+    return BIN_DID_NOT_TAKE in said or said == recycle_bin.can_copy_here(size, size)
 
 
 def _rename(clip, size):

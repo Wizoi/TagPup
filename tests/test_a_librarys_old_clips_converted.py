@@ -388,7 +388,7 @@ class TheRecycleBinFull(OldClips):
         recycle_bin.forget_bin()
 
         self.assertEqual(1, code, said)
-        self.assertIn("Empty the Recycle Bin", said)
+        self.assertIn(script.STOPPED_BY_DELETE.split("%s ")[1], said)
         temp = self.temp_of("harbour.wmv")
         self.assertEqual(sorted(["harbour.wmv", "jetty.wmv", os.path.basename(temp),
                                  os.path.basename(old.marker_of(temp))]), self.listed())
@@ -398,6 +398,26 @@ class TheRecycleBinFull(OldClips):
         self.assertEqual(0, code, said)
         self.assertIn("Wrote 2 clip(s)", said)
         self.assertEqual(["harbour.mp4", "jetty.mp4"], self.listed())
+
+
+class ADeleteRefusedElsewhere(OldClips):
+    """The original's delete refused by something other than the Recycle Bin (a player holding it, a share refusing the
+    delete after the copy went to the Bin): the run stops saying so and to run it again, not to empty the Bin."""
+
+    def test_it_stops_with_the_real_sentence_and_both_kept(self):
+        sentence = ("A copy is in this PC's Recycle Bin, but the original could not be deleted (Access is denied): it is "
+                    "still where it was, so the file is there twice.")
+        with mock.patch.object(recycle_bin, "delete_file", side_effect=OSError(sentence)):
+            code, said = self.run_script("--apply")
+
+        self.assertEqual(1, code, said)
+        self.assertIn(sentence, said)
+        self.assertIn("original is kept", said)
+        self.assertIn("run this again", said)
+        self.assertNotIn("Empty the Recycle Bin", said)
+        temp = self.temp_of("harbour.wmv")
+        self.assertEqual(sorted(["harbour.wmv", os.path.basename(temp), os.path.basename(old.marker_of(temp))]),
+                         self.listed())
 
 
 class TheNameTaken(OldClips):
