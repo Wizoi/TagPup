@@ -274,10 +274,10 @@ def _flushed(temp):
     def flush():
         with open(temp, "r+b") as handle:
             os.fsync(handle.fileno())
-    try:
-        wait = VERIFY_SECONDS + os.path.getsize(temp) / READ_RATE
-    except OSError as e:
-        return NOT_FLUSHED % (e.strerror or e)
+    stamp = shares.stamp_of(temp)
+    if not isinstance(stamp, tuple):
+        return NOT_FLUSHED % "the share did not answer"
+    wait = VERIFY_SECONDS + stamp[1] / READ_RATE
     state, error = shares.bounded(os.path.dirname(temp), flush, wait, waited_behind=False)
     if state == "ok":
         return None

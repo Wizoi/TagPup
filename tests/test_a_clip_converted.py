@@ -227,12 +227,22 @@ class CutShort(AnOldClipInTheLibrary):
             return real_bounded(folder, call, seconds, **how)
 
         with mock.patch.object(clip_convert.shares, "bounded", side_effect=bounded), \
-                mock.patch.object(clip_convert.os.path, "getsize", return_value=3 * 1024 ** 3):
+                mock.patch.object(clip_convert.shares, "stamp_of", return_value=(1.0, 3 * 1024 ** 3)):
             temp = os.path.join(self.vl.pictures, "flush-probe.tmp")
             with open(temp, "wb") as handle:
                 handle.write(b"x")
             self.assertIsNone(clip_convert._flushed(temp))
         self.assertEqual([clip_convert.VERIFY_SECONDS + 3 * 1024 ** 3 / clip_convert.READ_RATE], asked)
+
+    def test_a_share_that_stops_answering_as_ffmpeg_ends_refuses_the_flush_without_waiting_on_it(self):
+        temp = os.path.join(self.vl.pictures, "flush-probe-away.tmp")
+        with open(temp, "wb") as handle:
+            handle.write(b"x")
+        with mock.patch.object(clip_convert.shares, "stamp_of", return_value=clip_convert.shares.UNANSWERED), \
+                mock.patch("os.fsync") as flushed:
+            said = clip_convert._flushed(temp)
+        self.assertEqual(clip_convert.NOT_FLUSHED % "the share did not answer", said)
+        flushed.assert_not_called()
 
     def test_a_copy_its_disk_will_not_take_is_removed_the_original_kept_and_nothing_recorded(self):
         with mock.patch("os.fsync", side_effect=OSError(5, "Access is denied")):
