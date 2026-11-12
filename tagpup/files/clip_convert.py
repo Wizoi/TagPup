@@ -1,8 +1,9 @@
 """A clip made H.264 and AAC in an MP4, beside the original: the one module that runs ffmpeg to WRITE a file (DECISIONS
 2026-11-09, 'A CLIP IS CONVERTED ONLY WHEN THE OWNER CLICKS CONVERT'; tagpup.files.convertible says which clip needs it).
 
-    made = clip_convert.convert(tools, source, clip_convert.temp_of(clip_convert.target_of(source)),
-                                progress=lambda done, whole: ..., stop=threading.Event())
+    temp = clip_convert.temp_of(clip_convert.target_of(source))
+    clip_convert.claimed(temp)                                          # True: the temp is this conversion's
+    made = clip_convert.convert(tools, source, temp, streams, progress=lambda done, whole: ..., stop=threading.Event())
     problem = clip_convert.verified(tools, source_streams, temp)       # None: the temp is the clip, whole
 
 What it writes: the picture re-encoded to H.264 at CRF 23 (ffmpeg's default quality, the owner's choice: about half the
@@ -10,11 +11,19 @@ size of the old formats), 4:2:0 so every browser decodes it; the sound to AAC at
 already (the 11 .mp4 clips of photo_index whose picture is MPEG-4 Part 2 carry AAC sound, counted 2026-11-09); the
 container's own metadata (`-map_metadata 0`: its creation time, its title) and the index at the front (`+faststart`, so
 the player starts before the whole file has come over a share). The clip's XMP is not carried by ffmpeg: its tags, title
-and kept name are written into the MP4 afterwards by the journaled write of a clip (tagpup.services.convert).
+and kept name are written into the MP4 afterwards by the journaled write of a clip (tagpup.services.convert). Nor is a
+.wmv's caption, its ASF Description, which ffmpeg maps to the MP4's Comment, a field the reader does not read as a caption
+(measured on a generated .wmv, 2026-11-12; 45 photo_index .wmv rows hold one): the caller gives it (`description`) and it
+is written as the MP4's description item, which the reader reads (fields.DESCRIPTION_COPIES), since a clip's journaled
+write names no caption (fields.CLIP_WRITES). An MP4 made so takes that XMP by a patch in place: it holds no XMP box, its
+moov before mdat, so the packet is appended at its end in a uuid box (tagpup.files.clip_patch, case 4; measured on a
+generated clip of each old format, 2026-11-12).
 
 Where: a temp file beside the original, on its volume (`<stem>.mp4.tagpup-convert`, temp_of), never over it: a rename
 puts it in place once verified, and nothing but the conversion that made it, or the settle of one cut short, removes it
-(tagpup.services.file_changes, the scratch rule). ffmpeg is run with `-n`: a temp already there is never written over.
+(tagpup.services.file_changes, the scratch rule). The temp is the caller's once it made it, empty and exclusively
+(claimed: one create that fails when a file is there, on any process or library), and ffmpeg writes over that claim
+(`-y`) and nothing else: two conversions of one clip never write, or remove, one temp.
 
 How it fails, each as a plain problem (a sentence naming no file: a file's name can hold a person's name), never an
 exception, and every failure removes the temp it made: ffmpeg cannot read the clip, or stops with an error (its last line
@@ -25,8 +34,8 @@ the caller keeps its record for the settle to remove it. room_for refuses before
 room for the temp: ROOM times the original, a guess (a re-encode at CRF 23 is about half an old format's size; an MPEG-4
 Part 2 clip is already small, and its H.264 may be larger), plus a margin.
 
-Two at once share nothing but the folder: a second conversion of the same clip finds the temp there and is refused by its
-caller before ffmpeg runs (tagpup.services.convert); ffmpeg's `-n` refuses it too.
+Two at once share nothing but the folder: a second conversion of the same clip finds the temp claimed and is refused by
+its caller before ffmpeg runs (tagpup.services.convert).
 """
 import logging
 import os
@@ -111,27 +120,45 @@ def room_for(source, size):
     return NO_ROOM.format(-(-needed // mb), free // mb)
 
 
+def claimed(temp):
+    """True when the temp file at `temp` was made now, empty, by this call (an exclusive create): the conversion's own from
+    here on. False when a file is there already (another conversion's, or one cut short); else why it could not be made,
+    a sentence (a share that did not answer: one bounded call, shares.bounded)."""
+    def make():
+        os.close(os.open(temp, os.O_CREAT | os.O_EXCL | os.O_WRONLY))
+    state, error = shares.bounded(os.path.dirname(temp), make, shares.LISTING_WAIT)
+    if state == "ok":
+        return True
+    if state == "error" and isinstance(error, FileExistsError):
+        return False
+    return "its converted copy could not be begun (%s); nothing was converted" % (
+        "the share did not answer" if state == "away" else (error.strerror or error))
+
+
 def deadline_for(size):
     """The time.monotonic() a conversion of a clip of `size` bytes is stopped at, whatever its progress: DEADLINE_FLOOR
     and a second for each READ_RATE bytes (a 10 GB clip, about three hours)."""
     return time.monotonic() + DEADLINE_FLOOR + size / READ_RATE
 
 
-def arguments(tools, source, temp, audio):
-    """ffmpeg's arguments to convert `source` into `temp`, whose sound is of codec `audio` (None: none)."""
+def arguments(tools, source, temp, audio, description=""):
+    """ffmpeg's arguments to convert `source` into `temp` (claimed: written over), whose sound is of codec `audio` (None:
+    none), with `description` as its description item when it is not empty (the module)."""
     sound = ("-c:a", "copy") if audio in COPIED_AUDIO else AUDIO
-    return ([tools.ffmpeg, "-hide_banner", "-nostdin", "-nostats", "-v", "error", "-n", "-i", source,
+    described = ["-metadata", "description=" + description] if description else []
+    return ([tools.ffmpeg, "-hide_banner", "-nostdin", "-nostats", "-v", "error", "-y", "-i", source,
              "-map", "0:V:0", "-map", "0:a:0?", "-sn", "-dn"] + list(VIDEO) + list(sound)
-            + ["-map_metadata", "0", "-movflags", "+faststart", "-progress", "pipe:1", "-f", "mp4", temp])
+            + ["-map_metadata", "0"] + described + ["-movflags", "+faststart", "-progress", "pipe:1", "-f", "mp4", temp])
 
 
-def convert(tools, source, temp, streams, progress=None, stop=None, deadline=None, stall=STALL):
+def convert(tools, source, temp, streams, progress=None, stop=None, deadline=None, stall=STALL, description=""):
     """Convert the clip at `source` into `temp` (see the module). `streams` is video_frames.streams of the source, read
     by the caller (its sound decides copy or re-encode; its duration is the whole progress is told against). `progress(done,
     whole)` is told seconds converted and the whole; `stop` an Event asked between progress lines; `deadline` a
-    time.monotonic() after which it is stopped. Returns None when ffmpeg finished and the temp is there to verify, else
-    the problem, the temp removed (or TEMP_LEFT said)."""
-    args = arguments(tools, source, temp, streams.audio)
+    time.monotonic() after which it is stopped; `description`, the caption written into it (the module). `temp` is
+    claimed by the caller (claimed). Returns None when ffmpeg finished and the temp is there to verify, else the problem,
+    the temp removed (or TEMP_LEFT said)."""
+    args = arguments(tools, source, temp, streams.audio, description)
     try:
         child = processes.start(args, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     except OSError as problem:
