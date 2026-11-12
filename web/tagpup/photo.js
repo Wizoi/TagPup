@@ -275,8 +275,25 @@ function openPhoto(path) {
 function showLibraryRecord(lib, record) {
     state.folderPhotos = [record];
     lib.activeId = record.id;
+    lib.previous = null;
     showPhoto(record.path);
     notePhoto(record.id);
+    readPreviousOf(lib, record.id);
+}
+
+/**
+ * The view holds only the open photo, so the one before it in the view's order (a photo or a clip, whatever it is) is read
+ * from the library when the open one is shown, for "Same as previous" (finding #2832: it was never offered in a view). Said
+ * only while that photo is still the open one; a photo the library no longer has is dropped by fetchLibraryRecord.
+ */
+function readPreviousOf(lib, id) {
+    const index = lib.ids.indexOf(id);
+    if (index <= 0) return;
+    fetchLibraryRecord(lib.ids[index - 1]).then(record => {
+        if (!record || lib !== state.library || lib.activeId !== id) return;
+        lib.previous = { of: id, tags: (record.tags || []).slice(), from: record.filename || baseName(record.path) };
+        updateCarryForwardState();
+    }).catch(err => console.error('Could not read the photo before this one:', err));
 }
 
 /**
@@ -408,8 +425,12 @@ export function showCamera(photo) {
  * backwards from the first photo yields nothing rather than wrapping around.
  */
 export function previousPhotoTags() {
-    // The photo before this one in a library view is not in the page.
-    if (state.library) return { tags: [], from: null };
+    // The photo before this one in a library view is not in the page: readPreviousOf read it when this one was shown.
+    const lib = state.library;
+    if (lib) {
+        const held = lib.previous;
+        return held && held.of === lib.activeId ? { tags: held.tags.slice(), from: held.from } : { tags: [], from: null };
+    }
     const items = Array.from(photoList.querySelectorAll('.photo-item-file'));
     const index = items.findIndex(
         el => el.getAttribute('data-path') === state.activePhotoPath

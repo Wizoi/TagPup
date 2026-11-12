@@ -466,7 +466,7 @@ describe("the details panel on a library photo", () => {
     const ctx = await load(t);
     ctx.cardById(IDS[2]).querySelector(".btn-thumbnail-detail").click();
     await ctx.settle(60);
-    assert.deepEqual(ctx.photosAsked, [IDS[2]]);
+    assert.deepEqual(ctx.photosAsked, [IDS[2], IDS[1]]);
     assert.equal(ctx.state.activePhotoPath, cardOf(IDS[2]).path);
     assert.equal(ctx.document.getElementById("detail-path").textContent, cardOf(IDS[2]).path);
     assert.equal(ctx.document.getElementById("photo-position").textContent, "3 of 68,000");
@@ -498,7 +498,7 @@ describe("the details panel on a library photo", () => {
     key("ArrowLeft");
     await ctx.settle(60);
     assert.equal(ctx.state.activePhotoPath, cardOf(IDS[9]).path);
-    assert.deepEqual(ctx.photosAsked.slice(0, 2), [IDS[10], IDS[11]]);
+    assert.deepEqual(ctx.photosAsked.filter((id) => id === IDS[10] || id === IDS[11]).slice(0, 2), [IDS[10], IDS[11]]);
   });
 
   test("the first photo has no photo before it", async (t) => {
