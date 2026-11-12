@@ -85,7 +85,8 @@ MODES = {"convert": OLD_FORMAT, "shrink": SMALLER}
 #: What the clip's plan (convertible.plan_for, from the streams _ready reads) must be for each reason: Convert is for a
 #: clip that does not play, Make smaller for one that does.
 NEEDS = {OLD_FORMAT: convertible.REENCODE, SMALLER: convertible.NOTHING}
-#: The conversions of this process kept for the panel to read once they have ended (outcome), the last ones.
+#: The conversions of this process kept for the panel to read once they have ended (outcome), the last ones to end; one
+#: under way is always kept.
 MOST_KEPT = 50
 #: The name of a conversion's thread (start), with its library's.
 CONVERT_THREAD = "ConvertThread %s"
@@ -241,7 +242,7 @@ def start(library, exiftool_path, find_ffmpeg, photo_id, mode, stamp, done=None)
         with _asked_lock:
             said["ticket"] = batch.ticket
             _asked[(library.key, batch.ticket)] = [threading.current_thread(), None]
-            for old in list(_asked)[:-MOST_KEPT]:
+            for old in [key for key, held in _asked.items() if held[1] is not None][:-MOST_KEPT]:
                 del _asked[old]
         lined.set()
 

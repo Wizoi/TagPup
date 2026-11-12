@@ -28,6 +28,7 @@ from test_file_journal import Crash, crash_at  # noqa: E402
 from view_library import ViewLibrary  # noqa: E402
 
 from tagpup.core import fields, paths, processes  # noqa: E402
+from tagpup.core.result import Result  # noqa: E402
 from tagpup.files import clip_convert, field_values, metadata, recycle_bin, video_frames  # noqa: E402
 from tagpup.services import batches, convert, file_changes, tagging  # noqa: E402
 from tagpup.services import photos as photo_actions  # noqa: E402
@@ -482,6 +483,31 @@ class ThePanelButtons(AnOldClipInTheLibrary):
         self.assertEqual(before, self.read_bytes(source))
         self.assertEqual([], self.leftovers())
         self.assertFalse(os.path.exists(clip_convert.target_of(source)))
+
+    def test_a_conversion_under_way_keeps_its_ticket_however_many_are_asked_after_it(self):
+        # The server keeps the last MOST_KEPT conversions that ended; one still converting is never dropped for them.
+        first, first_id = self.clip("quay.wmv")
+        second, second_id = self.clip("slipway.wmv")
+        go, entered = threading.Event(), threading.Event()
+
+        def converting(library, exiftool_path, tools, source, **kwargs):
+            if paths.same(source, first) and not go.is_set():
+                entered.set()
+                go.wait(60)
+            result = Result(attempted=1)
+            result.refuse("stood in for")
+            return result
+        with mock.patch.object(convert, "MOST_KEPT", 1), mock.patch.object(convert, "convert_clip", side_effect=converting):
+            under_way = self.ask(first_id, "convert", first)
+            self.assertTrue(entered.wait(60))
+            after_it = self.ask(second_id, "convert", second)
+            go.set()
+            said = [self.ended(under_way), self.ended(after_it)]
+            later = self.ended(self.ask(first_id, "convert", first))
+        self.assertEqual([(False, "stood in for")] * 3, [(s["success"], s["error"]) for s in said + [later]])
+        asked = [reply.get_json()["ticket"] for reply in (under_way, after_it)]
+        self.assertEqual([404, 200], [self.client.get("/library/api/clip/converted?ticket=%d" % ticket).status_code
+                                      for ticket in asked], "the oldest that ended dropped once a later one is asked")
 
     def test_a_bulk_edit_asked_meanwhile_waits_behind_it(self):
         # One batch at a time in a process (batches._line): decided, the strip shows its place.
