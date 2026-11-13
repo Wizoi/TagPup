@@ -11,6 +11,8 @@ A clip whose file holds no date (its QuickTime dates zeros, no XMP date) is date
 (`name_date`), at midnight: a real date always wins, a photo is never dated by its name, and a folder's date never
 dates one (owner, 2026-11-13). The path reaches the rule as an argument of each reader (date_taken, year_taken,
 date_taken_sort_key), so the row (store.photos.date_photos), the page's record and the folder view's order give one date.
+A clip's year is the year of that date alone (photo_year): one with no Date Taken has no year, so the owner finds it
+among the undated (owner, 2026-11-13, #2941); a photo with none takes a year from its file or folder names.
 
 And how TagPup spells a time it records (`recorded`): the journal's, the runs', the Activity page's. It was spelled by
 hand in fourteen places; tests/test_rules_have_one_owner.py fails the build on a copy.
@@ -150,11 +152,18 @@ def _clip_dates(raw_metadata):
             yield local
 
 
+def _a_clips(raw_metadata):
+    """Is `raw_metadata` a clip's record: does it hold a QuickTime date (CLIP_DATE_FIELDS), zeros or not? The one test
+    of a clip the dating rules read by (_dates_given, photo_year): every clip of the three libraries holds one and no
+    photo does (2,915 clips, counted read-only 2026-11-13)."""
+    return any(field in (raw_metadata or {}) for field in CLIP_DATE_FIELDS)
+
+
 def _dates_given(raw_metadata, path):
     """Each date the record of the photo at `path` holds, as read, the most specific first: the one rule date_taken and
     year_taken read by. A clip's own dates (_clip_dates), else, holding none, the date in its file name (name_date); a
     photo's DATE_TAKEN_FIELDS, never its name. `path` None reads the record's own dates alone."""
-    if any(field in (raw_metadata or {}) for field in CLIP_DATE_FIELDS):
+    if _a_clips(raw_metadata):
         given = list(_clip_dates(raw_metadata))
         named = None if given else name_date(path)
         yield from given or ([named] if named else [])
@@ -195,8 +204,8 @@ def year_taken(raw_metadata, path):
 def era_year(taken):
     """The year of `taken` (photos.taken, the photo's Date Taken: 'YYYY:MM:DD HH:MM:SS', some with a time zone after) as
     a year to match a face by: from ERA_FIRST to the current year, else None (undated); None for a photo with no Date
-    Taken, never a year read from its file or folder name as photos.year falls back to (a clip dated by its file name's
-    date, name_date, has that date for its Date Taken)."""
+    Taken, never a year read from its file or folder name as a photo's photos.year falls back to (a clip dated by its file
+    name's date, name_date, has that date for its Date Taken)."""
     match = _YEAR_AT_START.match(str(taken or "").strip())
     year = int(match.group(1)) if match else None
     return year if year is not None and ERA_FIRST <= year <= datetime.date.today().year else None
@@ -214,8 +223,16 @@ def year_in_name(path):
 
 
 def photo_year(raw_metadata, path):
-    """The year a photo was taken: its Date Taken if it has one, else a year in its name."""
-    return year_taken(raw_metadata, path) or year_in_name(path)
+    """The year a photo was taken: the year of its Date Taken (year_taken), else, for a photo, a year in its file or
+    folder names (year_in_name). A clip's is the year of its Date Taken alone, the date in its file name included
+    (name_date, a whole date: `2019-07-04 jetty.mp4`), never a folder's year nor a year alone in its name (`2016-07
+    slipway.mp4`): a clip with no Date Taken has no year, undated where the owner looks for the clips to date by hand
+    (owner, 2026-11-13, #2941; photo_index's 11 such clips, 2 of them with a year in their folder only, 9 with a year
+    alone in their name, counted read-only 2026-11-13)."""
+    year = year_taken(raw_metadata, path)
+    if year is not None or _a_clips(raw_metadata):
+        return year
+    return year_in_name(path)
 
 
 def record_year(meta):
