@@ -4,7 +4,8 @@
 A SOURCE says which photos: `all`; a `folder` (by its path, never an id) and, when asked, its subfolders; a
 `keyword` -- the tag as the tree spells it -- and everything under it, or `keyword_only`, its node alone; a `person`
 (the leaf name, as photo_people holds it: identity by id comes later); a `year`; `year_other`, the photos of a year
-whose date names no month of it; a `month` ("2024-06"); `any_of`, a list of those (at most MAX_MEMBERS): the
+whose date names no month of it; a `month` ("2024-06"); `untagged`, the photos with no keyword (no value, as
+`all`); `any_of`, a list of those (at most MAX_MEMBERS): the
 union of the rows selected in the navigator (phase 9, #672); or a `search` (phase 9e): {"all_of", "any_of", "none_of",
 "words"} (search_of). `ids` answers the whole ORDERED list of a source's photo ids with the
 TOTAL; `cards` turns any list of ids into cards.
@@ -22,7 +23,8 @@ TOTAL; `cards` turns any list of ids into cards.
   size and time no longer describe the row, "missing" when the file is gone -- and nothing to a card whose file
   is as the row says, is on a share that did not answer, cannot be read, or whose row was never stamped.
 * **The navigator**: `navigator(library, section)` for `folders`, `keywords`, `people` or `dates`, each one query
-  (or one read of a derived table) and a pass in memory; native paths, tag paths and names out, never ids.
+  (or one read of a derived table) and a pass in memory -- the keywords' with the count of the photos with no keyword
+  beside them, in the same snapshot; native paths, tag paths and names out, never ids.
 * **What fails, and how it says so**: a root this machine does not place raises paths.RootsError, whose
   sentence the web layer's gate answers first; a request that cannot mean anything is `Refused`, with why. Reads
   only, on a read-only connection: nothing here migrates or writes a library.
@@ -126,8 +128,8 @@ class _Canonical:
 def _source_of(kind, value, recursive, canonical, member):
     if kind not in KINDS:
         raise Refused("kind must be one of %s." % ", ".join(KINDS))
-    if kind == store.ALL:
-        return store.Source(store.ALL)
+    if kind in (store.ALL, store.UNTAGGED):
+        return store.Source(kind)
     if kind == store.ANY_OF:
         if member:
             raise Refused("A union cannot hold a union.")
@@ -413,7 +415,8 @@ def cards(library, photo_ids, check_disk=False):
 
 def navigator(library, section):
     """The counts of one section of the navigator: `folders` {"folders": [{path, name, parent, direct,
-    recursive}]}, `keywords` {"keywords": [{tag, name, parent, count}]}, `people` {"people": [{name, count, group, person}],
+    recursive}]}, `keywords` {"keywords": [{tag, name, parent, count}], "untagged": the photos with no keyword} -- both read
+    in one snapshot, so a photo tagged meanwhile is counted once --, `people` {"people": [{name, count, group, person}],
     "groups": [{tag, name, parent, count}], "unfiled"} -- each person under the tag of the branch they are filed in (None:
     not filed), the branches above people with the photos naming anyone under them, and the photos naming someone not
     filed (store.people_groups) --, `dates` {"years": [{year, count, months: [{month, count}], other}], "undated"}. Each
@@ -425,7 +428,8 @@ def navigator(library, section):
         if section == "folders":
             return {"folders": _folders(store.folders(conn))}
         if section == "keywords":
-            return {"keywords": _keywords(store.keyword_counts(conn))}
+            db.begin(conn)
+            return {"keywords": _keywords(store.keyword_counts(conn)), "untagged": store.count(conn, store.Source(store.UNTAGGED))}
         if section == "people":
             counted = store.people_counts(conn)
             group_of, groups, unfiled = store.people_groups(conn, counted)

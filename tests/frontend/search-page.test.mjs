@@ -285,6 +285,25 @@ describe("the picker: the library's tags and people", () => {
     assert.deepEqual(chipTexts(ctx, "all_of"), ["People/Family"]);
   });
 
+  test("No tag is offered by its words with its count; picked into None of the search asks for the tagged; none, none offered", async (t) => {
+    const navigator = { keywords: { keywords: KEYWORDS(), untagged: 59 }, people: PEOPLE() };
+    const ctx = await loadViewPage(t, { search: "?view=all", navigator });
+    ctx.document.getElementById("btn-library-search-filters").click();
+    await type(ctx, "none_of", "no tag");
+    assert.deepEqual(optionLabels(ctx, "none_of"), ["No tag"]);
+    assert.match(options(ctx, "none_of")[0].textContent, /photos with no tag · 59/);
+    ctx.key(pick(ctx, "none_of"), "Enter");
+    await ctx.settle();
+    assert.deepEqual(lastSearch(ctx).value, { none_of: [{ kind: "untagged", value: null }] });
+    assert.deepEqual(chipTexts(ctx, "none_of"), ["No tag"]);
+    assert.equal(chips(ctx, "none_of")[0].title, "Photos with no tag in the tag tree");
+    await type(ctx, "any_of", "untag");
+    assert.deepEqual(optionLabels(ctx, "any_of"), ["No tag"]);
+    const tagged = await loadViewPage(t, { search: "?view=all", navigator: { keywords: { keywords: KEYWORDS(), untagged: 0 }, people: PEOPLE() } });
+    await type(tagged, "any_of", "no tag");
+    assert.deepEqual(optionLabels(tagged, "any_of"), []);
+  });
+
   test("keys: ArrowDown and Enter add; Escape closes; Backspace on an empty box takes the last chip off and searches again", async (t) => {
     const ctx = await loadViewPage(t, { search: "?view=all", navigator: NAVIGATOR() });
     await type(ctx, "any_of", "h");

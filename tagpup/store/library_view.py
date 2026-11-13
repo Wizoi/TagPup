@@ -3,7 +3,8 @@ holds, in what order, and the counts the navigator shows.
 
 A SOURCE says which photos: all of them; a folder -- by its path, never an id -- and, when asked, its
 subfolders; a keyword and everything under it, or its node alone (`keyword_only`); a person; a year; the
-photos of a year whose date names no month of it (`year_other`); a month; or ANY OF a list of those (a
+photos of a year whose date names no month of it (`year_other`); a month; the photos with no keyword (`untagged`); or
+ANY OF a list of those (a
 union: the rows a person selected in the navigator, phase 9 #672 -- one statement, a photo in two of
 them once); or a SEARCH (phase 9e): the photos in ALL OF a list of sources, ANY OF another and NONE OF a third, and
 -- once the library has its word index -- matching the words typed, again one statement. Every source is ordered by when the photo was taken and then by id, those with no date at
@@ -41,11 +42,19 @@ ANY_OF = "any_of"
 #: A search (phase 9e): Source.value is a Search. Its lists hold sources of the kinds a union may hold, and its `all_of` a
 #: union too (the navigator's selection, "within" which the search looks: docs/ARCHITECTURE.md, phase 9e-1).
 SEARCH = "search"
-KINDS = (ALL, FOLDER, KEYWORD, PERSON, YEAR, MONTH, KEYWORD_ONLY, YEAR_OTHER, ANY_OF, SEARCH)
+#: The photos with no keyword (#2837): no row of photo_tags, as the owner rules it. A photo naming only a person is
+#: tagged -- the person is a node of the tag tree, and the photo's row for it is in photo_tags --, so is one whose keyword
+#: is a branch. Valueless, as ALL is.
+UNTAGGED = "untagged"
+KINDS = (ALL, FOLDER, KEYWORD, PERSON, YEAR, MONTH, KEYWORD_ONLY, YEAR_OTHER, UNTAGGED, ANY_OF, SEARCH)
 #: The kinds a union may hold.
-MEMBER_KINDS = (ALL, FOLDER, KEYWORD, PERSON, YEAR, MONTH, KEYWORD_ONLY, YEAR_OTHER)
+MEMBER_KINDS = (ALL, FOLDER, KEYWORD, PERSON, YEAR, MONTH, KEYWORD_ONLY, YEAR_OTHER, UNTAGGED)
 #: The kinds whose photos are a range of another index of photos (Scope.ranged): a union of only these is one too.
 RANGED = (YEAR, MONTH, YEAR_OTHER)
+
+#: The where of UNTAGGED over `photos p`: one seek of photo_tags's primary key (photo_id, tag_id) for each photo, so a
+#: list walks idx_photos_taken or the name index and a count scans a covering index of photos; never a BLOB.
+UNTAGGED_WHERE = "NOT EXISTS (SELECT 1 FROM photo_tags pt WHERE pt.photo_id = p.id)"
 
 #: A source: its kind, its value -- a folder's path (native), a keyword's tag as the tree spells it, a person's
 #: name, a year as an integer, a month as "YYYY-MM", a union's tuple of Sources; None for all --, for a folder,
@@ -301,6 +310,8 @@ def _union_scope(conn, members, reads=None):
             clauses.append(("(p.taken >= ? AND p.taken < ?)", month_range(member.value)))
         elif kind == YEAR_OTHER:
             clauses.append(_year_other(int(member.value)))
+        elif kind == UNTAGGED:
+            clauses.append((UNTAGGED_WHERE, ()))
         else:
             raise ValueError("no such kind of source in a union: %r" % (kind,))
     for table, column, held in (("photo_folder", "folder_id", folder_ids), ("photo_tags", "tag_id", tag_ids),
@@ -342,6 +353,8 @@ def _source_scope(conn, source, reads=None):
     kind = source.kind
     if kind == ALL:
         return Scope("photos p", "1", (), ("SELECT COUNT(*) FROM photos", ()))
+    if kind == UNTAGGED:
+        return Scope("photos p", UNTAGGED_WHERE, (), ("SELECT COUNT(*) FROM photos p WHERE " + UNTAGGED_WHERE, ()))
     reads = reads or _Reads(conn)
     if kind == ANY_OF:
         return _union_scope(conn, source.value, reads)
@@ -508,6 +521,12 @@ def view_ids(conn, source, cap, order=TAKEN):
         list(scope.params) + [VIDEO])]
     of = total if source.only is None else conn.execute(*whole.count).fetchone()[0]
     return ids, total, videos, of
+
+
+def count(conn, source):
+    """How many photos `source` holds: its Scope's count, 0 for a source that holds none."""
+    scope = _scope(conn, source)
+    return 0 if scope is None else conn.execute(*scope.count).fetchone()[0]
 
 
 def existing_ids(conn, photo_ids):

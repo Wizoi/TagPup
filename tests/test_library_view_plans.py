@@ -100,6 +100,15 @@ class Plans(unittest.TestCase):
         found = self.plan_of(self.ids(store.Source(store.PERSON, "People/Wren Halloway")))
         self.assertIn("idx_photo_people_tag (tag_id=?)", "\n".join("\n".join(lines) for _statement, lines in found))
 
+    def test_the_photos_with_no_tag_seek_photo_tags_by_photo_and_are_counted_by_a_covering_index(self):
+        """#2837: the list walks the date index and seeks photo_tags's primary key for each photo; the navigator's count
+        scans a covering index of photos, never the table and its BLOBs."""
+        source = store.Source(store.UNTAGGED)
+        text = self.assert_searches(self.ids(source), "idx_photos_taken")
+        self.assertIn("PRIMARY KEY (photo_id=?)", text)
+        text = self.assert_searches(lambda conn: store.count(conn, source), "PRIMARY KEY (photo_id=?)")
+        self.assertIn("COVERING INDEX", text)
+
     def test_the_clip_statement_of_every_source_scans_no_photos(self):
         """view_ids reads a source's clips with `SELECT p.id FROM <from_> WHERE (<where>) AND p.kind = ? ORDER BY p.id`; the
         whole library's reads the clips' own index (migration 39, #2644), not every photo: on a copy of photo_index (2,179
@@ -114,7 +123,8 @@ class Plans(unittest.TestCase):
                                     ("keyword", store.Source(store.KEYWORD, "Trips"), "idx_photo_tags_tag"),
                                     ("person", store.Source(store.PERSON, "People/Wren Halloway"), "idx_photo_people_tag"),
                                     ("year", store.Source(store.YEAR, 2016), "idx_photos_year"),
-                                    ("month", store.Source(store.MONTH, "2016-02"), "idx_photos_taken")):
+                                    ("month", store.Source(store.MONTH, "2016-02"), "idx_photos_taken"),
+                                    ("no tag", store.Source(store.UNTAGGED), "idx_photos_clips")):
             with self.subTest(source=name):
                 found = clips(source)
                 self.assertEqual(1, len(found), "one clip statement")

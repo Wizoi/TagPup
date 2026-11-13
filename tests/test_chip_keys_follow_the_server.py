@@ -25,6 +25,7 @@ class TheServerReadsSameChipsAlike(unittest.TestCase):
         self.vl.photo("A", "a.jpg", taken="2024:01:01 00:00:00", tags=["Trips/Coast", "People/Wren Halloway"])
         self.vl.photo("A", "b.jpg", taken="2024:02:01 00:00:00", tags=["Trips/Coast"])
         self.vl.photo("B", "c.jpg", taken="2024:02:02 00:00:00", tags=["Other"])
+        self.vl.photo("B", "d.jpg", taken="2024:02:03 00:00:00")   # no tag: what the untagged pairs name
         self.folder = os.path.join(self.vl.pictures, "A")
 
     def member(self, source):

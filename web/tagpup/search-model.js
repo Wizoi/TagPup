@@ -47,6 +47,12 @@ export function pickerNames(keywords, people) {
                 what: 'tag', words: [node.name.toLowerCase(), node.tag.toLowerCase()],
             });
         }
+        if (keywords.untagged > 0) {
+            names.push({
+                member: { kind: 'untagged', value: null, recursive: false }, label: 'No tag', hint: '', count: keywords.untagged,
+                what: 'photos with no tag', words: ['no tag', 'untagged'],
+            });
+        }
     }
     return names;
 }
@@ -105,6 +111,7 @@ export function chipLabel(member, people = null) {
     }
     if (member.kind === 'keyword') return { text: String(member.value), title: `${member.value}, and every tag under it` };
     if (member.kind === 'keyword_only') return { text: `${member.value} alone`, title: `${member.value}, without the tags under it` };
+    if (member.kind === 'untagged') return { text: 'No tag', title: 'Photos with no tag in the tag tree' };
     return { text: `Within ${memberLabel(member)}`, title: `Within: ${viewLabel(member)}` };
 }
 

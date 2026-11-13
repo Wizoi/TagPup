@@ -12,6 +12,8 @@
     {"name": "a month twice", "a": {"kind": "month", "value": "2024-01"}, "b": {"kind": "month", "value": "2024-01"}, "same_chip": true},
     {"name": "two months", "a": {"kind": "month", "value": "2024-01"}, "b": {"kind": "month", "value": "2024-02"}, "same_chip": false},
     {"name": "a year with no month and the year", "a": {"kind": "year_other", "value": "2024"}, "b": {"kind": "year", "value": "2024"}, "same_chip": false},
-    {"name": "the whole library twice", "a": {"kind": "all", "value": null}, "b": {"kind": "all", "value": null}, "same_chip": true}
+    {"name": "the whole library twice", "a": {"kind": "all", "value": null}, "b": {"kind": "all", "value": null}, "same_chip": true},
+    {"name": "no tag twice", "a": {"kind": "untagged", "value": null}, "b": {"kind": "untagged", "value": null}, "same_chip": true},
+    {"name": "no tag and the whole library", "a": {"kind": "untagged", "value": null}, "b": {"kind": "all", "value": null}, "same_chip": false}
   ]
 }
