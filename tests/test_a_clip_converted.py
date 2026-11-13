@@ -1,4 +1,4 @@
-"""A clip of an old format converted to H.264 and AAC in an MP4 (F19; tagpup.services.convert, DECISIONS 2026-11-09, 'A
+"""A clip of an old format converted to H.264 and AAC in an MP4 (C7; tagpup.services.convert, DECISIONS 2026-11-09, 'A
 CLIP IS CONVERTED ONLY WHEN THE OWNER CLICKS CONVERT'): its row followed to the MP4, what it carried written into the
 copy, the original deleted for good last (never to a Recycle Bin: owner 2026-11-12), one change of History that is
 never undone.

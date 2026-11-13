@@ -2,7 +2,7 @@
 charters name real paths.
 
 Owners (tests/owners.py): a test file added without an owner is named here; a scenario file names scenarios that exist;
-a file named for an owner (data_, people_, files_, views_, apps_) is that owner's; the tier file (tests/tiers.py) and the
+a file named for an owner (data_, people_, files_, media_, views_, apps_) is that owner's; the tier file (tests/tiers.py) and the
 map agree about which files run a flow; the files nobody could place (kind unmapped) only go down in number; and a
 finding a test cites (#NNNN) is not dropped from the tests unless its number is in owners.RETIRED -- a finding is a bug
 that cost time, and the test that cites it is its memory (the freeze is tests/findings_cited.txt).
@@ -43,7 +43,7 @@ UNMAPPED_TODAY = 0
 CITES = re.compile(r"#(\d{2,4})\b")
 
 AGENTS = os.path.join(ROOT, ".claude", "agents")
-CHARTERS = ("data", "people", "files", "views-ai", "integration")
+CHARTERS = ("data", "people", "files", "media", "views-ai", "integration")
 #: A charter's name for the owner tests/owners.py calls it.
 IN_THE_MAP = dict(zip(CHARTERS, owners.OWNERS))
 
@@ -142,7 +142,7 @@ class EveryTestFileHasOneOwner(unittest.TestCase):
             with self.subTest(name):
                 self.assertIn(owner, owners.OWNERS)
                 self.assertIn(kind, owners.KINDS)
-                prefix = re.match(r"(data|people|files|views|apps)_", name)
+                prefix = re.match(r"(data|people|files|media|views|apps)_", name)
                 self.assertTrue(not prefix or prefix.group(1) == owner, "a file named for an owner is that owner's")
 
     def test_a_scenario_file_names_scenarios_that_exist_and_are_its_owners(self):
@@ -244,7 +244,7 @@ class OwnerCharters(unittest.TestCase):
 
     def test_every_charter_ends_with_the_owners_checklist_in_the_words_of_owners_md(self):
         # An agent reads its own definition and opens OWNERS.md only if it chooses to, so the seven conditions and the
-        # order of a review stand in each charter; this holds the six copies to one text (retro 2026-10-16).
+        # order of a review stand in each charter; this holds the seven copies to one text (retro 2026-10-16).
         def checklist(text):
             found = re.findall(r"^\*\*Standing goal: the domain is healthy\*\*.*?Say so in the review\.$", text, re.M | re.S)
             self.assertEqual(1, len(found), "one checklist, from **Standing goal** to 'Say so in the review.'")
@@ -255,7 +255,7 @@ class OwnerCharters(unittest.TestCase):
         for owner in CHARTERS:
             with self.subTest(owner=owner):
                 self.assertEqual(model, checklist(read(charter_path(owner))),
-                                 "the charter's checklist differs from docs/OWNERS.md: change all six together")
+                                 "the charter's checklist differs from docs/OWNERS.md: change all seven together")
 
     def test_every_test_the_architecture_and_the_invariants_name_exists(self):
         # A guard named in INVARIANTS.md that is not there is a rule with no guard (#2749).

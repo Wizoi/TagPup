@@ -1,4 +1,4 @@
-"""Playing a video in the browser (V15): /api/video-file answers the ranges a <video> asks for, a piece at a time
+"""Playing a video in the browser (C8): /api/video-file answers the ranges a <video> asks for, a piece at a time
 (tagpup.services.photos.video, video_bytes; tagpup.files.shares.read_span; tagpup.web.responses.ranged), and the cards
 and the record say which photos are videos (`media`).
 
