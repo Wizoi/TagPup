@@ -37,6 +37,7 @@ import os
 import shutil
 import struct
 import sys
+import tempfile
 import unittest
 from unittest import mock
 
@@ -521,6 +522,35 @@ class AFreedBoxOfEitherKind(unittest.TestCase):
                 self.assertIsNotNone(found)
                 self.assertEqual(1, len(found.ranges))
                 through.assert_called_once()
+
+
+class APixelClipsXmpItem(unittest.TestCase):
+    """The owner's concert clip (#2908): its only XMP is an `XMP_` item of the item list holding a `data` atom that wraps a
+    bare packet (a Google camera's), 341 bytes, in moov before mdat. A keyword save reads the packet out of the atom,
+    retires the item and appends the packet in a box of its own: the clip is not refused, mdat does not move."""
+
+    def test_a_save_reads_the_packet_out_of_the_items_data_atom_and_appends_the_new_one(self):
+        inner = (b'<x:xmpmeta xmlns:x="adobe:ns:meta/"><rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">'
+                 b'<rdf:Description rdf:about="" xmlns:GCamera="http://ns.google.com/photos/1.0/camera/" '
+                 b'GCamera:GFileMetadata="AAAA"/></rdf:RDF></x:xmpmeta>\n')
+        item = box(b"XMP_", box(b"data", b"\0\0\0\1\0\0\0\0" + inner))
+        ilst = box(b"ilst", item + box(b"\xa9nam", b"x" * 20))
+        data = FTYP + box(b"moov", MVHD + box(b"udta", box(b"meta", bytes(4) + ilst))) + MDAT
+        with tempfile.TemporaryDirectory() as folder:
+            path = os.path.join(folder, "pixel.mp4")
+            with open(path, "wb") as handle:
+                handle.write(data)
+            saved = []
+            stale = in_place.patch_clip(path, lambda old: segment_edits.new_packet(old, keywords(("Wren Ashcombe",))),
+                                        lambda record, before: saved.append(record))
+            self.assertIsNotNone(stale, "the clip was refused: its packet was read with the data atom's bytes")
+            with open(path, "rb") as handle:
+                after = handle.read()
+        self.assertEqual(data.index(MDAT), after.index(MDAT), "mdat did not move")
+        self.assertEqual(1, len(saved))
+        self.assertIn(b"GCamera:GFileMetadata", after[len(data):], "the packet's own properties are kept")
+        self.assertIn(b"Wren Ashcombe", after[len(data):])
+        self.assertEqual(1, after.count(b"Wren Ashcombe"))
 
 
 class FfmpegClips(unittest.TestCase):

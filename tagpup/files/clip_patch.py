@@ -238,6 +238,19 @@ def xmp_box(layout):
     return box
 
 
+def packet_of(layout, raw):
+    """The XMP packet the bytes `raw` (the payload of the clip's one XMP box, xmp_box) hold: `raw` itself, or, for an
+    XMP_ item of the item list (moov/udta/meta/ilst/XMP_, as a Pixel camera writes it: 1 live, the owner's concert clip,
+    #2908), what its one `data` atom holds after the atom's 16 bytes (size, `data`, type, locale); None when an item
+    holds anything else. The box is retired by a patch, never written, so the wrapper is never put back."""
+    (where, _), = layout.xmp
+    if "ilst" not in where:
+        return raw
+    if len(raw) < 16 or raw[4:8] != b"data" or int.from_bytes(raw[:4], "big") != len(raw):
+        return None
+    return raw[16:]
+
+
 def _understood(layout):
     """Is `layout` a clip this module may patch: walked whole to its end, one moov with its children whole, no
     fragments?"""

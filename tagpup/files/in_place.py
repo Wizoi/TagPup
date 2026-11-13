@@ -400,7 +400,8 @@ def _packet_of(handle, title=None, category=None):
     box = clip_patch.xmp_box(layout)
     if box is None:
         return None
-    return layout, _read_at(handle, box.payload, box.end - box.payload), freed, xtra_read
+    packet = clip_patch.packet_of(layout, _read_at(handle, box.payload, box.end - box.payload))
+    return None if packet is None else (layout, packet, freed, xtra_read)
 
 
 # --- the open file, shared by both patches ----------------------------------------------------------------------------
