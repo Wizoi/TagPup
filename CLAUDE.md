@@ -114,8 +114,8 @@ second round beats reaching for it after the fourth.
 `tools/watch_processes.ps1` while it happens and read which process did it.
 
 **A one-time command or backfill is briefed with its steady state first**: "a photo added or changed afterwards: which
-writer keeps it right, with no command run?" Unless the answer names a command, it is a one-off script (retro 2026-10-28:
-the bake was built as a command, then rebuilt as the indexer's job).
+writer keeps it right, with no command run?" Unless the answer names a command, it is a one-off script that calls that
+service, never a copy of it, and is deleted only when its dry run says 0 left (retros 2026-10-28, 2026-11-13).
 
 **Check the destination before moving data into it.** Re-pointing rows at paths that
 already had rows created 233 duplicate faces.
@@ -136,7 +136,7 @@ domain and which files are its, plus what is particular to the task.
   holding an escape), one script per concern (patch, lint, test).
 - Before briefing a new tool, script or module, find the existing owner: grep `tagpup/services/`, the MCP server's
   tools and `scripts/`.
-- A brief names how the work fails (interrupted part-way, two at once, a read that fails, the real data's shape, what
+- A brief names how the work fails (interrupted part-way, two at once, a read that fails, the real data's shape (for a file the owner has, its box layout captured as the fixture before the fix), what
   the owner sees) and the scenario the owner works in (rapid clicks, switching library mid-folder, two libraries
   holding one folder, an update while working).
 - A one-way choice -- a stamp or migration on the live libraries, anything automatic on the owner's data, a new meaning
@@ -147,8 +147,8 @@ domain and which files are its, plus what is particular to the task.
   change more than one agent made, a reviewer before committing. A one-file fix is often cheapest done directly.
 - A number told to the owner about their libraries is one counted this session, not relayed.
 - Commit before launching background agents, and keep their work in worktrees.
-- One session per phase: `/clear` at a phase boundary (the memory handoff carries the state), `/compact` inside a long
-  one, at about 300k of context at the latest; a worker brief is ONE concern and names what remains. A retro runs at each phase end and on its triggers, by [docs/RETRO.md](docs/RETRO.md) (the `retro` skill).
+- One session per phase: `/clear` at a phase boundary (the memory handoff carries the state); a worker brief is ONE
+  concern and names what remains. A retro runs at each phase end and on its triggers, by [docs/RETRO.md](docs/RETRO.md) (the `retro` skill).
 - Decide by the rules here and in docs/ARCHITECTURE.md; ask the owner only what they alone can answer. The cheapest
   correct change first: no extra backup, no workaround around the model where the model can be fixed.
 

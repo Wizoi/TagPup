@@ -20,7 +20,9 @@ A worker's brief says: "Domain: Files and sync. Load `.claude/agents/tagpup-owne
 before you start." The worker reads the charter's scope, contract and checklist; a reviewer's brief names the
 same file so the review is made against it. A branch in one domain gets that owner's review. A branch that crosses
 two lists, in its description, the rows of the integration owner's contract table it touches, each as unchanged,
-changed or new, with its guard named.
+changed or new, with its guard named. A one-off program (a script run once) has a domain like any branch and its
+owner's review; a feature that touches two domains has one plan naming the single place of each mechanism before a
+second worker starts it (retro 2026-11-13).
 
 ## How a test file gets its owner
 
