@@ -8,9 +8,9 @@ import { loadApp, FakeServer, closeAllApps, openFolder, click, PHOTO_WRITES } fr
 
 const PHOTO = { path: "D:\\Pictures\\Run\\a.jpg", filename: "a.jpg", tags: [], people: [], captions: [], title: "", writes: PHOTO_WRITES, camera: "Tidewater TX R6m2", lens: "" };
 
-function server() {
+function server(records = [PHOTO]) {
   return new FakeServer()
-    .on("/api/folder/scan", [PHOTO])
+    .on("/api/folder/scan", records)
     .on("/api/taxonomy/tree", [])
     .on("/api/people", [])
     .on("/api/tags", [])
@@ -55,4 +55,30 @@ test("the add boxes of people and keywords are closed until their pencil is clic
     click(window, document.getElementById(pencil));
     assert.ok(!box.classList.contains("hidden"), `${group} closed over a typed name`);
   }
+});
+
+async function openWith(t, record) {
+  const srv = server([record]);
+  const { window, document } = await loadApp("tagpup", { server: srv, t });
+  await openFolder({ document, window }, "D:\\Pictures\\Run");
+  await settle(window, 60);
+  click(window, document.querySelector(".photo-item-file"));
+  await settle(window);
+  return document;
+}
+
+test("a video's file size reads under its Date Taken, a photo's under its path", async (t) => {
+  const page = await openWith(t, { ...PHOTO, path: "D:\\Pictures\\Run\\a.mp4", filename: "a.mp4", media: "video", size: 3 * 1024 * 1024 });
+  const underDate = page.getElementById("detail-video-size");
+  assert.equal(underDate.textContent, "3.0 MB");
+  assert.ok(!underDate.classList.contains("hidden"));
+  assert.equal(underDate.closest(".detail-item"), page.getElementById("detail-date-taken").closest(".detail-item"));
+  assert.equal(page.getElementById("detail-file-size").textContent, "", "the size was also shown under the path");
+});
+
+test("a photo's file size stays under its path, none under the date", async (t) => {
+  const page = await openWith(t, { ...PHOTO, size: 820 * 1024 });
+  assert.equal(page.getElementById("detail-file-size").textContent, "820 KB");
+  assert.equal(page.getElementById("detail-video-size").textContent, "");
+  assert.ok(page.getElementById("detail-video-size").classList.contains("hidden"));
 });

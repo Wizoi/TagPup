@@ -113,6 +113,7 @@ export const detailFileSize = document.getElementById('detail-file-size');
 // Smart Rename of the open photo: the grouping box beside its name and its button (rename-one.js).
 export const inputSmartRenameOne = document.getElementById('input-smart-rename-one');
 export const btnSmartRenameOne = document.getElementById('btn-smart-rename-one');
+export const detailVideoSize = document.getElementById('detail-video-size');
 export const detailDateTaken = document.getElementById('detail-date-taken');
 export const detailCamera = document.getElementById('detail-camera');
 export const detailCameraItem = document.getElementById('detail-camera-item');
