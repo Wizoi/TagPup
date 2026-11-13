@@ -66,7 +66,7 @@ from tagpup.core.result import CHANGED_ON_DISK, CHANGED_ON_DISK_SENTENCE, Confli
 from tagpup.files import clip_convert, convertible, field_values, images, lock_owners, names, shares, video_frames
 from tagpup.services import batches, file_changes, tagging
 from tagpup.services import photos as photo_actions
-from tagpup.store import db, file_journal, person_ids, photos, taxonomy
+from tagpup.store import db, file_journal, photos, taxonomy
 
 logger = logging.getLogger(__name__)
 
@@ -312,7 +312,8 @@ def _ready(library, exiftool_path, tools, source, reason):
         return UNREADABLE % "ExifTool could not read it"
     held = read[paths.key(source)]
     windows = [str(text) for text in dict.fromkeys(fields.field_values(held.get(fields.CLIP_CATEGORY)))]
-    cannot = [text for text in windows if text not in _carryable(library)] if windows else []
+    carryable = _carryable(library) if windows else frozenset()
+    cannot = [text for text in windows if text not in carryable]
     if cannot:
         return CANNOT_CARRY % "; ".join(cannot)
     try:
@@ -331,7 +332,9 @@ def _ready(library, exiftool_path, tools, source, reason):
     if room:
         return room
     tags = list(vocabulary.extract_tags({field: held.get(field) for field in fields.TAG_SOURCE_FIELDS}))
-    carry = {"tags": list(dict.fromkeys(tags + windows)),
+    # As a read of the copy gives them back (a Windows level, Places beside Places/Coast, is no tag of its own), so that
+    # the copy reads back holding what it carries (_short_of).
+    carry = {"tags": list(vocabulary.extract_tags(fields.keyword_fields(*fields.expand_tag_fields(tags + windows)))),
              "title": fields.own_title(held),
              "name": names.preserved_name(held) or os.path.basename(source), "date": dates.date_taken(whole)}
     return _Ready(found[0], stamp, streams, carry, clip_convert.target_of(source))
@@ -347,11 +350,11 @@ def _carryable(library):
     try:
         db.begin(conn)
         tree = taxonomy.tags(conn)
-        people = {tag for _id, tag, _name in person_ids.read(conn).listing}
-        roots = taxonomy.people_roots(conn)
+        known = taxonomy.read_people_vocabulary(conn)
     finally:
         conn.close()
-    return frozenset(tag for tag in tree if tag in people or vocabulary.key(vocabulary.root_of(tag)) not in roots)
+    return frozenset(tag for tag in tree
+                     if vocabulary.keyword_key(tag) in known.ids or vocabulary.key(vocabulary.root_of(tag)) not in known.roots)
 
 
 def _taken(library, source, target):

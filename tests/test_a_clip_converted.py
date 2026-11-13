@@ -402,6 +402,19 @@ class AClipHoldingWindowsTags(AnOldClipInTheLibrary):
                 self.assertEqual((1, True), (result.changed, result.ok), result.message())
                 self.assert_carried(source, photo_id, title)
 
+    def test_a_windows_tag_naming_a_level_of_a_tag_it_holds_is_carried_as_a_read_gives_it_back_and_finishes(self):
+        # "Trips" beside its "Trips/Harbour": a read of the copy leaves the level out (vocabulary.extract_tags), so a carry
+        # planned to hold it would never read back as carried, and the conversion would never finish.
+        source, photo_id = self.windows_clip("harbour.mov", ("Trips", "Trips/Coast"))
+        result = self.convert(source, reason=convert.SMALLER)
+        self.assertEqual((1, True), (result.changed, result.ok), result.message())
+        target = self.assert_converted(source, photo_id, "")
+        self.assertEqual(["Trips/Harbour", "Trips/Coast"], self.row_of(photo_id)[1], "the row reads its tags")
+        self.assertIsNone(patched.windows_tags_read(target)[1], "no Windows Tags")
+        self.assertEqual([("done",)], self.vl.rows(
+            "SELECT state FROM change_files WHERE photo_id = ? AND change_id IN (SELECT id FROM changes WHERE operation = ?)",
+            photo_id, file_journal.CONVERT))
+
     def test_a_windows_tag_it_cannot_carry_refuses_the_clip_naming_it_before_anything_is_planned(self):
         self.vl.forget("Trips/Pier")
         self.vl.tree("People/Cousins/Ash Pell", face_root="People")
