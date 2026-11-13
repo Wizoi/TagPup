@@ -251,18 +251,22 @@ def date_clips_by_name(library, exiftool_path, apply=False, on_planned=None, on_
     `conflicts`, `failed` (`not_patched` and `open_elsewhere` name two causes of `refused`; the id and sentence of each
     error is in details["failures"]); `redated`, the clip rows dated again from their rows alone (photos.redate_clips) before any
     file is read, counted from what the rows hold afterwards (a dry run: how many it would date again, nothing
-    written); and `left`, the clips still to date, counted again from the index after the write.
+    written); `year_cleared`, the clip rows with no Date Taken whose year (their folder's, or a year alone in their name)
+    the same step clears, counted the same way (#2941); and `left`, the clips still to date, counted again from the index
+    after the write.
 
     The clips this lists are dated by name in the panel and the folder scan from the start, but their rows hold no
     `taken` until their file is written (or indexed again): the library view's order, month and tally read the column
     (docs/findings.md #2933). So `apply` first dates the rows again, a clip its write then leaves (away, refused,
-    stopped) included; run again it finds none to date again, and a clip whose name holds no date stays as it is."""
+    stopped) included, and clears in the same transaction the year of a clip whose name holds no date (a clip with no
+    Date Taken has no year, dates.photo_year); run again it finds none to date again or to clear."""
     if apply:
-        redated = db.write_with_connection(library.path, photos.redate_clips, label="the clips dated by their names: rows")
+        redated, year_cleared = db.write_with_connection(library.path, photos.redate_clips,
+                                                         label="the clips dated by their names: rows")
     else:
         conn = db.connect(db.readonly_uri(library.path), uri=True)
         try:
-            redated = len(photos.clips_to_redate(conn))
+            redated, year_cleared = map(len, photos.clips_to_redate(conn))
         finally:
             conn.close()
     to_date, undated = clips_dated_by_name(library)
@@ -287,7 +291,7 @@ def date_clips_by_name(library, exiftool_path, apply=False, on_planned=None, on_
         on_written()    # the write is finished and recorded; what follows only counts
     away = {paths.key(path) for path in result.details.get("not_answered", [])}
     change = result.details.get("change")
-    counts = {"listed": len(found), "redated": redated,
+    counts = {"listed": len(found), "redated": redated, "year_cleared": year_cleared,
               "wrote": file_changes.files_done(library, change) if change is not None else 0,
               DATED_SINCE: 0, "unreadable": 0, "away": 0}
     for path, why in result.skipped:

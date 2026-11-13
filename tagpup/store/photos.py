@@ -660,24 +660,39 @@ def clip_raw_rows(conn):
 
 
 def clips_to_redate(conn):
-    """[id] of the clips whose `taken` is NULL and which the library dates now (dates.date_taken of their raw metadata
-    and path: by the date in their file name): rows indexed before a clip was dated by its name, or whose file has not
-    been written since (the 669 of photo_index, 2026-11-13; docs/findings.md #2933). A clip whose name holds no date is
-    not listed: it stays NULL. One walk of the clips' own index, no file read."""
+    """([id] to date, [id] to clear) of the clips whose `taken` is NULL and whose row the library reads otherwise now
+    (_dated, date_photos' rule), as rows indexed before a clip was dated by its name hold them, or whose file has not
+    been written since. To date: the library dates them by the date in their file name (the 669 of photo_index,
+    2026-11-13; docs/findings.md #2933). To clear: no date in their name either, and a `year` the indexer of the day read
+    from their folder or a year alone in their name, where a clip with no Date Taken has none now (dates.photo_year; the
+    11 of photo_index, 2026-11-13, #2941). One search of idx_photos_taken (its NULLs), no file read."""
     roots = store_roots.roots_for(conn)
-    return [photo_id for photo_id, path, raw_json in conn.execute(
-        "SELECT id, path, raw_metadata FROM photos WHERE kind = ? AND taken IS NULL", ("video",)).fetchall()
-            if _dated(raw_json, paths.from_row(path, roots))[0] is not None]
+    to_date, to_clear = [], []
+    for photo_id, path, raw_json, year in conn.execute(
+            "SELECT id, path, raw_metadata, year FROM photos WHERE kind = ? AND taken IS NULL", ("video",)).fetchall():
+        taken, year_now = _dated(raw_json, paths.from_row(path, roots))
+        if taken is not None:
+            to_date.append(photo_id)
+        elif year != year_now:
+            to_clear.append(photo_id)
+    return to_date, to_clear
+
+
+def _rows_holding(conn, photo_ids, where):
+    """How many of `photo_ids` hold `where` now, counted from the rows, 500 ids a statement."""
+    return sum(conn.execute("SELECT COUNT(*) FROM photos WHERE id IN (%s) AND %s" % (",".join("?" * len(chunk)), where),
+                            chunk).fetchone()[0]
+               for chunk in (photo_ids[at:at + 500] for at in range(0, len(photo_ids), 500)))
 
 
 def redate_clips(conn):
-    """Date the clips clips_to_redate lists again, from their rows alone (date_photos), the caller committing; how many
-    hold a `taken` afterwards, counted from the rows, not from the statement. Run again, it finds none."""
-    listed = clips_to_redate(conn)
-    date_photos(conn, listed)
-    return sum(conn.execute("SELECT COUNT(*) FROM photos WHERE id IN (%s) AND taken IS NOT NULL"
-                            % ",".join("?" * len(chunk)), chunk).fetchone()[0]
-               for chunk in (listed[at:at + 500] for at in range(0, len(listed), 500)))
+    """Date the clips clips_to_redate lists again, from their rows alone (date_photos), the caller committing in one
+    transaction; (how many it lists to date hold a `taken` afterwards, how many it lists to clear hold no `year`), counted
+    from the rows, not from the statement. Run again, it finds none."""
+    to_date, to_clear = clips_to_redate(conn)
+    date_photos(conn, to_date + to_clear)
+    return (_rows_holding(conn, to_date, "taken IS NOT NULL"),
+            _rows_holding(conn, to_clear, "taken IS NULL AND year IS NULL"))
 
 
 def row_paths(conn):

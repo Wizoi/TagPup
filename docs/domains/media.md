@@ -38,6 +38,14 @@ a browser cannot play (`clip_plan` asks ffprobe of the file; not counted from th
   by a one-off, applied on photo_index as the journal's "rederive clip dates" (undone from History as any change of
   rows: `journal.RETIRED`) and deleted once no clip was apart (#2734). C5:
   `tests/test_a_clip_dated_through_the_journal.py`.
+- **A clip whose file holds no date** (its QuickTime dates zeros, no XMP date) is dated by the whole date in its file
+  name at midnight (`dates.name_date`: `YYYY-MM-DD`, `YYYY_MM_DD`, `YYYY.MM.DD`, `YYYYMMDD`), never by its folder's
+  name (DECISIONS 2026-11-13). Its year is the year of its Date Taken alone (`dates.photo_year`): a clip with no Date
+  Taken has no year, neither its folder's nor a year alone in its name, so the owner finds it among the undated to date
+  it by hand (DECISIONS 2026-11-13, #2941); a photo keeps its year from its file or folder names. The one-off
+  `scripts/date_undated_clips.py` writes the name's date into each such clip's XMP, its --apply first dating the rows
+  again and clearing the year of the clips with no date in their name (photo_index, counted read-only 2026-11-13: 669 to
+  date, 11 to clear). C5: `tests/test_a_clip_dated_by_its_name.py`, `tests/test_dating_clips_by_their_names.py`.
 
 ## The seven conditions (first stated 2026-11-13, at the carve)
 

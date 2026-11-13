@@ -6,7 +6,9 @@ script once its dry run says 0 left on the three libraries).
 The dry run reads the index alone, names by id the clips whose name holds no date either, and writes nothing. --apply
 is refused while an app runs; it patches each clip's XMP:DateTimeOriginal through the journaled clip save, reports what
 the journal holds written, and History's Undo takes it back off (the library dating the clip by its name again). A clip
-saved by hand between the listing and the write is left alone and said, never written over.
+saved by hand between the listing and the write is left alone and said, never written over. Its --apply first dates the
+rows again: a clip dated by its name gets its `taken` and its year, and one with no date in its name loses the year its
+folder gave it (#2941), so the library view counts it undated; an undated photo of that folder keeps the folder's year.
 
 A library of its own (web_client), real ffmpeg clips with zeroed QuickTime dates and the real ExifTool
 (tests/test_a_clip_tagged_through_the_journal.ALibraryHoldingAClip); the owner's libraries are never opened. The script
@@ -51,7 +53,12 @@ class DatingClipsByTheirNames(tagged.ALibraryHoldingAClip):
         named = os.path.join(self.folder, by_name.CLIP_NAME)
         os.replace(self.clip_path, named)
         self.clip_path = named
-        self.loose_path = by_name.zeroed_clip(os.path.join(self.folder, "dock.mp4"))
+        # In a folder named for a day, as 2 of the 11 photo_index clips with no date in their name are.
+        dated_folder = os.path.join(self.vl.pictures, by_name.FOLDER)
+        os.makedirs(dated_folder)
+        self.loose_path = by_name.zeroed_clip(os.path.join(dated_folder, "dock.mp4"))
+        self.quay_path = os.path.join(dated_folder, "quay.jpg")
+        tagged.make_jpeg(self.quay_path, size=(32, 32))
         self.clip, self.loose = self.index(self.clip_path, self.loose_path)
         # No app is running for the test (launcher.running reads the user's own servers folder).
         running = mock.patch.object(date_undated_clips.launcher, "running", return_value=[])
@@ -124,42 +131,58 @@ class DatingClipsByTheirNames(tagged.ALibraryHoldingAClip):
         self.assertEqual(dated.SAVED, self.xmp_date(self.clip_path), "the date saved by hand is kept")
 
     def indexed_before_the_clips_were_dated_by_name(self):
-        """The rows as photo_index holds the 669 live ones: indexed before the fallback, `taken` and `year` NULL, the
-        name's date in no column (the panel and the folder scan show it; the library view reads the column). A photo
-        taken in 2023 beside them."""
+        """The rows as photo_index holds its 680 clips with no date of their own: indexed before the fallback, `taken`
+        NULL and `year` the one the indexer of the day read from the names, the file's or else a folder's (every one of the
+        680 holds one, counted read-only 2026-11-13): the clip named for 2019-07-04 2019, the one with no date in its name
+        its folder's 2021. The name's date in no column (the panel and the folder scan show it; the library view reads the
+        columns). A photo taken in 2023 beside them, and an undated photo in the clip's folder of 2021."""
         with ExifToolSession(executable=EXIFTOOL) as et:
             et.set_tags([self.photo_path], tags={"EXIF:DateTimeOriginal": dated.PHOTO_TAKEN}, params=["-overwrite_original"])
-        self.photo, = self.index(self.photo_path)
-        self.vl.conn.execute("UPDATE photos SET taken = NULL, year = NULL WHERE id IN (?, ?)", (self.clip, self.loose))
+        self.photo, self.quay = self.index(self.photo_path, self.quay_path)
+        for photo_id, year in ((self.clip, 2019), (self.loose, 2021)):
+            self.vl.conn.execute("UPDATE photos SET taken = NULL, year = ? WHERE id = ?", (year, photo_id))
         self.vl.conn.commit()
 
     def library_view(self):
-        """(the ids by Date Taken, the ids of 2019-07, the navigator's undated tally, its months of 2019), by the routes."""
+        """(the ids by Date Taken, the ids of 2019-07, the navigator's undated tally, its {year: (count, months)}, the ids
+        of the year 2021 as the year filter gives them), by the routes."""
         got = self.client.get("/library/api/library/ids", query_string={"kind": "all", "order": "taken"})
         month = self.client.get("/library/api/library/ids", query_string={"kind": "month", "value": "2019-07"})
+        year = self.client.get("/library/api/library/ids", query_string={"kind": "year", "value": "2021"})
         navigator = self.client.get("/library/api/library/navigator", query_string={"section": "dates"})
-        for reply in (got, month, navigator):
+        for reply in (got, month, year, navigator):
             self.assertEqual(200, reply.status_code, reply.data)
-        years = {each["year"]: [m["month"] for m in each["months"]] for each in navigator.get_json()["years"]}
-        return got.get_json()["ids"], month.get_json()["ids"], navigator.get_json()["undated"], years.get(2019)
+        years = {each["year"]: (each["count"], [m["month"] for m in each["months"]])
+                 for each in navigator.get_json()["years"]}
+        return (got.get_json()["ids"], month.get_json()["ids"], navigator.get_json()["undated"], years,
+                year.get_json()["ids"])
 
-    def test_a_row_indexed_before_the_fallback_is_in_the_views_undated_tail_until_apply_dates_it_by_its_name(self):
+    def test_a_row_indexed_before_the_fallback_is_dated_by_apply_and_a_clip_with_no_date_in_its_name_loses_its_folders_year(self):
         self.indexed_before_the_clips_were_dated_by_name()
-        self.assertEqual(([self.photo, self.clip, self.loose], [], 2, None), self.library_view(),
-                         "the views read the NULL column: both clips undated")
+        as_indexed = ([self.photo, self.clip, self.loose, self.quay], [], 0,
+                      {2019: (1, []), 2021: (2, []), 2023: (1, ["2023-05"])}, [self.loose, self.quay])
+        self.assertEqual(as_indexed, self.library_view(),
+                         "the views read the columns: neither clip in a month, the loose one under its folder's year")
         code, said = self.run_it()
         self.assertEqual(0, code, said)
         self.assertIn("1 clip row(s) hold no Date Taken yet", said, "the dry run says how many it would date")
-        self.assertEqual(([self.photo, self.clip, self.loose], [], 2, None), self.library_view(), "and wrote nothing")
+        self.assertIn("1 clip row(s) with no Date Taken hold a year", said, "and on how many it would clear the year")
+        self.assertEqual(as_indexed, self.library_view(), "and wrote nothing")
 
         code, said = self.run_it("--apply")
         self.assertEqual(0, code, said)
         self.assertIn("Re-dated 1 clip row(s)", said)
-        self.assertEqual(([self.clip, self.photo, self.loose], [self.clip], 1, ["2019-07"]), self.library_view(),
-                         "the clip is in its month and its place by the date; the clip with no date in its name stays undated")
-        self.assertIsNone(self.taken(self.loose))
+        self.assertIn("Year cleared on 1 clip row(s) with no Date Taken.", said)
+        self.assertEqual(([self.clip, self.photo, self.loose, self.quay], [self.clip], 1,
+                          {2019: (1, ["2019-07"]), 2021: (1, []), 2023: (1, ["2023-05"])}, [self.quay]),
+                         self.library_view(), "the clip in its month and its place by the date; the clip with no date in "
+                         "its name undated, out of its folder's year, which keeps the undated photo")
+        self.assertEqual([(None, None), (None, 2021)],
+                         [tuple(row) for row in self.vl.rows("SELECT taken, year FROM photos WHERE id IN (?, ?) ORDER BY id",
+                                                             self.loose, self.quay)])
         code, said = self.run_it("--apply")
         self.assertIn("Re-dated 0 clip row(s)", said, "idempotent: nothing left to date again")
+        self.assertIn("Year cleared on 0 clip row(s)", said, "nor a year to clear")
 
     def test_a_clip_the_write_leaves_is_dated_in_the_views_all_the_same(self):
         """A share away, or a writer that refuses: the file is not written, the row is dated (counted from the row)."""
@@ -167,7 +190,9 @@ class DatingClipsByTheirNames(tagged.ALibraryHoldingAClip):
         with mock.patch.object(tagging.file_changes, "write_fields", return_value=Result(attempted=1)):
             code, said = self.run_it("--apply")
         self.assertIn("Re-dated 1 clip row(s)", said)
-        self.assertEqual(([self.clip, self.photo, self.loose], [self.clip], 1, ["2019-07"]), self.library_view())
+        self.assertEqual(([self.clip, self.photo, self.loose, self.quay], [self.clip], 1,
+                          {2019: (1, ["2019-07"]), 2021: (1, []), 2023: (1, ["2023-05"])}, [self.quay]),
+                         self.library_view())
         self.assertIsNone(self.xmp_date(self.clip_path), "the file was not written")
         self.assertEqual([], self.changes())
 

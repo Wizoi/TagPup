@@ -7,7 +7,9 @@ day. The library dates it by its name: its row's `taken` and year, the library's
 order and the page's record give the one date (dates.date_taken, given the path), and the file is not touched. A real
 date always wins: a clip whose QuickTime date is set keeps it, and a Date Taken saved from the panel is read before the
 name, its undo from History bringing the name's date back. A folder's date never dates a clip (the 11 dated only in
-their folder stay undated, for the owner), and a photo is never dated by its name.
+their folder stay undated, for the owner), and a photo is never dated by its name. A clip with no Date Taken has no year
+either, neither its folder's nor a year alone in its name, so the owner finds it among the undated (#2941); a photo
+beside it keeps its folder's year.
 
 The one-off that writes the name's date into each such clip's XMP is tests/test_dating_clips_by_their_names.py.
 
@@ -23,7 +25,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import test_a_clip_dated_through_the_journal as dated  # noqa: E402
 import test_a_clip_tagged_through_the_journal as tagged  # noqa: E402
 
-from tagpup.core import processes  # noqa: E402
+from tagpup.core import dates, processes  # noqa: E402
 from tagpup.files.exiftool_session import ExifToolSession  # noqa: E402
 
 EXIFTOOL = tagged.EXIFTOOL
@@ -114,12 +116,27 @@ class AClipDatedByItsName(tagged.ALibraryHoldingAClip):
         self.assertEqual([clip, photo], self.order())
         self.assertEqual((NAMED, "2019"), self.panel(clip))
 
-    def test_a_clip_dated_only_in_its_folder_stays_undated(self):
+    def test_a_clip_dated_only_in_its_folder_or_by_a_year_alone_in_its_name_has_no_year_a_photo_beside_it_keeps_its_folders(self):
+        """The owner finds the undated clips to date them by hand (owner, 2026-11-13, #2941): a clip with no Date Taken has
+        no year, neither its folder's (2 of photo_index's clips) nor a year alone in its name (`2016-07 ...`, `2015Dec ...`:
+        9, counted read-only 2026-11-13), name_date taking a whole date only. An undated photo beside them keeps the year
+        of its folder, as every photo does."""
         loose = zeroed_clip(os.path.join(self.folder, "jetty.mp4"))
-        photo, clip = self.index(self.photo_path, loose)
-        self.assertIsNone(self.taken(clip), "a folder's date never dates a clip (owner, 2026-11-13)")
-        self.assertEqual([photo, clip], self.order(), "undated, after the dated")
-        self.assertIsNone(self.panel(clip)[0])
+        by_a_year = zeroed_clip(os.path.join(self.folder, "2016-07 slipway.mp4"))
+        quay = os.path.join(self.folder, "quay.jpg")
+        tagged.make_jpeg(quay, size=(32, 32))
+        photo, clip, partial, undated_photo = self.index(self.photo_path, loose, by_a_year, quay)
+        for each in (clip, partial):
+            self.assertEqual((None, None), (self.taken(each), self.year(each)),
+                             "a folder's date never dates a clip, nor a year alone in its name (owner, 2026-11-13)")
+            self.assertEqual((None, dates.UNKNOWN_YEAR), self.panel(each))
+        self.assertEqual((None, 2021), (self.taken(undated_photo), self.year(undated_photo)), "a photo keeps its folder's year")
+        self.assertEqual([photo, clip, partial, undated_photo], self.order(), "undated, after the dated")
+        scanned = {name: (taken, year) for name, taken, year in self.scanned()}
+        self.assertEqual({"pier.jpg": (dated.PHOTO_TAKEN, "2023"), CLIP_NAME: (NAMED, "2019"),
+                          "jetty.mp4": (None, dates.UNKNOWN_YEAR), "2016-07 slipway.mp4": (None, dates.UNKNOWN_YEAR),
+                          "quay.jpg": (None, "2021")}, scanned,
+                         "the folder view's records the same, the clip dated by its name its name's year")
 
     def test_a_photo_with_a_date_in_its_name_is_never_dated_by_it(self):
         named = os.path.join(self.folder, "2019-07-04 dock.jpg")
