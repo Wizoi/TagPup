@@ -288,14 +288,7 @@ refused. Each was edited in memory (a caption, a keyword added, an Orientation),
   Description; ExifTool writes the attribute form only under its `-api Compact=Shorthand` option, which TagPup never
   passes. Read back by ExifTool (`-validate` clean) and ffprobe in a clip of each shape:
   `tests/test_an_adobe_clip_packet_edited_and_read_back.py`.
-- **A clip's Date Taken** (DECISIONS 2026-11-08, A5 (D) REVISED) is written into its exif:DateTimeOriginal, and
-  into its xmp:CreateDate only where it holds one (`fields.held_dates`, decided when the write is planned: 41
-  photo_index clips hold one); its QuickTime dates are never written. The index dates a clip by its XMP dates
-  first (`dates.CLIP_XMP_DATE_FIELDS`), then its QuickTime ones. The rows dated before that rule (photo_index 80
-  of its 2,179 clips, none by its year; kr-track and renton_parkrun none) were dated again from their own raw_metadata
-  by a one-off, applied on photo_index as the journal's "rederive clip dates" (undone from History as any change of
-  rows: `journal.RETIRED`) and deleted once no clip was apart (#2734). F16:
-  `tests/test_a_clip_dated_through_the_journal.py`.
+- **A clip's Date Taken**: docs/domains/media.md.
 
 ## The EXIF block editor
 
