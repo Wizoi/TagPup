@@ -22,11 +22,13 @@ counted read-only 2026-11-05):
      bytes before and after, so no other box moves: moov keeps its size, mdat its offset, and the chunk offsets in
      stco/co64 stay true.
   2. A top-level XMP box whose run reaches the end of the file (39 live) grows there: the file is longer, nothing moves.
-  3. A top-level XMP box that does not fit and cannot grow is made a `free` box (its four type bytes, and its old packet
+  3. An XMP box that does not fit and cannot grow is made a `free` box (its four type bytes, and its old packet
      blanked with spaces: a free box's content is never read, but it would stay readable) and the packet is appended at
-     the end of the file in a new uuid box. A .mov's moov/udta/XMP_ that does not fit is the rewrite's: to
-     grow it is to grow udta and moov, which moves mdat when moov comes first; to move it out to a top-level box is to
-     take it from the place Adobe's specification gives a QuickTime file.
+     the end of the file in a new uuid box. This is the one way a box inside moov (a .mov's moov/udta/XMP_, or the
+     XMP_ in moov/udta/meta/ilst of an MP4 such as the owner's 2025-12-17 concert clip, 341 bytes, #2908) goes: to grow
+     it is to grow udta and moov, which moves mdat when moov comes first, so it is retired in place and the packet
+     lives in the top-level box (owner, 2026-11-13: a format TagPup supports is never refused for a layout a patch can
+     reach; reverses the 2026-11-05 note that left a nested box to the rewrite).
   4. A clip with no XMP (2,104 live) gets a uuid box appended at the end of the file: what ExifTool writes into an MP4,
      and what ExifTool 13.59 and ffmpeg read back from an MP4 with moov first or last and from a .mov
      (tests/test_a_clip_patched_in_place.py).
@@ -219,9 +221,9 @@ def _xmp_patch(layout, packet):
     placed = _placed(box, packet, end)
     if placed is not None:
         return Patch(placed, layout.file_size, IN_PLACE)
-    if len(where) > 1:
-        return None         # moov/udta/XMP_: the rewrite's (the module, 3)
-    if end == layout.file_size and box.offset + len(written) > end:
+    # A box inside moov (a .mov's moov/udta/XMP_, or an MP4's moov/udta/meta/ilst/XMP_) never grows: its parents' sizes
+    # and mdat's offset would move. It is retired in place and the packet appended (the module, 3).
+    if len(where) == 1 and end == layout.file_size and box.offset + len(written) > end:
         return Patch(((box.offset, written),), box.offset + len(written), GROWN)
     return _appended(layout, packet, ((box.offset + 4, b"free"), (box.payload, b" " * (box.end - box.payload))))
 

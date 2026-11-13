@@ -234,7 +234,7 @@ class APacketPlacedInAClip(unittest.TestCase):
                 self.assertEqual(new, held)
                 self.assertEqual(b"free", after[len(FTYP + MOOV) + 4:len(FTYP + MOOV) + 8])
                 nested = FTYP + mov(xmp_box(new + b"   ", b"XMP_")) + MDAT
-                self.assertIsNone(clip_patch.patch(layout_of(nested), new))
+                self.assertEqual(clip_patch.APPENDED, clip_patch.patch(layout_of(nested), new).how)
 
     def test_a_movs_xmp_in_udta_takes_the_free_box_after_it_and_moov_keeps_its_size(self):
         data = FTYP + mov(xmp_box(OLD, b"XMP_"), box(b"free", bytes(60))) + MDAT
@@ -242,7 +242,22 @@ class APacketPlacedInAClip(unittest.TestCase):
         found, after, held = self.placed(data, new, clip_patch.IN_PLACE)
         self.assertEqual(new, held)
         self.assertEqual([("moov", "udta", "XMP_")], [path for path, _ in layout_of(after).xmp])
-        self.assertIsNone(clip_patch.patch(layout_of(data), sized(len(OLD) + 69)), "a .mov's XMP_ does not grow")
+        self.assertEqual(clip_patch.APPENDED, clip_patch.patch(layout_of(data), sized(len(OLD) + 69)).how,
+                         "a .mov's XMP_ does not grow: it is retired and the packet appended")
+
+    def test_an_mp4s_xmp_in_the_item_list_that_does_not_fit_is_retired_and_appended_with_mdat_unmoved(self):
+        # The owner's concert clip (#2908): moov/udta/meta/ilst/XMP_ of 341 bytes, a title item beside it, mdat after.
+        ilst = box(b"ilst", xmp_box(OLD, b"XMP_") + box(b"\xa9nam", b"x" * 20))
+        data = FTYP + box(b"moov", MVHD + box(b"udta", box(b"meta", bytes(4) + ilst))) + MDAT
+        new = sized(len(OLD) + 400, ("Lakes",))
+        found, after, held = self.placed(data, new, clip_patch.APPENDED)
+        old = layout_of(data).xmp[0][1]
+        self.assertEqual(new, held)
+        self.assertEqual(((old.offset + 4, b"free"), (old.payload, b" " * len(OLD)), (len(data), after[len(data):])),
+                         found.ranges)
+        self.assertEqual(data.index(MDAT), after.index(MDAT), "mdat did not move")
+        self.assertEqual([("uuid",)], [path for path, _ in layout_of(after).xmp])
+        self.assertNotIn(b"Hiking", after)
 
     def test_a_packet_one_byte_longer_than_its_slot_is_appended_or_the_rewrites(self):
         data = FTYP + MOOV + xmp_box(OLD) + MDAT
@@ -254,7 +269,7 @@ class APacketPlacedInAClip(unittest.TestCase):
         self.assertEqual(1, after.count(b"Lakes"))
         self.assertEqual(["ftyp", "moov", "free", "mdat", "uuid"], [one.type for one in layout_of(after).boxes])
         nested = FTYP + mov(xmp_box(OLD, b"XMP_")) + MDAT
-        self.assertIsNone(clip_patch.patch(layout_of(nested), sized(len(OLD) + 1)))
+        self.assertEqual(clip_patch.APPENDED, clip_patch.patch(layout_of(nested), sized(len(OLD) + 1)).how)
 
     def test_an_xmp_box_whose_run_reaches_the_end_grows_there(self):
         for tail in (b"", box(b"free", bytes(10))):
