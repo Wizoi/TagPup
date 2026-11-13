@@ -28,7 +28,7 @@ def date_photos(conn, photo_ids=None):
     raw metadata and its path (tagpup.core.dates): `taken`, its Date Taken as recorded,
     and `year`, the year of it, else one in its name. Every write of a photo's metadata
     or path calls this; readers read the columns. The caller commits."""
-    query = "SELECT id, path, raw_metadata FROM photos"
+    query = "SELECT id, path, raw_metadata, kind FROM photos"
     params = ()
     if photo_ids is not None:
         photo_ids = list(photo_ids)
@@ -37,18 +37,18 @@ def date_photos(conn, photo_ids=None):
         query += " WHERE id IN (%s)" % ",".join("?" * len(photo_ids))
         params = tuple(photo_ids)
     roots = store_roots.roots_for(conn)
-    dated = [_dated(raw_json, paths.from_row(path, roots)) + (photo_id,)
-             for photo_id, path, raw_json in conn.execute(query, params).fetchall()]
+    dated = [_dated(raw_json, paths.from_row(path, roots), kind) + (photo_id,)
+             for photo_id, path, raw_json, kind in conn.execute(query, params).fetchall()]
     conn.executemany("UPDATE photos SET taken = ?, year = ? WHERE id = ?", dated)
 
 
-def _dated(raw_json, path):
-    """(taken, year) of a row holding `raw_json` at `path` (native): date_photos' one rule."""
+def _dated(raw_json, path, kind):
+    """(taken, year) of a row of `kind` (photos.kind) holding `raw_json` at `path` (native): date_photos' one rule."""
     try:
         raw = json.loads(raw_json) if raw_json else {}
     except (TypeError, ValueError):
         raw = {}
-    return dates.date_taken(raw, path), dates.photo_year(raw, path)
+    return dates.date_taken(raw, path, kind), dates.photo_year(raw, path, kind)
 
 
 def _dated_paths(conn, photo_paths):
