@@ -131,11 +131,12 @@ first. Read docs/DEVELOPMENT.md, "Performance work", before claiming anything go
 
 A worker's standing rules (how the work fails, one-way choices, findings, what it runs, its report) are in
 `.claude/agents/tagpup-worker.md`; delegate multi-file work to it in a worktree, and the brief says only the task, the
-domain and which files are its, plus what is particular to the task.
+domain and which files are its, plus what is particular to the task. Commit before launching any background agent.
 - Edit through `tools/patch.py` from a script written with the Write tool, never a shell heredoc (a hook refuses one
   holding an escape), one script per concern (patch, lint, test).
 - Before briefing a new tool, script or module, find the existing owner: grep `tagpup/services/`, the MCP server's
-  tools and `scripts/`.
+  tools and `scripts/`. A feature across two domains is planned first ([docs/plans/README.md](docs/plans/README.md)),
+  and each worker launch for it cites `Plan: docs/plans/<name>.md` (`.claude/hooks/plan-first.mjs` refuses one without).
 - A brief names how the work fails (interrupted part-way, two at once, a read that fails, the real data's shape (for a file the owner has, its box layout captured as the fixture before the fix), what
   the owner sees) and the scenario the owner works in (rapid clicks, switching library mid-folder, two libraries
   holding one folder, an update while working).
@@ -146,7 +147,6 @@ domain and which files are its, plus what is particular to the task.
   a branch in one domain also gets its owner, `-integration` across two ([docs/OWNERS.md](docs/OWNERS.md)). After any
   change more than one agent made, a reviewer before committing. A one-file fix is often cheapest done directly.
 - A number told to the owner about their libraries is one counted this session, not relayed.
-- Commit before launching background agents, and keep their work in worktrees.
 - One session per phase: `/clear` at a phase boundary (the memory handoff carries the state); a worker brief is ONE
   concern and names what remains. A retro runs at each phase end and on its triggers, by [docs/RETRO.md](docs/RETRO.md) (the `retro` skill).
 - Decide by the rules here and in docs/ARCHITECTURE.md; ask the owner only what they alone can answer. The cheapest
