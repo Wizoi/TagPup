@@ -121,6 +121,8 @@ TOO_LONG = "the conversion passed its deadline and was stopped; the original is 
 FAILED = "ffmpeg could not convert it (%s); the original is as it was"
 NOT_STARTED = "ffmpeg could not be started (%s); the original is as it was"
 NOT_FLUSHED = "its converted copy could not be written to its disk (%s); the original is as it was"
+#: Added to a problem (this module's, or convert's) when the copy could not be removed: a sentence of its own, after one
+#: that claims no removal of the copy (#2884).
 TEMP_LEFT = ". Its unfinished copy could not be removed just now (%s); it is removed when the change is settled."
 NO_ROOM = ("there is not room for its converted copy on the original's drive: about {:,} MB needed, {:,} MB free (1 GB "
            "kept spare); nothing was converted")

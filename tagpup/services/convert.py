@@ -36,9 +36,9 @@ How one conversion goes, the original kept until its copy is in place and holds 
 
 The original is deleted FOR GOOD, never to a Recycle Bin (owner 2026-11-12: its copy is verified first; the Bin is for
 deletes), by one bounded call (_removed_for_good), and only while it is the file the conversion found (its fingerprint).
-A delete that fails (a program holding it, a share that stopped answering) keeps the original and the copy: the file is
-left `writing` and the next settle deletes it (a same-name conversion, whose copy has no name of its own yet, is let go
-instead: its temp removed, the original kept).
+A delete that fails (a program holding it, a share that stopped answering, or that says "not found" at once as one
+asleep does: _original_kept) keeps the original and the copy: the file is left `writing` and the next settle deletes it
+(a same-name conversion, whose copy has no name of its own yet, is let go instead: its temp removed, the original kept).
 
 The copy is known by its file id (`made`'s ino; _is_copy): the carry writes into it in place, which changes its size and
 modified time but never its file id, nor does the rename into place; a volume that gives its files no file id is refused
@@ -111,22 +111,30 @@ NAME_TAKEN = "a file or a row is there already under its converted name; nothing
 UNDER_WAY = "it is being converted already, or a conversion of it cut short is still to be settled; nothing was converted"
 TEMP_TAKEN = ("an unfinished converted copy of it is there already (another conversion, or one cut short); nothing was "
               "converted")
-CHANGED = "it changed while it was being converted; its converted copy was removed and the original is as it is"
+#: The sentences of a conversion let go with its copy in the temp claim no removal of it: clip_convert.TEMP_LEFT
+#: follows them when its removal fails (#2884).
+CHANGED = "it changed while it was being converted; the original is as it is"
 NOT_MADE = "its converted copy is not as it was made; the original is as it was"
 NOT_IN_PLACE = ("its converted copy could not be put in its place (%s); the original is deleted and the copy is put in "
                 "place when the change is settled")
-NOT_RENAMED = "its converted copy could not be put in its place (%s); it was removed and the original is as it was"
+NOT_RENAMED = "its converted copy could not be put in its place (%s); the original is as it was"
 NOT_CARRIED = ("its tags, title or kept name could not be written into its converted copy (%s); the original is kept, "
                "and the change is finished when it is settled")
 ROW_THERE = "a row of the library is at its converted name already; both files are kept as they are"
+#: Why an original is still there when its share did not answer (ORIGINAL_KEPT, NOT_DELETED).
+SHARE_AWAY = "its share did not answer"
+#: Why an original is still there when it could not be looked at: neither there nor gone (ORIGINAL_KEPT).
+NOT_LOOKED_AT = "it could not be looked at just now"
 ORIGINAL_KEPT = ("it was converted, but its original could not be deleted (%s); the original and its verified copy "
                  "are both kept, and the original is deleted when the change is settled (the next start)")
+ORIGINAL_CHANGED = ("it was converted, but its original changed meanwhile (another program wrote it), so it is not "
+                    "deleted: it and its verified copy are both kept, and the next sync finds it as a clip of its own")
 CHANGED_SINCE = "it changed since it was converted: it holds neither what the conversion found nor its converted copy"
 PLAYS_ALREADY = "it plays as it is: it is made smaller (Make smaller), not converted; nothing was converted"
 DOES_NOT_PLAY = "it does not play as it is: it is converted (Convert), not made smaller; nothing was converted"
 NOT_SMALLER = "its MP4 came out no smaller than it is: left as it is"
-NOT_DELETED = ("its original could not be deleted (%s), so its converted copy, which takes its name, was removed; the "
-               "original is as it was")
+NOT_DELETED = ("its original could not be deleted (%s), so its converted copy, which takes its name, is not put in "
+               "its place; the original is as it was")
 ASKED_ALREADY = "it is being converted already; wait for it to finish"
 NO_SUCH = "This server has no conversion %d (it may have been long ago, or before the server restarted)."
 
@@ -206,7 +214,7 @@ def convert_clip(library, exiftool_path, tools, source, reason=OLD_FORMAT, progr
             else:
                 file_journal.release(library.path, change_id)
             if result.changed:
-                result.details["size_after"] = file_changes.fingerprint(target)["size"]
+                result.details["size_after"] = _size_recorded(library, target)
     except BaseException:
         file_journal.release(library.path, change_id)
         raise
@@ -394,7 +402,9 @@ def settle_change(library, change, exiftool_path):
         if row.state == "planned":
             file_journal.withdraw(library.path, [row.id])
         elif row.state == "writing":
-            if any(shares.stamp_of(path) is shares.UNANSWERED for path in (row.path, row.new_path or row.path)):
+            # Neither there nor gone (a share asleep, or one whose connection dropped): waited for, never decided on.
+            if any(shares.stamp_of(path) in (shares.UNANSWERED, shares.CANNOT_READ)
+                   for path in (row.path, row.new_path or row.path)):
                 settled = False
                 continue
             settled = _onward(library, exiftool_path, row, False, Result()) and settled
@@ -461,18 +471,31 @@ def _onward(library, exiftool_path, row, forward, result, problem=None):
         result.refuse(NOT_CARRIED % short)
         return False
     _reached("carried")
-    if renamed and file_changes.fingerprint(source) == row.before:
-        kept = _removed_for_good(source)
+    if renamed:
+        kept, again = _original_kept(source, row.before)
         if kept:
-            _note(library, row, ORIGINAL_KEPT % kept)
             result.changed = 1
-            result.details["original_kept"] = ORIGINAL_KEPT % kept
-            result.refuse(ORIGINAL_KEPT % kept)
-            return False
+            result.details["original_kept"] = kept
+            result.refuse(kept)
+            if again:
+                _note(library, row, kept)
+                return False
+            file_journal.mark(library.path, [row.id], "done", kept)
+            return True
         _reached("original deleted")
     file_journal.mark(library.path, [row.id], "done")
     result.changed = 1
     return True
+
+
+def _size_recorded(library, target):
+    """The size of the converted copy at `target` as its row records it (the carry's write, or _followed, read it last):
+    no look at its share, which may have stopped answering as the conversion ended."""
+    conn = db.connect(db.readonly_uri(library.path), uri=True)
+    try:
+        return photos.stamps_of(conn, [target])[paths.key(target)][3]
+    finally:
+        conn.close()
 
 
 def _short_of(library, exiftool_path, target, after):
@@ -540,13 +563,37 @@ def _note(library, row, why):
                              label="%s: left writing" % row.named())
 
 
+def _original_kept(source, before):
+    """Why the original at `source` is still there once its copy is in place, the sentence the owner is told, and whether
+    a settle deletes it later (True: the file stays `writing`); (None, False) when it was deleted for good now
+    (_removed_for_good) or is not there to delete (deleted already: a settle after its delete). Every other answer is
+    said, never done in silence:
+    - ORIGINAL_KEPT, for the next settle: its share did not answer, or says "not found" at once as one asleep does
+      (shares.stamp_of's UNANSWERED, #1543, #2890); it could not be looked at (CANNOT_READ: a share whose connection
+      dropped, WinError 64, or a look failing after the share answered); its delete failed.
+    - ORIGINAL_CHANGED, finished: it is not the file the conversion found (`before`, its fingerprint), so it is never
+      deleted."""
+    there = shares.stamp_of(source)
+    if there is None:
+        return None, False
+    if there is shares.UNANSWERED:
+        return ORIGINAL_KEPT % SHARE_AWAY, True
+    found = None if there is shares.CANNOT_READ else file_changes.fingerprint(source)
+    if found is None:
+        return ORIGINAL_KEPT % NOT_LOOKED_AT, True
+    if found != before:
+        return ORIGINAL_CHANGED, False
+    why = _removed_for_good(source)
+    return (None, False) if why is None else (ORIGINAL_KEPT % why, True)
+
+
 def _removed_for_good(source):
     """None when the original at `source` was deleted for good (never to a Recycle Bin: the module), by one call bounded
     as a listing is (shares.bounded); else why it is still there, a phrase."""
     state, error = shares.bounded(os.path.dirname(source), lambda: os.remove(source), shares.LISTING_WAIT)
     if state == "ok":
         return None
-    return "its share did not answer" if state == "away" else (getattr(error, "strerror", None) or str(error))
+    return SHARE_AWAY if state == "away" else (getattr(error, "strerror", None) or str(error))
 
 
 def _followed(library, exiftool_path, row, target):
