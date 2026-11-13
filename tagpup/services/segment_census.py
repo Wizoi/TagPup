@@ -92,7 +92,7 @@ def _read(path):
 
 def _looked(path):
     """("read", (layout, header, tail)) | (why it was not read, None: shares.why_not_read's words), never raising."""
-    state, found = shares.read_bounded(path, lambda: _read(path))
+    state, found = shares.bounded(path, lambda: _read(path), shares.READ_WAIT)
     if state == "ok":
         return "read", found
     return shares.why_not_read(path, found if state == "error" else None), None
