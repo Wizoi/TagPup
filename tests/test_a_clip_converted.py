@@ -392,6 +392,34 @@ class CutShort(AnOldClipInTheLibrary):
         self.assertEqual(["done"], self.converted_states(self.photo_id))
         self.assert_converted(self.source, self.photo_id, TITLE)
 
+    def test_a_settle_while_only_the_files_of_the_clip_cannot_be_read_waits_and_never_calls_the_clip_changed(self):
+        # The share's look at the original and its copy fails (WinError 64) once the copy is carried, while a look at the
+        # temp, a name that is not there, still says "not found": a settle then must not conclude from the copy it
+        # cannot find that the conversion was never made (a conflict, the original and its copy left beside each other
+        # for the next sync). It waits for the look, `writing`; back, it deletes the original. Only the settle's own
+        # look at the two files (convert.settle_change) tells this: nothing else of it fails.
+        target = clip_convert.target_of(self.source)
+        down, real_stat = threading.Event(), os.stat
+
+        def stat(path, *args, **kwargs):
+            if down.is_set() and paths.key(str(path)) in (paths.key(self.source), paths.key(target)):
+                raise OSError(22, "The specified network name is no longer available", str(path), 64)
+            return real_stat(path, *args, **kwargs)
+        shares.forget()
+        self.addCleanup(shares.forget)
+        with mock.patch.object(shares, "on_a_network_drive", lambda path: os.path.normcase(str(path)).startswith(
+                os.path.normcase(self.folder))), mock.patch.object(os, "stat", stat), \
+                mock.patch.object(convert, "_reached", side_effect=lambda step: step == "carried" and down.set()):
+            result = self.convert(self.source)
+            self.assertEqual(1, result.changed, result.message())
+            self.assertEqual(["writing"], self.converted_states(self.photo_id), "left for the next settle")
+            file_changes.settle(self.vl.library, EXIFTOOL)
+            self.assertEqual(["writing"], self.converted_states(self.photo_id), "a settle while it is down waits")
+            down.clear()
+        file_changes.settle(self.vl.library, EXIFTOOL)
+        self.assertEqual(["done"], self.converted_states(self.photo_id))
+        self.assert_converted(self.source, self.photo_id, TITLE)
+
     def test_its_original_changed_by_another_program_after_its_copy_is_carried_is_kept_said_and_the_conversion_done(self):
         # Another program writes the original between the carry and its delete: never deleted (it is not the file the
         # conversion found), the conversion done, and the owner told both are kept. Was: done in silence, the changed
