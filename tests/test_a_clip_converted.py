@@ -8,7 +8,9 @@ MPEG-4 Part 2, converted under its own name), each clip one change; the run cut 
 start, or its share falling asleep as its copy is put in place; a clip open in a player before or after the plan, a full
 disk, ffmpeg failing; two libraries holding the folder, the second asked to convert the clip meanwhile, or finding it at
 its MP4 by the name it kept (TwoLibrariesHoldingTheFolder); a clip tagged long ago in Windows, its Windows Tags carried
-into its copy's tags, one the tree lacks refused through the panel (AClipHoldingWindowsTags). The panel's
+into its copy's tags, one the tree lacks refused through the panel (AClipHoldingWindowsTags); a clip holding XMP
+other programs wrote, its packet carried whole into its copy, or refused when it cannot be (AClipHoldingXmpOfOtherPrograms).
+The panel's
 Convert and Make smaller (MP4) by id: answered at once with a ticket, a second click refused, Cancel on the ticket, a bulk
 edit waiting behind, a shrink no smaller left as it is, a button that is not the clip's plan refused (ThePanelButtons).
 
@@ -20,6 +22,7 @@ ExifTool. Fictional names only.
 import contextlib
 import json
 import os
+import re
 import sys
 import threading
 import unittest
@@ -28,13 +31,15 @@ from unittest import mock
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import test_a_clip_patched_in_place as patched  # noqa: E402
+import test_xmp_packet_edits_what_it_owns as shapes  # noqa: E402
 from test_a_clip_tagged_through_the_journal import EXIFTOOL, TOOLS, ALibraryHoldingAClip  # noqa: E402
 from test_file_journal import Crash, crash_at  # noqa: E402
 from view_library import ViewLibrary  # noqa: E402
 
 from tagpup.core import fields, paths, processes  # noqa: E402
 from tagpup.core.result import Result  # noqa: E402
-from tagpup.files import clip_convert, containers, field_values, metadata, recycle_bin, shares, video_frames  # noqa: E402
+from tagpup.files import (clip_convert, clip_patch, containers, field_values, metadata, recycle_bin,  # noqa: E402
+                          shares, video_frames)
 from tagpup.services import batches, convert, file_changes, sync, tagging  # noqa: E402
 from tagpup.services import photos as photo_actions  # noqa: E402
 from tagpup.store import file_journal, photos  # noqa: E402
@@ -129,6 +134,15 @@ class AnOldClipInTheLibrary(ALibraryHoldingAClip):
     def leftovers(self):
         return sorted(name for name in os.listdir(self.folder) if name.endswith(clip_convert.SUFFIX))
 
+    def settled(self):
+        """The settle of the next start, a while later: a temp the killed run left is older than the scratch rule's
+        minutes by then (SCRATCH_STALE, 0 here: a temp's own modified time set back would make it older than its
+        original, which the rule reads as the original changed since)."""
+        with mock.patch.object(file_changes, "SCRATCH_STALE", 0):
+            file_changes.settle(self.vl.library, EXIFTOOL)
+        self.assertEqual([], [row for row in self.changes() if row[2] == "planned"], "every change finished: %s" % (
+            self.vl.rows("SELECT change_id, state, note FROM change_files"),))
+
     def assert_converted(self, source, photo_id, title):
         target = clip_convert.target_of(source)
         made = video_frames.streams(TOOLS, target)
@@ -194,15 +208,6 @@ class CutShort(AnOldClipInTheLibrary):
         with mock.patch.object(convert, "_reached", side_effect=crash_at(step)):
             with self.assertRaises(Crash):
                 self.convert(source or self.source)
-
-    def settled(self):
-        """The settle of the next start, a while later: a temp the killed run left is older than the scratch rule's
-        minutes by then (SCRATCH_STALE, 0 here: a temp's own modified time set back would make it older than its
-        original, which the rule reads as the original changed since)."""
-        with mock.patch.object(file_changes, "SCRATCH_STALE", 0):
-            file_changes.settle(self.vl.library, EXIFTOOL)
-        self.assertEqual([], [row for row in self.changes() if row[2] == "planned"], "every change finished: %s" % (
-            self.vl.rows("SELECT change_id, state, note FROM change_files"),))
 
     def assert_as_it_was(self):
         self.assertEqual(self.before, self.read_bytes(self.source), "the original as it was")
@@ -733,6 +738,92 @@ class AClipHoldingWindowsTags(AnOldClipInTheLibrary):
         self.assertEqual(["writing"], self.converted_states(photo_id))
         file_changes.settle(self.vl.library, EXIFTOOL)
         self.assert_carried(source, photo_id, "")
+
+
+class AClipHoldingXmpOfOtherPrograms(AnOldClipInTheLibrary):
+    """A clip whose XMP other programs wrote (#2938; owner 2026-11-13: every XMP property is kept, those TagPup does not
+    use too): its packet carried whole into its converted copy, what the conversion carries written over it. The live
+    shapes (test_xmp_packet_edits_what_it_owns: Premiere's packet, 40 live; one grown by many saves, as the 1 over 64 KB
+    is; Adobe XMP Core's unwrapped one, 39 live), in a top-level uuid box after moov, appended to an ffmpeg-made clip
+    as a save in place appends one. An MPEG-4 Part 2 .mp4, converted under its own name: the conversion that deletes its
+    original before its copy is in place. A clip holding none, and an old format (which the box walk does not read, so
+    holds none to carry), convert as before: TheConversion."""
+
+    def xmp_clip(self, name, *packets):
+        """A clip `name` in the folder with an XMP box after its moov for each of `packets`, recorded as the indexer reads
+        it: (its path, its id)."""
+        path = make_clip(os.path.join(self.folder, name), TITLE)
+        with open(path, "ab") as handle:
+            for packet in packets:
+                handle.write(patched.xmp_box(packet))
+        return path, self.index(path)[0]
+
+    def packet_of(self, path):
+        """The packet of the one XMP box of the clip at `path`, read by the box walk alone."""
+        with open(path, "rb") as handle:
+            (_, box), = containers.read(handle).xmp
+            handle.seek(box.payload)
+            return handle.read(box.end - box.payload)
+
+    def assert_as_it_was(self, source, photo_id, before):
+        self.assertEqual(before, self.read_bytes(source), "the original as it was")
+        self.assertEqual([], self.leftovers(), "no temp left")
+        self.assertEqual(paths.key(source), paths.key(self.row_of(photo_id)[0]), "the row where it was")
+
+    def test_every_property_its_packet_held_is_in_its_copy_with_what_it_carries_written_over_it(self):
+        attribute = re.compile(rb'([\w]+:[\w]+)="([^"]*)"')
+        for n, packet in enumerate((shapes.PREMIERE, shapes.premiere(), shapes.BARE)):
+            with self.subTest(len(packet)):
+                source, photo_id = self.xmp_clip("dock%d.mp4" % n, packet)
+                result = self.convert(source)
+                self.assertEqual(1, result.changed, result.message())
+                target = self.assert_converted(source, photo_id, TITLE)
+                copied = self.packet_of(target)
+                self.assertEqual([], [pair for pair in dict.fromkeys(attribute.findall(packet))
+                                      if b'%s="%s"' % pair not in copied], "every property it held is kept")
+                for element in (b"<xmpMM:History>", b"<xmpMM:Pantry>"):
+                    self.assertEqual(packet.count(element), copied.count(element))
+                self.assertEqual(packet.count(b"stEvt:action="), copied.count(b"stEvt:action="))
+
+    def test_a_clip_whose_xmp_no_patch_reads_is_refused_before_ffmpeg_and_left_as_it_was(self):
+        source, photo_id = self.xmp_clip("dock.mp4", shapes.PREMIERE, shapes.BARE)
+        before = self.read_bytes(source)
+        with mock.patch.object(clip_convert, "convert", side_effect=AssertionError("ffmpeg ran")):
+            result = self.convert(source)
+        self.assertEqual(0, result.changed)
+        self.assertEqual("its XMP is held in a way TagPup does not read (two XMP boxes, or one it does not know), so it "
+                         "could not be carried into its converted copy; nothing was converted", result.message())
+        self.assert_as_it_was(source, photo_id, before)
+        self.assertEqual([], [op for _id, op, _status in self.changes() if op == file_journal.CONVERT], "nothing planned")
+
+    def test_a_copy_that_cannot_take_its_packet_is_removed_and_the_original_kept_saying_why(self):
+        source, photo_id = self.xmp_clip("dock.mp4", shapes.PREMIERE)
+        before = self.read_bytes(source)
+        with mock.patch.object(clip_patch, "patch", return_value=None):
+            result = self.convert(source)
+        self.assertEqual(0, result.changed)
+        self.assertEqual("its XMP could not be put into its converted copy (the copy has no place for it); the original "
+                         "is as it was", result.message())
+        self.assert_as_it_was(source, photo_id, before)
+        self.assertEqual([], self.converted_states(photo_id), "taken out of the change")
+
+    def test_killed_once_its_copy_holds_the_packet_the_settle_removes_the_copy_and_keeps_the_original(self):
+        source, photo_id = self.xmp_clip("dock.mp4", shapes.PREMIERE)
+        before = self.read_bytes(source)
+        temp, held = clip_convert.temp_of(clip_convert.target_of(source)), []
+
+        def reached(step):
+            if step == "temp verified":
+                held.append(self.packet_of(temp))
+                raise Crash(step)
+
+        with mock.patch.object(convert, "_reached", side_effect=reached):
+            with self.assertRaises(Crash):
+                self.convert(source)
+        self.assertEqual([shapes.PREMIERE], held, "its copy held the original's packet when it was verified")
+        self.settled()
+        self.assert_as_it_was(source, photo_id, before)
+        self.assertEqual([], self.converted_states(photo_id), "taken out of the change")
 
 
 def make_mov(path, crf, created=CREATED):

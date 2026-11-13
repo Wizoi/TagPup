@@ -388,6 +388,17 @@ def _clip_written(photo_path, values, saving):
     return stale
 
 
+def packet_given(scratch, packet):
+    """Put `packet`, the XMP packet a clip held (in_place.packet_held), whole into `scratch`, the copy of it a conversion
+    made and has not recorded (tagpup.services.convert), by a patch of its XMP in place (in_place.patch_clip): True once
+    the copy holds it, False when the copy cannot take it (clip_patch places it nowhere), nothing written. Its `saving`
+    is nothing, the one patch saved by no journal: sound only because a scratch nothing records yet is settled by its
+    removal (tagpup.services.file_changes.removed_scratch, the scratch rule), never by its bytes, so a patch of it cut
+    short needs no record to be put back. Raises in_place.Away when its share does not answer, Refused when another
+    program holds it open, the OSError of the open or a write."""
+    return in_place.patch_clip(scratch, lambda _old: (packet, ()), lambda _record, _before: None) is not None
+
+
 def written_once_more(et, photo_path, values, again, **options):
     """write(et, photo_path, values, **options), made once more when its new file's picture differed (PictureChanged:
     discarded, the photo as it was), for a held photo's write (tagpup.services.file_changes._carry) and a Just-look
