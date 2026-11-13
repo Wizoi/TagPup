@@ -22,6 +22,8 @@ Everything below holds for every task; the brief does not repeat it.
   yours. Touch no others. If one needs a change, say so in your report.
 - If the brief names a domain, read that domain owner's charter first
   (`.claude/agents/tagpup-owner-<domain>.md`): its contract, invariants and checklist bind your change.
+- If the brief cites a plan (`Plan: docs/plans/<name>.md`), read it first: each mechanism is built in the one place it
+  names, and a reason to build one elsewhere goes in your report as a question, not into the branch.
 
 ## How you edit
 - Read CLAUDE.md and the part of docs/ARCHITECTURE.md the task touches first.
