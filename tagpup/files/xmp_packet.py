@@ -15,6 +15,9 @@ changes no byte; a Bag keeps the order it is given, a repeat dropped.
 `blank()` is a wrapped packet holding nothing, with RESERVE bytes of padding: a clip with no XMP is given it,
 edited, as its first packet (tagpup.files.segment_edits.new_packet; tagpup.files.clip_patch appends it).
 
+No size is refused here (owner, 2026-11-12): a JPEG's packet is bounded by its segment (containers.MOST_BODY) and a
+JPEG's edit never grows it; a clip's is bounded by the journal's cap on a patch (tagpup.store.file_journal.PATCH_CAP).
+
 Either answers `containers.Refusal`, a sentence, for a packet it does not wholly understand: it never repairs one and never returns
 bytes on doubt (an edit is parsed again and read back before it is answered). What it refuses, with the counts of the
 three libraries behind each rule: docs/domains/files.md, "The XMP packet editor".
@@ -41,8 +44,6 @@ PROPERTIES = {
     "xmpMM:PreservedFileName": ("http://ns.adobe.com/xap/1.0/mm/", "PreservedFileName", "Text"),
 }
 _NAMES = {(uri, local): name for name, (uri, local, _) in PROPERTIES.items()}
-#: The largest packet read or made: a JPEG's main packet is under it; a caller with a larger one passes `limit`.
-LIMIT = 64 * 1024
 #: The whitespace a grown packet is given after its XML: ExifTool's, a line break and 24 lines of 100 spaces (3,549 of
 #: the 3,558 wrapped packets read).
 RESERVE = 1 + 24 * 101
@@ -199,9 +200,7 @@ class _Packet:
     """A packet read: its descriptions, the owned properties' (description, node) and values, and its padding's span
     (None for a packet with no wrapper)."""
 
-    def __init__(self, data, limit):
-        if len(data) > limit:
-            raise _Refused("The packet is %d bytes, over the %d an XMP packet is read at." % (len(data), limit))
+    def __init__(self, data):
         if data[:3] == b"\xef\xbb\xbf" or data[:2] in (b"\xfe\xff", b"\xff\xfe") or b"\0" in data[:4]:
             raise _Refused("The packet starts with a byte order mark or is UTF-16: only plain UTF-8 is read.")
         self.data = data
@@ -241,10 +240,10 @@ class _Packet:
                     self.values[name] = _value(name, node)
 
 
-def read(packet, limit=LIMIT):
+def read(packet):
     """{name: value} of the owned properties `packet` (bytes) holds, or a Refusal."""
     try:
-        return dict(_Packet(packet, limit).values)
+        return dict(_Packet(packet).values)
     except _Refused as why:
         return containers.Refusal(str(why))
 
@@ -387,13 +386,13 @@ def _padded(pad, need, grow, reserve):
     raise _Refused("The change needs %d more bytes than the packet's padding holds." % (need - len(pad) + containers.XMP_PADDING_LEAST))
 
 
-def edit(packet, changes, grow=False, reserve=RESERVE, limit=LIMIT):
+def edit(packet, changes, grow=False, reserve=RESERVE):
     """`packet` (bytes) with `changes` ({name: value}) made: Edited, or a Refusal saying why it was not edited."""
     try:
         unknown = sorted(set(changes) - set(PROPERTIES))
         if unknown:
             raise _Refused("%s is not a property TagPup owns." % unknown[0])
-        before = _Packet(packet, limit)
+        before = _Packet(packet)
         wanted = {name: _wanted(name, changes[name]) for name in PROPERTIES if name in changes}
         moved = {name: value for name, value in wanted.items() if (before.values.get(name) or None) != value}
         if not moved:
@@ -410,10 +409,8 @@ def edit(packet, changes, grow=False, reserve=RESERVE, limit=LIMIT):
             result = b"".join(pieces) + packet[at:]
             if len(result) != len(packet) and not grow:
                 raise _Refused("The packet has no wrapper and so no padding: the change needs it to grow.")
-        if len(result) > limit:
-            raise _Refused("The edited packet would be %d bytes, over %d." % (len(result), limit))
         expected = {name: value for name, value in {**before.values, **moved}.items() if value is not None}
-        if _Packet(result, limit).values != expected:
+        if _Packet(result).values != expected:
             raise _Refused("The edited packet does not read back as written.")
         return containers.Edited(result, len(result) != len(packet))
     except _Refused as why:

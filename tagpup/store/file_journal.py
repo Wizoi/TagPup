@@ -47,6 +47,7 @@ from dataclasses import dataclass, field
 from typing import Any, Dict, Optional
 
 from tagpup.core import dates, paths, processes
+from tagpup.core.result import Refused
 from tagpup.store import db, schema
 from tagpup.store import roots as store_roots
 
@@ -215,9 +216,13 @@ def _row(found, roots):
                    json.loads(after or "{}"), state, note, tuple(json.loads(stamp)) if stamp else None)
 
 
-#: The most bytes a patch's record keeps of what its ranges held (save_patch): a patch bigger than this is ExifTool's
-#: rewrite's, which the patcher then takes. A photo's metadata segments are at most 64 KB each.
+#: The most a patch's row keeps (save_patch): its record as saved (the new bytes in base64, 4/3 of them) and the bytes
+#: its ranges held. Over it the patch is refused, nothing written (PatchTooLarge). A photo's metadata segments are at
+#: most 64 KB each; a clip's XMP box has no other bound (owner, 2026-11-12).
 PATCH_CAP = 1 << 20
+#: The owner's sentence of a patch over PATCH_CAP: the KB it would keep, and the most kept.
+PATCH_TOO_LARGE = ("TagPup cannot save into this file: its metadata is too large to keep a copy of, which would put the "
+                   "file back if the save were cut short (%s KB; at most %s KB is kept). Nothing was written.")
 
 #: The note of a file whose write changed its picture's bytes twice in a settle or an undo (tagpup.files.field_values.
 #: PictureChanged, the picture check of #2377): the new file was discarded each time and the file is as it was; a
@@ -231,8 +236,14 @@ NOTES = (PICTURE_CHANGED,)
 PATCH_KEPT = ("not writing", "a patch's record")
 
 
-class PatchTooLarge(Exception):
-    """A patch's old bytes are more than PATCH_CAP: nothing was saved, and nothing may be written by a patch."""
+class PatchTooLarge(Refused):
+    """A patch whose row would keep more than PATCH_CAP (its record and old bytes, `size`): nothing was saved, and
+    nothing may be written by a patch. A Refused, its sentence the owner's (PATCH_TOO_LARGE): the write's caller withdraws
+    the file's row and tells it apart as its writer's refusal (file_changes.WRITER_REFUSED)."""
+
+    def __init__(self, size):
+        self.size = size
+        super().__init__(PATCH_TOO_LARGE % ("{:,}".format(-(-size // 1024)), "{:,}".format(PATCH_CAP // 1024)))
 
 
 _FILE_COLUMNS = "id, change_id, photo_id, path, new_path, fields_before, fields_after, state, note, stamp"
@@ -298,14 +309,16 @@ def writing(db_path, file_id, stamp):
 
 def save_patch(db_path, file_id, record, before):
     """Commit the record of a patch (tagpup.files.in_place.record) and the bytes its ranges hold `before`, of a file
-    `writing`, before the patch writes a byte. Raises PatchTooLarge over PATCH_CAP, and RuntimeError when the file is not
-    `writing`; either way nothing is saved, and the patch must write nothing."""
-    if len(before) > PATCH_CAP:
-        raise PatchTooLarge("file %d: a patch of %d bytes is more than the journal keeps (%d)" % (file_id, len(before), PATCH_CAP))
+    `writing`, before the patch writes a byte. Raises PatchTooLarge when the row would keep more than PATCH_CAP (the
+    record's text and `before`, what it holds), and RuntimeError when the file is not `writing`; either way nothing is
+    saved, and the patch must write nothing."""
+    text = json.dumps(record, sort_keys=True)
+    if len(text) + len(before) > PATCH_CAP:
+        raise PatchTooLarge(len(text) + len(before))
 
     def work(conn):
         return conn.execute("UPDATE change_files SET patch = ?, patch_before = ? WHERE id = ? AND state = 'writing'",
-                            (json.dumps(record, sort_keys=True), bytes(before), file_id)).rowcount
+                            (text, bytes(before), file_id)).rowcount
 
     if db.write_with_connection(db_path, work, label="file %d: its patch saved" % file_id) != 1:
         raise RuntimeError("file %d is not being written, so its patch was not saved; nothing was written" % file_id)
