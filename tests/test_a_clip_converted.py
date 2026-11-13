@@ -17,6 +17,7 @@ Real one-second clips made by the machine's ffmpeg in each old format, recorded 
 fails the test (AnOldClipInTheLibrary). Skipped, saying so, without ffmpeg or
 ExifTool. Fictional names only.
 """
+import contextlib
 import json
 import os
 import sys
@@ -306,6 +307,43 @@ class CutShort(AnOldClipInTheLibrary):
         self.assertEqual(["writing"], self.converted_states(self.photo_id), "left for the next settle")
         again = self.convert(self.source)
         self.assertEqual(1, again.changed, again.message())
+        self.assert_converted(self.source, self.photo_id, TITLE)
+
+    @contextlib.contextmanager
+    def on_a_share_that_falls_asleep_at(self, step):
+        """The clip's folder on a share (a stand-in, as test_a_share_asleep's) that falls asleep at the conversion's
+        `step` (convert.STEPS): from then, a look in the folder says "not found" at once, the words Windows has for a file
+        deleted (WinError 53, #1543), and the share's root is not there. Awake again after the block, nothing remembered."""
+        under, root = os.path.normcase(self.folder), os.path.normcase(os.path.splitdrive(self.folder)[0] + os.sep)
+        asleep, real_stat, real_exists = threading.Event(), os.stat, os.path.exists
+        shares.forget()
+        self.addCleanup(shares.forget)
+
+        def stat(path, *args, **kwargs):
+            if asleep.is_set() and os.path.normcase(str(path)).startswith(under):
+                raise FileNotFoundError(2, "The network path was not found")
+            return real_stat(path, *args, **kwargs)
+
+        def exists(path):
+            return not (asleep.is_set() and os.path.normcase(str(path)) == root) and real_exists(path)
+        with mock.patch.object(shares, "on_a_network_drive", lambda path: os.path.normcase(str(path)).startswith(under)), \
+                mock.patch.object(os, "stat", stat), mock.patch.object(os.path, "exists", exists), \
+                mock.patch.object(convert, "_reached", side_effect=lambda reached: reached == step and asleep.set()):
+            try:
+                yield
+            finally:
+                asleep.clear()
+        shares.forget()
+
+    def test_its_share_asleep_once_its_original_is_deleted_says_it_converted_and_how_large_its_copy_is(self):
+        # Was: the copy's size read by an unbounded look at the share asleep, None, and a TypeError raised out of a
+        # conversion that was done: the panel said it could not be converted.
+        with self.on_a_share_that_falls_asleep_at("original deleted"):
+            result = self.convert(self.source)
+        self.assertEqual((1, True), (result.changed, result.ok), result.message())
+        target = clip_convert.target_of(self.source)
+        self.assertEqual(os.path.getsize(target), result.details["size_after"], "the copy's size, as its row records it")
+        self.assertEqual(["done"], self.converted_states(self.photo_id))
         self.assert_converted(self.source, self.photo_id, TITLE)
 
     def test_an_mp4_of_its_own_name_killed_between_its_delete_and_its_rename_is_put_in_place_by_the_settle(self):

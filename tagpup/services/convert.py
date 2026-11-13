@@ -208,7 +208,7 @@ def convert_clip(library, exiftool_path, tools, source, reason=OLD_FORMAT, progr
             else:
                 file_journal.release(library.path, change_id)
             if result.changed:
-                result.details["size_after"] = file_changes.fingerprint(target)["size"]
+                result.details["size_after"] = _size_recorded(library, target)
     except BaseException:
         file_journal.release(library.path, change_id)
         raise
@@ -475,6 +475,16 @@ def _onward(library, exiftool_path, row, forward, result, problem=None):
     file_journal.mark(library.path, [row.id], "done")
     result.changed = 1
     return True
+
+
+def _size_recorded(library, target):
+    """The size of the converted copy at `target` as its row records it (the carry's write, or _followed, read it last):
+    no look at its share, which may have stopped answering as the conversion ended."""
+    conn = db.connect(db.readonly_uri(library.path), uri=True)
+    try:
+        return photos.stamps_of(conn, [target])[paths.key(target)][3]
+    finally:
+        conn.close()
 
 
 def _short_of(library, exiftool_path, target, after):
