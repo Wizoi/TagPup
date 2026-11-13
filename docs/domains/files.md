@@ -257,12 +257,11 @@ refused. Each was edited in memory (a caption, a keyword added, an Orientation),
   property splices from the element before it), a byte order mark or UTF-16, a NUL, an Alt not one x-default item, bytes after the end PI, `end='r'`
   (all 4,366 wrapped are `end='w'`). CRLF: none in the packets. A value XML cannot carry (NUL, another C0) is refused,
   and so is an empty keyword (a Bag item ''; nothing real writes one and ExifTool drops it);
-  `&`, `<`, `>` are escaped and a CR written `&#xD;`. Over `LIMIT` (64 KB, read or made) is refused; that a JPEG's
-  segment holds a few bytes less is its container's to check.
+  `&`, `<`, `>` are escaped and a CR written `&#xD;`. No size is refused here; a JPEG packet is bounded by its segment, a clip's by `PATCH_CAP`.
 - **Handled instances**: the empty caption `<rdf:li xml:lang='x-default'/>` (photo_index 264 of 1,000, renton_parkrun 1)
   reads '' and '' or None writes nothing; no wrapper, 7 in kr-track (an edit at its length, or growing with no padding
   laid; the 7 grow); a single line break of padding in 11 (kr-track 9, renton_parkrun 2): an edit needing room is
-  refused, and with grow too, the reserve carrying each past `LIMIT`; a namespace URI holding `xmlns/` (Iptc4xmpCore), 2
+  refused without `grow` (a JPEG's, whose segment is fixed: the rewrite's); with `grow` the packet is laid `RESERVE` of padding and grows (a clip's, placed by `clip_patch`); a namespace URI holding `xmlns/` (Iptc4xmpCore), 2
   in photo_index. ExifTool's padding, a line break and 24 lines of 100 spaces (`padding(2425)`), in 4,355 of the 4,366
   wrapped packets.
 - **What it does differently from ExifTool**: a property of a namespace the packet does not declare is declared on the
@@ -282,7 +281,7 @@ refused. Each was edited in memory (a caption, a keyword added, an Orientation),
   2,184 clips in the three libraries' 2,603 photo folders, 80 hold an XMP packet: 40 wrapped by Adobe Premiere or Media
   Encoder (`xmp:CreateDate`, `tiff:Orientation`, `xmpMM:DocumentID` attributes, padding of 2,000 B or more), 39 bare
   368-byte "Adobe XMP Core 5.1.0-jc003" packets (a self-closing Description, `exif:DateTimeOriginal` an attribute, no
-  wrapper), 1 of 206,986 B (over `LIMIT`, refused). 79 read; each was edited in memory (a date, a keyword, a caption,
+  wrapper), 1 of 206,986 B (refused then; read and edited since). 79 read; each was edited in memory (a date, a keyword, a caption,
   the dates cleared), nothing written: the 40 every one at its length, the 39 only with `grow` (no padding) but for a
   value of the same length, and each edit made twice gave the bytes of once. JPEGs: 300 of photo_index's 59,600 sampled
   (seed 20261105) hold 300 packets, every one ExifTool's, none with a property as an attribute or a self-closing

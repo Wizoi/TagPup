@@ -258,8 +258,8 @@ def write(et, photo_path, values, saving=None, scratch_written=None, own_writer=
     `saving(record, before)` is the journal's (tagpup.services.file_changes): given, a JPEG whose fields fit is patched
     in place (the module; PATCH_IN_PLACE), which calls it with its record (tagpup.files.in_place.record) and writes no
     byte until it returns, nor at all when it raises. ExifTool's rewrite never calls it: it leaves the file it held or the
-    one it was to hold, whole. A JPEG patch is at most three segments of 64 KB, under file_journal.PATCH_CAP, so the
-    journal's PatchTooLarge is not met here. A patch whose photo's share does not answer raises NotAnswered, the file
+    one it was to hold, whole. A JPEG patch is at most three segments of 64 KB, with its record under
+    file_journal.PATCH_CAP, so the journal's PatchTooLarge (a Refused) is not met here; a clip's may be (_clip_written). A patch whose photo's share does not answer raises NotAnswered, the file
     settled by its bytes (file_changes._by_bytes).
 
     Returns the fields of `values` the write left holding what they held before (fields.XMP_ONLY: a keyword or caption
@@ -351,7 +351,8 @@ def _clip_written(photo_path, values, saving):
     patch of its XMP in place (in_place.patch_clip), saved by `saving` before a byte is written. Raises Refused, nothing
     written, for a write that is not the journal's (no `saving`: nothing could settle a
     patch a crash cut short), or one naming a field outside fields.CLIP_FIELDS (images.CLIP_NOT_EDITED); for a clip the
-    patch cannot place (images.CLIP_NOT_PATCHED); a clip open in another program (in_place's sentence). Raises Unreadable
+    patch cannot place (images.CLIP_NOT_PATCHED); a clip open in another program (in_place's sentence); a patch more
+    than the journal keeps (`saving` raises file_journal.PatchTooLarge, its own sentence). Raises Unreadable
     when it could not be read before a byte was written (NotAnswered: its share did not answer); a write that failed
     after its record was saved raises as it failed, the file settled by its bytes. ExifTool is not asked."""
     if saving is None or clip_refused(photo_path, values):

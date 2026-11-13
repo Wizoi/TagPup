@@ -520,9 +520,9 @@ class ARouteAnswersWhatAServiceRaisedThroughTheOneMapper(unittest.TestCase):
 
 
 #: The functions of tagpup/web that may tell what the server keeps of a photo a write renamed, and what each may tell:
-#: `_followed_rename`, the one follow-up of a photo's rename (Suggest's looks, the folder maps' records moved, their
-#: stamps); the folder's rename tells the looks and reads its folder again instead of moving records (#2852).
-RENAME_FOLLOWERS = {"_followed_rename": {"looks", "records"}, "folder_rename_photos": {"looks"}}
+#: `_followed_rename`, the one follow-up of every rename (Suggest's looks, the folder maps' records moved, their stamps),
+#: a folder's Smart Rename's included (#2852, #2892).
+RENAME_FOLLOWERS = {"_followed_rename": {"looks", "records"}}
 
 
 def rename_followups(source):
@@ -563,7 +563,8 @@ class ARenamedPhotoIsFollowedInOnePlace(unittest.TestCase):
     """The follow-up of a photo's rename -- Suggest's looks kept under the new name, the folder maps' records moved to it,
     their stamps taken -- was written three times in tagpup_routes (a Smart Rename of one photo, a save renaming it after
     its title, a clip's conversion), and a fourth write renaming a photo would have written a fourth that could skip a
-    step (#2852). `_followed_rename` is the one; a write that renames a photo calls it
+    step (#2852); the folder's Smart Rename, which told the looks and read its own folder again, skipped an ancestor's
+    scan (#2892). `_followed_rename` is the one; a write that renames a photo calls it
     (tests/test_what_the_server_keeps_follows_a_rename.py holds each caller to what it does)."""
 
     def test_a_follow_up_of_its_own_is_found(self):

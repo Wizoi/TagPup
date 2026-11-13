@@ -72,7 +72,8 @@ def clip_stale_of(values):
 def new_packet(old, values):
     """(the clip's new XMP packet, the fields of `values` left stale) of a clip's save, `values` naming only
     fields.CLIP_FIELDS (another raises ValueError: the caller refuses it before planning). `old` is the packet the clip's
-    one XMP box holds (bytes, at most xmp_packet.LIMIT), None for a clip with none, which is given xmp_packet.blank().
+    one XMP box holds (bytes, of any size: the journal's cap bounds a clip's patch, file_journal.PATCH_CAP), None for a
+    clip with none, which is given xmp_packet.blank().
     The packet is `old` itself when it already holds the values (None, a clip with none and nothing to write). None when
     it is not a patch: a value it cannot spell, a packet the editor refuses (the clip waits for the whole-file rewrite)."""
     unknown = sorted(set(values) - fields.CLIP_FIELDS)
