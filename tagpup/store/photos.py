@@ -555,35 +555,6 @@ def record_indexed(conn, photo_path, row, model=None, known=None, batch=None):
     return photo_id
 
 
-# ---- A photo's picture size, filled once (scripts/fill_picture_sizes.py) --------------------
-
-def picture_size_counts(conn):
-    """{"to fill": photos (kind 'photo') whose size is not read (width NULL), "already filled": photos whose size is,
-    "clips": rows of kind 'video', whose size is never read}: what the one-off fill of the sizes says before it reads a
-    file (tagpup.services.picture_sizes). One scan of the rows, nothing but two of their columns."""
-    found = {"to fill": 0, "already filled": 0, "clips": 0}
-    for kind, unread, count in conn.execute("SELECT kind, width IS NULL, COUNT(*) FROM photos GROUP BY 1, 2"):
-        found["clips" if kind != "photo" else "to fill" if unread else "already filled"] += count
-    return found
-
-
-def unsized(conn, after_id, limit):
-    """[(id, native path, mtime, size)] of at most `limit` photos (kind 'photo') whose size is not read (width NULL),
-    of id above `after_id`, by id: a page of the one-off fill (tagpup.services.picture_sizes), which goes on from the
-    last id it was given, so a photo it could not read is not given again in the same run."""
-    rows = conn.execute("SELECT id, path, mtime, size FROM photos WHERE id > ? AND kind = 'photo' AND width IS NULL"
-                        " ORDER BY id LIMIT ?", (after_id, limit)).fetchall()
-    return store_roots.natives(conn, rows, 1)
-
-
-def record_picture_sizes(conn, sized):
-    """Record each photo's picture size, `sized` [(width, height, id, mtime, size)], where its row still has none and
-    is still stamped (mtime, size) as when its file was read: a row read again meanwhile (the index records the size
-    itself) or a file the index found changed is left as it is. Returns how many rows changed. The caller commits."""
-    return sum(conn.execute("UPDATE photos SET width = ?, height = ? WHERE id = ? AND kind = 'photo'"
-                            " AND width IS NULL AND mtime = ? AND size = ?", row).rowcount for row in sized)
-
-
 def remove_under(conn, folder):
     """Take the photos under a folder, at any depth, out of the library with their faces.
     The files are not touched. Returns {photos_removed, faces_removed, manual_lost,
@@ -668,16 +639,6 @@ def raw_rows(conn):
     for path, raw_json in conn.execute("SELECT path, raw_metadata FROM photos"
                                        " WHERE raw_metadata IS NOT NULL AND raw_metadata != ''"):
         yield paths.from_row(path, roots), json.loads(raw_json)
-
-
-def clip_rows(conn):
-    """[(id, path)] of every clip's row (a row of kind 'video', tagpup.files.images.is_clip), by id, the path native: the
-    clips the one-time move of Windows Tags reads (tagpup.services.windows_tags). Spelled `kind = 'video'`, as the clips'
-    partial index is (idx_photos_clips, migration 39), so it walks that index alone: `kind IN ('video')` is not read as
-    its WHERE and scans the table (EXPLAIN QUERY PLAN on the three live libraries, read-only, 2026-11-09)."""
-    roots = store_roots.roots_for(conn)
-    return [(photo_id, paths.from_row(path, roots)) for photo_id, path in conn.execute(
-        "SELECT id, path FROM photos WHERE kind = 'video' ORDER BY id")]
 
 
 def row_paths(conn):

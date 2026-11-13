@@ -66,7 +66,6 @@ SCENARIOS = {
     "F15": ("files", "A clip of up to 2 GiB is deleted as a photo is (from a share through this PC, its copy whole, its vector, frames and poster with it, other writers let in after each clip of a bulk delete, its stream refused while it is deleted); a larger one, or a file its own drive's Recycle Bin would not keep, or one from a share whose copy this PC's Recycle Bin would not keep (full: 'The Recycle Bin is full: delete permanently instead?'; the Bin still keeps what it has room for), is deleted for good only once the owner confirmed the warning naming it (no copy made or counted; unconfirmed, or a question that did not name it, nothing touched), the reply saying for good; one held open, or whose size cannot be read, is left with its row and a sentence."),
     "F16": ("files", "A clip's Date Taken is written into its XMP dates (xmp:CreateDate only where it holds one), its QuickTime dates left byte for byte, its row and the library's order following; undone from History, the old xmp:CreateDate given back; refused outside the library while the held clip is dated; a date save cut short settled by its bytes at the next start."),
     "F17": ("files", "A tag-tree rename, merge or retire of a tag a clip holds rewrites the clip's XMP with the photos, its row following, and the tree moves once every file is rewritten."),
-    "F18": ("files", "ONE-OFF, deleted with scripts/convert_old_clips.py: a library's clips in an older format converted once to H.264 and AAC in an .mp4 beside them (a dry run writes nothing; refused while the app runs; --limit; the original deleted for good only once its copy is verified, a run killed after the verify or after the delete finished by the next; a stale temp removed, a fresh one left; a refused delete stops the run with both kept; an .mp4 name taken as a file or a row leaves the clip be); then the sync of the whole library removes the old row and indexes the .mp4 with its title."),
     "F19": ("files", "A clip of an old format (.wmv, .mpg, .avi; an .mp4 of MPEG-4 Part 2 under its own name) is converted to H.264 and AAC in an MP4 as one change of History that is never undone: its row followed to the MP4, its title, tags and the name it had carried into the copy, its Date Taken kept (a dated .mov, an .mp4 dated in its XMP; a .wmv's creation time never made one), the original deleted for good last (never binned); a conversion cut short at any step is settled at the next start, its copy on its disk before it was recorded (a power cut finds it whole); ffmpeg failing, or a copy its disk will not take, leaves the original and no temp; an original that cannot be deleted is kept, the copy in place, for the next settle; a second conversion of one clip is refused before ffmpeg runs; the panel's Convert and Make smaller (MP4) by id answer at once with a ticket the Activity strip lists and Cancel stops, a second click and a stale stamp are refused, a shrink no smaller is withdrawn, a button that is not the clip's plan is refused."),
     "V1": ("views", "A view lists each photo once, in the owner's order, with its count; a clip by its XMP date first, then its QuickTime one, a date of zeros no date; under the Photos / Videos filter its photos or its clips alone, the source's whole count beside."),
     "V2": ("views", "A typed search ANDs its words and ranks nothing."),
@@ -133,7 +132,7 @@ _SCENARIO_FILES = {
         "test_bulk_writes_start_from_the_file test_a_bake_is_planned_from_the_library "
         "test_an_index_reads_a_bake "
         "test_the_index_writes_the_bake test_a_caption_repeating_the_title_is_cleared "
-        "test_a_photos_picture_size_is_filled test_a_long_change_cut_off_is_settled_in_chunks"
+        "test_a_long_change_cut_off_is_settled_in_chunks"
     ),
     "F4": "test_folder_watcher test_one_walk_of_a_library_at_a_time test_sync",
     "F5": "test_scenario_two_libraries_share_a_folder",
@@ -152,14 +151,12 @@ _SCENARIO_FILES = {
     "F12": "test_a_clip_is_indexed_as_a_video",
     "F13": (
         "test_a_clip_tagged_through_the_journal test_a_clip_titled_in_quicktime test_a_clip_tag_undone "
-        "test_a_clip_patch_cut_short test_a_clip_is_not_turned test_a_clips_windows_tags_freed "
-        "test_a_librarys_windows_tags_moved_once"
+        "test_a_clip_patch_cut_short test_a_clip_is_not_turned"
     ),
     "F14": "test_a_clip_renamed",
     "F15": "test_a_clip_deleted test_a_delete_when_the_recycle_bin_is_full",
     "F16": "test_a_clip_dated_through_the_journal",
     "F17": "test_a_tag_tree_edit_of_a_tag_a_clip_holds",
-    "F18": "test_a_librarys_old_clips_converted",
     "F19": "test_a_clip_converted clip-convert",
     "I1": "scenario-switching-library-mid-folder",
     "I2": "scenario-write-through-a-server-update test_server_drain",
