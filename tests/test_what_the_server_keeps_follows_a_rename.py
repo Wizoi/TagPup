@@ -334,6 +334,20 @@ class AFolderRenamedWhileAnAncestorIsScanned(unittest.TestCase):
         self.assertEqual([], failed[:3])
         self.assertEqual(self.COUNT, len(self.lib.folders().peek(self.lib.photos)), "every record kept")
 
+    def test_what_a_scan_put_hands_back_is_a_copy_a_rename_does_not_change(self):
+        """The path taken after any write (the kept map is gone, the folder is scanned and put): the caller walks what put
+        gave back while the rename re-keys the map it stored (#2910, the review's second row)."""
+        cache = self.lib.folders()
+        cache.clear()
+        scanned = {paths.key(os.path.join(self.folder, "Harbour - %04d.jpg" % number)): {"n": number}
+                   for number in range(5)}
+        walked = cache.put(self.lib.photos, scanned)
+        cache.move_all([(paths.stored(os.path.join(self.folder, "Harbour - 0000.jpg")),
+                         paths.stored(os.path.join(self.folder, "Quay - 0000.jpg")), None)])
+        self.assertIn(paths.key(os.path.join(self.folder, "Harbour - 0000.jpg")), walked,
+                      "what put gave back changed with the rename: it is the stored map, not a copy")
+        self.assertNotIn(paths.key(os.path.join(self.folder, "Harbour - 0000.jpg")), cache.peek(self.lib.photos))
+
     def test_the_readers_of_a_scan_walk_a_copy_while_the_folder_is_renamed_back_and_forth(self):
         """What Suggest's photos, a time shift's targets and the suggest-status answer each walk: the records of the
         folder's map, one after another, while the rename re-keys the map (#2910)."""

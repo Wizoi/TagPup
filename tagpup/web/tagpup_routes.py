@@ -507,11 +507,13 @@ def folder_time_shift():
             path = paths.stored(meta["path"])
             # Every map holding the photo: this folder's, and an ancestor's scan that
             # walked into it.
-            cache.move(path, path, photo_actions.page_record(path, meta, meta["mtime"], meta["size"]))
+            record = photo_actions.page_record(path, meta, meta["mtime"], meta["size"])
+            cache.move(path, path, record)
+            photos[paths.key(path)] = record
     except Exception as e:
         logger.error("Error applying time shift to %s: %s", folder, e)
         return responses.error(500, str(e))
-    return jsonify({"success": True, "updated_photos": _sorted(cache.snapshot(folder) or photos),
+    return jsonify({"success": True, "updated_photos": _sorted(photos if (held := cache.snapshot(folder)) is None else held),
                     "updated_count": result.changed, "requested_count": result.attempted,
                     **_where(result)})
 
