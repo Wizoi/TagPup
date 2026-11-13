@@ -23,13 +23,16 @@ import { forgetSelectedIds, newIdSelection, reconcileIdSelection } from './selec
 
 /**
  * The kinds a view is, as GET /api/library/ids names them: the sources a navigator row holds -- `keyword_only` a keyword's
- * node without the nodes under it, `year_other` the photos of a year whose date names no month of it -- and `any_of`, the
+ * node without the nodes under it, `year_other` the photos of a year whose date names no month of it, `untagged` the photos
+ * with no keyword (#2837; no value, as `all`) -- and `any_of`, the
  * union of a list of them (the rows selected together, #672; its value is the list, each { kind, value, recursive }) -- and
  * `search` (phase 9e): its value { all_of, any_of, none_of, words }, three lists of sources and the words typed (search.js).
  */
-export const LIBRARY_KINDS = ['all', 'folder', 'keyword', 'person', 'year', 'month', 'keyword_only', 'year_other', 'any_of', 'search'];
+export const LIBRARY_KINDS = ['all', 'folder', 'keyword', 'person', 'year', 'month', 'keyword_only', 'year_other', 'untagged', 'any_of', 'search'];
 /** The kinds a union holds. */
 export const MEMBER_KINDS = LIBRARY_KINDS.filter(kind => kind !== 'any_of' && kind !== 'search');
+/** The kinds that name no value: the whole library, and the photos with no keyword. */
+const VALUELESS = ['all', 'untagged'];
 /** A search's lists, in the order its address names them (the contract of phase 9e-1); `words` follows them. */
 export const SEARCH_LISTS = ['all_of', 'any_of', 'none_of'];
 /** The longest text of words a search reads (services.library_view.MAX_WORDS). */
@@ -145,7 +148,7 @@ export function viewSpecFromSearch(search) {
     if (!LIBRARY_MEDIA.includes(media)) {
         return { error: `This address shows a kind of item (“${media.slice(0, 40)}”) that TagPup does not know. The kinds are photo and video.` };
     }
-    if (kind === 'all') return { kind, value: null, recursive: false, order, media };
+    if (VALUELESS.includes(kind)) return { kind, value: null, recursive: false, order, media };
     if (kind === 'any_of') {
         const members = unionFromText(params.get('value') || '');
         return members.error ? members : { kind, value: members, recursive: false, order, media };
@@ -161,7 +164,7 @@ export function viewSpecFromSearch(search) {
 /** One source as an address or a union names it: { kind, value, recursive }, or { error } saying why it is none. */
 function memberOf(kind, raw, recursive) {
     if (!MEMBER_KINDS.includes(kind)) return { error: `A view of the library cannot hold “${String(kind).slice(0, 40)}”.` };
-    if (kind === 'all') return { kind, value: null, recursive: false };
+    if (VALUELESS.includes(kind)) return { kind, value: null, recursive: false };
     const value = (raw === null || raw === undefined ? '' : String(raw)).trim();
     if (!value) return { error: `This address names a ${kind} view without saying which.` };
     if (value.length > MAX_VALUE) return { error: `This address names a ${kind} too long to be one.` };
@@ -307,7 +310,7 @@ export function viewSearch(spec) {
     params.set('view', spec.kind);
     if (spec.kind === 'any_of') params.set('value', unionText(spec.value));
     else if (spec.kind === 'search') params.set('value', searchText(spec.value));
-    else if (spec.kind !== 'all') params.set('value', spec.value);
+    else if (!VALUELESS.includes(spec.kind)) params.set('value', spec.value);
     if (spec.recursive) params.set('recursive', '1');
     if (spec.order && spec.order !== DEFAULT_ORDER) params.set('order', spec.order);
     if (spec.media && spec.media !== DEFAULT_MEDIA) params.set('media', spec.media);
@@ -343,6 +346,7 @@ export function memberLabel(spec) {
     if (spec.kind === 'keyword_only') return `${spec.value} alone`;
     if (spec.kind === 'folder') return `${baseName(spec.value) || spec.value}${spec.recursive ? '' : ' alone'}`;
     if (spec.kind === 'all') return 'everything';
+    if (spec.kind === 'untagged') return 'no tag';
     if (spec.kind === 'person') return leafOf(String(spec.value));   // a person is asked for by their tag; the leaf is what is shown
     return String(spec.value);
 }
@@ -367,6 +371,7 @@ function searchLabel(value) {
 /** What a view is called, in the header. */
 export function viewLabel(spec) {
     if (spec.kind === 'all') return 'The whole library';
+    if (spec.kind === 'untagged') return 'Photos with no tag';
     if (spec.kind === 'search') return searchLabel(spec.value || {});
     if (spec.kind === 'any_of') {
         const members = Array.isArray(spec.value) ? spec.value : [];
@@ -400,6 +405,7 @@ function filteredSentence(spec) {
 export function emptySentence(spec) {
     if (spec.media && spec.media !== DEFAULT_MEDIA && spec.of > 0) return filteredSentence(spec);
     if (spec.kind === 'all') return 'This library holds no photos.';
+    if (spec.kind === 'untagged') return 'Every photo has a tag.';
     if (spec.kind === 'any_of') return 'None of the rows selected holds a photo, or the library no longer has them.';
     if (spec.kind === 'search') return 'Nothing in the library matches this search.';
     if (spec.kind === 'keyword_only') return `No photo carries the keyword “${spec.value}” itself, or the library's tag tree has no such keyword.`;

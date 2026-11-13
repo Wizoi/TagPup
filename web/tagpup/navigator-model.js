@@ -82,11 +82,17 @@ function navFolderRow(node, level, expanded) {
 
 // ---- Keywords --------------------------------------------------------------------------------
 
+/** The row of the photos with no keyword (#2837): the Keywords tree's last, drawn while there is one. */
+export const UNTAGGED_ID = 'u:';
+/** What the filter finds that row by. */
+const UNTAGGED_WORDS = 'no tag untagged';
+
 /**
  * The tag tree of the route's list, [{ tag, name, parent, count }] (`parent` the tag of the node above, or null):
- * nodes by tag and by the tag without case, each holding its children alphabetically (compareTagNames).
+ * nodes by tag and by the tag without case, each holding its children alphabetically (compareTagNames); `untagged`, the
+ * photos with no keyword, which the route counts beside the tree.
  */
-export function indexKeywords(list) {
+export function indexKeywords(list, untagged = 0) {
     const byTag = new Map();
     const byLower = new Map();
     for (const each of Array.isArray(list) ? list : []) {
@@ -107,7 +113,7 @@ export function indexKeywords(list) {
     const alphabetical = (a, b) => compareTagNames(a.name, b.name) || compareTagNames(a.tag, b.tag);
     tops.sort(alphabetical);
     for (const node of byTag.values()) node.children.sort(alphabetical);
-    return { byTag, byLower, tops, size: byTag.size };
+    return { byTag, byLower, tops, size: byTag.size, untagged: Number(untagged) || 0 };
 }
 
 function navKeywordRow(node, level, expanded) {
@@ -118,6 +124,15 @@ function navKeywordRow(node, level, expanded) {
         aria: `${node.name}, ${navPlural(node.count, 'photo', 'photos')}`,
         hint: '', expandable: node.children.length > 0, expanded: open && node.children.length > 0,
         spec: { kind: 'keyword', value: node.tag, recursive: false },
+    };
+}
+
+function navUntaggedRow(index) {
+    return {
+        id: UNTAGGED_ID, level: 1, label: 'No tag', count: index.untagged,
+        title: `${navPlural(index.untagged, 'photo', 'photos')} with no tag in the tag tree`,
+        aria: `No tag, ${navPlural(index.untagged, 'photo', 'photos')}`,
+        hint: '', expandable: false, expanded: false, spec: { kind: 'untagged', value: null, recursive: false },
     };
 }
 
@@ -342,8 +357,10 @@ export function sectionRows(section, index, expanded, filter, capped = null) {
     }
     if (section === 'dates') return navDateRows(index, expanded, needle, cap);
     const make = section === 'folders' ? navFolderRow : navKeywordRow;
+    const untagged = section === 'keywords' && index.untagged > 0;
     if (!needle) {
         navWalk(index.tops, 1, expanded, make, out);
+        if (untagged) out.push(navUntaggedRow(index));
         return navCapped(out, treeCap, out.length);
     }
     let found = 0;
@@ -362,6 +379,10 @@ export function sectionRows(section, index, expanded, filter, capped = null) {
         row.expanded = false;
         row.hint = section === 'folders' ? node.path : node.tag;
         out.push(row);
+    }
+    if (untagged && navMatches(UNTAGGED_WORDS, needle)) {
+        found += 1;
+        out.push(navUntaggedRow(index));
     }
     return navCapped(out, cap, found);
 }
@@ -433,6 +454,7 @@ export function locate(section, index, spec) {
         }
         return { id, open };
     }
+    if (section === 'keywords' && spec.kind === 'untagged') return index.untagged > 0 ? { id: UNTAGGED_ID, open: [] } : null;
     if (section === 'keywords' && (spec.kind === 'keyword' || spec.kind === 'keyword_only')) {
         let node = index.byTag.get(spec.value) || index.byLower.get(String(spec.value).toLowerCase());
         if (!node) return null;
@@ -484,7 +506,7 @@ export function sectionOf(spec) {
     if (spec.kind === 'any_of') return Array.isArray(spec.value) && spec.value.length ? sectionOf(spec.value[0]) : null;
     if (spec.kind === 'search') return null;
     if (spec.kind === 'folder') return 'folders';
-    if (spec.kind === 'keyword' || spec.kind === 'keyword_only') return 'keywords';
+    if (spec.kind === 'keyword' || spec.kind === 'keyword_only' || spec.kind === 'untagged') return 'keywords';
     if (spec.kind === 'person') return 'people';
     if (spec.kind === 'year' || spec.kind === 'month' || spec.kind === 'year_other') return 'dates';
     return null;
@@ -540,6 +562,11 @@ export function rowTree(section, index) {
                 { kind: 'keyword', value: node.tag, recursive: false });
         }
         tops = index.tops.map(n => n.id);
+        if (index.untagged > 0) {
+            const spec = { kind: 'untagged', value: null, recursive: false };
+            add(UNTAGGED_ID, [], spec, spec);
+            tops.push(UNTAGGED_ID);
+        }
     } else if (section === 'people') {
         const visit = (node) => {
             if (children.has(node.id)) return;

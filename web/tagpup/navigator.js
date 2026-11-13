@@ -47,7 +47,7 @@ const NAV_SECTIONS = {
     },
     keywords: {
         label: 'Keywords', tree: true, noun: 'keywords', loading: 'Loading the keywords...',
-        empty: 'The library has no keywords yet.', build: body => indexKeywords(body.keywords),
+        empty: 'The library has no keywords yet.', build: body => indexKeywords(body.keywords, body.untagged),
     },
     people: {
         label: 'People', tree: true, noun: 'people', loading: 'Loading the people...',

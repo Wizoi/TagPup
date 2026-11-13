@@ -8,7 +8,7 @@
 import { test, describe, afterEach } from "node:test";
 import assert from "node:assert/strict";
 import { closeAllApps, click } from "./harness.mjs";
-import { loadViewPage, pageErrors, personRow, syntheticDates } from "./view-page.mjs";
+import { loadViewPage, pageErrors, personRow, syntheticDates, syntheticKeywords } from "./view-page.mjs";
 
 afterEach(() => {
   closeAllApps();
@@ -369,6 +369,61 @@ describe("the sort", () => {
   });
 });
 
+describe("No tag: the photos with no keyword (#2837)", () => {
+  const withUntagged = (n) => ({ keywords: { keywords: syntheticKeywords(), untagged: n } });
+  const labels = (rows) => rows.map((row) => row.querySelector(".nav-label").textContent);
+
+  test("the Keywords tree ends with No tag and its count; a click opens its photos, the address naming no value", async (t) => {
+    const ctx = await loadViewPage(t, { search: "?view=all", navigator: withUntagged(37) });
+    await ctx.openTab("keywords");
+    const row = ctx.rows("keywords").at(-1);
+    assert.equal(row.querySelector(".nav-label").textContent, "No tag");
+    assert.equal(row.querySelector(".nav-count").textContent, "37");
+    click(ctx.window, row);
+    await ctx.settle();
+    assert.deepEqual(asked(ctx), { kind: "untagged", value: null, order: null, recursive: null });
+    assert.equal(ctx.window.location.search, "?view=untagged");
+    assert.match(ctx.stripText(), /Photos with no tag/);
+  });
+
+  test("Ctrl-click adds No tag to a keyword: one request for the union; Back and Forward restore the rows", async (t) => {
+    const ctx = await loadViewPage(t, { search: "?view=keyword&value=Trips", navigator: withUntagged(37) });
+    assert.equal(ctx.state.nav.tab, "keywords");
+    const before = ctx.idsAsked.length;
+    click(ctx.window, ctx.rowByLabel("keywords", "No tag"), { ctrlKey: true });
+    await ctx.settle();
+    assert.equal(ctx.idsAsked.length, before + 1);
+    const source = asked(ctx);
+    assert.equal(source.kind, "any_of");
+    assert.deepEqual(source.value, [{ kind: "keyword", value: "Trips" }, { kind: "untagged", value: null }]);
+    assert.deepEqual(labels(ctx.selectedRows("keywords")), ["Trips", "No tag"]);
+    const both = ctx.window.location.search;
+    await ctx.popTo("?view=untagged");
+    assert.deepEqual(labels(ctx.selectedRows("keywords")), ["No tag"]);
+    await ctx.popTo(both);
+    assert.deepEqual(labels(ctx.selectedRows("keywords")), ["Trips", "No tag"]);
+  });
+
+  test("a bookmark of ?view=untagged opens the Keywords tab on its row, and the filter finds it by its words", async (t) => {
+    const ctx = await loadViewPage(t, { search: "?view=untagged", navigator: withUntagged(37) });
+    assert.equal(ctx.state.nav.tab, "keywords");
+    assert.deepEqual(labels(ctx.selectedRows("keywords")), ["No tag"]);
+    assert.deepEqual(asked(ctx), { kind: "untagged", value: null, order: null, recursive: null });
+    for (const typed of ["no tag", "untagged"]) {
+      await filter(ctx, "keywords", typed);
+      assert.deepEqual(labels(ctx.rows("keywords")), ["No tag"], typed);
+    }
+  });
+
+  test("a library whose every photo has a tag draws no No tag row, nor finds one", async (t) => {
+    const ctx = await loadViewPage(t, { search: "?view=all", navigator: withUntagged(0) });
+    await ctx.openTab("keywords");
+    assert.ok(!labels(ctx.rows("keywords")).includes("No tag"));
+    await filter(ctx, "keywords", "no tag");
+    assert.deepEqual(labels(ctx.rows("keywords")), []);
+  });
+});
+
 describe("the model, alone", () => {
   test("compress gives the fewest sources and selectedRows gives the rows back", async (t) => {
     const ctx = await loadViewPage(t);
@@ -384,5 +439,13 @@ describe("the model, alone", () => {
     const back = m.selectedRows("dates", dates, m.specOfMembers(parts)).rows;
     assert.ok(!back.has("m:2020-03") && back.has("m:2020-04") && back.has("o:2020"));
     assert.equal(m.specOfMembers([]), null);
+    const keywords = m.indexKeywords(syntheticKeywords(), 12);
+    const kTree = m.rowTree("keywords", keywords);
+    assert.equal(kTree.tops.at(-1), m.UNTAGGED_ID, "No tag is the tree's last row");
+    const untagged = { kind: "untagged", value: null, recursive: false };
+    assert.equal(JSON.stringify(m.compress(kTree, new Set([m.UNTAGGED_ID]))), JSON.stringify([untagged]));
+    assert.deepEqual([...m.selectedRows("keywords", keywords, untagged).rows], [m.UNTAGGED_ID]);
+    assert.equal(m.sectionOf(untagged), "keywords");
+    assert.equal(m.locate("keywords", m.indexKeywords(syntheticKeywords(), 0), untagged), null, "no row when none");
   });
 });
