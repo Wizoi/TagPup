@@ -649,52 +649,6 @@ def raw_rows(conn):
         yield paths.from_row(path, roots), json.loads(raw_json)
 
 
-def clip_raw_rows(conn):
-    """(id, path, raw_metadata as read) of every clip (a row of kind 'video') holding raw_metadata, one row at a time:
-    what the one-off dating of clips by their names reads (tagpup.services.tagging.clips_dated_by_name). The path
-    native. One walk of the clips' own index, idx_photos_clips (photo_index: 2,910 clips, 2026-11-13)."""
-    roots = store_roots.roots_for(conn)
-    for photo_id, path, raw_json in conn.execute("SELECT id, path, raw_metadata FROM photos WHERE kind = ?"
-                                                 " AND raw_metadata IS NOT NULL AND raw_metadata != ''", ("video",)):
-        yield photo_id, paths.from_row(path, roots), json.loads(raw_json)
-
-
-def clips_to_redate(conn):
-    """([id] to date, [id] to clear) of the clips whose `taken` is NULL and whose row the library reads otherwise now
-    (_dated, date_photos' rule), as rows indexed before a clip was dated by its name hold them, or whose file has not
-    been written since. To date: the library dates them by the date in their file name (the 669 of photo_index,
-    2026-11-13; docs/findings.md #2933). To clear: no date in their name either, and a `year` the indexer of the day read
-    from their folder or a year alone in their name, where a clip with no Date Taken has none now (dates.photo_year; the
-    11 of photo_index, 2026-11-13, #2941). One search of idx_photos_taken (its NULLs), no file read."""
-    roots = store_roots.roots_for(conn)
-    to_date, to_clear = [], []
-    for photo_id, path, raw_json, year in conn.execute(
-            "SELECT id, path, raw_metadata, year FROM photos WHERE kind = ? AND taken IS NULL", ("video",)).fetchall():
-        taken, year_now = _dated(raw_json, paths.from_row(path, roots))
-        if taken is not None:
-            to_date.append(photo_id)
-        elif year != year_now:
-            to_clear.append(photo_id)
-    return to_date, to_clear
-
-
-def _rows_holding(conn, photo_ids, where):
-    """How many of `photo_ids` hold `where` now, counted from the rows, 500 ids a statement."""
-    return sum(conn.execute("SELECT COUNT(*) FROM photos WHERE id IN (%s) AND %s" % (",".join("?" * len(chunk)), where),
-                            chunk).fetchone()[0]
-               for chunk in (photo_ids[at:at + 500] for at in range(0, len(photo_ids), 500)))
-
-
-def redate_clips(conn):
-    """Date the clips clips_to_redate lists again, from their rows alone (date_photos), the caller committing in one
-    transaction; (how many it lists to date hold a `taken` afterwards, how many it lists to clear hold no `year`), counted
-    from the rows, not from the statement. Run again, it finds none."""
-    to_date, to_clear = clips_to_redate(conn)
-    date_photos(conn, to_date + to_clear)
-    return (_rows_holding(conn, to_date, "taken IS NOT NULL"),
-            _rows_holding(conn, to_clear, "taken IS NULL AND year IS NULL"))
-
-
 def row_paths(conn):
     """{photo id: path as the row holds it} of every photo: what sweeping the cache compares its entries
     with. 68,000 short strings; one scan of the table, once per sweep."""
