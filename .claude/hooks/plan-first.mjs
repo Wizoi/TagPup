@@ -22,7 +22,7 @@ import path from "node:path";
 export const WORKERS = new Set(["tagpup-worker", "tagpup-worker-small"]);
 const DOMAIN_LINE = /^[ \t>*-]*Domain:/gim;
 const INTEGRATION = /tagpup-owner-integration|^[ \t>*-]*Domain:\s*Integration\b/im;
-const PLAN_LINE = /^[ \t>*-]*Plan:\s*`?(docs\/plans\/[A-Za-z0-9_.-]+\.md)`?\s*$/gim;
+const PLAN_LINE = /^[ \t]*Plan:[ \t]*(docs\/plans\/[A-Za-z0-9_.-]+\.md)[ \t]*$/gm;
 const TEMPLATE = "docs/plans/README.md";
 
 /** Whether a brief is for a feature across two domains: two `Domain:` lines, or the integration owner named. */

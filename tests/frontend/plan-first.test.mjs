@@ -6,11 +6,11 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
-import { citedPlans, crossesDomains, reasonToBlock } from "../../.claude/hooks/plan-first.mjs";
+import { WORKERS, citedPlans, crossesDomains, reasonToBlock } from "../../.claude/hooks/plan-first.mjs";
 
 const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
 const HOOK = path.join(ROOT, ".claude", "hooks", "plan-first.mjs");
@@ -27,8 +27,8 @@ test("a brief across two domains, or naming the integration owner, crosses; one 
   assert.equal(crossesDomains("Domain: Data.\nThe brief says two `Domain:` lines need a plan."), false);
 });
 
-test("the plans a brief cites: one per Plan line, backticks allowed, the template is not a plan", () => {
-  assert.deepEqual(citedPlans("Plan: docs/plans/convert.md\nPlan: `docs/plans/clip-saves.md`"),
+test("the plans a brief cites: one per Plan line, the template is not a plan", () => {
+  assert.deepEqual(citedPlans("Plan: docs/plans/convert.md\nPlan: docs/plans/clip-saves.md"),
                    ["docs/plans/convert.md", "docs/plans/clip-saves.md"]);
   assert.deepEqual(citedPlans("Plan: docs/plans/README.md"), []);
   assert.deepEqual(citedPlans("See the plan: docs/plans/convert.md, and Plan: docs/plans/../x.md"), []);
@@ -74,7 +74,10 @@ test("as a hook: refused with exit 2 until the plan is written, and a broken pay
   assert.equal(run(undefined, "not json").status, 0);
 });
 
-test("the hook is registered on the Agent tool", () => {
+test("the hook is registered on the Agent tool, and the agents it names are the project's", () => {
+  for (const name of [...WORKERS, "tagpup-owner-integration"]) {
+    assert.ok(existsSync(path.join(ROOT, ".claude", "agents", name + ".md")), `${name} is not an agent: the hook guards nothing`);
+  }
   const settings = JSON.parse(readFileSync(path.join(ROOT, ".claude", "settings.json"), "utf8"));
   const entry = settings.hooks.PreToolUse.find((e) => e.hooks.some((h) => h.command.includes("plan-first.mjs")));
   assert.ok(entry, "plan-first.mjs is not a PreToolUse hook");
