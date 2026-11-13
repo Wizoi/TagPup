@@ -13,3 +13,4 @@ One file per retro, named `<date>-<scope>.md`, newest last. The process and the 
 | 2026-10-24 | [Phase 5, the SigLIP 2 photo model and the undo owner](2026-10-24-phase-5.md) | phase end; 13 of 25 workers past 150k |
 | 2026-10-28 | [Keep-in-step, the old models deleted, the share fix](2026-10-28-keep-in-step.md) | the feature tree called done; 47 of 122 worker runs past 150k |
 | 2026-11-08 | [Video support, clip writing, A5 cuts, the low batches](2026-11-08-video-and-clips.md) | phase end; 49% of worker runs past 150k |
+| 2026-11-13 | [Convert, the clip saves, the low batches](2026-11-13-convert-and-lows.md) | phase end; Convert built twice, three fixes for one clip |
