@@ -22,6 +22,7 @@ The services stand in (each renames the file on disk as the real one does and an
 the routes' follow-up. Written against the trunk before the follow-up was folded into one function, and passing there.
 """
 import os
+import sys
 import unittest
 from unittest import mock
 
@@ -332,6 +333,57 @@ class AFolderRenamedWhileAnAncestorIsScanned(unittest.TestCase):
             scanner.join()
         self.assertEqual([], failed[:3])
         self.assertEqual(self.COUNT, len(self.lib.folders().peek(self.lib.photos)), "every record kept")
+
+    def test_the_readers_of_a_scan_walk_a_copy_while_the_folder_is_renamed_back_and_forth(self):
+        """What Suggest's photos, a time shift's targets and the suggest-status answer each walk: the records of the
+        folder's map, one after another, while the rename re-keys the map (#2910)."""
+        import threading
+        failed, stop = [], threading.Event()
+        library = self.lib.library
+
+        def walking(reader):
+            while not stop.is_set():
+                try:
+                    reader()
+                except Exception as e:
+                    failed.append(repr(e))
+                    return
+
+        def suggest_photos():
+            held = tagpup_routes._folder_photos(library, self.lib.photos)
+            {key: meta for key, meta in held.items() if meta["media"] == "photo"}
+
+        def time_shift_targets():
+            held = tagpup_routes._folder_photos(library, self.lib.photos)
+            [paths.stored(record["path"]) for record in held.values() if record["media"] == "photo"]
+
+        def suggest_status():
+            status, reply = self.lib.get("/api/folder/suggest-status", {"path": self.lib.photos})
+            if status != 200:
+                failed.append((status, reply))
+        readers = [threading.Thread(target=walking, args=(reader,))
+                   for reader in (suggest_photos, time_shift_targets, suggest_status)]
+        for reader in readers:
+            reader.start()
+        # The map is re-keyed through its one owner, over and over, with the threads switched often: a rename of a
+        # folder this size is a moment, and the race is a reader caught inside it.
+        cache = self.lib.folders()
+        there = [paths.stored(os.path.join(self.folder, "Harbour - %04d.jpg" % number)) for number in range(self.COUNT)]
+        away = [path.replace("Harbour", "Quay") for path in there]
+        switch = sys.getswitchinterval()
+        sys.setswitchinterval(1e-6)
+        try:
+            for round_ in range(40):
+                before, after = (there, away) if round_ % 2 == 0 else (away, there)
+                cache.move_all([(old, new, None) for old, new in zip(before, after)])
+                if failed:
+                    break
+        finally:
+            sys.setswitchinterval(switch)
+            stop.set()
+            for reader in readers:
+                reader.join()
+        self.assertEqual([], failed[:3])
 
 
 if __name__ == "__main__":
