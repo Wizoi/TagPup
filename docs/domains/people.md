@@ -60,7 +60,8 @@ faces, counted 2026-11-08), and no writer files a face without its vector, so ev
 5. **No branch without an instance.** Met. Kept, each with its user action or count: a typed name (the pages' New Person
    dialog and the face box's typed name; neither the CLI nor the MCP names a face); `Directory.of_name` and `of_reference`'s
    bare-name arm (79 stored kr-track Suggest rows above, #1426); `is_background`'s NULL size, which puts no face in the
-   background (0 faces on such a photo, counted 2026-11-12; the user actions that make one: a Suggest look at a photo
+   background (rows of NULL size, counted 2026-11-12: 1 photo and 2,833 clips in photo_index, 5 clips in kr-track,
+   none in renton_parkrun, 0 faces on any of them; the user actions that make one: a Suggest look at a photo
    the library has no row for, an undo that puts back a row from before migration 39, a header the indexer could not
    read; DECISIONS 2026-11-12). A person at the top of the
    tag tree is legal (DECISIONS 2026-11-08, "A PERSON AT THE TOP OF THE TAG TREE IS LEGAL"): no branch refuses it and
