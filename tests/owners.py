@@ -340,7 +340,7 @@ _FILES = {
             "test_web_app undo-from-reply validation"
         ),
         "guard": (
-            "context-budget dom-contract merge-budget no-heredoc-escapes page-modules page-shape plan-first "
+            "context-budget dom-contract merge-budget no-heredoc-escapes page-modules page-shape plan-first read-budget "
             "test_config_single_owner test_database_axis_guard test_fixtures_make_photo_rows_like_the_indexer "
             "test_layers test_lint "
             "test_page_module_names test_processes_single_owner test_rules_have_one_owner test_sandbox_has_all_the_code "
