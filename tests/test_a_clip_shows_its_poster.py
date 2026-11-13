@@ -1,4 +1,4 @@
-"""A clip in the grid shows its poster frame, kept in the thumbnail cache as a photo's thumbnail is (scenario V16;
+"""A clip in the grid shows its poster frame, kept in the thumbnail cache as a photo's thumbnail is (scenario C9;
 tagpup.services.thumbnails, tagpup.files.thumbs.poster, tagpup.files.video_frames; owner, 2026-11-05: the middle frame,
 warmed ahead by `thumbs warm`).
 

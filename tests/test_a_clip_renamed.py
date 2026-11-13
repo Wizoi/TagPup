@@ -1,4 +1,4 @@
-"""A clip renamed as a photo is (F14; DECISIONS 2026-11-08, A5 cut A): Smart Rename of a day's selection, the Smart
+"""A clip renamed as a photo is (C3; DECISIONS 2026-11-08, A5 cut A): Smart Rename of a day's selection, the Smart
 Rename button beside one clip's name, and a Save that renames a Smart-Renamed clip after its title. Before its first
 rename a clip keeps the name it had in its XMP-xmpMM:PreservedFileName, patched into its XMP in place by the journaled
 write of its tags and title (field_values.writes names "name"; ExifTool is never asked to rewrite it), and the rename

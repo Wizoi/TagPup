@@ -1,4 +1,4 @@
-"""A clip's tag write cut short, and the next start (DECISIONS 2026-11-05, M7; scenario F13, its settle D3's rule).
+"""A clip's tag write cut short, and the next start (DECISIONS 2026-11-05, M7; scenario C2, its settle D3's rule).
 
 What the owner lives through: a tag is added to a clip (its XMP patched in place, a box appended: in_place.patch_clip)
 and the server dies, or the share stops answering, part-way. At the next start (file_changes.settle_once) the clip is
