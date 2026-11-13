@@ -513,35 +513,18 @@ BACKGROUND_SHARE = 0.02
 
 
 def is_background(box, size):
-    """Whether a face in `box` ([x1, y1, x2, y2]) is under BACKGROUND_SHARE of the picture's shorter side; `size` is
-    [width, height] of the picture the box is in (as stored). False for a picture of no known size."""
-    if not size or len(box) < 4 or not min(size):
+    """Whether a face in `box` ([x1, y1, x2, y2]) is under BACKGROUND_SHARE of its picture's shorter side, `size` the
+    photo's (width, height) as its row stores them (photos.width, height, migration 39: the frame the boxes are in).
+
+    The one rule of the face in the background (#2738, #2761): the photo's strip and boxes, Organize's suggestions,
+    Suggest, cluster-faces and Name faces from tags each ask it with the stored size, never a look at the file, so they
+    give one answer for one face. A size not read -- NULL: a header that could not be read, a clip, a row an undo put back
+    from before migration 39, a photo the library has no row for -- puts no face in the background (DECISIONS
+    2026-11-12, "A FACE ON A PICTURE OF NO STORED SIZE IS NOT IN THE BACKGROUND"). A box is four numbers, as detection
+    records it: none of the 199,648 stored in the three libraries is not (counted 2026-11-12)."""
+    if not size or not all(size):
         return False
     return min(box[2] - box[0], box[3] - box[1]) < BACKGROUND_SHARE * min(size)
-
-
-#: A face smaller than this many square pixels is a speck in the background: not named by the tag alone,
-#: and clustering names none of those a tenth of the largest's (background_faces).
-BACKGROUND_AREA = 2000
-
-
-def is_background_sized(box):
-    """Is a face with this box ([x1, y1, x2, y2]) under BACKGROUND_AREA square pixels? A box that is
-    not four numbers is not."""
-    try:
-        return (box[2] - box[0]) * (box[3] - box[1]) < BACKGROUND_AREA
-    except (TypeError, IndexError):
-        return False
-
-
-def background_faces(boxes):
-    """Indexes of the faces of one photo, by their boxes ([x1, y1, x2, y2], or None),
-    that are noise in the background: under a tenth the area of the largest and under
-    2,000 pixels outright. Clustering names none of them and the suggester offers no
-    name for them; each wrote this rule itself (docs/findings.md, #74)."""
-    areas = [(box[2] - box[0]) * (box[3] - box[1]) if box else 0 for box in boxes]
-    largest = max(areas, default=0)
-    return {i for i, area in enumerate(areas) if area < 0.10 * largest and area < BACKGROUND_AREA}
 
 
 # ---- One face in two detections ------------------------------------------------------

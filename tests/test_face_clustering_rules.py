@@ -1,8 +1,7 @@
 """Tests for the face identity resolution rules (tagpup.services.identities).
 
 This file covers the resolution pipeline: how anchors are found, how clusters vote, how conflicts inside a single photo are broken,
-which faces are dismissed as background noise, and how remaining faces are matched to
-leftover name tags.
+and how remaining faces are matched to leftover name tags. Faces in the background: scenario P12.
 
 Embeddings are synthetic unit vectors arranged so DBSCAN's grouping is unambiguous:
 faces of one identity sit well within the euclidean epsilon of the library's face model
@@ -299,62 +298,9 @@ class TestSameNameConflictInOnePhoto(FaceClusteringTestBase):
         self.assertEqual(self.name_of(bob_face), "Bob Roe")
 
 
-class TestBackgroundFaceFiltering(FaceClusteringTestBase):
-    def test_a_tiny_background_face_is_never_named_by_elimination(self):
-        """Noise faces are excluded from the process-of-elimination matching.
-
-        Under 10% of the largest face AND under 2000px counts as background. Without
-        the filter the leftover "Bob Roe" tag would be handed to the tiny face simply
-        because it is the only unassigned face left.
-        """
-        jane, stranger = identity_vector(1), identity_vector(3)
-        anchor_photo = self.add_photo("anchor.jpg", people=["Jane Doe"])
-        self.add_face(anchor_photo, jane)
-
-        photo = self.add_photo("crowd.jpg", people=["Jane Doe", "Bob Roe"])
-        big = self.add_face(photo, near(jane, 7), box=(0, 0, 400, 400))       # 160000
-        tiny = self.add_face(photo, stranger, box=(0, 0, 20, 20))             # 400
-
-        self.resolve()
-        self.assertEqual(self.name_of(big), "Jane Doe")
-        self.assertIsNone(
-            self.name_of(tiny), "a background face was handed the leftover name"
-        )
-
-    def test_a_tiny_face_can_still_be_matched_with_high_confidence(self):
-        """The counterpart: the final pass ignores the size filter.
-
-        A small face that is visually confident (>= 0.80), confirmed by the photo's
-        own tags, and whose name is not already taken by another face is still named
-        -- the desired outcome for someone genuinely small in frame.
-        """
-        jane, bob = identity_vector(1), identity_vector(2)
-        self.add_face(self.add_photo("jane.jpg", people=["Jane Doe"]), jane)
-        self.add_face(self.add_photo("bob.jpg", people=["Bob Roe"]), bob)
-
-        photo = self.add_photo("crowd.jpg", people=["Jane Doe", "Bob Roe"])
-        self.add_face(photo, near(bob, 7), box=(0, 0, 400, 400))     # Bob, prominent
-        tiny = self.add_face(photo, near(jane, 8), box=(0, 0, 20, 20))  # Jane, distant
-
-        self.resolve()
-        self.assertEqual(self.name_of(tiny), "Jane Doe")
-
-    def test_a_large_face_is_kept_even_beside_a_much_larger_one(self):
-        jane = identity_vector(1)
-        anchor_photo = self.add_photo("anchor.jpg", people=["Jane Doe"])
-        self.add_face(anchor_photo, jane)
-
-        photo = self.add_photo("pair.jpg", people=["Jane Doe"])
-        big = self.add_face(photo, near(jane, 9), box=(0, 0, 400, 400))
-        medium = self.add_face(photo, near(jane, 10), box=(0, 0, 100, 100))   # 10000 > 2000
-
-        self.resolve()
-        # Both are valid candidates, so the same-name conflict rule clears both;
-        # the point here is that `medium` was not silently dropped as noise.
-        self.assertNotIn(
-            "background", str(self.traces().get(medium, {}).get("resolution_method", ""))
-        )
-        self.assertIsNotNone(big)
+# A face in the background of its stored picture: tests/test_a_face_in_the_background_is_one_answer.py (P12), which
+# holds that the last pass asks no size, a hand-named face keeps its name whatever its size, and a face on a picture of
+# no stored size is not in the background.
 
 
 class TestProcessOfElimination(FaceClusteringTestBase):

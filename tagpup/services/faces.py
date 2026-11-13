@@ -586,8 +586,9 @@ def panel(library, photo_path, named):
     (tagpup.core.clustering.Cuts.is_offered, the library's face model's) the nearest name is noise, not a candidate:
     it was 0.5 here, which two strangers in three reach (docs/findings.md, #75).
     Named first, then by confidence, then largest first: the faces needing attention
-    are the ones the eye should land on. An unnamed face under clustering.BACKGROUND_SHARE of the picture's shorter side is left
-    out (the people behind the subject); the library keeps it.
+    are the ones the eye should land on. An unnamed face in the background (clustering.is_background, on the photo's
+    stored size, as the jobs ask it: the file's size is for drawing only) is left out (the people behind the subject); the
+    library keeps it.
     """
     conn = db.connect(db.readonly_uri(library.path), uri=True)
     try:
@@ -597,10 +598,11 @@ def panel(library, photo_path, named):
             return {"faces": [], "total": 0, "unmatched": 0}
         everyone = person_ids.Directory.read(conn)
         eras = faces.eras_of(conn, [row[0] for row in rows])   # where and when, for the years around it (FaceRows.likeness)
+        stored = photos.picture_size(conn, photo_path)
     finally:
         conn.close()
     shape = photo_files.box_shape(photo_path)
-    found = _faces_shown(rows, eras, everyone, key, _named_under(named, key), shape)
+    found = _faces_shown(rows, eras, everyone, key, _named_under(named, key), stored, shape)
     found.sort(key=lambda f: (f["name"] is None, -(f["similarity"] or 0.0), -f["area"]))
     size, turn = shape["size"], shape["turn"]
     return {"faces": found, "total": len(found),
@@ -614,9 +616,9 @@ def selection_suggestions(library, photo_paths, named):
     same cut the photo's own faces strip offers (`panel`'s faces, by one code). A face whose nearest is a name and no
     person is left out: a name alone is nobody to put on a photo. A photo with no such face is not in the answer.
 
-    One read of the library for every photo, and the named faces read once, on the first face that needs them. The
-    photos' files are looked at only for their size (photo_files.box_shape, bounded on a share), so that the faces left
-    out of a photo's own strip (BACKGROUND_SHARE) are left out here too."""
+    One read of the library for every photo, and the named faces read once, on the first face that needs them. No file
+    is looked at: the faces left out of a photo's own strip (clustering.is_background) are left out here by the size its
+    row stores."""
     conn = db.connect(db.readonly_uri(library.path), uri=True)
     try:
         key = faces.model_key(conn)
@@ -624,14 +626,14 @@ def selection_suggestions(library, photo_paths, named):
         for path in photo_paths:
             rows = faces.in_photo_for_panel(conn, path, key)
             if rows:
-                held[path] = (rows, faces.eras_of(conn, [row[0] for row in rows]))
+                held[path] = (rows, faces.eras_of(conn, [row[0] for row in rows]), photos.picture_size(conn, path))
         everyone = person_ids.Directory.read(conn) if held else None
     finally:
         conn.close()
     known, answer = _named_under(named, key), {}
-    for path, (rows, eras) in held.items():
+    for path, (rows, eras, stored) in held.items():
         best = {}
-        for face in _faces_shown(rows, eras, everyone, key, known, photo_files.box_shape(path)):
+        for face in _faces_shown(rows, eras, everyone, key, known, stored):
             who = face["suggestion_person"]
             if who and (who["id"] not in best or face["similarity"] > best[who["id"]]["similarity"]):
                 best[who["id"]] = {"person": who, "name": who["name"], "similarity": face["similarity"]}
@@ -646,22 +648,20 @@ def _named_under(named, key):
     return functools.cache(lambda: clustering.FaceRows.of(named()).under(key))
 
 
-def _faces_shown(rows, eras, everyone, key, known, shape):
+def _faces_shown(rows, eras, everyone, key, known, stored, shape=None):
     """The faces of one photo as the panel shows them (see `panel`), from its rows (faces.in_photo_for_panel) and
-    their eras, `everyone` the people directory, `known` the named faces under `key` (_named_under) and `shape` the one
-    look at the file (photo_files.box_shape): the unnamed faces too small for it (BACKGROUND_SHARE) are left out."""
+    their eras, `everyone` the people directory, `known` the named faces under `key` (_named_under), `stored` the photo's
+    size as its row stores it (photos.picture_size): the unnamed faces in the background of it (clustering.is_background)
+    are left out; and `shape`, the one look at the file (photo_files.box_shape), when the boxes are to be drawn."""
     cuts = clustering.cuts_of(key)
-    size, turn = shape["size"], shape["turn"]
+    size, turn = (shape["size"], shape["turn"]) if shape else (None, None)
     found = []
     for face_id, box_json, carried, prob, emb, excluded, reason in rows:
         name = carried.name if carried else None
-        try:
-            box = json.loads(box_json) if box_json else []
-        except Exception:
-            box = []
-        # A face nobody is named, behind the subject (BACKGROUND_SHARE): not in the answer, so no box, no card and no Add all
-        # for it. A named face stays whatever its size.
-        if name is None and not excluded and clustering.is_background(box, size):
+        box = json.loads(box_json)   # four numbers, as detection records it (clustering.is_background)
+        # A face nobody is named, behind the subject (clustering.is_background): not in the answer, so no box, no card and
+        # no Add all for it. A named face stays whatever its size.
+        if name is None and not excluded and clustering.is_background(box, stored):
             continue
         suggestion = suggested = similarity = None
         if name is None and not excluded:
@@ -673,8 +673,8 @@ def _faces_shown(rows, eras, everyone, key, known, shape):
                     suggested = None
         found.append({
             "id": face_id, "box": box,
-            "shown_box": orientation.to_upright(box, size[0], size[1], turn) if size and len(box) == 4 else None,
-            "area": (box[2] - box[0]) * (box[3] - box[1]) if len(box) >= 4 else 0,
+            "shown_box": orientation.to_upright(box, size[0], size[1], turn) if size else None,
+            "area": (box[2] - box[0]) * (box[3] - box[1]),
             "name": name, "person": everyone.of_id(carried.id) if carried else None, "prob": prob,
             "excluded": bool(excluded), "excluded_reason": reason,
             "suggestion": suggestion if name is None else None,

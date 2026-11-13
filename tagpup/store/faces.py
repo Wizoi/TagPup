@@ -350,12 +350,14 @@ def excluded_ids(conn):
 
 
 def for_clustering(conn, key):
-    """(id, photo_path, box JSON, embedding bytes, Ref or None, prob, photo id, dates.era_year of the photo's Date Taken)
-    of every face with a vector under `key`, the face model's (WITH_VECTOR). The crop is left behind: 6 KB a face, and clustering never looks at it."""
-    return [(face_id, photo_path, box, embedding, _ref(tag_id, name), prob, photo_id, dates.era_year(taken))
-            for face_id, photo_path, box, embedding, tag_id, name, prob, photo_id, taken in store_roots.natives(
-                conn, conn.execute("SELECT f.id, p.path, f.box, v.vector, f.tag_id, f.name, f.prob, f.photo_id, p.taken"
-                                   " FROM faces f" + PHOTO + WITH_VECTOR, (key,)).fetchall(), 1)]
+    """(id, photo_path, box JSON, embedding bytes, Ref or None, prob, photo id, dates.era_year of the photo's Date Taken,
+    (width, height) of the photo's stored picture, each None until read: clustering.is_background's size) of every face
+    with a vector under `key`, the face model's (WITH_VECTOR). The crop is left behind: 6 KB a face, and clustering never
+    looks at it."""
+    return [(face_id, photo_path, box, embedding, _ref(tag_id, name), prob, photo_id, dates.era_year(taken), (width, height))
+            for face_id, photo_path, box, embedding, tag_id, name, prob, photo_id, taken, width, height in store_roots.natives(
+                conn, conn.execute("SELECT f.id, p.path, f.box, v.vector, f.tag_id, f.name, f.prob, f.photo_id, p.taken,"
+                                   " p.width, p.height FROM faces f" + PHOTO + WITH_VECTOR, (key,)).fetchall(), 1)]
 
 
 def in_photo(conn, photo_path, key):

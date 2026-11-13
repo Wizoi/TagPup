@@ -13,6 +13,7 @@ import unittest
 from unittest import mock
 
 import numpy as np
+from PIL import Image
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import face_rows  # noqa: E402
@@ -29,6 +30,12 @@ ROUTE = "/library/api/face-matches-unmatched"
 
 #: The likeness New Person gathers a face at, on the face model a new library is on (SCRFD and AdaFace).
 GATHERS_AT = clustering.cuts_of(face_rows.FACE_MODEL).name_without_asking
+
+#: Each photo's picture, on disk when it is read, so its row stores its size as the index's does: its one face
+#: (face_rows.add_face's 10 x 10) is under 2% of 600, in the background (clustering.is_background), so naming it by hand
+#: puts its person on the photo and Name faces from tags names nothing there first. A face the keyword write names
+#: first is a case this file does not hold yet: the pool is read again (docs/findings.md, found 2026-11-12).
+PICTURE = (800, 600)
 
 
 def like(likeness, *towards):
@@ -67,6 +74,8 @@ class NewPerson(unittest.TestCase):
                     ("named", 0.85, {"name": "Imogen Vale", "name_source": "manual"}, 2),
                     ("excluded", 0.95, {"excluded": 1, "excluded_reason": "stranger"})]):
                 photo = os.path.join(self.home.root, "Photos", "IMG_%04d.jpg" % n)
+                os.makedirs(os.path.dirname(photo), exist_ok=True)
+                Image.new("RGB", PICTURE, (70, 90, 110)).save(photo, "JPEG")
                 photo_rows.add_read(conn, photo, {"XMP:Subject": []})
                 self.ids[label] = face_rows.add_face(conn, photo, embedding=like(likeness, *towards).tobytes(), **columns)
             conn.commit()

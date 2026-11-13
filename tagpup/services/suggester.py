@@ -27,6 +27,7 @@ from tagpup.services import faces as face_records
 from tagpup.store import db, person_ids
 from tagpup.store import faces as store_faces
 from tagpup.store import faces_detected as store_faces_detected
+from tagpup.store import photos as store_photos
 from tagpup.store import roots as store_roots
 from tagpup.store import suggestions as store_suggestions
 from tagpup.store.taxonomy import TagTaxonomy
@@ -484,11 +485,12 @@ class TagSuggester:
                     logger.info(f"Recorded {saved} newly detected face(s) for {photo_path}")
 
         if detected_faces:
-            # Tiny faces in the background are noise: no name is offered for them
-            # (tagpup.core.clustering).
-            background = clustering.background_faces([f.get("box") for f in detected_faces])
-            valid_detected_faces = [f for i, f in enumerate(detected_faces)
-                                    if i not in background and f.get("embedding") is not None]
+            # A face too small for its picture is in the background: no name is offered for it (clustering.is_background,
+            # on the photo's stored size, as cluster-faces and the photo's strip ask it; a photo the library has no row
+            # for, a look, has no stored size and so no face in the background).
+            size = store_photos.picture_size(self.index.conn, photo_path) if self.index.conn else None
+            valid_detected_faces = [f for f in detected_faces
+                                    if not clustering.is_background(f["box"], size) and f.get("embedding") is not None]
 
             if valid_detected_faces:
                 if known_faces[2] is not None:

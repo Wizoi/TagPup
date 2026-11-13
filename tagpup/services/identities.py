@@ -52,8 +52,9 @@ def resolution_trace_path(db_path):
 
 
 def _all_faces(photo_index, key):
-    """Every face's id, photo, box, vector, person (the Ref it carries, and its id) and probability, of the faces with a
-    vector under `key`, the face model's (store_faces.for_clustering); [] if they cannot be read."""
+    """Every face's id, photo, box, vector, person (the Ref it carries, and its id), probability and its photo's stored
+    picture size, of the faces with a vector under `key`, the face model's (store_faces.for_clustering); [] if they
+    cannot be read."""
     try:
         return [{
             "id": face_id,
@@ -65,7 +66,8 @@ def _all_faces(photo_index, key):
             "prob": prob,
             "photo_id": photo_id,
             "year": year,
-        } for face_id, photo_path, box_json, emb_bytes, person, prob, photo_id, year
+            "size": size,
+        } for face_id, photo_path, box_json, emb_bytes, person, prob, photo_id, year, size
             in store_faces.for_clustering(photo_index.conn, key)]
     except Exception as e:
         logger.error(f"Error retrieving faces: {e}")
@@ -526,12 +528,14 @@ def resolve(photo_index, on_step=None):
             for fid in decided:
                 face_resolved[fid] = manual_names[fid]
 
-            # Tiny faces in the background are noise: they keep no name
-            # (tagpup.core.clustering).
-            background = clustering.background_faces([f.get("box") for f in photo_faces])
+            # A face too small for its picture is in the background: it keeps no name (clustering.is_background, on
+            # the photo's stored size, the one rule the photo's strip and Suggest ask too). But a face named by hand,
+            # which stays named whatever its size, as on the strip (faces._faces_shown) and to Name faces from tags
+            # (face_tags._to_be_named): put out, its person was free in its photo, and with it the person's anchor left
+            # the gallery from the second round.
             valid_photo_faces = []
-            for i, f in enumerate(photo_faces):
-                if i in background:
+            for f in photo_faces:
+                if f["id"] not in decided and clustering.is_background(f["box"], f["size"]):
                     face_resolved[f["id"]] = None
                 else:
                     valid_photo_faces.append(f)
