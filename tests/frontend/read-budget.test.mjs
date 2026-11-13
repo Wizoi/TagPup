@@ -1,7 +1,7 @@
 /**
  * The PreToolUse hook that has a worker read by part (retro 2026-11-13: whole-file Reads were the largest share of a
  * worker's context, slices of findings.md the largest single reads). The scenario: a worker opens a large module
- * whole, then the findings ledger, and is pointed at tools/code.py and add_findings.py --open; the main session, a
+ * whole, then the findings ledger, and is pointed at tools/read_code.py and add_findings.py --open; the main session, a
  * slice, a picture, a short file, a file not there and a payload the hook cannot read all go through.
  */
 import { test } from "node:test";
@@ -44,8 +44,8 @@ test("the ledgers are known by either slash and any case, and nothing else is", 
 test("a worker opening a large module whole is pointed at outline and show; a slice of it goes through", () => {
   const reason = reasonToBlock({ file_path: JOURNAL }, ROOT);
   assert.match(reason, /more than 300 lines/);
-  assert.match(reason, /tools\/code\.py outline/);
-  assert.match(reason, /tools\/code\.py show .*::NAME/);
+  assert.match(reason, /tools\/read_code\.py outline/);
+  assert.match(reason, /tools\/read_code\.py show .*::NAME/);
   assert.match(reason, /offset and limit/);
   assert.equal(reasonToBlock({ file_path: JOURNAL, offset: 200, limit: 60 }, ROOT), null);
   assert.equal(reasonToBlock({ file_path: JOURNAL, limit: 60 }, ROOT), null);
@@ -83,7 +83,7 @@ test("as a hook: a worker is refused with exit 2, the main session and a broken 
 
   const refused = run({ ...worker, tool_input: { file_path: big } });
   assert.equal(refused.status, 2);
-  assert.match(refused.stderr, /tools\/code\.py outline/);
+  assert.match(refused.stderr, /tools\/read_code\.py outline/);
   assert.equal(run({ ...worker, tool_input: { file_path: "big.js" } }).status, 2);
   assert.equal(run({ ...worker, tool_input: { file_path: "docs\\findings.md" } }).status, 2);
 
@@ -104,5 +104,5 @@ test("the hook is registered on the Read tool, and the tool it names is there", 
   const entry = settings.hooks.PreToolUse.find((e) => e.hooks.some((h) => h.command.includes("read-budget.mjs")));
   assert.ok(entry, "read-budget.mjs is not a PreToolUse hook");
   assert.match("Read", new RegExp(`^(?:${entry.matcher})$`));
-  assert.ok(readFileSync(path.join(ROOT, "tools", "code.py"), "utf8").includes("def outline("));
+  assert.ok(readFileSync(path.join(ROOT, "tools", "read_code.py"), "utf8").includes("def outline("));
 });

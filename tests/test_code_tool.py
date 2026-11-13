@@ -1,4 +1,4 @@
-"""tools/code.py: a worker reads a large module by its outline and one definition, not whole (retro 2026-11-13).
+"""tools/read_code.py: a worker reads a large module by its outline and one definition, not whole (retro 2026-11-13).
 
 The scenario is the worker's: it outlines the largest modules of the package, shows one function of one of them by the
 line numbers the outline gave, meets a name defined twice and is told the candidates, mistypes a name and is told the
@@ -16,7 +16,7 @@ import tempfile
 import unittest
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-_SPEC = importlib.util.spec_from_file_location("tagpup_code_tool", os.path.join(ROOT, "tools", "code.py"))
+_SPEC = importlib.util.spec_from_file_location("tagpup_code_tool", os.path.join(ROOT, "tools", "read_code.py"))
 tool = importlib.util.module_from_spec(_SPEC)
 _SPEC.loader.exec_module(tool)
 

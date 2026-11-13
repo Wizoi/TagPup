@@ -33,7 +33,7 @@ Everything below holds for every task; the brief does not repeat it.
   may import what.
 
 ## Reading economically (retro 2026-11-13: a worker's context is mostly what it read)
-- A file by part: `python tools/code.py outline <file>` (definitions or headings, with lines), then `show
+- A file by part: `python tools/read_code.py outline <file>` (definitions or headings, with lines), then `show
   <file>::<name>` (`Class.method`, `name@LINE`, a heading), `refs <name>` for its callers; else Read with offset+limit.
   `.claude/hooks/read-budget.mjs` refuses a worker's whole Read of a file over 300 lines.
 - docs/findings.md and docs/DECISIONS.md are refused whole and by slice: `tools/add_findings.py --open`, or Grep a number.

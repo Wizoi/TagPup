@@ -1,10 +1,10 @@
 """Read code by part, not by file: a slim reader for the shell (retro 2026-11-13: a worker's context was mostly reading).
 
-    .venv/Scripts/python.exe tools/code.py outline tagpup/store/journal.py
-    .venv/Scripts/python.exe tools/code.py show tagpup/store/journal.py::record
-    .venv/Scripts/python.exe tools/code.py show tagpup/store/journal.py::Journal.apply
-    .venv/Scripts/python.exe tools/code.py show docs/ARCHITECTURE.md::"The processes"
-    .venv/Scripts/python.exe tools/code.py refs readonly_uri --max 20
+    .venv/Scripts/python.exe tools/read_code.py outline tagpup/store/journal.py
+    .venv/Scripts/python.exe tools/read_code.py show tagpup/store/journal.py::record
+    .venv/Scripts/python.exe tools/read_code.py show tagpup/store/journal.py::Journal.apply
+    .venv/Scripts/python.exe tools/read_code.py show docs/ARCHITECTURE.md::"The processes"
+    .venv/Scripts/python.exe tools/read_code.py refs readonly_uri --max 20
 
 outline  the definitions of a file with their line spans: Python by its syntax tree (functions, classes and their
          methods, module constants), JavaScript (.js, .mjs, .cjs) by its function, class, method, exported and arrow
@@ -374,7 +374,7 @@ def find(found, language, wanted):
         names = sorted({d.qualified for d in found} | {d.name for d in found})
         near = difflib.get_close_matches(wanted, names, n=8, cutoff=0.5)
         raise Failure("no %s here.%s" % (repr(wanted), (" Nearest: " + ", ".join(near)) if near else
-                                           " Run `tools/code.py outline` on the file for its names."))
+                                           " Run `tools/read_code.py outline` on the file for its names."))
     listing = "\n".join("  " + d.label() for d in hits[:40])
     raise Failure("%s names %d definitions; say which, as %s:\n%s"
                   % (repr(wanted), len(hits), "a heading's full text or TITLE@LINE" if language == "md"
@@ -437,7 +437,7 @@ def main(argv=None, stream=None):
         stream = sys.stdout
         if hasattr(stream, "reconfigure"):
             stream.reconfigure(encoding="utf-8", errors="replace")
-    parser = argparse.ArgumentParser(prog="tools/code.py", description=__doc__.split("\n\n")[0])
+    parser = argparse.ArgumentParser(prog="tools/read_code.py", description=__doc__.split("\n\n")[0])
     commands = parser.add_subparsers(dest="command", required=True)
     commands.add_parser("outline", help="the definitions of a file with their lines").add_argument("file")
     commands.add_parser("show", help="one definition or section: FILE::NAME").add_argument("target")

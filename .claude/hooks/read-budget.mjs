@@ -9,7 +9,7 @@
  * For a subagent only (the payload has `agent_id`, as context-budget.mjs reads it), refuses
  *   - a Read of docs/findings.md or docs/DECISIONS.md, whole or a slice: the open findings are
  *     `tools/add_findings.py --open`, and one row or one decision is a `grep -n` away;
- *   - a Read with neither `offset` nor `limit` of a text file over LIMIT lines: `tools/code.py outline` and `show`
+ *   - a Read with neither `offset` nor `limit` of a text file over LIMIT lines: `tools/read_code.py outline` and `show`
  *     read it by definition, or Read takes offset+limit.
  * An image, a PDF, a notebook, a file of LIMIT lines or fewer, and any Read by the main session pass. Lines are counted
  * by reading the file in chunks until LIMIT is passed, never the whole of a large file.
@@ -75,8 +75,8 @@ export function reasonToBlock(input, cwd, count = linesOver) {
   if (NOT_TEXT.has(path.posix.extname(file).toLowerCase())) return null;
   if (count(cwd ? path.resolve(String(cwd), input.file_path) : input.file_path) <= LIMIT) return null;
   return `${input.file_path} has more than ${LIMIT} lines: a whole read is refused for a worker (retro 2026-11-13). ` +
-    `Read it by part: \`python tools/code.py outline ${input.file_path}\` lists its definitions or headings with their ` +
-    `lines; \`python tools/code.py show ${input.file_path}::NAME\` prints one function, class or section; or Read ` +
+    `Read it by part: \`python tools/read_code.py outline ${input.file_path}\` lists its definitions or headings with their ` +
+    `lines; \`python tools/read_code.py show ${input.file_path}::NAME\` prints one function, class or section; or Read ` +
     "with offset and limit.";
 }
 
