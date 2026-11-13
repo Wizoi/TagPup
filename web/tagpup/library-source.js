@@ -33,6 +33,12 @@ export const LIBRARY_KINDS = ['all', 'folder', 'keyword', 'person', 'year', 'mon
 export const MEMBER_KINDS = LIBRARY_KINDS.filter(kind => kind !== 'any_of' && kind !== 'search');
 /** The kinds that name no value: the whole library, and the photos with no keyword. */
 const VALUELESS = ['all', 'untagged'];
+/** How the page names the photos with no keyword, said once: the navigator's row, the picker's entry, the chip, the view's label. */
+export const UNTAGGED = {
+    label: 'No tag', title: 'Photos with no tag in the tag tree', member: 'no tag', view: 'Photos with no tag',
+    what: 'photos with no tag', words: ['no tag', 'untagged'],
+    spec: () => ({ kind: 'untagged', value: null, recursive: false }),
+};
 /** A search's lists, in the order its address names them (the contract of phase 9e-1); `words` follows them. */
 export const SEARCH_LISTS = ['all_of', 'any_of', 'none_of'];
 /** The longest text of words a search reads (services.library_view.MAX_WORDS). */
@@ -346,7 +352,7 @@ export function memberLabel(spec) {
     if (spec.kind === 'keyword_only') return `${spec.value} alone`;
     if (spec.kind === 'folder') return `${baseName(spec.value) || spec.value}${spec.recursive ? '' : ' alone'}`;
     if (spec.kind === 'all') return 'everything';
-    if (spec.kind === 'untagged') return 'no tag';
+    if (spec.kind === 'untagged') return UNTAGGED.member;
     if (spec.kind === 'person') return leafOf(String(spec.value));   // a person is asked for by their tag; the leaf is what is shown
     return String(spec.value);
 }
@@ -371,7 +377,7 @@ function searchLabel(value) {
 /** What a view is called, in the header. */
 export function viewLabel(spec) {
     if (spec.kind === 'all') return 'The whole library';
-    if (spec.kind === 'untagged') return 'Photos with no tag';
+    if (spec.kind === 'untagged') return UNTAGGED.view;
     if (spec.kind === 'search') return searchLabel(spec.value || {});
     if (spec.kind === 'any_of') {
         const members = Array.isArray(spec.value) ? spec.value : [];

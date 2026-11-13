@@ -18,6 +18,7 @@
 // holds the selection and Back, Forward and a bookmark restore it.
 import { baseName, pathKey } from './common/paths.js';
 import { compareTagNames, leafOf } from './common/vocabulary.js';
+import { UNTAGGED } from './library-source.js';
 
 /** The most rows one section draws; the rest are said in a line and reached by the filter. */
 export const NAV_MAX_ROWS = 1500;
@@ -85,7 +86,6 @@ function navFolderRow(node, level, expanded) {
 /** The row of the photos with no keyword (#2837): the Keywords tree's last, drawn while there is one. */
 export const UNTAGGED_ID = 'u:';
 /** What the filter finds that row by. */
-const UNTAGGED_WORDS = 'no tag untagged';
 
 /**
  * The tag tree of the route's list, [{ tag, name, parent, count }] (`parent` the tag of the node above, or null):
@@ -129,10 +129,10 @@ function navKeywordRow(node, level, expanded) {
 
 function navUntaggedRow(index) {
     return {
-        id: UNTAGGED_ID, level: 1, label: 'No tag', count: index.untagged,
+        id: UNTAGGED_ID, level: 1, label: UNTAGGED.label, count: index.untagged,
         title: `${navPlural(index.untagged, 'photo', 'photos')} with no tag in the tag tree`,
         aria: `No tag, ${navPlural(index.untagged, 'photo', 'photos')}`,
-        hint: '', expandable: false, expanded: false, spec: { kind: 'untagged', value: null, recursive: false },
+        hint: '', expandable: false, expanded: false, spec: UNTAGGED.spec(),
     };
 }
 
@@ -380,7 +380,7 @@ export function sectionRows(section, index, expanded, filter, capped = null) {
         row.hint = section === 'folders' ? node.path : node.tag;
         out.push(row);
     }
-    if (untagged && navMatches(UNTAGGED_WORDS, needle)) {
+    if (untagged && navMatches(UNTAGGED.words.join(' '), needle)) {
         found += 1;
         out.push(navUntaggedRow(index));
     }
@@ -563,7 +563,7 @@ export function rowTree(section, index) {
         }
         tops = index.tops.map(n => n.id);
         if (index.untagged > 0) {
-            const spec = { kind: 'untagged', value: null, recursive: false };
+            const spec = UNTAGGED.spec();
             add(UNTAGGED_ID, [], spec, spec);
             tops.push(UNTAGGED_ID);
         }

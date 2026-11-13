@@ -15,7 +15,7 @@
 // branch the people answer lists (counted read-only, 2026-10-04). And a filed person's own node is not offered a second time
 // as a tag: they are offered by name.
 import { compareTagNames } from './common/vocabulary.js';
-import { memberLabel, viewLabel } from './library-source.js';
+import { memberLabel, UNTAGGED, viewLabel } from './library-source.js';
 import { personSource } from './navigator-model.js';
 
 /** The most names the picker shows at once; more are counted ("12 more: keep typing"). */
@@ -49,8 +49,8 @@ export function pickerNames(keywords, people) {
         }
         if (keywords.untagged > 0) {
             names.push({
-                member: { kind: 'untagged', value: null, recursive: false }, label: 'No tag', hint: '', count: keywords.untagged,
-                what: 'photos with no tag', words: ['no tag', 'untagged'],
+                member: UNTAGGED.spec(), label: UNTAGGED.label, hint: '', count: keywords.untagged,
+                what: UNTAGGED.what, words: UNTAGGED.words,
             });
         }
     }
@@ -111,7 +111,7 @@ export function chipLabel(member, people = null) {
     }
     if (member.kind === 'keyword') return { text: String(member.value), title: `${member.value}, and every tag under it` };
     if (member.kind === 'keyword_only') return { text: `${member.value} alone`, title: `${member.value}, without the tags under it` };
-    if (member.kind === 'untagged') return { text: 'No tag', title: 'Photos with no tag in the tag tree' };
+    if (member.kind === 'untagged') return { text: UNTAGGED.label, title: UNTAGGED.title };
     return { text: `Within ${memberLabel(member)}`, title: `Within: ${viewLabel(member)}` };
 }
 
