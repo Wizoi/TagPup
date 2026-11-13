@@ -131,6 +131,17 @@ describe("the clip panel's Convert and Make smaller (MP4)", () => {
     assert.equal(callsTo(ctx, "/api/clip/converted").length, asked, "the reading stops at its end");
   });
 
+  test("a conversion done whose original stayed says so as a sentence of its own: a capital, one full stop", async (t) => {
+    const ctx = await viewWithAClip(t);
+    await open(ctx, CLIP);
+    await fails(ctx);
+    ctx.ends = [{ ...converted, original_kept: "it was converted, but its original changed meanwhile (another program wrote it), so it is not deleted" }];
+    el(ctx, "btn-clip-convert").click();
+    const expected = "Converted IMG_13.mp4: 120 MB to 18 MB. It was converted, but its original changed meanwhile (another program wrote it), so it is not deleted.";
+    assert.ok(await ctx.until(() => stripSaid(ctx).length > 0), "the end is said");
+    assert.deepEqual(stripSaid(ctx), [expected]);
+  });
+
   test("a clip that plays with a picture: Make smaller offered, nothing asked until it is clicked; a shrink no smaller says the server's sentence", async (t) => {
     const ctx = await viewWithAClip(t, { plan: { action: "NOTHING", sentence: "", replaces: REPLACES } });
     await open(ctx, CLIP);

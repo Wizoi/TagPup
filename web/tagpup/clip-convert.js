@@ -218,7 +218,9 @@ function converted(key, live, said) {
     const sizes = `${megabytes(said.size_before)} to ${megabytes(said.size_after)}`;
     const verb = live.mode === 'shrink' ? 'Made smaller' : 'Converted';
     if (said.original_kept) {
-        sayEnd(`${verb} ${baseName(photo.path)}: ${sizes}. ${said.original_kept}`, true);
+        // The server's sentence is a fragment, as its other reasons are (no capital, no full stop): it is made one here.
+        const kept = said.original_kept.charAt(0).toUpperCase() + said.original_kept.slice(1);
+        sayEnd(`${verb} ${baseName(photo.path)}: ${sizes}. ${kept}.`, true);
     } else {
         sayEnd(`${verb} ${baseName(photo.path)}: ${sizes}`, false);
     }
