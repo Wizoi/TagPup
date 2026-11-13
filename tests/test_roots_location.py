@@ -655,6 +655,86 @@ class OnlyTheCurrentAndThePreviousPlace(unittest.TestCase):
 
 
 @unittest.skipUnless(WINDOWS, "spellings below are Windows paths")
+class ARootMovedToAShareAsleep(RootsCase):
+    """The owner asks to move a root to the NAS while it sleeps (#2889; owner, 2026-11-13: a share that is away is
+    "away" on the Roots page). Windows answers a server asleep "not found" at once (WinError 53, #1543), or hangs and
+    then says it: either way the look at the location is asked through shares.bounded, which asks the share, so the
+    page says "away" -- never "a drive that is not there" -- and the look that ends late does not take the share as
+    back. Two libraries holding the root are told the same, without another look. Stand-ins for the server's looks
+    only; the libraries are made as the roots tests make them. Break: roots_sample._probe answering "anchor" by
+    os.path.isdir and not raising "not found" (the code before #2889) fails each test."""
+
+    SERVER = "\\\\NAS\\PICTURES"
+    SHARE = "\\\\Nas\\Pictures\\Pictures"
+
+    def setUp(self):
+        super().setUp()
+        self.second = rl.Side(self.home, "second", real=2, bulk=0, outside=0, share=self.side)
+        self.assertIsNone(self.second.adopt().refused)
+        shares.forget()
+        self.addCleanup(shares.forget)
+        self.looks, self.server_up = [], False
+        self.release = threading.Event()
+        self.release.set()
+        self.addCleanup(self.release.set)
+        real_isdir, real_exists = os.path.isdir, os.path.exists
+
+        def on_the_server(path):
+            return str(path).upper().startswith(self.SERVER)
+
+        def isdir(path):
+            if not on_the_server(path):
+                return real_isdir(path)
+            self.looks.append(path)
+            self.release.wait(30)
+            return self.server_up
+
+        for patcher in (mock.patch.object(os.path, "isdir", isdir),
+                        mock.patch.object(os.path, "exists",
+                                          lambda path: self.server_up if on_the_server(path) else real_exists(path)),
+                        mock.patch.object(shares, "on_a_network_drive", on_the_server)):
+            patcher.start()
+            self.addCleanup(patcher.stop)
+
+    def check(self, library, others=()):
+        """The Roots page's dry run of Change location to the share, from `library`'s page."""
+        return roots_location.change_location(library, "pictures", self.SHARE, self.machine, others=list(others),
+                                              seconds=0.3)
+
+    def assert_away(self, result):
+        verify = result.details.get("verify") or {}
+        self.assertEqual("away", verify.get("state"), result.refused)
+        self.assertFalse(verify["reachable"])
+        self.assertEqual(0, verify["missing"], "a share asleep is not 'all missing'")
+        self.assertNotIn("drive", verify["message"])
+
+    def test_a_server_that_says_not_found_at_once_is_away_for_both_libraries_and_not_asked_again(self):
+        before, map_before = self.rows_dump(), open(config.machine_roots_path(), "rb").read()
+        self.assert_away(self.check(self.library, [self.second.library]))
+        self.assertEqual(1, len(self.looks), "the location looked at once")
+        self.assert_away(self.check(self.second.library, [self.library]))
+        self.assertEqual(1, len(self.looks), "the other library's page asked the share again")
+        self.assertIs(shares.UNANSWERED, shares.stamp_of(self.SHARE + "\\2024\\a.jpg"), "the share is taken as away")
+        self.assertEqual((before, map_before), (self.rows_dump(), open(config.machine_roots_path(), "rb").read()))
+
+    def test_a_look_that_timed_out_and_ended_saying_not_found_leaves_the_share_away(self):
+        self.release.clear()
+        self.assert_away(self.check(self.library))
+        self.release.set()   # the server's late answer: "not found"
+        self.assertFalse(shares.wait_back(shares.share_of(self.SHARE), 1.0),
+                         "a look that ended saying not found took the share as back")
+        self.assert_away(self.check(self.library))
+        self.assertEqual(1, len(self.looks), "the share was asked again while it is away")
+
+    def test_a_share_that_wakes_while_the_page_is_open_is_reached_on_the_next_look(self):
+        self.assertEqual("away", roots_sample.reach(self.SHARE, 0.3)["state"])
+        self.server_up = True
+        self.assertEqual("away", roots_sample.reach(self.SHARE, 0.3)["state"], "asked again within its window")
+        roots_sample.forget_away()   # the window ran out, or Retry
+        self.assertEqual("ok", roots_sample.reach(self.SHARE, 0.3)["state"])
+
+
+@unittest.skipUnless(WINDOWS, "spellings below are Windows paths")
 class OneOwnerOfAShareBeingAway(unittest.TestCase):
     SHARE = "\\\\idziserver\\Pictures\\Pictures"
 

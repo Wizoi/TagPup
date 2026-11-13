@@ -345,7 +345,7 @@ describe("Change location", () => {
 
   test("a refused dry run is a sentence, and nothing can be confirmed", async (t) => {
     const { ctx, dialog, type } = await panelOn(t);
-    ctx.server.first("/api/roots/change-location", { success: false, error: "Not changed. This location cannot be reached: Q: is not there -- a drive that is not connected, or a share that is away. Nothing is counted as missing." }, { status: 400 });
+    ctx.server.first("/api/roots/change-location", { success: false, error: "Not changed. This location cannot be reached: the drive Q: is not there -- not connected, or no such drive. Nothing is counted as missing." }, { status: 400 });
     type("Q:/Photos");
     click(ctx.window, dialog.querySelector(".roots-look"));
     await flush(ctx.window, 6);

@@ -31,6 +31,7 @@ blocked thread. A sample is also bounded in time (`SAMPLE_BUDGET`).
 **Read-only.** It writes no row, no file and not the map. The library is read through
 `store.root_rows`, with its own connection; `machine` is only asked where the other roots are.
 """
+import errno
 import logging
 import os
 import time
@@ -83,12 +84,14 @@ def forget_away():
 
 def _probe(location):
     """"ok" when the location is a folder; "folder" when its drive or share is there and it is
-    not; "anchor" when the drive or share is not there."""
+    not. Raises FileNotFoundError when the drive or share itself is not there: the "not found" that
+    shares.bounded asks a share by (#2781), so a share that does not answer is "away" and its late
+    answer does not take it as back (#2889); a local drive letter that is not there is the error."""
     spelled = paths.stored(location)
     drive = os.path.splitdrive(spelled)[0]
     top = drive + os.sep if drive else os.sep
     if not os.path.isdir(top):   # unbounded: _probe is the call shares.bounded waits for (_bounded)
-        return "anchor"
+        raise FileNotFoundError(errno.ENOENT, "not there", top)
     return "ok" if os.path.isdir(spelled) else "folder"   # unbounded: the same bounded call
 
 
@@ -99,14 +102,15 @@ def reach(location, seconds=None):
     state, value = _bounded(location, lambda: _probe(location), seconds)
     spelled = paths.stored(location)
     if state == "away":
-        return _reach("away", "This location cannot be reached: %s did not answer within %d seconds, so nothing "
-                              "is counted as missing. Try again when it is back." % (spelled, round(seconds)))
+        return _reach("away", "This location cannot be reached: the network share %s is not answering just now "
+                              "(asleep, away, or not there), so nothing is counted as missing. Try again when it "
+                              "is back." % (os.path.splitdrive(spelled)[0] or spelled))
+    if isinstance(value, FileNotFoundError):   # bounded answers a share's "not found" as away: a drive letter
+        return _reach("no_drive", "This location cannot be reached: the drive %s is not there -- not connected, "
+                                  "or no such drive. Nothing is counted as missing." % (
+                                      os.path.splitdrive(spelled)[0] or spelled))
     if state == "error":
         return _reach("unreadable", "This location cannot be read: %s (%s)." % (spelled, value))
-    if value == "anchor":
-        return _reach("no_drive", "This location cannot be reached: %s is not there -- a drive that is not "
-                                  "connected, or a share that is away. Nothing is counted as missing." % (
-                                      os.path.splitdrive(spelled)[0] or spelled))
     if value == "folder":
         return _reach("no_folder", "This location cannot be reached: the folder %s does not exist." % spelled)
     return _reach("ok", "")
