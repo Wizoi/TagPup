@@ -104,7 +104,6 @@ UNDO_CHECKS = {
     "rename tag": None,
     "remove tag": None,
     tagging.CLEAR_DUPLICATES: None,
-    tagging.DATE_CLIPS: None,
     "rename after caption": None,
     "smart rename": None,
     "smart rename: original names": None,
@@ -166,6 +165,9 @@ RETIRED = {
     # rows is.
     "rederive tags and captions": None,
     "rederive clip dates": None,
+    # The one-off dating of clips by their names, a program since deleted (it ran 2026-11-13: photo_index change 8261,
+    # 669 clips written). As a save of clip files is undone from History: the journal puts back what each held.
+    "date clips by their names": None,
 }
 UNDO_CHECKS.update(RETIRED)
 

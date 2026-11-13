@@ -16,10 +16,10 @@ Owner decisions (2026-11-13): the file name only, no folder date (415 of the 680
 folder's date); the date is written into each clip's XMP; the library reads it where the file has none.
 Steady-state writer: a clip with zeroed dates added afterwards is dated by the index from its name (the fallback above),
 with no command run; the file is not touched. A real date in the file always wins over the name's.
-One-offs: `scripts/date_undated_clips.py`, dry run by default, `--apply`, one library; it lists the clips the index
-holds with no `taken`, takes each file name's date (`dates.name_date`), and saves it through the same journaled clip save
-(never its own XMP writer); a share that does not answer is skipped and said; it reports `wrote N`. Deleted when its dry
-run says 0 left on the three libraries.
+One-offs: `scripts/date_undated_clips.py` ran on photo_index 2026-11-13 (change 8261, wrote 669 clips; a second dry run said
+0 to date and 0 to clear) and was deleted with `tagging.date_clips_by_name` and its tests; the change stays undoable
+from History. It listed the clips the index held with no `taken`, took each file name's date (`dates.name_date`), and
+saved it through the same journaled clip save.
 Cuts: one worker, one concern, about 400 lines: the function and the fallback with their scenario test (a clip of
 zeroed dates is dated by its name, a real date wins, the sort and the year follow), then the script. The app is stopped
 for the apply (as `fill_picture_sizes` was).

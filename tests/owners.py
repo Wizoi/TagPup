@@ -156,7 +156,7 @@ _SCENARIO_FILES = {
     ),
     "C3": "test_a_clip_renamed",
     "C4": "test_a_clip_deleted test_a_delete_when_the_recycle_bin_is_full",
-    "C5": "test_a_clip_dated_through_the_journal test_a_clip_dated_by_its_name test_dating_clips_by_their_names",
+    "C5": "test_a_clip_dated_through_the_journal test_a_clip_dated_by_its_name",
     "C6": "test_a_tag_tree_edit_of_a_tag_a_clip_holds",
     "C7": "test_a_clip_converted clip-convert",
     "C8": "test_playing_a_video test_what_a_clip_needs_to_play",

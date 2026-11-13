@@ -43,9 +43,9 @@ a browser cannot play (`clip_plan` asks ffprobe of the file; not counted from th
   name (DECISIONS 2026-11-13). Its year is the year of its Date Taken alone (`dates.photo_year`): a clip with no Date
   Taken has no year, neither its folder's nor a year alone in its name, so the owner finds it among the undated to date
   it by hand (DECISIONS 2026-11-13, #2941); a photo keeps its year from its file or folder names. The one-off
-  `scripts/date_undated_clips.py` writes the name's date into each such clip's XMP, its --apply first dating the rows
-  again and clearing the year of the clips with no date in their name (photo_index, counted read-only 2026-11-13: 669 to
-  date, 11 to clear). C5: `tests/test_a_clip_dated_by_its_name.py`, `tests/test_dating_clips_by_their_names.py`.
+  `scripts/date_undated_clips.py` wrote the name's date into each such clip's XMP and dated the rows again (photo_index
+  change 8261, 2026-11-13: wrote 669 clips; a second dry run said 0 to date, 0 to clear); it was deleted, and the change
+  is undone from History as a save is. C5: `tests/test_a_clip_dated_by_its_name.py`.
 
 ## The seven conditions (first stated 2026-11-13, at the carve)
 
