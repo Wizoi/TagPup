@@ -230,3 +230,16 @@ describe("while the page writes", () => {
     assert.deepEqual(sentences(ctx), ["Added Trips/Coast to 60 photos; 0 errors."]);
   });
 });
+
+describe("the request that stops a batch by its ticket", () => {
+  test("is written once, in batch-cancel.js, and the strip, Activity and the clip panel call it", () => {
+    const code = (file) => fs.readFileSync(path.join(REPO_ROOT, file), "utf8").split("\n").filter((line) => !/^\s*(\/\/|\*|\/\*)/.test(line)).join("\n");
+    const sends = (file) => code(file).includes("/api/activity/batches/cancel");
+    assert.ok(sends("web/common/batch-cancel.js"));
+    assert.ok(code("web/common/batch-cancel.js").includes("export async function cancelByTicket"));
+    for (const file of ["web/common/batch-strip.js", "web/activity/now.js", "web/tagpup/clip-convert.js"]) {
+      assert.equal(sends(file), false, `${file} writes the cancel request itself`);
+      assert.match(code(file), /cancelByTicket\(/, `${file} does not call the one helper`);
+    }
+  });
+});

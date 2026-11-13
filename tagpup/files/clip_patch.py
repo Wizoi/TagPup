@@ -176,10 +176,7 @@ def _title_ranges(layout, title, freed):
     if not title:
         box = layout.title_item
         return None if box is None else ((box.offset + 4, b"free"),)
-    found = [box for box, content in freed if holds_title(content, title)]
-    if len(found) != 1:
-        return None
-    return ((found[0].offset + 4, containers.TITLE_ITEM.encode("latin-1")),)
+    return _retyped(freed, lambda box, content: holds_title(content, title), containers.TITLE_ITEM.encode("latin-1"))
 
 
 def _xtra_ranges(category, read):
@@ -187,11 +184,16 @@ def _xtra_ranges(category, read):
     gives `category`'s texts back to the one of `read` (free boxes of udta, read) holding them as a read gives them
     (_holds_tags); None, the rewrite's, otherwise (the module)."""
     if category:
-        found = [box for box, raw in read if _holds_tags(windows_tags(raw, b"free", box.header), category)]
-        written = containers.XTRA.encode("latin-1")
-    else:
-        found = [box for box, raw in read if windows_tags(raw, containers.XTRA.encode("latin-1"), box.header)]
-        written = b"free"
+        return _retyped(read, lambda box, raw: _holds_tags(windows_tags(raw, b"free", box.header), category),
+                        containers.XTRA.encode("latin-1"))
+    return _retyped(read, lambda box, raw: windows_tags(raw, containers.XTRA.encode("latin-1"), box.header), b"free")
+
+
+def _retyped(read, holds, written):
+    """The one mechanism of a box freed or given back, whatever its kind: the range that writes `written` (the four type
+    bytes) over the type of the one box of `read` ((box, bytes read), ...) for which `holds(box, bytes)` is true; None,
+    the rewrite's, for none or for two (the module)."""
+    found = [box for box, raw in read if holds(box, raw)]
     return ((found[0].offset + 4, written),) if len(found) == 1 else None
 
 
