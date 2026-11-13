@@ -112,7 +112,7 @@ UNDER_WAY = "it is being converted already, or a conversion of it cut short is s
 TEMP_TAKEN = ("an unfinished converted copy of it is there already (another conversion, or one cut short); nothing was "
               "converted")
 CHANGED = "it changed while it was being converted; its converted copy was removed and the original is as it is"
-NOT_MADE = "its converted copy is not as it was made; it was removed and the original is as it was"
+NOT_MADE = "its converted copy is not as it was made; the original is as it was"
 NOT_IN_PLACE = ("its converted copy could not be put in its place (%s); the original is deleted and the copy is put in "
                 "place when the change is settled")
 NOT_RENAMED = "its converted copy could not be put in its place (%s); it was removed and the original is as it was"
@@ -506,9 +506,9 @@ def _stale_temp_removed(row, temp):
     if there is None:
         return None
     if there is shares.UNANSWERED:
-        return " Its unfinished copy could not be looked at just now."
+        return ". Its unfinished copy could not be looked at just now."
     why = file_changes.removed_scratch(row.path, row.stamp, None, scratch=temp)
-    return None if why is None else " Its unfinished copy is left for now: %s." % why
+    return None if why is None else ". Its unfinished copy is left for now: %s." % why
 
 
 def _given_up(library, row, temp, result, why):
