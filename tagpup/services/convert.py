@@ -17,7 +17,7 @@ How one conversion goes, the original kept until its copy is in place and holds 
    copy on its drive.
    Under the lock of changes of photo files: one a cut-short change has still to settle, one whose converted name holds a
    file or a row, one another conversion is converting.
-   Before the lock, beside the refusals above, its XMP packet is read (in_place.packet_held), to be carried whole into
+   Before the lock, beside the refusals above, its XMP packet is read (field_values.packet_held), to be carried whole into
    its copy (owner 2026-11-13: every XMP property is kept, those TagPup does not use too; #2938); a clip holding XMP no
    patch reads (two XMP boxes) is refused (XMP_UNREAD), and an old format holds none to carry.
 2. Planned (file_journal.CONVERT), one file: its path the original's, its new_path the MP4's (None for the same name),
@@ -70,8 +70,7 @@ import threading
 from tagpup.core import dates, fields, paths, vocabulary
 from tagpup.core.result import (CHANGED_ON_DISK, CHANGED_ON_DISK_SENTENCE, Conflict, NotFound, Refused, Result,
                                 Unavailable)
-from tagpup.files import (clip_convert, convertible, field_values, images, in_place, lock_owners, names, shares,
-                          video_frames)
+from tagpup.files import clip_convert, convertible, field_values, images, lock_owners, names, shares, video_frames
 from tagpup.services import batches, file_changes, tagging
 from tagpup.services import photos as photo_actions
 from tagpup.store import db, file_journal, photos, taxonomy
@@ -348,12 +347,12 @@ def _ready(library, exiftool_path, tools, source, reason):
     except OSError:
         return HELD_OPEN
     try:
-        packet = in_place.packet_held(source)
-    except in_place.Away:
+        packet = field_values.packet_held(source)
+    except field_values.NotAnswered:
         return AWAY
     except OSError as e:
         return UNREADABLE % (e.strerror or e)
-    if packet is in_place.UNREAD:
+    if packet is field_values.PACKET_UNREAD:
         return XMP_UNREAD
     streams = video_frames.streams(tools, source)
     if streams.problem:
@@ -382,9 +381,9 @@ def _packet_carried(temp, packet):
     try:
         if not field_values.packet_given(temp, packet):
             return XMP_NOT_GIVEN % XMP_NO_ROOM
-        if in_place.packet_held(temp) != packet:
+        if field_values.packet_held(temp) != packet:
             return XMP_NOT_GIVEN % XMP_NOT_READ_BACK
-    except in_place.Away:
+    except field_values.NotAnswered:
         return XMP_NOT_GIVEN % SHARE_AWAY
     except (OSError, Refused) as e:
         return XMP_NOT_GIVEN % (getattr(e, "strerror", None) or e)

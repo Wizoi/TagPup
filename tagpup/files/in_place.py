@@ -55,7 +55,8 @@ the whole-file rewrite (owner, 2026-11-05, Q2). It is opened once, alone, as a p
 (held: OLD, TORN, NEW); a torn grown file is put back to its old bytes and size (put_back).
 
 **A clip's packet read** (`packet_held`): the packet a patch would read, read alone and bounded, for a conversion that
-carries it whole into its copy (tagpup.services.convert; owner 2026-11-13, #2938). Nothing is written.
+carries it whole into its copy (field_values.packet_held and packet_given, the pair tagpup.services.convert calls; owner
+2026-11-13, #2938). Nothing is written.
 """
 import base64
 import io
@@ -389,7 +390,7 @@ def patch_clip(path, new_packet, saving, title=None, category=None):
 
 def packet_held(path):
     """The XMP packet the clip at `path` holds, as a patch reads it (_packet_in), for a conversion to carry whole into
-    its copy (tagpup.services.convert): its bytes; None when it holds no XMP box, or is no MOV/MP4/M4V the walk reads
+    its copy (field_values.packet_held, its one caller): its bytes; None when it holds no XMP box, or is no MOV/MP4/M4V the walk reads
     (an old format, .wmv, .mpg or .avi, is containers.Unreadable: taken as holding no packet to carry, so its Convert
     goes on as before; decided by the main session 2026-11-13, #2938); UNREAD when it holds XMP no patch reads. Read
     with a plain open, bounded by SECONDS: the boxes' headers and the packet, no other byte; nothing written. Raises

@@ -388,15 +388,33 @@ def _clip_written(photo_path, values, saving):
     return stale
 
 
+#: What packet_held answers for a clip holding XMP no patch reads: two XMP boxes, or one it does not know (in_place.UNREAD).
+PACKET_UNREAD = in_place.UNREAD
+
+
+def packet_held(path):
+    """The XMP packet the clip at `path` holds, for a conversion to carry whole into its copy (packet_given, its pair;
+    tagpup.services.convert), read as a patch reads it (in_place.packet_held): its bytes; None when it holds none, or is
+    an old format the box walk does not read; PACKET_UNREAD when it holds XMP no patch reads. Nothing written. Raises
+    NotAnswered when its share does not answer, the OSError of the open or a read."""
+    try:
+        return in_place.packet_held(path)
+    except in_place.Away:
+        raise NotAnswered("its folder did not answer the read of its XMP in %d s" % in_place.SECONDS) from None
+
+
 def packet_given(scratch, packet):
-    """Put `packet`, the XMP packet a clip held (in_place.packet_held), whole into `scratch`, the copy of it a conversion
+    """Put `packet`, the XMP packet a clip held (packet_held, its pair), whole into `scratch`, the copy of it a conversion
     made and has not recorded (tagpup.services.convert), by a patch of its XMP in place (in_place.patch_clip): True once
     the copy holds it, False when the copy cannot take it (clip_patch places it nowhere), nothing written. Its `saving`
     is nothing, the one patch saved by no journal: sound only because a scratch nothing records yet is settled by its
     removal (tagpup.services.file_changes.removed_scratch, the scratch rule), never by its bytes, so a patch of it cut
-    short needs no record to be put back. Raises in_place.Away when its share does not answer, Refused when another
+    short needs no record to be put back. Raises NotAnswered when its share does not answer, Refused when another
     program holds it open, the OSError of the open or a write."""
-    return in_place.patch_clip(scratch, lambda _old: (packet, ()), lambda _record, _before: None) is not None
+    try:
+        return in_place.patch_clip(scratch, lambda _old: (packet, ()), lambda _record, _before: None) is not None
+    except in_place.Away:
+        raise NotAnswered("its folder did not answer the patch of its XMP in %d s" % in_place.SECONDS) from None
 
 
 def written_once_more(et, photo_path, values, again, **options):
