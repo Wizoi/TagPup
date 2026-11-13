@@ -119,11 +119,6 @@ class FolderCache:
             self._maps[paths.key(folder)] = photos
             self._stamps[paths.key(folder)] = stamp
 
-    def pop(self, folder):
-        with self._lock:
-            self._stamps.pop(paths.key(folder), None)
-            return self._maps.pop(paths.key(folder), None)
-
     def clear(self):
         with self._lock:
             self._maps.clear()
@@ -514,36 +509,36 @@ def folder_rename_photos():
         result = photo_actions.smart_rename(
             library, sorted(photo_paths, key=taken), grouping, state.rename_format(library),
             state.exiftool(library))
-        # What Suggest only looked at is kept under the names the files had (#547).
-        if result.details.get("updated_paths"):
-            suggestion_jobs.runs_for(library).renamed(result.details["updated_paths"])
         if result.refused:
             return responses.refused(result)
-        if not result.ok:
-            if result.details.get("renamed"):
-                # Some were renamed before it stopped (the second part of a mixed rename): the cache is read
-                # again and the page told which names changed, so it shows them instead of the old ones.
-                cache.pop(folder)
-                try:
-                    changed = photo_actions.read_folder(library, folder, state.exiftool(library))
-                except Exception as again:
-                    # The folder cannot be read again just now: the cache stays dropped, and the answer is
-                    # a plain error (the page's Refresh reads the files).
-                    logger.error("Could not read %s again after a part-way rename: %s", folder, again)
-                    return responses.error(500, result.message())
-                cache.put(folder, changed)
-                return responses.error(500, result.message(), updated_paths=result.details["updated_paths"],
-                                       updated_photos=_sorted(changed))
+        # What the server keeps follows every photo the rename wrote, and every file it moved aside, whatever stopped
+        # it after (#2892): the records of each folder map holding one -- this folder's, and an ancestor's whose walk
+        # took it in -- under its new name with its file's stamp, and Suggest's looks (#547). A held photo's saved
+        # suggestions are kept by its id, and went with its row.
+        renamed = result.details.get("renamed") or {}
+        _followed_rename(library, [(old, new, old in renamed)
+                                   for old, new in (result.details.get("updated_paths") or {}).items()]
+                         + [(old, new, True) for old, new in (result.details.get("moved_aside") or {}).items()])
+        if not result.ok and not renamed:
             return responses.error(500, result.message())
-        # Their saved suggestions are kept by the photo's id, and went with the rows.
-        # The folder is read again from its files, as the page is about to show it: its clips with its photos
-        # (read_folder), whatever moved the library since it was opened.
-        cache.pop(folder)
-        photos = photo_actions.read_folder(library, folder, state.exiftool(library))
-        cache.put(folder, photos)
+        # The folder as the page is about to show it, its clips with its photos: the scan kept, followed, while the
+        # library has not moved; scanned again when it has (a held photo's row moved; FolderCache.get).
+        try:
+            photos = _folder_photos(library, folder)
+        except Exception as again:
+            if result.ok:
+                raise
+            # Some were renamed before it stopped (the second part of a mixed rename) and the folder cannot be
+            # scanned just now: a plain error (the page's Refresh reads the files).
+            logger.error("Could not read %s again after a part-way rename: %s", folder, again)
+            return responses.error(500, result.message())
+        if not result.ok:
+            # The page is told which names changed, so it shows them instead of the old ones.
+            return responses.error(500, result.message(), updated_paths=result.details["updated_paths"],
+                                   updated_photos=_sorted(photos))
     except Exception as e:
+        # The rename raises only when it renamed nothing; the follow-up has run before anything after it raises.
         logger.error("Error smart renaming photos: %s", e, exc_info=True)
-        cache.pop(folder)   # whatever it renamed before it stopped, the old names are not to be served
         return responses.error(500, str(e))
     return jsonify({
         "success": True,
@@ -896,7 +891,7 @@ def _clip_converted(library, source, how):
         return {"success": False, "error": how.message(), **responses.STATUS[how.refused_kind][1], **sizes}
     new_path = how.details["path"]
     renamed = not paths.same(source, new_path)
-    _followed_rename(library, source, new_path, renamed)
+    _followed_rename(library, [(source, new_path, renamed)])
     reply = {"success": True, "new_path": new_path, "renamed": renamed, **sizes, **_stamp_reply(new_path)}
     if how.details.get("original_kept"):
         reply["original_kept"] = how.details["original_kept"]
@@ -1032,29 +1027,38 @@ def _stamp_reply(path):
     return {"mtime": stamp[0], "size": stamp[1]} if stamp else {}
 
 
-def _followed_rename(library, old_path, new_path, renamed):
-    """What the server keeps of a photo follows a write of it that may have renamed it (`renamed`, as the write says:
-    a Smart Rename of one photo, a save renaming it after its title, a clip's conversion to its MP4): the one follow-up
-    of the three (#2852). Renamed, Suggest's looks are kept under the new name (#547, #2415) and every folder map holding
-    the photo, found under the name it had, holds its record under `new_path` (a rename stays in the same directory).
+def _followed_rename(library, moves):
+    """What the server keeps of photos follows a write of them that may have renamed them: `moves`, [(old path, new
+    path, renamed)], `renamed` as the write says (a Smart Rename of one photo or of a folder's, a file that rename moved
+    aside, a save renaming a photo after its title, a clip's conversion to its MP4): the one follow-up of them all
+    (#2852, #2892). Renamed, Suggest's looks are kept under the new name (#547, #2415) and every folder map holding the
+    photo, found under the name it had -- the folder's, and an ancestor's whose recursive walk took it in --, holds its
+    record under the new path (a rename stays in the same directory). Every record is found before any moves, so a run
+    that shuffles numbered names among themselves, or takes the name of a file moved aside, moves each record once.
     Renamed or not, each record takes the file's stamp now: the write wrote the file, and the next save from the record
-    names that stamp. Memory only, nothing of the library's: a crash loses it with the maps, which are scanned again.
-    `library` is the one the write was made in, handed on: the conversion's follow-up runs on its own thread, after
-    the request that asked for it was answered. The records, for a write that tells them more of what it wrote."""
-    if renamed:
-        suggestion_jobs.runs_for(library).renamed({old_path: new_path})
-        records = []
-        for held, record in folders.of(library).entries_for(old_path):
-            held.pop(paths.key(old_path), None)
-            record["path"] = new_path
-            record["filename"] = os.path.basename(new_path)
-            held[paths.key(new_path)] = record
+    names that stamp (one look at each file a map holds). Memory only, nothing of the library's: a crash loses it with
+    the maps, which are scanned again. `library` is the one the write was made in, handed on: the conversion's
+    follow-up runs on its own thread, after the request that asked for it was answered. The records, in the order of
+    `moves`, for a write that tells them more of what it wrote."""
+    moves = list(moves)
+    renames = {old: new for old, new, renamed in moves if renamed}
+    if renames:
+        suggestion_jobs.runs_for(library).renamed(renames)
+    cache = folders.of(library)
+    found = [(old, new, renamed, cache.entries_for(old)) for old, new, renamed in moves]
+    for old, _new, renamed, entries in found:
+        for held, _record in (entries if renamed else ()):
+            held.pop(paths.key(old), None)
+    records = []
+    for _old, new, renamed, entries in found:
+        for held, record in entries:
+            if renamed:
+                record["path"] = new
+                record["filename"] = os.path.basename(new)
+                held[paths.key(new)] = record
             records.append(record)
-    else:
-        records = [record for _held, record in folders.of(library).entries_for(old_path)]
-    written_stamp = photo_actions.file_stamp(new_path)
-    if written_stamp:
-        for record in records:
+        written_stamp = photo_actions.file_stamp(new) if entries else None
+        for _held, record in (entries if written_stamp else ()):
             record["mtime"], record["size"] = written_stamp
     return records
 
@@ -1089,7 +1093,7 @@ def photo_smart_rename():
         new_path = result.details["new_path"]
         renamed = bool(result.details["renamed"])
         # Keeping the name it had wrote the file too (photos.preserve_names): the records take its stamp all the same.
-        _followed_rename(library, photo_path, new_path, renamed)
+        _followed_rename(library, [(photo_path, new_path, renamed)])
     except Exception as e:
         logger.error("Error smart renaming %s: %s", photo_path, e, exc_info=True)
         return responses.error(500, str(e))
@@ -1126,7 +1130,7 @@ def photo_save_metadata():
             logger.error("Error saving metadata for %s: %s", photo_path, result.message())
             return responses.error(500, result.message())
         new_path, renamed, tags = result.details["new_path"], result.details["renamed"], result.details["tags"]
-        for record in _followed_rename(library, photo_path, new_path, renamed):
+        for record in _followed_rename(library, [(photo_path, new_path, renamed)]):
             raw_meta = photo_actions.record_written(
                 library, record, new_path, tags, result.details["flat"], result.details["hierarchical"],
                 result.details["dates"])

@@ -102,7 +102,7 @@ class AnyFailureAfterTheHeldPartAnswersWhatChanged(jl.Base):
         folder = tagpup_routes.folders.of(self.library)
         folder.put(self.regatta, {"stale": {"path": self.held[0]}})
         with mock.patch.object(file_only, "rename", side_effect=OSError("gone")), \
-                mock.patch.object(tagpup_routes.photo_actions, "read_folder", side_effect=OSError("share gone")):
+                mock.patch.object(tagpup_routes.photo_actions, "scan_folder", side_effect=OSError("share gone")):
             reply = self.rename()
         self.assertEqual(500, reply.status_code, reply.data)
         self.assertNotIn("updated_paths", reply.get_json())

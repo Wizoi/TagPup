@@ -11,6 +11,13 @@ file. A save after a title also tells the records the tags and title it wrote; t
 The conversion's follow-up runs on the conversion's thread when it ends, the request long answered and no request
 context there: it acts on the library the conversion was started in.
 
+A folder's Smart Rename of a folder the library does not hold writes the files only and moves no counter, so nothing
+lets a kept scan go: the subfolder's scan and its parent's must follow every photo it renamed, and the file it moved
+aside, or opening the parent shows names no file has any more (#2892). Numbered names shuffled among themselves move
+each record once. A rename that stops part-way stopped in its second part, after the photos of the folders the library
+holds were renamed with their rows: the library moved, every kept scan is let go, and the answer is the folder scanned
+again.
+
 The services stand in (each renames the file on disk as the real one does and answers its Result); what is under test is
 the routes' follow-up. Written against the trunk before the follow-up was folded into one function, and passing there.
 """
@@ -180,6 +187,107 @@ class AClipConverted(Follows, unittest.TestCase):
         said = ended["done"](self.old, how)
         self.assertEqual(moved, said["renamed"])
         return said
+
+
+class AFolderRenamedThatTheLibraryDoesNotHold(unittest.TestCase):
+    """POST /api/folder/rename-photos in a subfolder the library does not hold, its scan kept and its parent's: the
+    files renamed and written (their names kept first), no row, no counter moved. The two photos asked for take the
+    numbers the order gives them, the first the second's old name and the second a name a file not asked for held,
+    which is moved aside first, as the service does."""
+
+    def setUp(self):
+        self.lib = Library(self)
+        self.folder = os.path.join(self.lib.photos, "Day 1")
+        os.makedirs(self.folder)
+        self.first, self.second, self.other = (paths.stored(os.path.join(self.folder, name)) for name in (
+            "Harbour - 1.jpg", "Harbour - 2.jpg", "Harbour - 3.jpg"))
+        records = {}
+        for path, title in ((self.first, "First"), (self.second, "Second"), (self.other, "Other")):
+            with open(path, "wb") as handle:
+                handle.write(title.encode())
+            record = photo_actions.page_record(path, {"tags": [], "raw_metadata": {}}, *OLD_STAMP)
+            record["title"] = title
+            records[paths.key(path)] = record
+        self.lib.folders().put(self.folder, records)
+        self.lib.folders().put(self.lib.photos, {key: dict(record) for key, record in records.items()})
+        self.lib.suggestion_runs().looks[paths.key(self.folder)] = {
+            path: {"raw_suggestions": {"path": path}} for path in (self.first, self.second, self.other)}
+        self.aside = paths.stored(os.path.join(self.folder, "Harbour - 3_conflict_1.jpg"))
+
+    def rename(self, stops_after_first=False):
+        """The two photos renamed, numbered first-taken first: the second (taken first) to 1, the first to 3. Stopped
+        part-way, the first alone, after a photo of a held folder was renamed with its row (a row written: the photos
+        counter moves)."""
+        wanted = {self.second: self.first, self.first: self.other}
+
+        def renaming(_library, photo_paths, _grouping, _format, _exiftool):
+            result = Result(attempted=len(photo_paths))
+            moves = {self.first: self.other} if stops_after_first else wanted
+            os.replace(self.other, self.aside)
+            for old in moves:
+                os.replace(old, old + ".tmp")
+            for old, new in moves.items():
+                os.replace(old + ".tmp", new)
+                with open(new, "ab") as handle:
+                    handle.write(b" its name kept")
+            result.changed = len(moves)
+            result.details.update(updated_paths=dict(moves), renamed=dict(moves), moved_aside={self.other: self.aside},
+                                  index_rows_moved=0, index_skipped=[], file_only=len(moves), with_rows=0)
+            if stops_after_first:
+                self.lib.hold(os.path.join(self.lib.photos, "Day 2"))
+                result.fail("smart rename", "Could not rename: the share went away.")
+            return result
+        with mock.patch.object(tagpup_routes.photo_actions, "smart_rename", side_effect=renaming):
+            return self.lib.post("/api/folder/rename-photos", {
+                "folder_path": self.folder, "photo_paths": [self.first, self.second], "grouping": "Harbour"})
+
+    def held(self, folder):
+        """{name: (title, path, filename, mtime, size)} of a kept scan, as it is handed back (get: the stamp checked)."""
+        kept = self.lib.folders().get(folder)
+        self.assertIsNotNone(kept, "the kept scan was let go: nothing moved the library")
+        return {os.path.basename(key): (r["title"], r["path"], r["filename"], r["mtime"], r["size"])
+                for key, r in kept.items()}
+
+    def expected(self, titles):
+        """{name: the record held of the file of that name now}, for {path: the title of the photo it is}."""
+        found = {}
+        for path, title in titles.items():
+            stamp = os.stat(path)
+            found[os.path.basename(paths.key(path))] = (title, path, os.path.basename(path), stamp.st_mtime, stamp.st_size)
+        return found
+
+    def test_every_scan_holding_the_photos_follows_them_under_their_new_names_and_stamps(self):
+        status, reply = self.rename()
+        self.assertEqual(200, status, reply)
+        now = self.expected({self.first: "Second", self.other: "First", self.aside: "Other"})
+        self.assertEqual(now, self.held(self.lib.photos), "the parent's scan, whose walk took the photos in")
+        self.assertEqual(now, self.held(self.folder), "the subfolder's scan")
+        self.assertEqual({self.second: self.first, self.first: self.other}, reply["updated_paths"])
+        self.assertEqual(sorted([self.first, self.other, self.aside]), sorted(r["path"] for r in reply["updated_photos"]))
+
+    def test_suggests_looks_follow_every_photo_and_the_file_moved_aside(self):
+        # Each photo's looks under its new name, the file moved aside's too: left under its old name, the name the first
+        # photo took, one of the two overwrote the other and the first photo showed the other file's suggestions.
+        self.lib.suggestion_runs().looks[paths.key(self.folder)] = {
+            path: {"raw_suggestions": {"path": path, "tags": [title]}}
+            for path, title in ((self.first, "Trips/First"), (self.second, "Trips/Second"), (self.other, "Trips/Other"))}
+        status, reply = self.rename()
+        self.assertEqual(200, status, reply)
+        looks = self.lib.suggestion_runs().looks[paths.key(self.folder)]
+        self.assertEqual({self.first: (self.first, ["Trips/Second"]), self.other: (self.other, ["Trips/First"]),
+                          self.aside: (self.aside, ["Trips/Other"])},
+                         {path: (entry["raw_suggestions"]["path"], entry["raw_suggestions"]["tags"])
+                          for path, entry in looks.items()})
+
+    def test_a_rename_that_stops_part_way_answers_the_folder_scanned_again(self):
+        status, reply = self.rename(stops_after_first=True)
+        self.assertEqual(500, status, reply)
+        self.assertEqual({self.first: self.other}, reply["updated_paths"])
+        now = sorted([self.second, self.other, self.aside])
+        self.assertEqual(now, sorted(r["path"] for r in reply["updated_photos"]), "the folder as it is now")
+        self.assertIsNone(self.lib.folders().get(self.lib.photos), "the parent's scan, kept past a move of the library")
+        self.assertEqual(now, sorted(r["path"] for r in self.lib.folders().get(self.folder).values()),
+                         "the folder's scan is the one answered")
 
 
 if __name__ == "__main__":
