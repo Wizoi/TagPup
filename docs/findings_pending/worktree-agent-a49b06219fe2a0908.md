@@ -1,0 +1,10 @@
+# Findings of a branch
+
+Provisional numbers `B-n`: `tools/add_findings.py --take` gives each row its number in
+docs/findings.md when the main session merges the branch, and removes this file.
+
+| # | Found | Finding | Status |
+|---|---|---|---|
+| B-1 | 2026-11-12 | wrong: convert deleted a renamed original (a .mov made smaller, a .wmv converted) once its carry's write_fields answered ok, without reading the copy back: a carry that wrote nothing deleted the one other holder of its tags, title and kept name. Fixed: convert._short_of reads the copy back (the carrier finds nothing to write, no Windows Tags) before the original goes; tests/test_a_clip_converted.py AClipHoldingWindowsTags (write_fields mocked to answer ok: on the old code the original was deleted, changed 1). | fixed |
+| B-2 | 2026-11-12 | data: a conversion under its own name (an .mp4 of MPEG-4 Part 2: clip 70543, the one live Windows-tagged clip Convert takes) deletes its original BEFORE its copy takes the name and is carried into, so its Windows Tags (and tags, title, kept name) live only in the journal's plan (change_files.fields_after carry) between the delete and the carry; the settle carries them from there, but a library restored from a snapshot taken meanwhile would lose them. Closing it means writing the carry into the temp before the delete: a write outside file_changes (contract 1, an exception widened) and an ExifTool rewrite changes the temp's file id that _is_copy knows it by. Owner/Files owner to decide; not built. | open |
+| B-3 | 2026-11-12 | low: convert reads the tag tree (_carryable) when it plans, minutes before the carry writes: a tree edit renaming a carried Windows tag meanwhile puts the old name on the copy (a tag not in the tree, visible, not lost); the original's XMP tags have the same window (a tree rewrite of the original during ffmpeg is a CHANGED refusal), its Windows Tags do not (the rewrite never touches the Xtra). No live instance; decide by design or re-check at the carry. | open |

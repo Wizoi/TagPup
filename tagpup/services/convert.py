@@ -11,7 +11,8 @@ smaller (MP4), for one that does (SMALLER; a copy no smaller is removed, the cli
 a thread of the server (batches.claim), the request answered at once with its ticket; no bulk convert (owner 2026-11-12).
 
 How one conversion goes, the original kept until its copy is in place and holds what it carried:
-1. Refused before ffmpeg runs, nothing planned: a clip away or gone, without a row, still holding Windows Tags, open in another program, whose length cannot be read, whose plan is not its
+1. Refused before ffmpeg runs, nothing planned: a clip away or gone, without a row, holding a Windows tag it cannot
+   carry (CANNOT_CARRY, _carryable), open in another program, whose length cannot be read, whose plan is not its
    reason's (NEEDS: a clip that plays is not converted, one that does not is not made smaller), or with no room for its
    copy on its drive.
    Under the lock of changes of photo files: one a cut-short change has still to settle, one whose converted name holds a
@@ -19,7 +20,9 @@ How one conversion goes, the original kept until its copy is in place and holds 
 2. Planned (file_journal.CONVERT), one file: its path the original's, its new_path the MP4's (None for the same name),
    fields_before the original's fingerprint (file_changes.fingerprint), fields_after what it carries (`carry`: its tags,
    title, the name it had and its Date Taken, as the library reads it of the original read whole; no caption,
-   clip_convert); marked `writing`; the temp claimed (clip_convert.claimed).
+   clip_convert; and its Windows Tags, after its tags: a clip tagged long ago in Windows Photo Gallery holds them in the
+   WM/Category of its Xtra, fields.CLIP_CATEGORY, which ffmpeg does not carry and the library never reads as tags);
+   marked `writing`; the temp claimed (clip_convert.claimed).
 3. ffmpeg, outside the lock (minutes); the temp flushed to its disk and verified (clip_convert), and its
    fingerprint recorded as `made`.
 4. Onward (_onward, the forward run's and the settle's alike), under the lock: the temp renamed into place (a same-name
@@ -27,8 +30,9 @@ How one conversion goes, the original kept until its copy is in place and holds 
    what the copy holds, in one transaction; the carry written into the copy (CARRIED, file_changes.write_fields: only
    what differs; the Date Taken into its XMP, as a clip's date is saved, fields.date_taken_fields, the date the library
    reads first: an XMP date, or a .mov's Apple CreationDate, is not carried by ffmpeg, which carries a QuickTime
-   CreateDate only, clip_convert); the original deleted LAST; marked done, the change finished. The row's Date Taken
-   is so the original's before the original is deleted.
+   CreateDate only, clip_convert); the copy read back holding all it carries and no Windows Tags (_short_of); the
+   original deleted LAST; marked done, the change finished. The row's Date Taken is so the original's before the
+   original is deleted.
 
 The original is deleted FOR GOOD, never to a Recycle Bin (owner 2026-11-12: its copy is verified first; the Bin is for
 deletes), by one bounded call (_removed_for_good), and only while it is the file the conversion found (its fingerprint).
@@ -62,7 +66,7 @@ from tagpup.core.result import CHANGED_ON_DISK, CHANGED_ON_DISK_SENTENCE, Confli
 from tagpup.files import clip_convert, convertible, field_values, images, lock_owners, names, shares, video_frames
 from tagpup.services import batches, file_changes, tagging
 from tagpup.services import photos as photo_actions
-from tagpup.store import db, file_journal, photos
+from tagpup.store import db, file_journal, person_ids, photos, taxonomy
 
 logger = logging.getLogger(__name__)
 
@@ -98,7 +102,8 @@ GONE = "it is not there any more; nothing was converted"
 NO_ROW = "the library has no row for it; nothing was converted"
 NOT_A_CLIP = "it is not a video; nothing was converted"
 UNREADABLE = "its metadata could not be read (%s); nothing was converted"
-WINDOWS_TAGS = "it still holds Windows Tags: move the Windows Tags first; nothing was converted"
+CANNOT_CARRY = ("it holds Windows Tags its tags cannot take, not in the tag tree or under a people root and no person "
+                "(%s): add them to the tree, or take them off in Windows; nothing was converted")
 HELD_OPEN = "it is open in another program; close it and try again; nothing was converted"
 NO_FILE_ID = ("its drive gives its files no file id, so its converted copy could not be told from another file; nothing "
               "was converted")
@@ -306,8 +311,10 @@ def _ready(library, exiftool_path, tools, source, reason):
     if whole is None:
         return UNREADABLE % "ExifTool could not read it"
     held = read[paths.key(source)]
-    if fields.field_values(held.get(fields.CLIP_CATEGORY)):
-        return WINDOWS_TAGS
+    windows = [str(text) for text in dict.fromkeys(fields.field_values(held.get(fields.CLIP_CATEGORY)))]
+    cannot = [text for text in windows if text not in _carryable(library)] if windows else []
+    if cannot:
+        return CANNOT_CARRY % "; ".join(cannot)
     try:
         lock_owners.opened(source, lock_owners.NO_SHARING).close()
     except OSError:
@@ -323,10 +330,28 @@ def _ready(library, exiftool_path, tools, source, reason):
     room = clip_convert.room_for(source, stamp[1])
     if room:
         return room
-    carry = {"tags": list(vocabulary.extract_tags({field: held.get(field) for field in fields.TAG_SOURCE_FIELDS})),
+    tags = list(vocabulary.extract_tags({field: held.get(field) for field in fields.TAG_SOURCE_FIELDS}))
+    carry = {"tags": list(dict.fromkeys(tags + windows)),
              "title": fields.own_title(held),
              "name": names.preserved_name(held) or os.path.basename(source), "date": dates.date_taken(whole)}
     return _Ready(found[0], stamp, streams, carry, clip_convert.target_of(source))
+
+
+def _carryable(library):
+    """The tags of `library`'s tag tree a clip's Windows Tags may be carried into its copy's tags as, the rule of the
+    one-time move of 2026-11-12 (DECISIONS 2026-11-09): a text the tree holds, as it is (a tag path, People/Wren Ashcombe;
+    a branch is a tag like another, owner 2026-11-12), but under a people root a person's alone: a keyword there names a
+    person (vocabulary.extract_refs), so one that is no person (a group of people) would name one by its leaf. Read once a
+    conversion, of one snapshot of the tree."""
+    conn = db.connect(db.readonly_uri(library.path), uri=True)
+    try:
+        db.begin(conn)
+        tree = taxonomy.tags(conn)
+        people = {tag for _id, tag, _name in person_ids.read(conn).listing}
+        roots = taxonomy.people_roots(conn)
+    finally:
+        conn.close()
+    return frozenset(tag for tag in tree if tag in people or vocabulary.key(vocabulary.root_of(tag)) not in roots)
 
 
 def _taken(library, source, target):
@@ -427,9 +452,10 @@ def _onward(library, exiftool_path, row, forward, result, problem=None):
     _reached("rows followed")
     carried = file_changes.write_fields(library, CARRIED, exiftool_path, [target], list(READ), _carrier(library, row.after),
                                         summary={"photos": 1, "change": row.change_id})
-    if not carried.ok:
-        _note(library, row, NOT_CARRIED % carried.message())
-        result.refuse(NOT_CARRIED % carried.message())
+    short = carried.message() if not carried.ok else _short_of(library, exiftool_path, target, row.after)
+    if short:
+        _note(library, row, NOT_CARRIED % short)
+        result.refuse(NOT_CARRIED % short)
         return False
     _reached("carried")
     if renamed and file_changes.fingerprint(source) == row.before:
@@ -444,6 +470,21 @@ def _onward(library, exiftool_path, row, forward, result, problem=None):
     file_journal.mark(library.path, [row.id], "done")
     result.changed = 1
     return True
+
+
+def _short_of(library, exiftool_path, target, after):
+    """None when the copy at `target` reads back holding all the conversion carries (`after`'s carry: _carrier finds
+    nothing to write) and no Windows Tags (ffmpeg carries no Xtra); else what it lacks, a phrase naming fields, never
+    tags. Read after the carry and before the original, the one other holder of what it carries, is deleted for good."""
+    try:
+        with field_values.session(exiftool_path) as et:
+            held = field_values.read_one(et, target, list(READ) + [fields.CLIP_CATEGORY])
+    except (OSError, field_values.Unreadable) as e:
+        return "it could not be read back: %s" % e
+    if fields.field_values(held.get(fields.CLIP_CATEGORY)):
+        return "it holds Windows Tags"
+    plan = _carrier(library, after)(target, held)
+    return None if plan.skip else "read back, it lacks %s" % ", ".join(plan.detail)
 
 
 def _is_copy(path, made):

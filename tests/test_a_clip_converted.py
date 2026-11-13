@@ -5,7 +5,8 @@ never undone.
 
 What the owner lives through: the one-time convert of the old formats (.wmv, .mpg, .avi; and an .mp4 whose picture is
 MPEG-4 Part 2, converted under its own name), each clip one change; the run cut short at any step and settled at the next
-start; a clip open in a player, a full disk, ffmpeg failing, an original that cannot be deleted. The panel's
+start; a clip open in a player, a full disk, ffmpeg failing, an original that cannot be deleted; a clip tagged long
+ago in Windows, its Windows Tags carried into its copy's tags (AClipHoldingWindowsTags). The panel's
 Convert and Make smaller (MP4) by id: answered at once with a ticket, a second click refused, Cancel on the ticket, a bulk
 edit waiting behind, a shrink no smaller left as it is, a button that is not the clip's plan refused (ThePanelButtons).
 
@@ -23,13 +24,14 @@ from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import test_a_clip_patched_in_place as patched  # noqa: E402
 from test_a_clip_tagged_through_the_journal import EXIFTOOL, TOOLS, ALibraryHoldingAClip  # noqa: E402
 from test_file_journal import Crash, crash_at  # noqa: E402
 from view_library import ViewLibrary  # noqa: E402
 
 from tagpup.core import fields, paths, processes  # noqa: E402
 from tagpup.core.result import Result  # noqa: E402
-from tagpup.files import clip_convert, field_values, metadata, recycle_bin, shares, video_frames  # noqa: E402
+from tagpup.files import clip_convert, containers, field_values, metadata, recycle_bin, shares, video_frames  # noqa: E402
 from tagpup.services import batches, convert, file_changes, tagging  # noqa: E402
 from tagpup.services import photos as photo_actions  # noqa: E402
 from tagpup.store import file_journal, photos  # noqa: E402
@@ -348,6 +350,101 @@ class Refused(AnOldClipInTheLibrary):
         (second,) = seconds
         self.assertEqual((0, convert.TEMP_TAKEN), (second.changed, second.message()))
         self.assert_converted(self.source, self.photo_id, TITLE)
+
+
+class AClipHoldingWindowsTags(AnOldClipInTheLibrary):
+    """A clip tagged long ago in Windows Photo Gallery: its Tags in the WM/Category of its Xtra (fields.CLIP_CATEGORY),
+    which the library never reads as tags (DECISIONS 2026-11-07). Convert and Make smaller carry each into the copy's
+    tags, beside the tags it holds, when the tag tree holds it (under a people root, as a person): the rule of the one-time
+    move of 2026-11-12; the copy holds no Xtra, and is read back holding what it carries before a renamed original is
+    deleted for good. A Windows tag it cannot carry refuses the clip, naming the tag, before anything is planned.
+
+    The live shapes (photo_index, read-only, 2026-11-12): twelve clips still hold Windows Tags, nine of them XMP tags too;
+    one an .mp4 of MPEG-4 Part 2 (Convert, under its own name), eleven an H.264 .mov (Make smaller, an .mp4 of another
+    name); two all carryable, ten holding a tag the tree does not hold, none a non-person under People."""
+
+    #: The live shapes: (name, the clip's button, its title as made).
+    SHAPES = (("dock.mp4", convert.OLD_FORMAT, TITLE), ("harbour.mov", convert.SMALLER, ""))
+
+    def setUp(self):
+        super().setUp()
+        self.vl.tree(patched.WINDOWS_TAGS[0], face_root="People")   # the base's tree holds Trips/Coast, Harbour, Pier
+
+    def windows_clip(self, name, texts=patched.WINDOWS_TAGS):
+        """A clip `name` (an .mp4 of MPEG-4 Part 2, or a large H.264 .mov) given an Xtra holding `texts` as Windows writes
+        one, recorded as the indexer reads it, then tagged Trips/Harbour in its XMP through the journal: (its path, its
+        id)."""
+        path = os.path.join(self.folder, name)
+        path = make_mov(path, 0) if name.endswith(".mov") else make_clip(path, TITLE)
+        patched.with_windows_tags(path, texts)
+        photo_id = self.index(path)[0]
+        saved = file_changes.write_fields(self.vl.library, "save", EXIFTOOL, [path], list(tagging.KEYWORD_READ),
+                                          tagging.keywords_planner(self.vl.library, lambda _p, _h: (["Trips/Harbour"], ())))
+        self.assertEqual(1, saved.changed, saved.message())
+        self.assertEqual((["Trips/Harbour"], list(texts) or None), patched.windows_tags_read(path))
+        return path, photo_id
+
+    def assert_carried(self, source, photo_id, title):
+        """The clip converted (a renamed original deleted for good), its Windows Tags in its copy's tags after the one it
+        held, and no Windows Tags left."""
+        target = self.assert_converted(source, photo_id, title)
+        carried = ["Trips/Harbour"] + list(patched.WINDOWS_TAGS)
+        self.assertEqual((carried, None), patched.windows_tags_read(target), "its tags in its XMP, no Windows Tags")
+        with open(target, "rb") as handle:
+            self.assertIsNone(containers.read(handle).xtra, "the copy holds no Xtra")
+        self.assertEqual(sorted(carried), sorted(self.row_of(photo_id)[1]), "the row reads them")
+
+    def test_its_windows_tags_the_tree_holds_are_carried_into_its_copys_tags_and_the_copy_holds_no_xtra(self):
+        for name, reason, title in self.SHAPES:
+            with self.subTest(name):
+                source, photo_id = self.windows_clip(name)
+                result = self.convert(source, reason=reason)
+                self.assertEqual((1, True), (result.changed, result.ok), result.message())
+                self.assert_carried(source, photo_id, title)
+
+    def test_a_windows_tag_it_cannot_carry_refuses_the_clip_naming_it_before_anything_is_planned(self):
+        self.vl.forget("Trips/Pier")
+        self.vl.tree("People/Cousins/Ash Pell", face_root="People")
+        for name, texts, cannot in (
+                ("pier.mp4", patched.WINDOWS_TAGS, "Trips/Pier"),                      # the ten live: not in the tree
+                ("cousins.mp4", ("Trips/Coast", "People/Cousins"), "People/Cousins")):  # under People, no person
+            with self.subTest(cannot):
+                source, _photo_id = self.windows_clip(name, texts)
+                before = self.read_bytes(source)
+                with mock.patch.object(clip_convert, "convert") as ffmpeg:
+                    result = self.convert(source)
+                ffmpeg.assert_not_called()
+                self.assertEqual((0, convert.CANNOT_CARRY % cannot), (result.changed, result.message()))
+                self.assertEqual(before, self.read_bytes(source), "the clip as it was")
+                self.assertEqual([], self.vl.rows("SELECT id FROM changes WHERE operation = ?", file_journal.CONVERT))
+
+    def test_killed_before_its_carry_the_settle_carries_its_windows_tags_from_the_journal(self):
+        for name, reason, title in self.SHAPES:
+            with self.subTest(name):
+                source, photo_id = self.windows_clip(name)
+                with mock.patch.object(convert, "_reached", side_effect=crash_at("rows followed")):
+                    with self.assertRaises(Crash):
+                        self.convert(source, reason=reason)
+                with mock.patch.object(file_changes, "SCRATCH_STALE", 0):
+                    file_changes.settle(self.vl.library, EXIFTOOL)
+                self.assert_carried(source, photo_id, title)
+
+    def test_a_renamed_copy_that_does_not_read_back_holding_its_carry_keeps_the_original_for_the_next_settle(self):
+        # A carry that answers ok while the copy holds none of it: the original, the one other holder of its tags, is
+        # kept. (An .mp4 converted under its own name has its original deleted before its copy takes the name: what it
+        # carries is in the journal's plan until the settle writes it, test_killed_before_its_carry_...)
+        source, photo_id = self.windows_clip("harbour.mov")
+        before = self.read_bytes(source)
+        with mock.patch.object(file_changes, "write_fields", return_value=Result()):
+            result = self.convert(source, reason=convert.SMALLER)
+        self.assertEqual(0, result.changed, result.message())
+        self.assertIn("its tags, title or kept name could not be written into its converted copy", result.message())
+        self.assertEqual(before, self.read_bytes(source), "the original kept")
+        self.assertEqual([("writing",)], self.vl.rows(
+            "SELECT state FROM change_files WHERE photo_id = ? AND change_id IN (SELECT id FROM changes WHERE operation = ?)",
+            photo_id, file_journal.CONVERT))
+        file_changes.settle(self.vl.library, EXIFTOOL)
+        self.assert_carried(source, photo_id, "")
 
 
 def make_mov(path, crf, created=CREATED):
