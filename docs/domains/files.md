@@ -1,7 +1,8 @@
 # Files and sync: the state of the domain
 
 The domain's charter is `.claude/agents/tagpup-owner-files.md`: its Scope, the contract the other domains rely on, its
-invariants and guards, and its scenarios F1 to F17. This page states each of the seven conditions of health
+invariants and guards, and its scenarios F1 to F11 (the clip flows, F12 to F19 until 2026-11-13, are
+Media's C1 to C7: docs/domains/media.md). This page states each of the seven conditions of health
 (docs/OWNERS.md) with its evidence and date. A condition not met is the domain's queue.
 
 ## What the domain holds (counted 2026-11-08, read-only)
@@ -25,9 +26,9 @@ its editors, the clips, the bake) is stated where it belongs, and the long secti
 editors) are the evidence those scenario tests cite.
 
 1. **No reach-ins.** Met. Every use of a Files module by another domain is a row of the Integration charter's contract
-   table: Files is the callee of rows 6, 7, 38, 46, 47, 48, 50, 51 and 53 to 59, and of rows 69 to 74 (a video's
+   table: Files is the callee of rows 6, 7, 38, 46, 47, 48, 50, 51 and 53 to 59, and of rows 69 to 72 and 74 (a video's
    bytes through `read_span`; the web server's settling of a half-done change; the page record's `writes`; the delete
-   check and the Recycle Bin's keeping; a clip's frames; the thumbnail cache and a clip's poster). Files is the caller of
+   check and the Recycle Bin's keeping; the thumbnail cache and a clip's poster). Files is the caller of
    rows 60, 61, 62 (vocabulary, the people vocabulary, the faces store), 65 and 66 (the index's matching of the faces it
    made and its reading of a bake) and 68 (`sync._said` into `tagpup.logs`). Rows 50 to 59 are the 2026-10-15 pass's:
    inspect, tags, identify, box_shape, the naming jobs' folder scope, the journal's undo and dating, the thumbnails'
@@ -68,11 +69,11 @@ editors) are the evidence those scenario tests cite.
      - a stop during the planning read: Cancel or a hand-over;
      - a Ctrl+C part-way.
    - `tests/photo_rows.stamp_of`'s (0.0, 0) is a fixture's, by design (its docstring).
-6. **Scenario tests, each file owned and mapped.** Met. F1 to F17 each have files in `tests/owners.py`
-   (Files' test files, counted 2026-11-08: 61 scenario, 53 unit, 2 guard), and `test_bulk_delete` is F8.
+6. **Scenario tests, each file owned and mapped.** Met. F1 to F11 each have files in `tests/owners.py`
+   (Files' test files, counted 2026-11-13 after the clip files went to Media: 50 scenario, 46 unit, 2 guard), and `test_bulk_delete` is F8.
    `test_service_save_photo` and `test_save_reply_says_rename_failed` were lifted into F1
-   (`tests/test_tag_a_photo_read_it_back_and_undo.py`) with mutation proofs, and the restatements deleted. F12 to F17 are the
-   clip flows (indexed, written, renamed, deleted, dated, tree edit), one id each (#2736).
+   (`tests/test_tag_a_photo_read_it_back_and_undo.py`) with mutation proofs, and the restatements deleted. The clip flows
+   (F12 to F19 until 2026-11-13, #2736) are Media's C1 to C7 (#2926).
 7. **No open data or wrong finding, and every low fixed or by design.** Met for data and wrong
    (`tools/add_findings.py --open`, 2026-11-08: 20 open, all low). Files' open lows are #2754 and
    #2755 (the watcher), #2756 (an unreachable arm of the bulk edit) and #2735 (this page, closed by this restatement).

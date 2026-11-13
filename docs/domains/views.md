@@ -1,7 +1,8 @@
 # Views, search and AI: the state of the domain
 
 The domain's charter is `.claude/agents/tagpup-owner-views-ai.md` (its Scope, its contract, its guards, the scenario list
-V1 to V9, V11 to V17; V10, MTCNN's detector cap, retired with the old models). This page states what the domain is today,
+V1 to V9, V11 to V14, V17; V10, MTCNN's detector cap, retired with the old models; V15 and V16, a video played and a
+clip's poster, are Media's C8 and C9 since 2026-11-13, docs/domains/media.md). This page states what the domain is today,
 each of the seven conditions of health (docs/OWNERS.md) with its evidence and date, and what is so by design. A condition
 not met is the domain's queue.
 
@@ -9,7 +10,7 @@ not met is the domain's queue.
 
 Which photos and clips, in what order and how many, for every way the owner looks at a library (a folder, a keyword, a
 person, a date, a union of them, a typed search), the navigator's counts, the photos' CLIP vectors (a clip's five frames),
-Suggest, the video the browser plays and the poster it shows, and the models on the one graphics card. What it reads, in
+Suggest (the video the browser plays and the poster it shows are Media's), and the models on the one graphics card. What it reads, in
 the three live libraries:
 
 | | photo_index | kr-track | renton_parkrun |
@@ -60,7 +61,7 @@ All three libraries name the same models (ViT-SO400M-14-SigLIP2/webli and scrfd-
    instance counted 2026-11-08: a clip with frame 0 alone (2,179 clips hold a vector and 8,708 frame rows; kr-track's 5
    hold 20), and a library with no clip (renton_parkrun, 0). The warm-up's refusal beside a run of another set has a user
    action: the server starts and the owner clicks Suggest in a library on another set.
-6. **Scenario tests, each file owned and mapped.** Met: V1 to V9 and V11 to V17 each have a file in `tests/owners.py`
+6. **Scenario tests, each file owned and mapped.** Met: V1 to V9, V11 to V14 and V17 each have a file in `tests/owners.py`
    (`tests/test_the_test_map.py` passes 2026-11-08). Unit tests that restated a scenario were lifted and deleted (V1, V7,
    V9). The unit files that stay hold a rule no scenario holds (below).
 7. **No open data or wrong finding, and every low fixed or by design.** Met 2026-11-08: `tools/add_findings.py --open`

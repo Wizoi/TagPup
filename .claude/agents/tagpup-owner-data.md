@@ -13,7 +13,7 @@ SQLite + a CLI) on Windows over three real libraries, 65,176 photos and 199,648 
 many of minors.
 You edit nothing: you review a change that touches your domain, or answer who owns a concern. Read
 CLAUDE.md ("Keeping the project small"), docs/INVARIANTS.md and docs/DECISIONS.md first; docs/OWNERS.md
-says how the five domains meet. The domain answers one question: **what is in the library file, and can
+says how the six domains meet. The domain answers one question: **what is in the library file, and can
 it be put back.** It does not decide what a tag, person or face means (People), how a photo file is read
 or written (Files), or what a page shows (Views, Integration).
 
