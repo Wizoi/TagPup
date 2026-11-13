@@ -102,7 +102,7 @@ class FolderCache:
                 return None
             kept = self._stamps.get(key)
         if kept == self.stamp():
-            return held
+            return self.snapshot(folder)
         with self._lock:
             if self._maps.get(key) is held:
                 del self._maps[key]
@@ -110,15 +110,16 @@ class FolderCache:
         return None
 
     def peek(self, folder):
-        with self._lock:
-            return self._maps.get(paths.key(folder))
+        return self.snapshot(folder)
 
     def put(self, folder, photos, stamp=None):
-        """Keep a scan; `stamp` is `self.stamp()` as it was before the scan (taken now when not given)."""
+        """Keep a scan; `stamp` is `self.stamp()` as it was before the scan (taken now when not given). Returns a copy of
+        it taken under the lock, which is what the caller reads (`snapshot`)."""
         stamp = self.stamp() if stamp is None else stamp
         with self._lock:
             self._maps[paths.key(folder)] = photos
             self._stamps[paths.key(folder)] = stamp
+            return dict(photos)
 
     def clear(self):
         with self._lock:
@@ -140,8 +141,10 @@ class FolderCache:
         return found
 
     def snapshot(self, folder):
-        """A copy of the folder's map taken under the lock, or None when none is held: what a route sorts or sends, since
-        a `move` re-keys the map itself and a reader walking it outside the lock would see it change size."""
+        """A copy of the folder's map taken under the lock, or None when none is held: what `get`, `peek` and `put` hand
+        back, since a `move` re-keys the map itself and a reader walking it outside the lock would see it change size
+        (#2907, #2910). The records in it are the map's own, so a patch of one (`entries_for`) shows in both; the live
+        map is reached only through `entries_for`, `move`, `move_all` and `forget`."""
         with self._lock:
             held = self._maps.get(paths.key(folder))
             return None if held is None else dict(held)
@@ -212,13 +215,13 @@ def _folder_photos(library, folder, force=False):
     """The folder's photos as the page was shown them: the one filler of the cache. Scanned now when they have not
     been, when the library moved since (FolderCache.get), or when `force` (the page's Refresh); an empty folder is
     walked again each time, so photos copied in after it was first opened show. Opening a folder, Suggest (on the
-    run's own thread, with the library it was handed) and a time shift."""
+    run's own thread, with the library it was handed) and a time shift. A copy of the kept map (FolderCache.snapshot),
+    safe to walk while a write re-keys the map."""
     cache = folders.of(library)
     found = None if force else cache.get(folder)
     if not found:
         stamp = cache.stamp()
-        found = photo_actions.scan_folder(library, folder, state.exiftool(library))
-        cache.put(folder, found, stamp)
+        found = cache.put(folder, photo_actions.scan_folder(library, folder, state.exiftool(library)), stamp)
     return found
 
 
@@ -238,12 +241,6 @@ def _a_file(path):
     """Is there a file (or a folder) at `path`, as a request sent it? Through photos.file_stamp, which waits a moment on
     a network share. The one check of the routes that act on one photo."""
     return isinstance(path, str) and bool(path) and photo_actions.file_stamp(path) is not None
-
-
-def _shown(library, folder, photos):
-    """`photos` (what `_folder_photos` handed back) as a copy taken under the cache's lock, to sort or send while a write
-    of another request re-keys the kept map (FolderCache.move); the map itself when the cache let it go meanwhile."""
-    return folders.of(library).snapshot(folder) or photos
 
 
 def _sorted(photos):
@@ -306,7 +303,7 @@ def folder_scan():
     if refused:
         return refused
     folder = paths.stored(folder)
-    return jsonify(_sorted(_shown(library, folder, _folder_photos(library, folder, force))))
+    return jsonify(_sorted(_folder_photos(library, folder, force)))
 
 
 @routes.get("/api/folder/membership")
@@ -514,7 +511,7 @@ def folder_time_shift():
     except Exception as e:
         logger.error("Error applying time shift to %s: %s", folder, e)
         return responses.error(500, str(e))
-    return jsonify({"success": True, "updated_photos": _sorted(_shown(library, folder, photos)),
+    return jsonify({"success": True, "updated_photos": _sorted(cache.snapshot(folder) or photos),
                     "updated_count": result.changed, "requested_count": result.attempted,
                     **_where(result)})
 
@@ -576,7 +573,7 @@ def folder_rename_photos():
         if not result.ok:
             # The page is told which names changed, so it shows them instead of the old ones.
             return responses.error(500, result.message(), updated_paths=result.details["updated_paths"],
-                                   updated_photos=_sorted(_shown(library, folder, photos)))
+                                   updated_photos=_sorted(photos))
     except Exception as e:
         # The rename mostly raises when it renamed nothing, but it can raise with files already moved (the move-aside of
         # a file not asked for, outside rename_all's try; file_changes.rename failing in _record_renames after
@@ -587,7 +584,7 @@ def folder_rename_photos():
     return jsonify({
         "success": True,
         "updated_paths": result.details["updated_paths"],
-        "updated_photos": _sorted(_shown(library, folder, photos)),
+        "updated_photos": _sorted(photos),
         "index_rows_moved": result.details["index_rows_moved"],
         "index_skipped": [new for _, new in result.details["index_skipped"]],
         **_where(result),

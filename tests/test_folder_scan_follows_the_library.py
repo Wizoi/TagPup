@@ -56,7 +56,7 @@ class AScanKeptWhileTheLibraryMoves(unittest.TestCase):
         self.assertEqual([["Boats/Dinghy"]], first)
         kept = self.cache().get(self.folder)
         self.assertIsNotNone(kept)
-        self.assertIs(kept, self.cache().get(self.folder))
+        self.assertEqual(kept, self.cache().get(self.folder))
 
     def test_a_write_from_another_connection_makes_the_next_scan_read_again(self):
         self.assertEqual([["Boats/Dinghy"]], self.scan())
