@@ -14,6 +14,10 @@ a clip open in a player is refused by its writer, said, and does not stop it. Ct
 what was written is kept (applied and undoable). Run it again to continue: the clips dated are no longer listed. A clip
 on a network share that did not answer is left alone and counted apart. Counts and ids only: no path, no name.
 
+Before any file is read, --apply dates the clip rows again in one transaction: a clip dated by its name gets its Date
+Taken and year in the library, and one with no date in its name loses the year the index once read from its folder (or
+from a year alone in its name), so the owner finds it among the undated ("Year cleared on N"; owner, 2026-11-13).
+
     .venv/Scripts/python.exe scripts/date_undated_clips.py --library photo_index
     .venv/Scripts/python.exe scripts/date_undated_clips.py --library photo_index --apply
 """
@@ -147,10 +151,13 @@ def run(db_path, apply, out=say):
         out("Refused: %s" % result.refused)
     if not apply:
         out("%d clip row(s) hold no Date Taken yet: --apply dates them in the library first (no file read)." % counts["redated"])
+        out("%d clip row(s) with no Date Taken hold a year from their folder or a year alone in their name: --apply clears "
+            "it in the library first (no file read)." % counts["year_cleared"])
         out("A dry run: nothing was read or written. --apply (TagPup closed) writes the date of each of the %d clip(s) "
             "into its XMP." % counts["listed"])
         return 0
     out("Re-dated %d clip row(s) in the library from their names, before any file was written." % counts["redated"])
+    out("Year cleared on %d clip row(s) with no Date Taken." % counts["year_cleared"])
     out("Dated: wrote %d clip file(s). Left alone: %d %s, %d unreadable, %d away (their network share did not answer). "
         "Refused by the writer: %d (%d its XMP cannot be patched where it is, %d open in another program). Conflicts: "
         "%d (changed since they were read; not written). Failed: %d. Left to date: %d."
