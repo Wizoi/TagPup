@@ -529,10 +529,13 @@ def resolve(photo_index, on_step=None):
                 face_resolved[fid] = manual_names[fid]
 
             # A face too small for its picture is in the background: it keeps no name (clustering.is_background, on
-            # the photo's stored size, the one rule the photo's strip and Suggest ask too).
+            # the photo's stored size, the one rule the photo's strip and Suggest ask too). But a face named by hand,
+            # which stays named whatever its size, as on the strip (faces._faces_shown) and to Name faces from tags
+            # (face_tags._to_be_named): put out, its person was free in its photo, and with it the person's anchor left
+            # the gallery from the second round.
             valid_photo_faces = []
             for f in photo_faces:
-                if clustering.is_background(f["box"], f["size"]):
+                if f["id"] not in decided and clustering.is_background(f["box"], f["size"]):
                     face_resolved[f["id"]] = None
                 else:
                     valid_photo_faces.append(f)

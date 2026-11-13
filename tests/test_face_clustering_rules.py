@@ -1,8 +1,7 @@
 """Tests for the face identity resolution rules (tagpup.services.identities).
 
 This file covers the resolution pipeline: how anchors are found, how clusters vote, how conflicts inside a single photo are broken,
-which faces are dismissed as background noise, and how remaining faces are matched to
-leftover name tags.
+and how remaining faces are matched to leftover name tags. Faces in the background: scenario P12.
 
 Embeddings are synthetic unit vectors arranged so DBSCAN's grouping is unambiguous:
 faces of one identity sit well within the euclidean epsilon of the library's face model
@@ -299,27 +298,10 @@ class TestSameNameConflictInOnePhoto(FaceClusteringTestBase):
         self.assertEqual(self.name_of(bob_face), "Bob Roe")
 
 
-class TestBackgroundFaceFiltering(FaceClusteringTestBase):
-    # A face in the background of its stored picture keeps no name by elimination, and one on a picture of no
-    # stored size is not in the background: tests/test_a_face_in_the_background_is_one_answer.py (P12).
+# A face in the background of its stored picture: tests/test_a_face_in_the_background_is_one_answer.py (P12), which
+# holds that the last pass asks no size, a hand-named face keeps its name whatever its size, and a face on a picture of
+# no stored size is not in the background.
 
-    def test_a_tiny_face_can_still_be_matched_with_high_confidence(self):
-        """The counterpart: the final pass ignores the size filter.
-
-        A small face that is visually confident (>= 0.80), confirmed by the photo's
-        own tags, and whose name is not already taken by another face is still named
-        -- the desired outcome for someone genuinely small in frame.
-        """
-        jane, bob = identity_vector(1), identity_vector(2)
-        self.add_face(self.add_photo("jane.jpg", people=["Jane Doe"]), jane)
-        self.add_face(self.add_photo("bob.jpg", people=["Bob Roe"]), bob)
-
-        photo = self.add_photo("crowd.jpg", people=["Jane Doe", "Bob Roe"])
-        self.add_face(photo, near(bob, 7), box=(0, 0, 400, 400))     # Bob, prominent
-        tiny = self.add_face(photo, near(jane, 8), box=(0, 0, 20, 20))  # Jane, distant
-
-        self.resolve()
-        self.assertEqual(self.name_of(tiny), "Jane Doe")
 
 class TestProcessOfElimination(FaceClusteringTestBase):
     # The one face left taking the one person left: test_clustering_meets_naming (#1374).
