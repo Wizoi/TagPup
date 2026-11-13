@@ -79,7 +79,8 @@ class FolderCache:
     shift sends. A scan stores its whole recursive walk under the scanned folder's key, so a
     photo in a subfolder is filed under an ancestor, not under its own directory; `entries_for`
     finds every map holding a photo, since a folder and a subfolder of it may both have been
-    scanned.
+    scanned. A map's keys change only here (`move`, `forget`) and are read as a copy (`snapshot`), all under the lock:
+    a scan of an ancestor never sees a rename half done (#2907).
     """
 
     def __init__(self, library=None):
@@ -137,6 +138,40 @@ class FolderCache:
             if record is not None:
                 found.append((photos, record))
         return found
+
+    def snapshot(self, folder):
+        """A copy of the folder's map taken under the lock, or None when none is held: what a route sorts or sends, since
+        a `move` re-keys the map itself and a reader walking it outside the lock would see it change size."""
+        with self._lock:
+            held = self._maps.get(paths.key(folder))
+            return None if held is None else dict(held)
+
+    def move(self, old_path, new_path, record=None):
+        """Re-key one photo's record, in every map holding it, under the lock: the record held (or `record`, when given:
+        a write that made the file's record anew) under the new path's key. The one place a route changes a map's keys."""
+        self.move_all([(old_path, new_path, record)])
+
+    def forget(self, photo_path):
+        """Take a photo's record out of every map holding it, under the lock (a photo deleted)."""
+        photo_key = paths.key(photo_path)
+        with self._lock:
+            for folder_key, photos in self._maps.items():
+                if paths.is_under(photo_path, folder_key):
+                    photos.pop(photo_key, None)
+
+    def move_all(self, moves):
+        """`move` for [(old path, new path, record or None)] at once: every record is found, and taken out, before any is
+        put back, so a run of numbered names shuffled among themselves, or one taking the name of a file moved aside,
+        moves each record once."""
+        with self._lock:
+            found = []
+            for old, new, record in moves:
+                old_key = paths.key(old)
+                for folder_key, photos in self._maps.items():
+                    if paths.is_under(old, folder_key) and old_key in photos:
+                        found.append((photos, new, record, photos.pop(old_key)))
+            for photos, new, record, held in found:
+                photos[paths.key(new)] = held if record is None else record
 
 
 folders = state.PerLibrary(FolderCache)
@@ -205,6 +240,12 @@ def _a_file(path):
     return isinstance(path, str) and bool(path) and photo_actions.file_stamp(path) is not None
 
 
+def _shown(library, folder, photos):
+    """`photos` (what `_folder_photos` handed back) as a copy taken under the cache's lock, to sort or send while a write
+    of another request re-keys the kept map (FolderCache.move); the map itself when the cache let it go meanwhile."""
+    return folders.of(library).snapshot(folder) or photos
+
+
 def _sorted(photos):
     """A folder's records in the order the page shows them."""
     return sorted(photos.values(), key=photo_actions.taken_order)
@@ -264,7 +305,8 @@ def folder_scan():
     refused = responses.folder_refused(folder)
     if refused:
         return refused
-    return jsonify(_sorted(_folder_photos(library, paths.stored(folder), force)))
+    folder = paths.stored(folder)
+    return jsonify(_sorted(_shown(library, folder, _folder_photos(library, folder, force))))
 
 
 @routes.get("/api/folder/membership")
@@ -468,12 +510,11 @@ def folder_time_shift():
             path = paths.stored(meta["path"])
             # Every map holding the photo: this folder's, and an ancestor's scan that
             # walked into it.
-            for held, _previous in cache.entries_for(path):
-                held[paths.key(path)] = photo_actions.page_record(path, meta, meta["mtime"], meta["size"])
+            cache.move(path, path, photo_actions.page_record(path, meta, meta["mtime"], meta["size"]))
     except Exception as e:
         logger.error("Error applying time shift to %s: %s", folder, e)
         return responses.error(500, str(e))
-    return jsonify({"success": True, "updated_photos": list(photos.values()),
+    return jsonify({"success": True, "updated_photos": list(_shown(library, folder, photos).values()),
                     "updated_count": result.changed, "requested_count": result.attempted,
                     **_where(result)})
 
@@ -535,7 +576,7 @@ def folder_rename_photos():
         if not result.ok:
             # The page is told which names changed, so it shows them instead of the old ones.
             return responses.error(500, result.message(), updated_paths=result.details["updated_paths"],
-                                   updated_photos=_sorted(photos))
+                                   updated_photos=_sorted(_shown(library, folder, photos)))
     except Exception as e:
         # The rename raises only when it renamed nothing; the follow-up has run before anything after it raises.
         logger.error("Error smart renaming photos: %s", e, exc_info=True)
@@ -543,7 +584,7 @@ def folder_rename_photos():
     return jsonify({
         "success": True,
         "updated_paths": result.details["updated_paths"],
-        "updated_photos": _sorted(photos),
+        "updated_photos": _sorted(_shown(library, folder, photos)),
         "index_rows_moved": result.details["index_rows_moved"],
         "index_skipped": [new for _, new in result.details["index_skipped"]],
         **_where(result),
@@ -973,8 +1014,7 @@ def photo_delete():
                     else responses.refused(result))
         if not result.ok:
             return responses.error(500, result.message())
-        for held, _record in folders.of(library).entries_for(photo_path):
-            held.pop(paths.key(photo_path), None)
+        folders.of(library).forget(photo_path)
     except Exception as e:
         logger.error("Error deleting image %s: %s", photo_path, e)
         return responses.error(500, str(e))
@@ -1046,20 +1086,18 @@ def _followed_rename(library, moves):
         suggestion_jobs.runs_for(library).renamed(renames)
     cache = folders.of(library)
     found = [(old, new, renamed, cache.entries_for(old)) for old, new, renamed in moves]
-    for old, _new, renamed, entries in found:
-        for held, _record in (entries if renamed else ()):
-            held.pop(paths.key(old), None)
     records = []
     for _old, new, renamed, entries in found:
-        for held, record in entries:
+        for _held, record in entries:
             if renamed:
                 record["path"] = new
                 record["filename"] = os.path.basename(new)
-                held[paths.key(new)] = record
             records.append(record)
         written_stamp = photo_actions.file_stamp(new) if entries else None
         for _held, record in (entries if written_stamp else ()):
             record["mtime"], record["size"] = written_stamp
+    # The keys move last, under the cache's lock, all of them at once (#2907).
+    cache.move_all([(old, new, None) for old, new, renamed, entries in found if renamed and entries])
     return records
 
 
