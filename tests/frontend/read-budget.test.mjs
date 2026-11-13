@@ -53,6 +53,15 @@ test("a worker opening a large module whole is pointed at outline and show; a sl
   assert.match(reasonToBlock({ file_path: "tagpup\\store\\journal.py" }, ROOT), /tagpup\\store\\journal\.py::NAME/);
 });
 
+test("a one-line 200 KB file is refused whole by bytes, a slice and a 30 KB line go through", () => {
+  const big = file("saved-result.txt", JSON.stringify({ text: "x".repeat(200000) }));
+  const reason = reasonToBlock({ file_path: big }, folder);
+  assert.match(reason, /more than 40000 bytes/);
+  assert.match(reason, /offset and limit/);
+  assert.equal(reasonToBlock({ file_path: big, limit: 1 }, folder), null);
+  assert.equal(reasonToBlock({ file_path: file("mid.txt", "y".repeat(30000)) }, folder), null);
+});
+
 test("the ledgers are refused whole and by slice, naming --open and grep -n", () => {
   for (const input of [{ file_path: path.join(ROOT, "docs", "findings.md") },
                        { file_path: "docs/findings.md", offset: 1, limit: 40 },
