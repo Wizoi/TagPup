@@ -261,7 +261,7 @@ refused. Each was edited in memory (a caption, a keyword added, an Orientation),
 - **Handled instances**: the empty caption `<rdf:li xml:lang='x-default'/>` (photo_index 264 of 1,000, renton_parkrun 1)
   reads '' and '' or None writes nothing; no wrapper, 7 in kr-track (an edit at its length, or growing with no padding
   laid; the 7 grow); a single line break of padding in 11 (kr-track 9, renton_parkrun 2): an edit needing room is
-  refused, and with grow too, refused without grow; a namespace URI holding `xmlns/` (Iptc4xmpCore), 2
+  refused without `grow` (a JPEG's, whose segment is fixed: the rewrite's); with `grow` the packet is laid `RESERVE` of padding and grows (a clip's, placed by `clip_patch`); a namespace URI holding `xmlns/` (Iptc4xmpCore), 2
   in photo_index. ExifTool's padding, a line break and 24 lines of 100 spaces (`padding(2425)`), in 4,355 of the 4,366
   wrapped packets.
 - **What it does differently from ExifTool**: a property of a namespace the packet does not declare is declared on the
