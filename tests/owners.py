@@ -166,7 +166,7 @@ _SCENARIO_FILES = {
     "I5": "test_pages_against_the_real_server",
     "I6": "test_roots_scenarios",
     "I7": "test_mcp_server test_one_library_three_programs",
-    "I8": "test_stale_record_precondition",
+    "I8": "test_stale_record_precondition test_what_the_server_keeps_follows_a_rename",
     "I9": "scenario-a-scan-kept-by-an-older-page",
     "I10": "test_a_failed_run_says_what_to_do",
     "I11": "test_ffmpeg_is_a_prerequisite",
