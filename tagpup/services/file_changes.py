@@ -462,8 +462,7 @@ def _write_session(library, operation, exiftool_path, photo_paths, read, plan_on
 def away_now(photo_paths, patient=False, stop=None):
     """The keys (paths.key) of the photos of `photo_paths` on a network share that did not answer (file_states: AWAY);
     `patient`, those still away after one more look (_looked_at_again; `stop`, a callable, ends its wait). The one look a
-    write takes before it reads (write_fields), and the one-time move of clips' Windows Tags before its survey
-    (tagpup.services.windows_tags)."""
+    write takes before it reads (write_fields)."""
     away = {paths.key(path) for path, state in file_states(photo_paths) if state == AWAY}
     return _looked_at_again(photo_paths, away, stop) if away and patient else away
 

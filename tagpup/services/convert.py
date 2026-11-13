@@ -11,8 +11,7 @@ smaller (MP4), for one that does (SMALLER; a copy no smaller is removed, the cli
 a thread of the server (batches.claim), the request answered at once with its ticket; no bulk convert (owner 2026-11-12).
 
 How one conversion goes, the original kept until its copy is in place and holds what it carried:
-1. Refused before ffmpeg runs, nothing planned: a clip away or gone, without a row, still holding Windows Tags (moved
-   first: tagpup.services.windows_tags), open in another program, whose length cannot be read, whose plan is not its
+1. Refused before ffmpeg runs, nothing planned: a clip away or gone, without a row, still holding Windows Tags, open in another program, whose length cannot be read, whose plan is not its
    reason's (NEEDS: a clip that plays is not converted, one that does not is not made smaller), or with no room for its
    copy on its drive.
    Under the lock of changes of photo files: one a cut-short change has still to settle, one whose converted name holds a
