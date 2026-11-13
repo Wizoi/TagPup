@@ -1,14 +1,20 @@
 """tools/add_findings.py numbers `| ? |` rows after the last finding, sets statuses, archives the closed
-rows, and keeps a worker's rows in a file of its own until the main session numbers them."""
+rows, keeps a worker's rows in a file of its own until the main session numbers them, and refuses a third fix for one
+place."""
 import contextlib
 import io
 import os
+import shutil
+import stat
 import sys
 import tempfile
 import unittest
 
-sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "tools"))
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, os.path.join(ROOT, "tools"))
+sys.path.insert(0, ROOT)
 import add_findings  # noqa: E402
+from tagpup.core import processes  # noqa: E402
 
 TABLE = """| # | Found | Finding | Status |
 | :-- | :-- | :-- | :-- |
@@ -68,6 +74,104 @@ class SimilarRows(unittest.TestCase):
     def test_a_row_about_another_case_is_not_noticed(self):
         other = "| ? | 2026-10-24 | low: `dedupe_faces` keeps the older `faces_in_photo` row. | open |"
         self.assertEqual([], add_findings.similar_rows([other], add_findings.existing_rows(self.OLD)))
+
+
+def _remove(path):
+    def writable(func, name, _exc):
+        os.chmod(name, stat.S_IWRITE)
+        func(name)
+    shutil.rmtree(path, onerror=writable)
+
+
+class AThirdFixForOnePlace(unittest.TestCase):
+    """The clip that would not save (retro 2026-11-13, #2924): a save refused, fixed in the clip patcher; still refused,
+    fixed there again; a third row about the same place is refused until it says which single place owns the rule. The
+    fixes are real commits of a repository made here, followed by their `fixed: <commit>`."""
+
+    def setUp(self):
+        self.folder = tempfile.mkdtemp()
+        self.addCleanup(_remove, self.folder)
+        self.repo = os.path.join(self.folder, "repo")
+        os.makedirs(self.repo)
+        self.git("init", "-q")
+        first = self.commit("tagpup/files/clip_patch.py", "BOUND = None\n", "tagpup/files/field_values.py", "A = 1\n")
+        second = self.commit("tagpup/files/clip_patch.py", "BOUND = None\nNESTED = True\n")
+        self.findings = os.path.join(self.folder, "findings.md")
+        self.rows = os.path.join(self.folder, "rows.md")
+        self.write(self.findings, (
+            "| # | Found | Finding | Status |\n|---|---|---|---|\n"
+            "| 40 | 2026-11-12 | wrong: Files: a title save on a clip with a large packet is refused (`clip_patch.LIMIT`). "
+            "| fixed: %s (wrote 0 rows) |\n"
+            "| 41 | 2026-11-12 | low: the fixture of #40 is padding-shaped. | fixed: %s |\n"
+            "| 45 | 2026-11-12 | wrong: Files: a save on a clip whose XMP box is nested is refused by `clip_patch._xmp_patch`. "
+            "| fixed: %s; wrote 0 rows |\n" % (first, first, second)))
+        self.base = ["--findings", self.findings, "--archive-dir", os.path.join(self.folder, "history"),
+                     "--watching-file", os.path.join(self.folder, "watching.md"), "--repo", self.repo]
+
+    def git(self, *args):
+        done = processes.run(["git", "-C", self.repo, "-c", "user.name=Tess Tarrow", "-c", "user.email=tess@example.invalid",
+                              "-c", "commit.gpgsign=false", *args], capture_output=True, text=True)
+        assert done.returncode == 0, done.stderr
+        return done.stdout.strip()
+
+    def commit(self, *changes):
+        for path, text in zip(changes[::2], changes[1::2]):
+            self.write(os.path.join(self.repo, *path.split("/")), text)
+            self.git("add", path)
+        self.git("commit", "-q", "-m", "a fix")
+        return self.git("rev-parse", "--short=8", "HEAD")
+
+    def write(self, path, text):
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w", encoding="utf-8", newline="") as handle:
+            handle.write(text)
+
+    def read(self, path):
+        with open(path, encoding="utf-8", newline="") as handle:
+            return handle.read()
+
+    def add(self, row, *more):
+        """(the exit code, what was said on stderr) of adding `row`."""
+        self.write(self.rows, row + "\n")
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            try:
+                code, _out = run(self.base + [self.rows, *more])
+            except SystemExit as stop:
+                code = stop.code
+        return code, err.getvalue()
+
+    def test_a_third_fix_of_the_clip_patcher_is_refused_and_nothing_is_written(self):
+        before = self.read(self.findings)
+        third = ("| ? | 2026-11-13 | wrong: Files: a save into the clip is still refused after #45's fix: "
+                 "`clip_patch.packet_of` hands the editor the data atom's bytes. | open |")
+        code, said = self.add(third)
+        self.assertNotEqual(0, code)
+        self.assertIn("tagpup/files/clip_patch.py, which the fixes of #40, #45 changed: a third fix for one place", said)
+        self.assertEqual(before, self.read(self.findings))
+        branch = os.path.join(self.folder, "pending.md")
+        code, said = self.add(third, "--branch-file", branch)
+        self.assertIn("a third fix for one place", said)
+        self.assertFalse(os.path.exists(branch))
+
+        code, said = self.add(third.replace("| open |", "second fix of #45: the single place is `clip_patch.packet_of`, "
+                                                       "the one reader of an item's packet. | open |"))
+        self.assertEqual((0, ""), (code, said))
+        self.assertIn("| 46 | 2026-11-13 | wrong: Files: a save into the clip is still refused", self.read(self.findings))
+
+    def test_a_low_row_or_a_place_fixed_once_is_added(self):
+        code, said = self.add("| ? | 2026-11-13 | low: `clip_patch.packet_of` has no docstring. | open |")
+        self.assertEqual((0, ""), (code, said))
+        code, said = self.add("| ? | 2026-11-13 | wrong: `field_values.parse` reads a date as a title. | open |")
+        self.assertEqual((0, ""), (code, said))
+        self.assertIn("| 47 | 2026-11-13 | wrong: `field_values.parse`", self.read(self.findings))
+
+    def test_a_place_whose_single_place_was_decided_is_not_refused(self):
+        with open(self.findings, "a", encoding="utf-8", newline="") as handle:
+            handle.write("| 46 | 2026-11-13 | low: three rows in `clip_patch.py`. | decided: the single place is "
+                         "`clip_patch.packet_of` |\n")
+        code, said = self.add("| ? | 2026-11-13 | wrong: `clip_patch.packet_of` misreads an empty item. | open |")
+        self.assertEqual((0, ""), (code, said))
 
 
 class OpenRows(unittest.TestCase):
