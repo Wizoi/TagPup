@@ -9,7 +9,7 @@ start, or its share falling asleep as its copy is put in place; a clip open in a
 disk, ffmpeg failing; two libraries holding the folder, the second asked to convert the clip meanwhile, or finding it at
 its MP4 by the name it kept (TwoLibrariesHoldingTheFolder); a clip tagged long ago in Windows, its Windows Tags carried
 into its copy's tags, one the tree lacks refused through the panel (AClipHoldingWindowsTags); a clip holding XMP
-other programs wrote, its packet carried whole into its copy, or refused when it cannot be (AClipHoldingXmpOfOtherPrograms).
+other programs wrote, its packet carried whole into its copy, or refused when no patch reads it (AClipHoldingXmpOfOtherPrograms).
 The panel's
 Convert and Make smaller (MP4) by id: answered at once with a ticket, a second click refused, Cancel on the ticket, a bulk
 edit waiting behind, a shrink no smaller left as it is, a button that is not the clip's plan refused (ThePanelButtons).
@@ -38,8 +38,8 @@ from view_library import ViewLibrary  # noqa: E402
 
 from tagpup.core import fields, paths, processes  # noqa: E402
 from tagpup.core.result import Result  # noqa: E402
-from tagpup.files import (clip_convert, clip_patch, containers, field_values, metadata, recycle_bin,  # noqa: E402
-                          shares, video_frames)
+from tagpup.files import (clip_convert, containers, field_values, metadata, recycle_bin, shares,  # noqa: E402
+                          video_frames)
 from tagpup.services import batches, convert, file_changes, sync, tagging  # noqa: E402
 from tagpup.services import photos as photo_actions  # noqa: E402
 from tagpup.store import file_journal, photos  # noqa: E402
@@ -516,6 +516,26 @@ class Refused(AnOldClipInTheLibrary):
         self.assertEqual(before, self.read_bytes(source), "the original kept: its copy would take its name")
         self.assertEqual([], self.leftovers())
 
+    def test_a_clip_another_program_writes_while_it_is_read_is_refused_before_anything_is_planned(self):
+        # A player's or an editor's save lands while the conversion reads the clip (ExifTool, its XMP, ffprobe: seconds),
+        # before it plans: the clip is not the one it read, so nothing is planned, converted or deleted.
+        streams, written = video_frames.streams, []
+
+        def written_meanwhile(tools, path, *args, **kwargs):
+            if not written:
+                written.append(path)
+                with open(self.source, "ab") as handle:
+                    handle.write(b"another program's bytes")
+            return streams(tools, path, *args, **kwargs)
+
+        with mock.patch.object(video_frames, "streams", side_effect=written_meanwhile):
+            result = self.convert(self.source)
+        self.assertEqual((0, convert.CHANGED), (result.changed, result.message()))
+        self.assertEqual(self.before + b"another program's bytes", self.read_bytes(self.source), "the clip as it is")
+        self.assertEqual([], [op for _id, op, _status in self.changes() if op == file_journal.CONVERT], "nothing planned")
+        self.assertEqual([], self.leftovers())
+        self.assertEqual(paths.key(self.source), paths.key(self.row_of(self.photo_id)[0]), "the row where it was")
+
     def test_an_mp4_of_its_own_name_changed_while_it_was_converted_is_never_deleted(self):
         source, _photo_id = self.clip("dock.mp4")
 
@@ -795,17 +815,6 @@ class AClipHoldingXmpOfOtherPrograms(AnOldClipInTheLibrary):
                          "could not be carried into its converted copy; nothing was converted", result.message())
         self.assert_as_it_was(source, photo_id, before)
         self.assertEqual([], [op for _id, op, _status in self.changes() if op == file_journal.CONVERT], "nothing planned")
-
-    def test_a_copy_that_cannot_take_its_packet_is_removed_and_the_original_kept_saying_why(self):
-        source, photo_id = self.xmp_clip("dock.mp4", shapes.PREMIERE)
-        before = self.read_bytes(source)
-        with mock.patch.object(clip_patch, "patch", return_value=None):
-            result = self.convert(source)
-        self.assertEqual(0, result.changed)
-        self.assertEqual("its XMP could not be put into its converted copy (the copy has no place for it); the original "
-                         "is as it was", result.message())
-        self.assert_as_it_was(source, photo_id, before)
-        self.assertEqual([], self.converted_states(photo_id), "taken out of the change")
 
     def test_killed_once_its_copy_holds_the_packet_the_settle_removes_the_copy_and_keeps_the_original(self):
         source, photo_id = self.xmp_clip("dock.mp4", shapes.PREMIERE)

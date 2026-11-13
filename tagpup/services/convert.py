@@ -17,9 +17,12 @@ How one conversion goes, the original kept until its copy is in place and holds 
    copy on its drive.
    Under the lock of changes of photo files: one a cut-short change has still to settle, one whose converted name holds a
    file or a row, one another conversion is converting.
-   Before the lock, beside the refusals above, its XMP packet is read (in_place.packet_held), to be carried whole into
+   Before the lock, beside the refusals above, its XMP packet is read (field_values.packet_held), to be carried whole into
    its copy (owner 2026-11-13: every XMP property is kept, those TagPup does not use too; #2938); a clip holding XMP no
    patch reads (two XMP boxes) is refused (XMP_UNREAD), and an old format holds none to carry.
+   Its fingerprint (file_changes.fingerprint) is taken before any of it is read, and taken again under the lock: a clip
+   another program wrote meanwhile (seconds: ExifTool's read, the packet's, ffprobe's) is refused CHANGED, so what is
+   planned, carried and deleted is the file that was read.
 2. Planned (file_journal.CONVERT), one file: its path the original's, its new_path the MP4's (None for the same name),
    fields_before the original's fingerprint (file_changes.fingerprint), fields_after what it carries (`carry`: its tags,
    title, the name it had and its Date Taken, as the library reads it of the original read whole; no caption,
@@ -27,8 +30,8 @@ How one conversion goes, the original kept until its copy is in place and holds 
    WM/Category of its Xtra, fields.CLIP_CATEGORY, which ffmpeg does not carry and the library never reads as tags);
    marked `writing`; the temp claimed (clip_convert.claimed).
 3. ffmpeg, outside the lock (minutes); the original's XMP packet put whole into the temp, which ffmpeg gives none
-   (field_values.packet_given), and read back from it (_packet_carried; one it cannot take or that does not read back is
-   a problem like ffmpeg's: the temp removed, the original as it was); the temp flushed to its disk and verified
+   (field_values.packet_given; _packet_carried: one it cannot take is a problem like ffmpeg's, the temp removed, the
+   original as it was); the temp flushed to its disk and verified
    (clip_convert), and its fingerprint recorded as `made`. What the copy carries is written over that packet (step 4):
    TagPup's fields win, every other property of it is kept (xmp_packet.edit).
 4. Onward (_onward, the forward run's and the settle's alike), under the lock: the temp renamed into place (a same-name
@@ -70,8 +73,7 @@ import threading
 from tagpup.core import dates, fields, paths, vocabulary
 from tagpup.core.result import (CHANGED_ON_DISK, CHANGED_ON_DISK_SENTENCE, Conflict, NotFound, Refused, Result,
                                 Unavailable)
-from tagpup.files import (clip_convert, convertible, field_values, images, in_place, lock_owners, names, shares,
-                          video_frames)
+from tagpup.files import clip_convert, convertible, field_values, images, lock_owners, names, shares, video_frames
 from tagpup.services import batches, file_changes, tagging
 from tagpup.services import photos as photo_actions
 from tagpup.store import db, file_journal, photos, taxonomy
@@ -146,9 +148,6 @@ NOT_DELETED = ("its original could not be deleted (%s), so its converted copy, w
 XMP_UNREAD = ("its XMP is held in a way TagPup does not read (two XMP boxes, or one it does not know), so it could not "
               "be carried into its converted copy; nothing was converted")
 XMP_NOT_GIVEN = "its XMP could not be put into its converted copy (%s); the original is as it was"
-#: Why the copy did not take the original's packet (XMP_NOT_GIVEN).
-XMP_NO_ROOM = "the copy has no place for it"
-XMP_NOT_READ_BACK = "the copy did not read back holding it"
 ASKED_ALREADY = "it is being converted already; wait for it to finish"
 NO_SUCH = "This server has no conversion %d (it may have been long ago, or before the server restarted)."
 
@@ -159,12 +158,12 @@ def _reached(step):
 
 
 class _Ready:
-    """What a conversion found of the clip before it planned (_ready): `packet`, the XMP packet it holds (bytes), None
-    for none."""
+    """What a conversion found of the clip before it planned (_ready): `before`, its fingerprint taken before it was read;
+    `packet`, the XMP packet it holds (bytes), None for none."""
 
-    def __init__(self, photo_id, stamp, streams, carry, target, packet):
+    def __init__(self, photo_id, stamp, before, streams, carry, target, packet):
         self.photo_id, self.stamp, self.streams, self.carry, self.target = photo_id, stamp, streams, carry, target
-        self.packet = packet
+        self.before, self.packet = before, packet
 
 
 def convert_clip(library, exiftool_path, tools, source, reason=OLD_FORMAT, stop=None):
@@ -191,8 +190,11 @@ def convert_clip(library, exiftool_path, tools, source, reason=OLD_FORMAT, stop=
     with file_changes.exclusively():
         why = _taken(library, source, target)
         before = file_changes.fingerprint(source)
-        if why or before is None or not before["ino"]:
-            result.refuse(why or (GONE if before is None else NO_FILE_ID))
+        if not why:
+            why = (GONE if before is None else NO_FILE_ID if not before["ino"] else
+                   CHANGED if before != ready.before else None)
+        if why:
+            result.refuse(why)
             return result
         change_id, (row,) = file_journal.plan(library.path, OPERATION, [{
             "photo_id": ready.photo_id, "path": source, "new_path": None if paths.same(source, target) else target,
@@ -323,6 +325,9 @@ def _ready(library, exiftool_path, tools, source, reason):
         return AWAY
     if not isinstance(stamp, tuple):
         return GONE
+    before = file_changes.fingerprint(source)     # before any byte of it is read: compared under the lock
+    if before is None:
+        return GONE
     conn = db.connect(db.readonly_uri(library.path), uri=True)
     try:
         found = photos.rows_of(conn, [source]).get(paths.key(source))
@@ -348,12 +353,12 @@ def _ready(library, exiftool_path, tools, source, reason):
     except OSError:
         return HELD_OPEN
     try:
-        packet = in_place.packet_held(source)
-    except in_place.Away:
+        packet = field_values.packet_held(source)
+    except field_values.NotAnswered:
         return AWAY
     except OSError as e:
         return UNREADABLE % (e.strerror or e)
-    if packet is in_place.UNREAD:
+    if packet is field_values.PACKET_UNREAD:
         return XMP_UNREAD
     streams = video_frames.streams(tools, source)
     if streams.problem:
@@ -372,19 +377,16 @@ def _ready(library, exiftool_path, tools, source, reason):
     carry = {"tags": list(vocabulary.extract_tags(fields.keyword_fields(*fields.expand_tag_fields(tags + windows)))),
              "title": fields.own_title(held),
              "name": names.preserved_name(held) or os.path.basename(source), "date": dates.date_taken(whole, None)}
-    return _Ready(found[0], stamp, streams, carry, clip_convert.target_of(source), packet)
+    return _Ready(found[0], stamp, before, streams, carry, clip_convert.target_of(source), packet)
 
 
 def _packet_carried(temp, packet):
     """None once the converted copy at `temp`, made by ffmpeg and not yet recorded, holds `packet`, the XMP packet of its
-    original, whole and read back; else why not, XMP_NOT_GIVEN, a problem as ffmpeg's is: the temp removed and the
-    original as it was (_onward)."""
+    original, whole (field_values.packet_given); else why not, XMP_NOT_GIVEN, a problem as ffmpeg's is: the temp removed
+    and the original as it was (_onward)."""
     try:
-        if not field_values.packet_given(temp, packet):
-            return XMP_NOT_GIVEN % XMP_NO_ROOM
-        if in_place.packet_held(temp) != packet:
-            return XMP_NOT_GIVEN % XMP_NOT_READ_BACK
-    except in_place.Away:
+        field_values.packet_given(temp, packet)
+    except field_values.NotAnswered:
         return XMP_NOT_GIVEN % SHARE_AWAY
     except (OSError, Refused) as e:
         return XMP_NOT_GIVEN % (getattr(e, "strerror", None) or e)
