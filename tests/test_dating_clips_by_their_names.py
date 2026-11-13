@@ -28,6 +28,9 @@ import test_a_clip_dated_by_its_name as by_name  # noqa: E402
 import test_a_clip_dated_through_the_journal as dated  # noqa: E402
 import test_a_clip_tagged_through_the_journal as tagged  # noqa: E402
 
+from tagpup.core.result import Refused, Result  # noqa: E402
+from tagpup.files import images, in_place  # noqa: E402
+from tagpup.files.exiftool_session import ExifToolSession  # noqa: E402
 from tagpup.services import tagging  # noqa: E402
 
 EXIFTOOL = tagged.EXIFTOOL
@@ -119,6 +122,83 @@ class DatingClipsByTheirNames(tagged.ALibraryHoldingAClip):
         self.assertIn("Left to date: 0.", said)
         self.assertIn("Nothing was recorded: no file was written.", said)
         self.assertEqual(dated.SAVED, self.xmp_date(self.clip_path), "the date saved by hand is kept")
+
+    def indexed_before_the_clips_were_dated_by_name(self):
+        """The rows as photo_index holds the 669 live ones: indexed before the fallback, `taken` and `year` NULL, the
+        name's date in no column (the panel and the folder scan show it; the library view reads the column). A photo
+        taken in 2023 beside them."""
+        with ExifToolSession(executable=EXIFTOOL) as et:
+            et.set_tags([self.photo_path], tags={"EXIF:DateTimeOriginal": dated.PHOTO_TAKEN}, params=["-overwrite_original"])
+        self.photo, = self.index(self.photo_path)
+        self.vl.conn.execute("UPDATE photos SET taken = NULL, year = NULL WHERE id IN (?, ?)", (self.clip, self.loose))
+        self.vl.conn.commit()
+
+    def library_view(self):
+        """(the ids by Date Taken, the ids of 2019-07, the navigator's undated tally, its months of 2019), by the routes."""
+        got = self.client.get("/library/api/library/ids", query_string={"kind": "all", "order": "taken"})
+        month = self.client.get("/library/api/library/ids", query_string={"kind": "month", "value": "2019-07"})
+        navigator = self.client.get("/library/api/library/navigator", query_string={"section": "dates"})
+        for reply in (got, month, navigator):
+            self.assertEqual(200, reply.status_code, reply.data)
+        years = {each["year"]: [m["month"] for m in each["months"]] for each in navigator.get_json()["years"]}
+        return got.get_json()["ids"], month.get_json()["ids"], navigator.get_json()["undated"], years.get(2019)
+
+    def test_a_row_indexed_before_the_fallback_is_in_the_views_undated_tail_until_apply_dates_it_by_its_name(self):
+        self.indexed_before_the_clips_were_dated_by_name()
+        self.assertEqual(([self.photo, self.clip, self.loose], [], 2, None), self.library_view(),
+                         "the views read the NULL column: both clips undated")
+        code, said = self.run_it()
+        self.assertEqual(0, code, said)
+        self.assertIn("1 clip row(s) hold no Date Taken yet", said, "the dry run says how many it would date")
+        self.assertEqual(([self.photo, self.clip, self.loose], [], 2, None), self.library_view(), "and wrote nothing")
+
+        code, said = self.run_it("--apply")
+        self.assertEqual(0, code, said)
+        self.assertIn("Re-dated 1 clip row(s)", said)
+        self.assertEqual(([self.clip, self.photo, self.loose], [self.clip], 1, ["2019-07"]), self.library_view(),
+                         "the clip is in its month and its place by the date; the clip with no date in its name stays undated")
+        self.assertIsNone(self.taken(self.loose))
+        code, said = self.run_it("--apply")
+        self.assertIn("Re-dated 0 clip row(s)", said, "idempotent: nothing left to date again")
+
+    def test_a_clip_the_write_leaves_is_dated_in_the_views_all_the_same(self):
+        """A share away, or a writer that refuses: the file is not written, the row is dated (counted from the row)."""
+        self.indexed_before_the_clips_were_dated_by_name()
+        with mock.patch.object(tagging.file_changes, "write_fields", return_value=Result(attempted=1)):
+            code, said = self.run_it("--apply")
+        self.assertIn("Re-dated 1 clip row(s)", said)
+        self.assertEqual(([self.clip, self.photo, self.loose], [self.clip], 1, ["2019-07"]), self.library_view())
+        self.assertIsNone(self.xmp_date(self.clip_path), "the file was not written")
+        self.assertEqual([], self.changes())
+
+    def test_a_clip_the_writer_refuses_is_named_by_its_id_and_sentence_and_by_its_real_cause(self):
+        refusals = (images.CLIP_NOT_PATCHED, in_place.OPEN_ELSEWHERE)
+        for sentence in refusals:
+            with self.subTest(sentence=sentence), mock.patch.object(in_place, "patch_clip", side_effect=Refused(sentence)):
+                code, said = self.run_it("--apply")
+                self.assertEqual(1, code, said)
+                cause = (1, 0) if sentence == images.CLIP_NOT_PATCHED else (0, 1)
+                self.assertIn("Refused by the writer: 1 (%d its XMP cannot be patched where it is, %d open in another "
+                              "program)." % cause, said)
+                self.assertIn("Clip %d: %s" % (self.clip, sentence), said)
+                self.assertNotIn(self.clip_path, said, "an id and a sentence, never a path")
+
+    def test_a_ctrl_c_after_the_write_returned_does_not_say_the_write_was_stopped(self):
+        listed, calls = tagging.clips_dated_by_name, []
+
+        def interrupted_in_the_recount(library):
+            calls.append(library)
+            if len(calls) == 2:
+                raise KeyboardInterrupt
+            return listed(library)
+
+        with mock.patch.object(tagging, "clips_dated_by_name", side_effect=interrupted_in_the_recount):
+            code, said = self.run_it("--apply")
+        self.assertEqual(130, code)
+        self.assertIn("the write had finished (1 clip(s) written", said)
+        self.assertNotIn("stopped:", said)
+        self.assertNotIn("stopped again", said)
+        self.assertEqual(by_name.NAMED, self.xmp_date(self.clip_path), "and it had been written")
 
     def test_apply_is_refused_while_an_app_runs(self):
         self.running.return_value = [{"pid": 4242}]
