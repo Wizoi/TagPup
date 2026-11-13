@@ -346,6 +346,38 @@ class CutShort(AnOldClipInTheLibrary):
         self.assertEqual(["done"], self.converted_states(self.photo_id))
         self.assert_converted(self.source, self.photo_id, TITLE)
 
+    def test_its_share_asleep_as_its_original_is_deleted_keeps_both_says_so_and_the_next_settle_deletes_it(self):
+        # Asleep once the copy is carried: both files kept, the owner told so, the file left `writing`; awake, the next
+        # settle deletes the original. Was: the original's unbounded look said None, taken as "changed", its delete
+        # skipped and the conversion marked done in silence, the original left beside its copy for the next sync to find
+        # as a new clip (#2890).
+        with self.on_a_share_that_falls_asleep_at("carried"):
+            result = self.convert(self.source)
+        kept = convert.ORIGINAL_KEPT % "its share did not answer"
+        self.assertEqual((1, kept, kept), (result.changed, result.details.get("original_kept"), result.message()))
+        self.assertEqual(self.before, self.read_bytes(self.source), "the original kept")
+        self.assertEqual(["writing"], self.converted_states(self.photo_id), "left for the next settle")
+        self.assertEqual([kept], [note for note, in self.vl.rows(
+            "SELECT note FROM change_files WHERE photo_id = ? AND change_id IN (SELECT id FROM changes WHERE operation = ?)",
+            self.photo_id, file_journal.CONVERT)], "the original kept, noted")
+        file_changes.settle(self.vl.library, EXIFTOOL)
+        self.assertEqual(["done"], self.converted_states(self.photo_id))
+        self.assert_converted(self.source, self.photo_id, TITLE)
+
+    def test_its_original_deleted_by_another_program_while_its_share_answers_is_taken_as_gone(self):
+        # The same "not found" of the original once the copy is carried, while the share answers: it is gone, the
+        # conversion done, the share not taken as away.
+        under = os.path.normcase(self.folder)
+        shares.forget()
+        self.addCleanup(shares.forget)
+        with mock.patch.object(shares, "on_a_network_drive", lambda path: os.path.normcase(str(path)).startswith(under)), \
+                mock.patch.object(convert, "_reached", side_effect=lambda step: step == "carried" and os.remove(self.source)):
+            result = self.convert(self.source)
+        self.assertEqual((1, True), (result.changed, result.ok), result.message())
+        self.assertEqual(["done"], self.converted_states(self.photo_id))
+        self.assertIsNone(shares.away_since(shares.share_of(self.folder)), "a file deleted took its share as away")
+        self.assert_converted(self.source, self.photo_id, TITLE)
+
     def test_an_mp4_of_its_own_name_killed_between_its_delete_and_its_rename_is_put_in_place_by_the_settle(self):
         source, photo_id = self.clip("dock.mp4")
         self.killed_at("original deleted", source)

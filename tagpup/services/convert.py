@@ -36,9 +36,9 @@ How one conversion goes, the original kept until its copy is in place and holds 
 
 The original is deleted FOR GOOD, never to a Recycle Bin (owner 2026-11-12: its copy is verified first; the Bin is for
 deletes), by one bounded call (_removed_for_good), and only while it is the file the conversion found (its fingerprint).
-A delete that fails (a program holding it, a share that stopped answering) keeps the original and the copy: the file is
-left `writing` and the next settle deletes it (a same-name conversion, whose copy has no name of its own yet, is let go
-instead: its temp removed, the original kept).
+A delete that fails (a program holding it, a share that stopped answering, or that says "not found" at once as one
+asleep does: _original_kept) keeps the original and the copy: the file is left `writing` and the next settle deletes it
+(a same-name conversion, whose copy has no name of its own yet, is let go instead: its temp removed, the original kept).
 
 The copy is known by its file id (`made`'s ino; _is_copy): the carry writes into it in place, which changes its size and
 modified time but never its file id, nor does the rename into place; a volume that gives its files no file id is refused
@@ -121,6 +121,8 @@ NOT_RENAMED = "its converted copy could not be put in its place (%s); the origin
 NOT_CARRIED = ("its tags, title or kept name could not be written into its converted copy (%s); the original is kept, "
                "and the change is finished when it is settled")
 ROW_THERE = "a row of the library is at its converted name already; both files are kept as they are"
+#: Why an original is still there when its share did not answer (ORIGINAL_KEPT, NOT_DELETED).
+SHARE_AWAY = "its share did not answer"
 ORIGINAL_KEPT = ("it was converted, but its original could not be deleted (%s); the original and its verified copy "
                  "are both kept, and the original is deleted when the change is settled (the next start)")
 CHANGED_SINCE = "it changed since it was converted: it holds neither what the conversion found nor its converted copy"
@@ -463,8 +465,8 @@ def _onward(library, exiftool_path, row, forward, result, problem=None):
         result.refuse(NOT_CARRIED % short)
         return False
     _reached("carried")
-    if renamed and file_changes.fingerprint(source) == row.before:
-        kept = _removed_for_good(source)
+    if renamed:
+        kept = _original_kept(source, row.before)
         if kept:
             _note(library, row, ORIGINAL_KEPT % kept)
             result.changed = 1
@@ -552,13 +554,27 @@ def _note(library, row, why):
                              label="%s: left writing" % row.named())
 
 
+def _original_kept(source, before):
+    """Why the original at `source` is still there once its copy is in place, a phrase; or None: deleted for good now
+    (_removed_for_good), not there to delete (deleted already: a settle after its delete), or not the file the conversion
+    found (`before`, its fingerprint: never deleted). Looked at first by the share's bounded look (shares.stamp_of): a
+    share asleep says "not found" at once, the words of a file deleted (#1543), and is said, never taken as the original
+    gone (#2890)."""
+    there = shares.stamp_of(source)
+    if there is shares.UNANSWERED:
+        return SHARE_AWAY
+    if there is None or file_changes.fingerprint(source) != before:
+        return None
+    return _removed_for_good(source)
+
+
 def _removed_for_good(source):
     """None when the original at `source` was deleted for good (never to a Recycle Bin: the module), by one call bounded
     as a listing is (shares.bounded); else why it is still there, a phrase."""
     state, error = shares.bounded(os.path.dirname(source), lambda: os.remove(source), shares.LISTING_WAIT)
     if state == "ok":
         return None
-    return "its share did not answer" if state == "away" else (getattr(error, "strerror", None) or str(error))
+    return SHARE_AWAY if state == "away" else (getattr(error, "strerror", None) or str(error))
 
 
 def _followed(library, exiftool_path, row, target):
