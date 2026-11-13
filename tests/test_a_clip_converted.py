@@ -5,8 +5,10 @@ never undone.
 
 What the owner lives through: the one-time convert of the old formats (.wmv, .mpg, .avi; and an .mp4 whose picture is
 MPEG-4 Part 2, converted under its own name), each clip one change; the run cut short at any step and settled at the next
-start; a clip open in a player, a full disk, ffmpeg failing, an original that cannot be deleted; a clip tagged long
-ago in Windows, its Windows Tags carried into its copy's tags (AClipHoldingWindowsTags). The panel's
+start, or its share falling asleep as its copy is put in place; a clip open in a player before or after the plan, a full
+disk, ffmpeg failing; two libraries holding the folder, the second asked to convert the clip meanwhile, or finding it at
+its MP4 by the name it kept (TwoLibrariesHoldingTheFolder); a clip tagged long ago in Windows, its Windows Tags carried
+into its copy's tags, one the tree lacks refused through the panel (AClipHoldingWindowsTags). The panel's
 Convert and Make smaller (MP4) by id: answered at once with a ticket, a second click refused, Cancel on the ticket, a bulk
 edit waiting behind, a shrink no smaller left as it is, a button that is not the clip's plan refused (ThePanelButtons).
 
@@ -32,7 +34,7 @@ from view_library import ViewLibrary  # noqa: E402
 from tagpup.core import fields, paths, processes  # noqa: E402
 from tagpup.core.result import Result  # noqa: E402
 from tagpup.files import clip_convert, containers, field_values, metadata, recycle_bin, shares, video_frames  # noqa: E402
-from tagpup.services import batches, convert, file_changes, tagging  # noqa: E402
+from tagpup.services import batches, convert, file_changes, sync, tagging  # noqa: E402
 from tagpup.services import photos as photo_actions  # noqa: E402
 from tagpup.store import file_journal, photos  # noqa: E402
 
@@ -94,6 +96,28 @@ class AnOldClipInTheLibrary(ALibraryHoldingAClip):
 
     def changes(self):
         return self.vl.rows("SELECT id, operation, status FROM changes ORDER BY id")
+
+    def converted_states(self, photo_id):
+        """The states of the photo's file in the conversions of the journal (not in their carries)."""
+        return [state for state, in self.vl.rows(
+            "SELECT state FROM change_files WHERE photo_id = ? AND change_id IN (SELECT id FROM changes WHERE operation = ?)",
+            photo_id, file_journal.CONVERT)]
+
+    def ask(self, photo_id, mode, path, **changed):
+        """The panel's button `mode` on the clip `photo_id` at `path` (POST /api/clip/convert), with its stamp as the
+        page's record has it (`size`: that many bytes off)."""
+        stamp = photo_actions.file_stamp(path)
+        body = {"id": photo_id, "mode": mode, "stamp": {"mtime": stamp[0], "size": stamp[1] + changed.get("size", 0)}}
+        return self.post("clip/convert", body)
+
+    def ended(self, reply):
+        """What the panel reads by the ticket of `reply` once the conversion ended (/api/clip/converted)."""
+        self.assertEqual(200, reply.status_code, reply.get_json())
+        ticket = reply.get_json()["ticket"]
+        convert.outcome(self.vl.library, ticket, wait=120)
+        said = self.client.get("/library/api/clip/converted?ticket=%d" % ticket).get_json()
+        self.assertTrue(said["done"], said)
+        return said
 
     def leftovers(self):
         return sorted(name for name in os.listdir(self.folder) if name.endswith(clip_convert.SUFFIX))
@@ -191,10 +215,7 @@ class CutShort(AnOldClipInTheLibrary):
                 source, photo_id = self.clip("slipway%d.wmv" % n)
                 self.killed_at(step, source)
                 self.settled()
-                self.assertEqual([("done",)], self.vl.rows(
-                    "SELECT state FROM change_files WHERE photo_id = ? AND change_id IN "
-                    "(SELECT id FROM changes WHERE operation = ?)", photo_id, file_journal.CONVERT),
-                    "the conversion done, never a conflict")
+                self.assertEqual(["done"], self.converted_states(photo_id), "the conversion done, never a conflict")
                 self.assertFalse(os.path.exists(source), "the original deleted")
                 self.assert_converted(source, photo_id, TITLE)
 
@@ -254,6 +275,39 @@ class CutShort(AnOldClipInTheLibrary):
         self.assertEqual([], [after for (after,) in self.vl.rows("SELECT fields_after FROM change_files")
                               if "made" in json.loads(after or "{}")], "no copy recorded as made")
 
+    def test_its_share_asleep_as_its_copy_is_put_in_place_keeps_the_original_and_the_next_click_converts_it(self):
+        # The share stops answering once ffmpeg's copy is verified: every look at the folder hangs, then says "not found"
+        # (a stand-in for the share, as test_a_share_asleep's), and a bounded look waits a moment, not Windows' minutes.
+        asleep, awake, under = threading.Event(), threading.Event(), os.path.normcase(self.folder)
+        self.addCleanup(awake.set)
+        shares.forget()
+        self.addCleanup(shares.forget)
+
+        def hang(real):
+            def look(path, *args, **kwargs):
+                if asleep.is_set() and os.path.normcase(str(path)).startswith(under):
+                    awake.wait(1)
+                    raise FileNotFoundError(2, "The network path was not found")
+                return real(path, *args, **kwargs)
+            return look
+        with mock.patch.object(os, "stat", hang(os.stat)), mock.patch.object(os, "remove", hang(os.remove)), \
+                mock.patch.object(os, "rename", hang(os.rename)), mock.patch.object(shares, "LISTING_WAIT", 0.1), \
+                mock.patch.object(convert, "_reached", side_effect=lambda step: step == "temp verified" and asleep.set()):
+            result = self.convert(self.source)
+            asleep.clear()
+            awake.set()
+        shares.forget()
+        self.assertEqual(0, result.changed, result.message())
+        self.assertNotIn("removed and", result.message(), "it says the copy could not be removed, and nothing else")
+        self.assertIn("as it was. Its unfinished copy could not be removed just now (the share did not answer)",
+                      result.message(), "two sentences")
+        self.assertEqual(self.before, self.read_bytes(self.source), "the original as it was")
+        self.assertEqual(paths.key(self.source), paths.key(self.row_of(self.photo_id)[0]), "the row where it was")
+        self.assertEqual(["writing"], self.converted_states(self.photo_id), "left for the next settle")
+        again = self.convert(self.source)
+        self.assertEqual(1, again.changed, again.message())
+        self.assert_converted(self.source, self.photo_id, TITLE)
+
     def test_an_mp4_of_its_own_name_killed_between_its_delete_and_its_rename_is_put_in_place_by_the_settle(self):
         source, photo_id = self.clip("dock.mp4")
         self.killed_at("original deleted", source)
@@ -281,18 +335,24 @@ class Refused(AnOldClipInTheLibrary):
         self.assertEqual([(file_journal.CONVERT, "failed")],
                          [(op, status) for _id, op, status in self.changes() if op == file_journal.CONVERT])
 
-    def test_an_original_that_cannot_be_deleted_keeps_it_and_its_copy_and_the_next_settle_deletes_it(self):
-        with mock.patch.object(convert, "_removed_for_good", return_value="it is open in another program"):
+    def test_a_clip_opened_in_a_player_after_it_was_planned_keeps_its_original_and_copy_and_the_next_settle_deletes_it(self):
+        # Refused open before the plan (HELD_OPEN), it is opened as ffmpeg ends: a handle that does not share delete, as a
+        # player's, so the delete of the original, last, fails.
+        held = []
+        self.addCleanup(lambda: [handle.close() for handle in held])
+        with mock.patch.object(convert, "_reached", side_effect=lambda step: step == "temp verified" and held.append(
+                open(self.source, "rb"))):
             result = self.convert(self.source)
         self.assertEqual(1, result.changed, "the copy is in place")
         self.assertFalse(result.ok)
-        self.assertIn("its original could not be deleted", result.details["original_kept"])
-        self.assertIn("it is open in another program", result.details["original_kept"])
+        self.assertTrue(result.details["original_kept"].startswith(convert.ORIGINAL_KEPT.split("%s")[0]), result.details)
         self.assertEqual(self.before, self.read_bytes(self.source), "the original kept")
         target = clip_convert.target_of(self.source)
         self.assertEqual(paths.key(target), paths.key(self.row_of(self.photo_id)[0]), "the row at the MP4")
         self.assertEqual(("h264", "aac"), tuple(getattr(video_frames.streams(TOOLS, target), k) for k in ("video", "audio")),
                          "the verified copy kept")
+        self.assertEqual(["writing"], self.converted_states(self.photo_id))
+        held.pop().close()
         file_changes.settle(self.vl.library, EXIFTOOL)
         self.assertFalse(os.path.exists(self.source), "the next settle deleted it")
         self.assert_converted(self.source, self.photo_id, TITLE)
@@ -330,26 +390,61 @@ class Refused(AnOldClipInTheLibrary):
         ffmpeg.assert_not_called()
         self.assertEqual(self.before, self.read_bytes(self.source))
 
-    def test_a_second_library_holding_the_folder_converting_the_clip_meanwhile_is_refused_and_leaves_the_temp(self):
-        # Two libraries hold the folder; while the first converts the clip, the second is asked to convert it too.
-        other = ViewLibrary(self, "other", home=self.home)
-        for record in metadata.MetadataExtractor(EXIFTOOL).batch_read([self.source]):
-            photos.record_indexed(other.conn, record["path"], record)
-            photos.ensure_row(other.conn, record["path"])
-        other.conn.commit()
-        real, seconds = clip_convert.convert, []
 
-        def converting(tools, source, temp, *args, **kwargs):
-            seconds.append(convert.convert_clip(other.library, EXIFTOOL, TOOLS, self.source))
-            self.assertTrue(os.path.exists(temp), "the first's temp is where it was")
-            return real(tools, source, temp, *args, **kwargs)
+class TwoLibrariesHoldingTheFolder(AnOldClipInTheLibrary):
+    """A second library holding the folder, its rows recorded as its indexer reads the clips. The two share the files
+    alone: the second's journal knows nothing of a conversion the first has under way, nor of one it finished."""
 
-        with mock.patch.object(clip_convert, "convert", side_effect=converting):
-            result = self.convert(self.source)
-        self.assertEqual(1, result.changed, result.message())
+    def setUp(self):
+        super().setUp()
+        self.other = ViewLibrary(self, "other", home=self.home)
+
+    def held_there(self, path):
+        """The id of the second library's row of `path`, recorded as its indexer reads it."""
+        (record,) = metadata.MetadataExtractor(EXIFTOOL).batch_read([path])
+        photos.record_indexed(self.other.conn, record["path"], record)
+        photo_id = photos.ensure_row(self.other.conn, record["path"])
+        self.other.conn.commit()
+        return photo_id
+
+    def asked_there_meanwhile(self, source, moment):
+        """The first library's conversion of `source`, the second asked to convert it as the first reaches clip_convert's
+        `moment` ("convert": its temp claimed and empty; "verified": its copy made, nothing holding the clip open): (the
+        first's Result, the second's)."""
+        temp, real, seconds = clip_convert.temp_of(clip_convert.target_of(source)), getattr(clip_convert, moment), []
+
+        def meanwhile(*args, **kwargs):
+            size = os.path.getsize(temp)
+            seconds.append(convert.convert_clip(self.other.library, EXIFTOOL, TOOLS, source))
+            self.assertEqual(size, os.path.getsize(temp), "the first's temp as it was")
+            return real(*args, **kwargs)
+        with mock.patch.object(clip_convert, moment, side_effect=meanwhile):
+            first = self.convert(source)
         (second,) = seconds
-        self.assertEqual((0, convert.TEMP_TAKEN), (second.changed, second.message()))
-        self.assert_converted(self.source, self.photo_id, TITLE)
+        return first, second
+
+    def test_the_second_asked_to_convert_the_clip_meanwhile_is_refused_and_leaves_the_firsts_copy(self):
+        # The second's ffmpeg, refused by the first's temp there, removed it (#2858): the claim refuses it first.
+        for n, moment in enumerate(("convert", "verified")):
+            with self.subTest(moment):
+                source, photo_id = self.clip("quay%d.wmv" % n)
+                self.held_there(source)
+                first, second = self.asked_there_meanwhile(source, moment)
+                self.assertEqual((0, convert.TEMP_TAKEN), (second.changed, second.message()))
+                self.assertEqual(1, first.changed, first.message())
+                self.assert_converted(source, photo_id, TITLE)
+
+    def test_the_second_finds_the_clip_at_its_mp4_by_the_name_it_kept(self):
+        source, photo_id = self.clip("quay.wmv")
+        there = self.held_there(source)
+        result = self.convert(source)
+        self.assertEqual(1, result.changed, result.message())
+        target = self.assert_converted(source, photo_id, TITLE)
+        synced = sync.sync(self.other.library, apply=True, exiftool_path=EXIFTOOL, roots=[self.vl.pictures])
+        self.assertTrue(synced.ok, synced.message())
+        self.assertEqual([(there, paths.key(target))],
+                         [(i, paths.key(path)) for i, path in self.other.rows("SELECT id, path FROM photos")],
+                         "its one row, with its faces and names, at the MP4")
 
 
 class AClipHoldingWindowsTags(AnOldClipInTheLibrary):
@@ -411,23 +506,21 @@ class AClipHoldingWindowsTags(AnOldClipInTheLibrary):
         target = self.assert_converted(source, photo_id, "")
         self.assertEqual(["Trips/Harbour", "Trips/Coast"], self.row_of(photo_id)[1], "the row reads its tags")
         self.assertIsNone(patched.windows_tags_read(target)[1], "no Windows Tags")
-        self.assertEqual([("done",)], self.vl.rows(
-            "SELECT state FROM change_files WHERE photo_id = ? AND change_id IN (SELECT id FROM changes WHERE operation = ?)",
-            photo_id, file_journal.CONVERT))
+        self.assertEqual(["done"], self.converted_states(photo_id))
 
-    def test_a_windows_tag_it_cannot_carry_refuses_the_clip_naming_it_before_anything_is_planned(self):
+    def test_convert_of_a_clip_holding_a_windows_tag_it_cannot_carry_is_refused_naming_it_before_anything_is_planned(self):
         self.vl.forget("Trips/Pier")
         self.vl.tree("People/Cousins/Ash Pell", face_root="People")
         for name, texts, cannot in (
                 ("pier.mp4", patched.WINDOWS_TAGS, "Trips/Pier"),                      # the ten live: not in the tree
                 ("cousins.mp4", ("Trips/Coast", "People/Cousins"), "People/Cousins")):  # under People, no person
             with self.subTest(cannot):
-                source, _photo_id = self.windows_clip(name, texts)
+                source, photo_id = self.windows_clip(name, texts)
                 before = self.read_bytes(source)
                 with mock.patch.object(clip_convert, "convert") as ffmpeg:
-                    result = self.convert(source)
+                    said = self.ended(self.ask(photo_id, "convert", source))
                 ffmpeg.assert_not_called()
-                self.assertEqual((0, convert.CANNOT_CARRY % cannot), (result.changed, result.message()))
+                self.assertEqual((False, convert.CANNOT_CARRY % cannot), (said["success"], said["error"]))
                 self.assertEqual(before, self.read_bytes(source), "the clip as it was")
                 self.assertEqual([], self.vl.rows("SELECT id FROM changes WHERE operation = ?", file_journal.CONVERT))
 
@@ -453,9 +546,7 @@ class AClipHoldingWindowsTags(AnOldClipInTheLibrary):
         self.assertEqual(0, result.changed, result.message())
         self.assertIn("its tags, title or kept name could not be written into its converted copy", result.message())
         self.assertEqual(before, self.read_bytes(source), "the original kept")
-        self.assertEqual([("writing",)], self.vl.rows(
-            "SELECT state FROM change_files WHERE photo_id = ? AND change_id IN (SELECT id FROM changes WHERE operation = ?)",
-            photo_id, file_journal.CONVERT))
+        self.assertEqual(["writing"], self.converted_states(photo_id))
         file_changes.settle(self.vl.library, EXIFTOOL)
         self.assert_carried(source, photo_id, "")
 
@@ -476,19 +567,6 @@ def make_mov(path, crf, created=CREATED):
 class ThePanelButtons(AnOldClipInTheLibrary):
     """The clip panel's Convert and Make smaller (MP4), by id (POST /api/clip/convert): a batch of one on a thread of the
     server, the request answered at once with its ticket, how it ended read by the ticket (/api/clip/converted)."""
-
-    def ask(self, photo_id, mode, path, **changed):
-        stamp = photo_actions.file_stamp(path)
-        body = {"id": photo_id, "mode": mode, "stamp": {"mtime": stamp[0], "size": stamp[1] + changed.get("size", 0)}}
-        return self.post("clip/convert", body)
-
-    def ended(self, reply):
-        self.assertEqual(200, reply.status_code, reply.get_json())
-        ticket = reply.get_json()["ticket"]
-        convert.outcome(self.vl.library, ticket, wait=120)
-        said = self.client.get("/library/api/clip/converted?ticket=%d" % ticket).get_json()
-        self.assertTrue(said["done"], said)
-        return said
 
     def mov(self, name, crf):
         path = make_mov(os.path.join(self.folder, name), crf)
@@ -591,6 +669,22 @@ class ThePanelButtons(AnOldClipInTheLibrary):
                     self.assertEqual((False, why), (said["success"], said["error"]))
                     self.assertEqual(before, self.read_bytes(path))
         ffmpeg.assert_not_called()
+
+    def test_a_clip_changed_by_another_program_while_it_converts_is_left_as_that_program_left_it(self):
+        source, photo_id = self.clip("quay.wmv")
+
+        def changed(step):
+            if step == "temp verified":
+                with open(source, "ab") as handle:
+                    handle.write(b"another program's bytes")
+        with mock.patch.object(convert, "_reached", side_effect=changed):
+            said = self.ended(self.ask(photo_id, "convert", source))
+        self.assertEqual((False, convert.CHANGED), (said["success"], said["error"]))
+        self.assertTrue(self.read_bytes(source).endswith(b"another program's bytes"), "the changed original kept")
+        self.assertFalse(os.path.exists(clip_convert.target_of(source)), "no MP4")
+        self.assertEqual([], self.leftovers(), "no temp left")
+        self.assertEqual(paths.key(source), paths.key(self.row_of(photo_id)[0]), "the row where it was")
+        self.assertEqual(["conflict"], self.converted_states(photo_id), "History says it changed")
 
     def test_a_stale_stamp_is_refused_at_once(self):
         source, photo_id = self.clip("quay.wmv")
