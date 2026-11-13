@@ -3,7 +3,7 @@
 
     temp = clip_convert.temp_of(clip_convert.target_of(source))
     clip_convert.claimed(temp)                                          # True: the temp is this conversion's
-    made = clip_convert.convert(tools, source, temp, streams, progress=lambda done, whole: ..., stop=threading.Event())
+    made = clip_convert.convert(tools, source, temp, streams, stop=threading.Event())
     problem = clip_convert.verified(tools, source, streams, temp)     # None: the temp is the clip, whole
 
 What it writes: the picture re-encoded to H.264 at CRF 23 (ffmpeg's default quality, the owner's choice: about half the
@@ -35,8 +35,7 @@ How it fails, each as a plain problem (a sentence naming no file: a file's name 
 exception, and every failure removes the temp it made: ffmpeg cannot read the clip, or stops with an error (its last line
 logged, unnamed); it makes no progress for STALL seconds (a share that stopped answering: ffmpeg blocked in a read), or
 passes the caller's deadline, or the caller asks it to stop (`stop`, an Event: Cancel, an update's drain): killed with
-its tree through tagpup.core.processes. An exception through the watch (a second Ctrl+C, raised in the caller's
-`progress`) ends ffmpeg's tree and removes the temp before it goes on up: no ffmpeg is left writing a temp nothing owns. A temp it could not remove (the share gone meanwhile) is said in the problem, so
+its tree through tagpup.core.processes. An exception through the watch (a second Ctrl+C) ends ffmpeg's tree and removes the temp before it goes on up: no ffmpeg is left writing a temp nothing owns. A temp it could not remove (the share gone meanwhile) is said in the problem, so
 the caller keeps its record for the settle to remove it. room_for refuses before anything runs when the volume has not
 room for the temp: ROOM times the original, a guess (a re-encode at CRF 23 is about half an old format's size; an MPEG-4
 Part 2 clip is already small, and its H.264 may be larger), plus a margin.
@@ -186,10 +185,9 @@ def arguments(tools, source, temp, audio):
             + ["-movflags", "+faststart", "-progress", "pipe:1", "-f", "mp4", temp])
 
 
-def convert(tools, source, temp, streams, progress=None, stop=None, deadline=None, stall=STALL):
+def convert(tools, source, temp, streams, stop=None, deadline=None, stall=STALL):
     """Convert the clip at `source` into `temp` (see the module). `streams` is video_frames.streams of the source, read
-    by the caller (its sound decides copy or re-encode; its duration is the whole progress is told against). `progress(done,
-    whole)` is told seconds converted and the whole; `stop` an Event asked between progress lines; `deadline` a
+    by the caller (its sound decides copy or re-encode; its duration tells when ffmpeg is at the end). `stop` an Event asked between progress lines; `deadline` a
     time.monotonic() after which it is stopped. `temp` is claimed by the caller (claimed). Returns None when ffmpeg finished
     and the temp is on its disk (_flushed) to verify, else the problem,
     the temp removed (or TEMP_LEFT said)."""
@@ -204,7 +202,7 @@ def convert(tools, source, temp, streams, progress=None, stop=None, deadline=Non
     for reader in readers:
         reader.start()
     try:
-        return _watched(child, readers, lines, said, source, temp, streams, progress, stop, deadline, stall)
+        return _watched(child, readers, lines, said, source, temp, streams, stop, deadline, stall)
     except BaseException:
         _end(child)
         removed(temp)
@@ -216,7 +214,7 @@ def convert(tools, source, temp, streams, progress=None, stop=None, deadline=Non
             pipe.close()
 
 
-def _watched(child, readers, lines, said, source, temp, streams, progress, stop, deadline, stall):
+def _watched(child, readers, lines, said, source, temp, streams, stop, deadline, stall):
     """convert's watch of its ffmpeg `child` to its end: None, or the problem (the temp removed or TEMP_LEFT said). The
     caller closes the child's pipes once its readers ended."""
     problem, last, ending = None, time.monotonic(), False
@@ -236,8 +234,6 @@ def _watched(child, readers, lines, said, source, temp, streams, progress, stop,
                 done = None
             if done is not None:
                 ending = ending or (streams.duration is not None and done >= streams.duration - DURATION_SLACK)
-                if progress is not None:
-                    progress(done, streams.duration)
         if stop is not None and stop.is_set():
             problem = STOPPED
         elif deadline is not None and now > deadline:

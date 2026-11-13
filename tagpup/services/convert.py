@@ -151,16 +151,16 @@ class _Ready:
         self.photo_id, self.stamp, self.streams, self.carry, self.target = photo_id, stamp, streams, carry, target
 
 
-def convert_clip(library, exiftool_path, tools, source, reason=OLD_FORMAT, progress=None, stop=None):
+def convert_clip(library, exiftool_path, tools, source, reason=OLD_FORMAT, stop=None):
     """Convert the clip at `source` of `library` (see the module), `tools` being config.locate_ffmpeg()'s, its original
-    deleted for good once its copy is verified and in place. `progress(done, whole)` in seconds;
+    deleted for good once its copy is verified and in place.
     `stop`, an Event: Cancel. A Result: `changed` 1 once the copy is in place, its row moved and what it carries written;
     refused with why, the original as it was, otherwise. `reason` is one of NEEDS: the clip's plan must be its own (a
     clip that plays is not converted, one that does not is not made smaller); made SMALLER, a copy no smaller than the
     original is removed and the clip refused NOT_SMALLER. details: `change` (its id or None), `reason`, `photo` (the
     photo's id), `path` (where its copy goes), `size_before` (the original's bytes), `size_after` (the copy's, in place;
     the removed copy's for NOT_SMALLER), and `original_kept`, the sentence, when the copy is in place but the original could not be deleted (the
-    result is refused too: the CLI exits 1)."""
+    result is refused too)."""
     result = Result(attempted=1)
     result.details.update(change=None, reason=reason, photo=None)
     source = paths.stored(source)
@@ -195,7 +195,7 @@ def convert_clip(library, exiftool_path, tools, source, reason=OLD_FORMAT, progr
             file_journal.release(library.path, change_id)
             raise
     try:
-        problem = clip_convert.convert(tools, source, temp, ready.streams, progress=progress, stop=stop,
+        problem = clip_convert.convert(tools, source, temp, ready.streams, stop=stop,
                                        deadline=clip_convert.deadline_for(ready.stamp[1]))
         if problem is None:
             problem = clip_convert.verified(tools, source, ready.streams, temp)
