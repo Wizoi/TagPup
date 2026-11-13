@@ -7,6 +7,10 @@ Media's C1 to C7: docs/domains/media.md). This page states each of the seven con
 
 ## What the domain holds (counted 2026-11-08, read-only)
 
+Photos and clips recounted 2026-11-13 (read-only, `db.readonly_uri`; the other columns are not recounted): photo_index
+62,229 photos of which 2,910 clips, kr-track 2,186 of which 5, renton_parkrun 1,309 of which 0. The libraries are
+three: the fourth `.db` in `data/` is `kr-track.before-people-merge-20261102-122703.db`, a backup, not a library (#2932).
+
 | Library | Photos | Of them clips | Folders | With a DocumentID | Faces | Changes of photo files in the journal |
 |---|---|---|---|---|---|---|
 | kr-track | 2,070 | 5 | 35 | 2,065 | 12,664 | 1,846 |
@@ -42,7 +46,9 @@ editors) are the evidence those scenario tests cite.
      (`in_place.patch_jpeg`, called from nowhere else; `PATCH_IN_PLACE`, True), every other write is ExifTool's rewrite.
      A patch's new segments are made by ExifTool into a copy of the header or, behind `OWN_WRITER` (False until the
      owner turns it on), by `segment_edits` (the one caller of the three block editors,
-     `tests/test_the_block_editors_have_one_caller.py`); a clip is patched by `clip_patch`.
+     `tests/test_the_block_editors_have_one_caller.py`); a clip is patched by `clip_patch`
+     (a clip patch is outside `field_values.write`; Media's Convert reaches Files' packet only through
+     `field_values.packet_held` / `packet_given`, `PACKET_UNREAD`, `NotAnswered`: contract row 77).
      It writes every photo beside itself and moves the new file over it only once its picture is the photo's
      (`_landed`, #2377, DECISIONS 2026-11-03): the one check of a rewrite, the patch in place's verify the other
      mechanism of the same rule (INVARIANTS), not merged with it: a patch checks only the bytes it changed

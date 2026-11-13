@@ -8,6 +8,10 @@ not met is the domain's queue.
 
 ## What the domain is (counted 2026-11-08, read-only, `db.readonly_uri`)
 
+Recounted 2026-11-13 (the other cells are not recounted): photo_index 62,229 photos, 2,910 clips, 11,632 rows in
+`embedding_frames`; kr-track 2,186 photos, 5 clips, 20 frame rows; renton_parkrun 1,309 photos, 0 clips. The libraries
+are three (the fourth `.db` in `data/` is a backup of kr-track, #2932).
+
 Which photos and clips, in what order and how many, for every way the owner looks at a library (a folder, a keyword, a
 person, a date, a union of them, a typed search), the navigator's counts, the photos' CLIP vectors (a clip's five frames),
 Suggest (the video the browser plays and the poster it shows are Media's), and the models on the one graphics card. What it reads, in
