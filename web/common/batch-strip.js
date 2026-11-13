@@ -11,6 +11,7 @@
  * When the server cannot be asked the strip says it cannot tell: it never claims a write finished because the list was not read.
  */
 import { api, libraryIn } from './api.js';
+import { cancelByTicket } from './batch-cancel.js';
 import { buildElement, replaceContent } from './dom.js';
 import { openHistory } from './history-dialog.js';
 
@@ -203,16 +204,7 @@ async function pollBatches() {
 
 async function cancelBatch(row, button) {
     button.disabled = true;
-    batchStrip.note = '';
-    try {
-        const answer = await api.site.json('/api/activity/batches/cancel', {
-            method: 'POST', headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ library: row.library, ticket: row.ticket }),
-        });
-        if (!answer.success) batchStrip.note = answer.error || 'The server did not stop it.';
-    } catch (err) {
-        batchStrip.note = `Cancel was not sent (${err.message}).`;
-    }
+    batchStrip.note = await cancelByTicket(row.library, row.ticket);
     return pollBatches();
 }
 

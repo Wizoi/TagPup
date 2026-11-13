@@ -10,6 +10,7 @@
 // aloud (#now-summary) says what runs, in tens of percent, changed only when its words change; the cards are not read.
 // A run that starts or ends here is said to the jobs and the timeline (touched), which show it without waiting for their poll.
 import { api } from './common/api.js';
+import { cancelByTicket } from './common/batch-cancel.js';
 import { buildElement } from './common/dom.js';
 import { state } from './state.js';
 import { asked, touched } from './poll.js';
@@ -42,11 +43,7 @@ function runsOf(data) {
 
 /** Stop a batch of photo files of this server at its chunk (or never start it, if it waits). */
 function cancelBatch(library, batch) {
-    return api.site.json('/api/activity/batches/cancel', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ library: library.name, ticket: batch.ticket }),
-    }).then(() => touched('now'));
+    return cancelByTicket(library.name, batch.ticket).then(() => touched('now'));
 }
 
 /** A batch of photo files, running or waiting: how far, and Cancel when this server runs it. */

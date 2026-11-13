@@ -13,6 +13,7 @@
 //    still the one shown: a photo stepped to meanwhile is not touched. A closed tab, or another library (another page),
 //    stops the reading and loses nothing: the server finishes the conversion and the clip's row follows the MP4.
 import { api } from './common/api.js';
+import { cancelByTicket } from './common/batch-cancel.js';
 import { showEnded } from './common/batch-strip.js';
 import { baseName, samePath } from './common/paths.js';
 import { upper } from './hooks.js';
@@ -232,16 +233,7 @@ async function cancelShown() {
     live.cancelling = true;
     live.note = `Stopping the conversion of ${baseName(live.from)}...`;
     draw();
-    let refused;
-    try {
-        const answer = await api.site.json('/api/activity/batches/cancel', {
-            method: 'POST', headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ library: live.library, ticket: live.ticket }),
-        });
-        if (!answer.success) refused = answer.error || 'The server did not stop it.';
-    } catch (err) {
-        refused = `Cancel was not sent (${err.message}).`;
-    }
+    const refused = await cancelByTicket(live.library, live.ticket);
     // Not stopped: it goes on, and Cancel may be pressed again (a ticket that ended meanwhile is said by its end).
     if (refused && state.clipConvert.live[key] === live) {
         live.cancelling = false;
