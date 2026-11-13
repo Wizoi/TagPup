@@ -1,6 +1,6 @@
 # Domain owners
 
-Five owners, each a read-only agent with a charter in `.claude/agents/`: scope, the contract other domains
+Six owners, each a read-only agent with a charter in `.claude/agents/`: scope, the contract other domains
 rely on, the invariants and their guard tests, a review checklist, and what the owner decides against what
 is the human owner's. The code map is [ARCHITECTURE.md](ARCHITECTURE.md); the rules are
 [INVARIANTS.md](INVARIANTS.md); the human owner's decisions are [DECISIONS.md](DECISIONS.md). A charter's file
@@ -11,6 +11,7 @@ paths are checked by `tests/test_the_test_map.py`: a commit that moves a module 
 | Data and journal | `.claude/agents/tagpup-owner-data.md` | opening and writing a library file, schema and migrations, the journal and undo, derived tables and the word index, snapshots and backups, the doctor, settings as stored, roots as stored data |
 | People and faces | `.claude/agents/tagpup-owner-people.md` | what a person is (the id of a tag-tree node), names, tags and faces in step, Identify and Name faces from tags, clustering, the tree's people side |
 | Files and sync | `.claude/agents/tagpup-owner-files.md` | every touch of a photo file, the journaled write path, indexing, sync and the watcher, following a renamed file, shares |
+| Media (clips) | `.claude/agents/tagpup-owner-media.md` | a clip's own code: its frames and codecs through ffmpeg, what it needs to play, where its patch in place goes, Convert and Make smaller, the video panel; the clip parts of Files' modules, reviewed beside Files |
 | Views, search and AI | `.claude/agents/tagpup-owner-views-ai.md` | which photos in what order and how many, the navigator and grid, search, photo vectors, Suggest, the models and the one graphics card |
 | Integration and apps | `.claude/agents/tagpup-owner-integration.md` | the seams: the cross-domain contract table, scenario tests, servers and routes, jobs' lifecycle, update hand-over and install, CLI and MCP (a command's flow is its domain's: `index` Files'), a route's reply against the page that reads it |
 
@@ -27,7 +28,7 @@ second worker starts it (retro 2026-11-13).
 ## How a test file gets its owner
 
 `tests/owners.py` gives every `tests/test_*.py` and `tests/frontend/*.test.mjs` one owner (`data`, `people`, `files`,
-`views`, `apps`), a kind (`scenario`, `unit`, `migration`, `guard`, or `unmapped` for a legacy file nothing placed) and,
+`media`, `views`, `apps`), a kind (`scenario`, `unit`, `migration`, `guard`, or `unmapped` for a legacy file nothing placed) and,
 for a scenario file, the scenario ids it runs (`SCENARIOS`: a flow a person lives through; each charter ends with its
 ids). The first map was made by the module of `tagpup/` or `web/` a file imports most, through the Scope of the charter
 that lists it; the rest by name. A new test file is added to `_FILES` under its owner in the commit that adds it, or
@@ -41,6 +42,10 @@ print the `node --test` line for that owner's page tests.
 - **One domain**: its owner decides and reviews.
 - **Two domains**: the callee's owner decides the contract; the caller's owner decides whether to call it. A
   disagreement goes to the integration owner, on "fewest places that know the rule".
+- **Media and Files**: Media is a consumer of Files' write door (contract row 1): a clip's tags, title, Date Taken,
+  name, delete and conversion are written through `file_changes`, and Media adds no second write path. Files decides
+  that contract; Media decides what a clip needs (its codecs, where its patch goes, its conversion) and reviews the
+  clip parts of Files' modules beside the Files owner.
 - **The integration owner** reviews only the contract-table diff and the scenario list, never the code. It may
   veto only for a second owner of a rule, a new cross-domain contract with no guard, anything unsafe for an update
   or hand-over, or a second migration in flight.
@@ -56,7 +61,7 @@ owner's. The output of every owner is the same: findings ranked, each with a sev
 
 This section is part of every charter in `.claude/agents/tagpup-owner-*.md`: an owner reads it before it reviews or
 plans. The seven conditions and the order of a review also end each charter, in the same words
-(`tests/test_the_test_map.py` holds the six copies equal), since an agent reads its own definition first; the
+(`tests/test_the_test_map.py` holds the seven copies equal), since an agent reads its own definition first; the
 explanations and the planning are here only. The state of each domain, with its evidence, is its document in docs/domains/.
 
 ### In every review

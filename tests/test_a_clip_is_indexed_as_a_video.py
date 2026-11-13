@@ -1,5 +1,5 @@
 """A clip in a folder the library is given is indexed as a row of kind 'video' and shown CLIP its five frames
-(scenario F12; DECISIONS, "VIDEO: THE OWNERS' PLANS AND THE OWNER'S ANSWERS", item 5, and 2026-11-06, migration 38).
+(scenario C1; DECISIONS, "VIDEO: THE OWNERS' PLANS AND THE OWNER'S ANSWERS", item 5, and 2026-11-06, migration 38).
 
 What the owner lives through: they add a folder of clips, or a folder where clips sit among photos, and index it with
 the CLI. Each clip gets a row of kind 'video', dated by the rule a clip's dates follow (tagpup.core.dates: its XMP

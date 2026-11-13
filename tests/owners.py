@@ -1,10 +1,10 @@
 """Which domain owner each test file belongs to, and which scenario a scenario file runs. Read by
 tools/run_tests.py (--owner, --scenarios, the per-owner line), tests/test_the_test_map.py; written like tests/tiers.py, by hand, in the commit that adds a test file.
 
-    OWNERS     the five domain owners (docs/OWNERS.md): their charters are .claude/agents/tagpup-owner-<data, people,
-               files, views-ai, integration>.md; `apps` is Integration and apps.
+    OWNERS     the six domain owners (docs/OWNERS.md): their charters are .claude/agents/tagpup-owner-<data, people,
+               files, media, views-ai, integration>.md; `apps` is Integration and apps.
     SCENARIOS  {id: (owner, one sentence)}: a flow a person lives through. The letter of an id is its owner's (D data,
-               P people, F files, V views, I apps). A charter lists its ids; a scenario file names the ones it runs,
+               P people, F files, C media (clips), V views, I apps). A charter lists its ids; a scenario file names the ones it runs,
                one or more (its owner is the owner of its first; test_roots_scenarios is D7 and I6).
     FILES      {test file: (owner, kind, scenario ids)} for every tests/test_*.py (the module name) and every
                tests/frontend/*.test.mjs (the file name).
@@ -16,7 +16,7 @@ A file got its owner from the module of tagpup/ (or the page module of web/) it 
 owner charter that lists it; a file naming no scope module was placed by its name or by hand. A new test file is added
 to _FILES below under its owner; the guard names a file that is not.
 """
-OWNERS = ("data", "people", "files", "views", "apps")
+OWNERS = ("data", "people", "files", "media", "views", "apps")
 KINDS = ("scenario", "unit", "migration", "guard", "unmapped")
 #: Finding numbers a test file once cited and may stop citing: only a number listed here may leave tests/findings_cited.txt's set.
 RETIRED = frozenset({
@@ -61,13 +61,15 @@ SCENARIOS = {
     "F9": ("files", "A run holds one map of the roots; a root moved meanwhile stops a write with a sentence."),
     "F10": ("files", "One photo whatever its path's spelling."),
     "F11": ("files", "Add a folder: it is queued, indexed by the CLI with progress, its photos' bakes read from their files under the library's keys, followed from every entry point, when it recorded a photo, by a matching of the faces it made that writes nothing, and a second run reads nothing."),
-    "F12": ("files", "A clip in a folder is indexed as a row of kind video, dated by its XMP dates first, then its QuickTime ones, its vector made of its frames after the photos; the owed scan never queues it again, the folder view lists it beside its photos, and the photos beside it are indexed as before; sync follows a clip moved or renamed and reads again one whose copy went on; a clip cut short is a row never decoded, tried again by every index; an index stopped part-way makes the rest next time; two libraries holding one folder of clips keep their own rows."),
-    "F13": ("files", "A clip's tags and title are written in place into its XMP, never by ExifTool's rewrite: a selection of photos and clips tagged writes both, a clip the patch cannot place is refused before anything is written, a cleared title frees its QuickTime title and its undo gives it back, a tag save undone from History puts its XMP back; a clip's Windows Tags moved into its XMP free its Windows Xtra in the same patch, a second move and a clip with no Windows Tags write nothing, and its undo gives the Xtra back; the one-time move over a library (a dry run reads and writes nothing, nor settles a change left half done; --apply refused while the app runs, --limit, Ctrl+C and a re-run continuing, a clip open in a player refused while the others go, a share away left for the next run, a tag not in the tree left as it is, the tags a clip holds kept); a write cut short is settled by its bytes at the next start (written again, cut back, recorded, or a conflict), two writes of one clip run one after the other, and the player streams it at its new size; a turn naming a clip, or a time shift over its folder, leaves its file as it was with a sentence, the photos beside it written."),
-    "F14": ("files", "A clip of a folder the library holds is Smart Renamed with the photos (a day's selection, its button, a Save after its title), the name it had kept first in its XMP, undone from History; a clip the patch cannot place keeps its name with a sentence while the photos beside it are renamed, a rename stopped part-way and run again renames with the names kept, a second library finds it by the name it kept, and a clip of a folder the library does not hold keeps its name."),
-    "F15": ("files", "A clip of up to 2 GiB is deleted as a photo is (from a share through this PC, its copy whole, its vector, frames and poster with it, other writers let in after each clip of a bulk delete, its stream refused while it is deleted); a larger one, or a file its own drive's Recycle Bin would not keep, or one from a share whose copy this PC's Recycle Bin would not keep (full: 'The Recycle Bin is full: delete permanently instead?'; the Bin still keeps what it has room for), is deleted for good only once the owner confirmed the warning naming it (no copy made or counted; unconfirmed, or a question that did not name it, nothing touched), the reply saying for good; one held open, or whose size cannot be read, is left with its row and a sentence."),
-    "F16": ("files", "A clip's Date Taken is written into its XMP dates (xmp:CreateDate only where it holds one), its QuickTime dates left byte for byte, its row and the library's order following; undone from History, the old xmp:CreateDate given back; refused outside the library while the held clip is dated; a date save cut short settled by its bytes at the next start."),
-    "F17": ("files", "A tag-tree rename, merge or retire of a tag a clip holds rewrites the clip's XMP with the photos, its row following, and the tree moves once every file is rewritten."),
-    "F19": ("files", "A clip of an old format (.wmv, .mpg, .avi; an .mp4 of MPEG-4 Part 2 under its own name) is converted to H.264 and AAC in an MP4 as one change of History that is never undone: its row followed to the MP4, its title, tags and the name it had carried into the copy (its Windows Tags the tag tree holds among its tags, the copy holding no Xtra and read back before a renamed original goes; a Windows tag it cannot carry refuses it, named), its Date Taken kept (a dated .mov, an .mp4 dated in its XMP; a .wmv's creation time never made one), the original deleted for good last (never binned); a conversion cut short at any step is settled at the next start, its copy on its disk before it was recorded (a power cut finds it whole); ffmpeg failing, or a copy its disk will not take, leaves the original and no temp; an original that cannot be deleted is kept, the copy in place, for the next settle; a second conversion of one clip is refused before ffmpeg runs; the panel's Convert and Make smaller (MP4) by id answer at once with a ticket the Activity strip lists and Cancel stops, a second click and a stale stamp are refused, a shrink no smaller is withdrawn, a button that is not the clip's plan is refused."),
+    "C1": ("media", "A clip in a folder is indexed as a row of kind video, dated by its XMP dates first, then its QuickTime ones, its vector made of its frames after the photos; the owed scan never queues it again, the folder view lists it beside its photos, and the photos beside it are indexed as before; sync follows a clip moved or renamed and reads again one whose copy went on; a clip cut short is a row never decoded, tried again by every index; an index stopped part-way makes the rest next time; two libraries holding one folder of clips keep their own rows."),
+    "C2": ("media", "A clip's tags and title are written in place into its XMP, never by ExifTool's rewrite: a selection of photos and clips tagged writes both, a clip the patch cannot place is refused before anything is written, a cleared title frees its QuickTime title and its undo gives it back, a tag save undone from History puts its XMP back; a clip's Windows Tags moved into its XMP free its Windows Xtra in the same patch, a second move and a clip with no Windows Tags write nothing, and its undo gives the Xtra back; the one-time move over a library (a dry run reads and writes nothing, nor settles a change left half done; --apply refused while the app runs, --limit, Ctrl+C and a re-run continuing, a clip open in a player refused while the others go, a share away left for the next run, a tag not in the tree left as it is, the tags a clip holds kept); a write cut short is settled by its bytes at the next start (written again, cut back, recorded, or a conflict), two writes of one clip run one after the other, and the player streams it at its new size; a turn naming a clip, or a time shift over its folder, leaves its file as it was with a sentence, the photos beside it written."),
+    "C3": ("media", "A clip of a folder the library holds is Smart Renamed with the photos (a day's selection, its button, a Save after its title), the name it had kept first in its XMP, undone from History; a clip the patch cannot place keeps its name with a sentence while the photos beside it are renamed, a rename stopped part-way and run again renames with the names kept, a second library finds it by the name it kept, and a clip of a folder the library does not hold keeps its name."),
+    "C4": ("media", "A clip of up to 2 GiB is deleted as a photo is (from a share through this PC, its copy whole, its vector, frames and poster with it, other writers let in after each clip of a bulk delete, its stream refused while it is deleted); a larger one, or a file its own drive's Recycle Bin would not keep, or one from a share whose copy this PC's Recycle Bin would not keep (full: 'The Recycle Bin is full: delete permanently instead?'; the Bin still keeps what it has room for), is deleted for good only once the owner confirmed the warning naming it (no copy made or counted; unconfirmed, or a question that did not name it, nothing touched), the reply saying for good; one held open, or whose size cannot be read, is left with its row and a sentence."),
+    "C5": ("media", "A clip's Date Taken is written into its XMP dates (xmp:CreateDate only where it holds one), its QuickTime dates left byte for byte, its row and the library's order following; undone from History, the old xmp:CreateDate given back; refused outside the library while the held clip is dated; a date save cut short settled by its bytes at the next start."),
+    "C6": ("media", "A tag-tree rename, merge or retire of a tag a clip holds rewrites the clip's XMP with the photos, its row following, and the tree moves once every file is rewritten."),
+    "C7": ("media", "A clip of an old format (.wmv, .mpg, .avi; an .mp4 of MPEG-4 Part 2 under its own name) is converted to H.264 and AAC in an MP4 as one change of History that is never undone: its row followed to the MP4, its title, tags and the name it had carried into the copy (its Windows Tags the tag tree holds among its tags, the copy holding no Xtra and read back before a renamed original goes; a Windows tag it cannot carry refuses it, named), its Date Taken kept (a dated .mov, an .mp4 dated in its XMP; a .wmv's creation time never made one), the original deleted for good last (never binned); a conversion cut short at any step is settled at the next start, its copy on its disk before it was recorded (a power cut finds it whole); ffmpeg failing, or a copy its disk will not take, leaves the original and no temp; an original that cannot be deleted is kept, the copy in place, for the next settle; a second conversion of one clip is refused before ffmpeg runs; the panel's Convert and Make smaller (MP4) by id answer at once with a ticket the Activity strip lists and Cancel stops, a second click and a stale stamp are refused, a shrink no smaller is withdrawn, a button that is not the clip's plan is refused."),
+    "C8": ("media", "A video played in the browser: a range answered with its bytes and capped, one that cannot be answered refused with the size, sought back and forth quickly, closed half way without holding the file, renamed while it plays ending every stream short, a share that stops answering ending the stream within its wait and the next ask answered 503 at once, an id a video in one library and a photo in another; the cards and the record say which are videos; a clip the browser cannot play (an older format, a picture it does not decode) says what it needs to play, ffprobe bounded on a share gone silent."),
+    "C9": ("media", "A clip in the grid shows its poster frame, its middle frame, kept as a photo's thumbnail is: made once (two cards at once one ffmpeg run, a folder scrolled fast at most three at once), found again by its stamp, made again once renamed or changed, its last poster shown once its file is gone; a clip cut short or a machine with no ffmpeg answered the placeholder and nothing kept, a share asleep one bounded look and no ffmpeg; `thumbs warm` making the posters ahead."),
     "V1": ("views", "A view lists each photo once, in the owner's order, with its count; a clip by its XMP date first, then its QuickTime one, a date of zeros no date; under the Photos / Videos filter its photos or its clips alone, the source's whole count beside."),
     "V2": ("views", "A typed search ANDs its words and ranks nothing."),
     "V3": ("views", "Suggest, and the analyse-only run, from start to end."),
@@ -81,8 +83,6 @@ SCENARIOS = {
     "V12": ("views", "A library switches to SigLIP 2 SO400M once the new model's vectors are made for its photos, refused with the counts before, and its undo held to the same share; each library then searches by its own model's vectors, a run on the model it began with."),
     "V13": ("views", "The new photo model's vectors are made for a library beside its own (embed-photos): a dry run that writes nothing, a run stopped and run again that makes only the rest, a batch one write, a photo removed meanwhile given no row back, a photo edited meanwhile stamped as it was opened, a file that does not decode tried again, a drive not connected stopping the run with a sentence, two libraries holding one folder each by its own run, the turn on the card taken before the list is read, a running server giving its kept turn to the run and its next Suggest on the switched model; then the switch from the command line (set-photo-model), refused before, passes as one change of the journal, and its undo puts the old model back."),
     "V14": ("views", "After the switch, the old photo model's vectors and Suggest's words under it are retired (retire-photo-vectors): a dry run that writes nothing, the own key's vectors and words kept byte for byte, one change a key whose undo is refused and the undo of the switch refused with the switch's sentence, a run stopped (or an app started) and run again as the same change, a switch back beside the run ending it, a photo removed meanwhile, and a library whose own model does not hold its photos refused."),
-    "V15": ("views", "A video played in the browser: a range answered with its bytes and capped, one that cannot be answered refused with the size, sought back and forth quickly, closed half way without holding the file, renamed while it plays ending every stream short, a share that stops answering ending the stream within its wait and the next ask answered 503 at once, an id a video in one library and a photo in another; the cards and the record say which are videos; a clip the browser cannot play (an older format, a picture it does not decode) says what it needs to play, ffprobe bounded on a share gone silent."),
-    "V16": ("views", "A clip in the grid shows its poster frame, its middle frame, kept as a photo's thumbnail is: made once (two cards at once one ffmpeg run, a folder scrolled fast at most three at once), found again by its stamp, made again once renamed or changed, its last poster shown once its file is gone; a clip cut short or a machine with no ffmpeg answered the placeholder and nothing kept, a share asleep one bounded look and no ffmpeg; `thumbs warm` making the posters ahead."),
     "V17": ("views", "The owner measures Suggest's neighbour cut for clips on a copy of a library, nothing written to it and no model loaded: a clip matched on its best of five frames against its frame 0 alone, the share of the neighbour slots clips take and the tags offered at each cut, held out by photo and by folder, ids and counts only."),
     "I1": ("apps", "Switching library in the middle of a folder shows no card of the first."),
     "I2": ("apps", "A write through a server update is waited out and not repeated."),
@@ -118,7 +118,6 @@ _SCENARIO_FILES = {
         "test_roots_store"
     ),
     "F1": (
-        "test_a_clip_patched_in_place test_an_adobe_clip_packet_edited_and_read_back "
         "test_a_file_holds_what_exiftool_kept test_a_photo_patched_in_place "
         "test_a_rename_stopped_part_way test_smart_rename_one_photo smart-rename-one-photo "
         "test_file_changes_one_at_a_time test_file_journal test_rotate_crash_settles_with_the_boxes test_rotate_is_journaled test_rotate_keeps_the_photo "
@@ -149,16 +148,19 @@ _SCENARIO_FILES = {
         "test_an_index_is_one_run_under_its_sync test_index_progress_end_to_end test_new_faces_are_matched_after_an_index test_an_index_reads_the_next_photos_ahead "
         "test_an_index_reads_a_bake test_a_machine_without_a_card"
     ),
-    "F12": "test_a_clip_is_indexed_as_a_video",
-    "F13": (
+    "C1": "test_a_clip_is_indexed_as_a_video",
+    "C2": (
+        "test_a_clip_patched_in_place test_an_adobe_clip_packet_edited_and_read_back "
         "test_a_clip_tagged_through_the_journal test_a_clip_titled_in_quicktime test_a_clip_tag_undone "
         "test_a_clip_patch_cut_short test_a_clip_is_not_turned"
     ),
-    "F14": "test_a_clip_renamed",
-    "F15": "test_a_clip_deleted test_a_delete_when_the_recycle_bin_is_full",
-    "F16": "test_a_clip_dated_through_the_journal",
-    "F17": "test_a_tag_tree_edit_of_a_tag_a_clip_holds",
-    "F19": "test_a_clip_converted clip-convert",
+    "C3": "test_a_clip_renamed",
+    "C4": "test_a_clip_deleted test_a_delete_when_the_recycle_bin_is_full",
+    "C5": "test_a_clip_dated_through_the_journal",
+    "C6": "test_a_tag_tree_edit_of_a_tag_a_clip_holds",
+    "C7": "test_a_clip_converted clip-convert",
+    "C8": "test_playing_a_video test_what_a_clip_needs_to_play",
+    "C9": "test_a_clip_shows_its_poster",
     "I1": "scenario-switching-library-mid-folder",
     "I2": "scenario-write-through-a-server-update test_server_drain",
     "I3": "test_install_app test_install_hands_over test_launcher_hands_over",
@@ -201,8 +203,6 @@ _SCENARIO_FILES = {
     "V12": "test_switching_a_librarys_photo_model",
     "V13": "test_making_a_new_photo_models_vectors",
     "V14": "test_retiring_the_old_photo_models_vectors",
-    "V15": "test_playing_a_video test_what_a_clip_needs_to_play",
-    "V16": "test_a_clip_shows_its_poster",
     "V17": "test_measuring_the_neighbour_cut_for_clips",
 }
 
@@ -271,10 +271,8 @@ _FILES = {
             "test_a_row_describes_its_file_one_way "
             "test_batches_go_through_the_model "
             "test_census_of_jpeg_segments "
-            "test_container_layout "
             "test_dates test_derived_file_changes "
             "test_exiftool_encoding test_exiftool_says_why test_exiftool_session "
-            "test_frames_of_a_video "
             "test_index_adds_the_folder_it_is_given "
             "test_index_startup_reads test_jobs_indexing "
             "test_keyword_fields test_lock_owners "
@@ -292,6 +290,9 @@ _FILES = {
             "tuner-remove-folder unsaved-edits write-queue-status"
         ),
         "guard": "test_photo_looks_have_one_owner test_the_block_editors_have_one_caller",
+    },
+    "media": {
+        "unit": "test_container_layout test_frames_of_a_video video-viewer",
     },
     "views": {
         "unit": (
@@ -314,7 +315,7 @@ _FILES = {
             "test_suggestions_keep_hierarchy test_tag_usage_from_photo_tags "
             "test_scrfd_adaface_faces "
             "test_the_runtime_keeps_models_by_settings test_the_runtime_reaches_suggest test_thumbs_cli test_vector_index "
-            "test_thumbnail_routes test_zero_shot_skips_people vgrid video-viewer"
+            "test_thumbnail_routes test_zero_shot_skips_people vgrid"
         ),
         "guard": "test_gpu_single_owner test_no_test_loads_a_model",
     },

@@ -59,6 +59,7 @@ BRANCH_BUDGET = 1200
 AGENT_TYPES = {"tagpup-worker": "worker", "tagpup-worker-small": "small worker", "tagpup-reviewer": "reviewer",
                "tagpup-quick-reviewer": "quick reviewer", "tagpup-owner-data": "owner: data",
                "tagpup-owner-people": "owner: people", "tagpup-owner-files": "owner: files",
+               "tagpup-owner-media": "owner: media",
                "tagpup-owner-views-ai": "owner: views-ai", "tagpup-owner-integration": "owner: integration",
                "general-purpose": "general-purpose"}
 MAIN = "main session"
@@ -703,7 +704,7 @@ def agents_markdown(a, split, other_merges):
            "cost as in the model table (low..high).\n\n### TOKENS BY AGENT TYPE\n\n",
            table(head, [row(t, v) for t, v in a["by_agent_type"].items() if v["calls"]])]
     review, work = a["review"], a["work"]
-    out.append("\nReview work (reviewer, quick reviewer, the five owners): %d calls, %d tokens, %s USD; workers (worker "
+    out.append("\nReview work (reviewer, quick reviewer, the six owners): %d calls, %d tokens, %s USD; workers (worker "
                "and small worker): %d calls, %d tokens, %s USD; review is %.0f%% of the two.\n"
                % (review["calls"], review["tokens"], money(review), work["calls"], work["tokens"], money(work),
                   100.0 * review["tokens"] / max(1, review["tokens"] + work["tokens"])))

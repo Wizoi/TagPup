@@ -1,6 +1,6 @@
 /**
  * The clip panel's Convert and Make smaller (MP4) (web/tagpup/clip-convert.js; POST /api/clip/convert, a batch of one on
- * a thread of the server, read by its ticket at /api/clip/converted): F19, the page's side. Convert is offered for a clip
+ * a thread of the server, read by its ticket at /api/clip/converted): C7, the page's side. Convert is offered for a clip
  * the browser does not play whose plan (asked once, by media.js, when it failed) is REENCODE; Make smaller for one that
  * plays with a picture, its plan asked only when it is clicked. The confirm is the plan's `replaces`; the ticket is read
  * until it ends; the clip's record follows its MP4 and the sizes are said. How it fails: rapid clicks (one request), a

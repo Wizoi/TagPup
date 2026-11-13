@@ -1,4 +1,4 @@
-"""What a clip needs before a browser plays it (V15; tagpup.files.convertible, video_frames.streams,
+"""What a clip needs before a browser plays it (C8; tagpup.files.convertible, video_frames.streams,
 /api/clip/convert-plan; DECISIONS 2026-11-09).
 
 What the owner lives through: a clip opened in the photo panel does not play -- an older format (.wmv, .mpg, .avi, .mod)
