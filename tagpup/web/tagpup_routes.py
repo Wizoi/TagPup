@@ -514,7 +514,7 @@ def folder_time_shift():
     except Exception as e:
         logger.error("Error applying time shift to %s: %s", folder, e)
         return responses.error(500, str(e))
-    return jsonify({"success": True, "updated_photos": list(_shown(library, folder, photos).values()),
+    return jsonify({"success": True, "updated_photos": _sorted(_shown(library, folder, photos)),
                     "updated_count": result.changed, "requested_count": result.attempted,
                     **_where(result)})
 
