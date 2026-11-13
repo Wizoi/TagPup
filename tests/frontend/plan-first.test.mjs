@@ -20,8 +20,13 @@ const ONE = "Domain: People (load .claude/agents/tagpup-owner-people.md).\nFix t
 
 test("a brief across two domains, or naming the integration owner, crosses; one domain or none does not", () => {
   assert.equal(crossesDomains(HALF), true);
-  assert.equal(crossesDomains("Domain: Integration (its charter).\nA hook."), true);
-  assert.equal(crossesDomains("Read .claude/agents/tagpup-owner-integration.md first."), true);
+  assert.equal(crossesDomains("Domain: Integration (its charter).\nDomain: Files.\nA hook and a route."), true);
+  assert.equal(crossesDomains("Read .claude/agents/tagpup-owner-integration.md first.\nDomain: Media."), true);
+  assert.equal(crossesDomains("Domain: Integration shell (one hook).\nA hook."), false);
+  assert.equal(crossesDomains("Read .claude/agents/tagpup-owner-integration.md first."), false);
+  assert.equal(crossesDomains("Domain: Files and Media."), true);
+  assert.equal(crossesDomains("Domain: Files, Media (load the charters)."), true);
+  assert.equal(crossesDomains("Domain: Files.\nDomain: Files (again)."), false);
   assert.equal(crossesDomains(ONE), false);
   assert.equal(crossesDomains("Rename a test file."), false);
   assert.equal(crossesDomains("Domain: Data.\nThe brief says two `Domain:` lines need a plan."), false);
@@ -53,6 +58,9 @@ test("one domain, an owner, a reviewer or another agent are let through", () => 
 
 test("as a hook: refused with exit 2 until the plan is written, and a broken payload allows", () => {
   const project = mkdtempSync(path.join(tmpdir(), "plan-first-"));
+  const git = (...args) => spawnSync("git", ["-c", "user.name=t", "-c", "user.email=t@example.com", ...args],
+                                     { cwd: project, encoding: "utf8" });
+  git("init", "-q");
   const env = { ...process.env };
   delete env.CLAUDE_PROJECT_DIR;
   const run = (toolInput, input) => spawnSync(process.execPath, [HOOK], {
@@ -66,6 +74,11 @@ test("as a hook: refused with exit 2 until the plan is written, and a broken pay
 
   mkdirSync(path.join(project, "docs", "plans"), { recursive: true });
   writeFileSync(path.join(project, "docs", "plans", "convert.md"), "# Convert\n");
+  const uncommitted = run(launch);
+  assert.equal(uncommitted.status, 2);
+  assert.match(uncommitted.stderr, /not committed/);
+  git("add", "docs/plans/convert.md");
+  git("commit", "-q", "-m", "plan");
   assert.equal(run(launch).status, 0);
   assert.equal(run({ ...launch, prompt: HALF }).status, 2);
   assert.equal(run({ subagent_type: "tagpup-worker", prompt: ONE }).status, 0);
