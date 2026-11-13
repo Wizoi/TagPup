@@ -17,6 +17,8 @@ import { openHistory } from './history-dialog.js';
 export const POLL_MS = 1500;
 /** Errors listed with their file's name; the rest are counted. The server names 50 as well. */
 export const MOST_ERRORS_SHOWN = 50;
+/** The operation name of a clip's conversion (tagpup.store.file_journal.CONVERT). */
+const CONVERT = 'convert';
 export const CANNOT_TELL = 'TagPup cannot tell how far the write has got: the server did not answer. It may still be going on; '
     + "the page's own request says when it is done.";
 
@@ -54,6 +56,11 @@ export function endedSentence(what, result) {
  * read are the counts said as seen then.
  */
 function batchLeftSentence(row, final) {
+    // A conversion is a batch of one file and writes no photo count: its page says its own end; one the page did not see says no count.
+    if (row.operation === CONVERT) {
+        return row.state !== 'stopping' ? `${row.operation} has ended. History has the change.`
+            : row.started ? `${row.operation} was stopped as asked.` : `${row.operation} was cancelled before it began: nothing was written.`;
+    }
     const handled = final ? (final.done || 0) + (final.conflict || 0) : null;
     const seenAt = handled === null
         ? `${(row.done + row.conflict).toLocaleString()} of ${photosOf(row.photos)} handled when last seen`

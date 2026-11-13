@@ -118,6 +118,27 @@ describe("a batch the page did not start", () => {
     assert.deepEqual(sentences(ctx), ["bulk tags was stopped as asked (25 of 60 photos handled when last seen)."]);
   });
 
+  test("a conversion the page did not see end says no photo count: it is one file, and the journal has the change", async (t) => {
+    const world = { batches: [going({ operation: "convert", photos: 1, done: 0, planned: 1 })] };
+    const ctx = await open(t, world);
+    world.batches = [];
+    await wait();
+    assert.deepEqual(sentences(ctx), ["convert has ended. History has the change."]);
+  });
+
+  test("a conversion asked to stop ends as stopped, with no photo count; a bulk edit keeps its count", async (t) => {
+    const world = { batches: [going({ operation: "convert", photos: 1, done: 0, planned: 1, state: "stopping" })] };
+    const ctx = await open(t, world);
+    world.batches = [];
+    await wait();
+    assert.deepEqual(sentences(ctx), ["convert was stopped as asked."]);
+    const other = { batches: [going()] };
+    const bulk = await open(t, other);
+    other.batches = [];
+    await wait();
+    assert.deepEqual(sentences(bulk), ["bulk tags has ended (10 of 60 photos handled when last seen)."]);
+  });
+
   test("another program's batch is listed and cannot be cancelled from here", async (t) => {
     const ctx = await open(t, { batches: served.another_program });
     assert.match(strip(ctx).textContent, /run by another program/);
