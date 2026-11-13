@@ -32,6 +32,15 @@ Everything below holds for every task; the brief does not repeat it.
 - New code goes in the layer ARCHITECTURE.md gives it; `tests/test_layers.py` says what
   may import what.
 
+## Reading economically (retro 2026-11-13: a worker's context is mostly what it read)
+- A file by part: `python tools/code.py outline <file>` (definitions or headings, with lines), then `show
+  <file>::<name>` (`Class.method`, `name@LINE`, a heading), `refs <name>` for its callers; else Read with offset+limit.
+  `.claude/hooks/read-budget.mjs` refuses a worker's whole Read of a file over 300 lines.
+- docs/findings.md and docs/DECISIONS.md are refused whole and by slice: `tools/add_findings.py --open`, or Grep a number.
+- Search with Grep and its `head_limit`, not `grep -rn` or `sed -n` through Bash; docs/ARCHITECTURE.md by its section.
+- Test and lint output through `tail -n 40`. No Read after an Edit or a patch: it failed loudly or it holds.
+- Commit what you have by about 100k of context; at 150k the context hook says report.
+
 ## Before you build: how it fails
 Answer each of these in the design, not after a review asks. Most review rounds were one
 of them, missed:
