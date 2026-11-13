@@ -14,7 +14,9 @@ A clip's save as its writer makes it (AClipSavedInPlace; in_place.patch_clip, th
 clip with no XMP is given a box at its end and no byte it held changes (the outside bytes are compared here, in the
 test, never by the patch: DECISIONS 2026-11-03); a clip with a tail or two XMP boxes is not patched, nothing written and
 ExifTool not asked; one open in another program is refused at once, a sentence; one killed after its record is saved,
-part-way or after its last byte is told OLD, TORN (put back to its old bytes and size) or NEW by its bytes.
+part-way or after its last byte is told OLD, TORN (put back to its old bytes and size) or NEW by its bytes. An XMP box
+of any size is saved (owner, 2026-11-12): a Premiere packet of about 200 KB, mostly XML, as the 1 live box over 64 KB
+holds, takes a keyword in its padding, and a save of it killed half way is put back.
 
 A clip's QuickTime title (DECISIONS 2026-11-08; AClipsQuickTimeTitle, by hand, and AClipSavedInPlace, a real one): a
 clear frees its one title item in moov/udta/meta/ilst (four type bytes, `free`), whatever else the patch writes, and an
@@ -337,13 +339,6 @@ class APacketPlacedInAClip(unittest.TestCase):
         boxes = (Box("ftyp", 0, 32, 8), Box("moov", 32, 1068, 8, children=(Box("mvhd", 40, 108, 8),)), xmp, free,
                  Box("mdat", free.end, 64, 8))
         self.assertIsNone(clip_patch.patch(Video(free.end + 64, boxes), sized(len(OLD))))
-
-    def test_an_old_packet_over_64_kb_is_the_rewrites_because_its_bytes_are_blanked_and_kept(self):
-        for words in (("Hiking",), ("Hiking", "Lakes")):
-            data = FTYP + MOOV + xmp_box(sized(65537)) + MDAT
-            self.assertIsNone(clip_patch.patch(layout_of(data), sized(65537, words)))
-        data = FTYP + MOOV + xmp_box(sized(65536)) + MDAT
-        self.assertEqual(clip_patch.IN_PLACE, clip_patch.patch(layout_of(data), sized(65536, ("Lakes",))).how)
 
 
 class AClipsQuickTimeTitle(unittest.TestCase):
@@ -770,6 +765,40 @@ class AClipSavedInPlace(FfmpegClips):
         self.save(path, words)
         self.assertEqual(in_place.NEW, in_place.held(path, *self.saved[-1]))
         self.read_back(path, words)
+
+    def test_a_premiere_packet_over_64_kb_and_a_bare_one_are_saved_and_a_save_killed_half_way_is_put_back(self):
+        """No size of XMP box is refused (owner, 2026-11-12): the Premiere packet of about 200 KB takes the keywords in
+        its padding, one range over its box; the bare one grows where it ends the file. A save killed half way through
+        its range is TORN, put back to the clip as it was, saved again NEW, and read back."""
+        words = ("Wren Ashcombe", "Hiking")
+
+        def torn(handle, changes):
+            (at, written), = changes
+            handle.seek(at)
+            old = handle.read(len(written))
+            differ = [n for n, (a, b) in enumerate(zip(old, written)) if a != b] + [len(old)] * (len(written) > len(old))
+            handle.seek(at)
+            handle.write(written[:(differ[0] + differ[-1]) // 2 + 1])
+            handle.flush()
+            raise Crash("killed half way")
+
+        for shape, how in ((shapes.premiere(), clip_patch.IN_PLACE), (shapes.BARE, clip_patch.GROWN)):
+            with self.subTest(how):
+                path, self.saved = self.clip("last.mp4"), []
+                with open(path, "ab") as handle:
+                    handle.write(xmp_box(shape))
+                original = self.bytes_of(path)
+                with mock.patch.object(in_place, "_write", torn), self.assertRaises(Crash):
+                    self.save(path, words)
+                record, before = self.saved[-1]
+                self.assertEqual((1, in_place.TORN), (len(record["ranges"]), in_place.held(path, record, before)))
+                in_place.put_back(path, record, before)
+                self.assertEqual(original, self.bytes_of(path))
+                self.save(path, words)
+                self.assertEqual(in_place.NEW, in_place.held(path, *self.saved[-1]))
+                grew = len(self.bytes_of(path)) - len(original)
+                self.assertEqual(how == clip_patch.GROWN, grew > 0, grew)
+                self.read_back(path, words)
 
     def test_a_title_clear_killed_part_way_is_told_by_its_four_bytes_and_its_undo_gives_the_title_back(self):
         path = os.path.join(self.folder, "titled.mp4")

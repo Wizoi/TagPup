@@ -7,6 +7,10 @@ clips, counted 2026-11-07) goes back to an empty XMP:Subject and no tag, that va
 is refused in its rehearsal, the change left applied, #2546: its one producer, writing clips turned off, went with the
 switch, DECISIONS 2026-11-07.)
 
+A clip's XMP box of any size is saved (owner, 2026-11-12): one holding a Premiere packet of about 200 KB, as the 1 live
+box over 64 KB holds, is tagged and undone, the clip byte for byte as before; one whose patch is more than the journal
+keeps (file_journal.PATCH_CAP: its record and the old bytes) is refused with its own sentence, nothing written.
+
 Real ffmpeg clips and the real ExifTool (tests/test_a_clip_tagged_through_the_journal.AClipInTheLibrary). Fictional names.
 """
 import os
@@ -18,6 +22,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import test_a_clip_tagged_through_the_journal as tagged  # noqa: E402
 
 from tagpup.services import journal  # noqa: E402
+from tagpup.store import file_journal  # noqa: E402
 
 EXIFTOOL = tagged.EXIFTOOL
 
@@ -51,6 +56,34 @@ class AClipTagUndone(tagged.ALibraryHoldingAClip):
         self.assertEqual(before, self.read_now(self.clip_path), "its XMP:Subject is empty again, and no tag is read")
         self.assertEqual([], self.tags_of(clip), "and its row follows")
         self.assertEqual(("undone", ["undone"]), self.states(change))
+
+    def with_a_premiere_packet(self, events):
+        """The clip given a Premiere packet with `events` saves in its History (tests/test_xmp_packet_edits_what_it_owns.
+        premiere) in a uuid box at its end; its row, as the indexer reads it, and its bytes."""
+        with open(self.clip_path, "ab") as handle:
+            handle.write(tagged.patched.xmp_box(tagged.patched.shapes.premiere(events)))
+        clip, = self.index(self.clip_path)
+        return clip, self.read_bytes(self.clip_path)
+
+    def test_a_clip_whose_xmp_is_over_64_kb_is_tagged_and_undone_byte_for_byte(self):
+        clip, before = self.with_a_premiere_packet(515)
+        change = self.tagged(clip, "Trips/Harbour")
+        self.assertEqual((["Trips/Harbour"], ["Trips/Harbour"]), self.read_now(self.clip_path))
+        self.assertEqual(len(before), len(self.read_bytes(self.clip_path)), "the keyword took the packet's padding")
+        undone = self.undo(change)
+        self.assertEqual((1, []), (undone.changed, undone.errors))
+        self.assertEqual(before, self.read_bytes(self.clip_path), "the clip is byte for byte as it was")
+        self.assertEqual([], self.tags_of(clip))
+        self.assertEqual(("undone", ["undone"]), self.states(change))
+
+    def test_a_clip_whose_patch_is_more_than_the_journal_keeps_is_refused_and_nothing_is_written(self):
+        clip, before = self.with_a_premiere_packet(1600)
+        reply = self.post("photos/bulk-tags", {"paths": [self.clip_path], "add_tags": ["Trips/Harbour"]})
+        body = reply.get_json()
+        self.assertIn(file_journal.PATCH_TOO_LARGE.split(" (")[0], body["error"])
+        self.assertIn("at most 1,024 KB is kept). Nothing was written.", body["error"])
+        self.assertEqual(before, self.read_bytes(self.clip_path), "not a byte written")
+        self.assertEqual(([], []), (self.tags_of(clip), self.change_states(clip)), "its row withdrawn, no tag")
 
 
 if __name__ == "__main__":

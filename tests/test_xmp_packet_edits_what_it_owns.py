@@ -255,7 +255,6 @@ class AnExifToolPacketReadAndWritten(unittest.TestCase):
             "a read-only packet": lake.replace(b"end='w'", b"end='r'"),
             "a cut wrapper": lake[:-len(END)],
             "not XML": lake.replace(b"</rdf:RDF>", b"</rdf:RDX>"),
-            "over the limit": packet(description("dc", bag(b"dc:subject", *[b"Kite %d" % n for n in range(5000)]))),
         }
         for why, data in refused.items():
             with self.subTest(why):
@@ -263,11 +262,6 @@ class AnExifToolPacketReadAndWritten(unittest.TestCase):
                 self.assertIsInstance(xp.edit(data, {"dc:description": "Rain"}), containers.Refusal)
                 self.assertIsInstance(xp.edit(data, {"dc:description": None}), containers.Refusal)
         self.assertIn(b"xmlns:dc='%s'" % dc, lake)
-        # an edit that would carry the packet past the limit, and a larger limit for a caller with a larger packet
-        many = [("Kite %d" % n) for n in range(5000)]
-        self.assertIsInstance(xp.edit(lake, {"dc:subject": many}, grow=True), containers.Refusal)
-        big = refused["over the limit"]
-        self.assertEqual(5000, len(xp.read(big, limit=len(big))["dc:subject"]))
         self.assertIsInstance(xp.edit(lake, {"dc:shiny": "x"}), containers.Refusal)
 
 
@@ -316,6 +310,44 @@ BARE = b"""<x:xmpmeta xmlns:x="adobe:ns:meta/" x:xmptk="Adobe XMP Core 5.1.0-jc0
   </rdf:RDF>
 </x:xmpmeta>
 """
+_EVENT = b"""
+     <rdf:li
+      stEvt:action="%s"
+      stEvt:instanceID="xmp.iid:%08x-4b1e-4c2a-9d3f-%012x"
+      stEvt:when="2018-06-%02dT14:%02d:%02d-07:00"
+      stEvt:softwareAgent="Adobe Premiere Pro CC 2018.1 (Windows)"
+      stEvt:changed="/"
+      stEvt:parameters="from application/vnd.adobe.premiere-project to video/mp4 (H.264, Match Source - High bitrate, VBR 2 pass)"/>"""
+_PANTRY = b"""
+     <rdf:li>
+      <rdf:Description
+       xmpMM:InstanceID="xmp.iid:%08x-0d2e-4f61-8a17-000000000000"
+       xmpMM:DocumentID="xmp.did:%08x-0d2e-4f61-8a17-000000000000"
+       xmpMM:OriginalDocumentID="xmp.did:%08x-0d2e-4f61-8a17-000000000000"
+       xmp:CreateDate="2018-06-02T14:03:11Z"
+       xmpDM:videoFrameRate="29.970030"/>
+     </rdf:li>"""
+
+
+def premiere(events=515, pantry=15):
+    """A clip's packet as Premiere writes one after many saves, PREMIERE grown as the 1 live packet over 64 KB is
+    (counted 2026-11-12: 206,986 bytes, of which 204,918 XML, 16 rdf:Descriptions, 530 rdf:li, 2,068 of padding):
+    `events` saves in its xmpMM:History and `pantry` Descriptions in its xmpMM:Pantry, mostly XML. lr is declared, as
+    in a packet TagPup saved a keyword into once, so a keyword added and taken off gives its bytes back."""
+    history = b"".join(_EVENT % ((b"saved", b"converted")[n % 2], n, n, 1 + n % 28, n % 60, n * 7 % 60)
+                       for n in range(events))
+    stored = b"".join(_PANTRY % (n, n, n) for n in range(pantry))
+    grown = PREMIERE.replace(b"""
+     <rdf:li
+      stEvt:action="saved"
+      stEvt:instanceID="xmp.iid:7c2d0e4a"
+      stEvt:softwareAgent="Adobe Media Encoder 2020.0 (Windows)"
+      stEvt:changed="/"/>""", history).replace(
+        b"   </xmpMM:History>\n", b"   </xmpMM:History>\n   <xmpMM:Pantry>\n    <rdf:Bag>" + stored
+        + b"\n    </rdf:Bag>\n   </xmpMM:Pantry>\n").replace(
+        b'    xmlns:dc="http://purl.org/dc/elements/1.1/"\n',
+        b'    xmlns:dc="http://purl.org/dc/elements/1.1/"\n    xmlns:lr="http://ns.adobe.com/lightroom/1.0/"\n')
+    return grown.replace(xp.padding(2400), xp.padding(2068))
 
 
 class AClipsPacketWithItsPropertiesAsAttributes(unittest.TestCase):
@@ -412,6 +444,17 @@ class AClipsPacketWithItsPropertiesAsAttributes(unittest.TestCase):
         self.assertIn(b"</dc:title>\n </rdf:Description>\n</rdf:RDF>", opened)
         self.assertEqual(1, opened.count(b"xmlns:dc="))
 
+    def test_a_premiere_packet_of_200_kb_is_read_and_a_keyword_paid_for_out_of_its_padding(self):
+        """No size is refused (owner, 2026-11-12): the 1 live packet over 64 KB, mostly XML, reads as PREMIERE does, and a
+        keyword added keeps its length and taken off gives its bytes back."""
+        big = premiere()
+        self.assertEqual((16, 530), (big.count(b"<rdf:Description"), big.count(b"<rdf:li")))
+        self.assertGreater(len(big), 200000)
+        self.assertEqual(xp.read(PREMIERE), xp.read(big))
+        added = self.edited(big, {"dc:subject": ["Wren Ashcombe"], "lr:hierarchicalSubject": ["People/Wren Ashcombe"]})
+        self.assertEqual(len(big), len(added.body))
+        self.assertEqual(big, self.edited(added.body, {"dc:subject": None, "lr:hierarchicalSubject": None}).body)
+
     def test_what_it_still_refuses(self):
         refused = {
             "an attribute and an element": BARE.replace(
@@ -421,7 +464,6 @@ class AClipsPacketWithItsPropertiesAsAttributes(unittest.TestCase):
                                          b'xmlns:xmp="http://ns.adobe.com/xap/1.0/" xmp:CreateDate="2019"/>'),
             "a Bag as an attribute": BARE.replace(b"exif:DateTimeDigitized", b"xmlns:dc='%s' dc:subject"
                                                   % URI["dc"].encode()),
-            "the 206,986-byte one": PREMIERE.replace(b"</x:xmpmeta>", b"</x:xmpmeta>" + xp.padding(xp.LIMIT)),
         }
         for why, data in refused.items():
             with self.subTest(why):

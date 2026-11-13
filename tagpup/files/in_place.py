@@ -37,7 +37,9 @@ that holds it open already makes it the rewrite's. Every read and write of it is
 
 **A clip's patch** (`patch_clip`). A MOV/MP4/M4V's keyword and caption save is its XMP alone (fields.CLIP_FIELDS; every
 copy outside XMP is left stale, segment_edits.clip_stale_of). The clip's boxes are walked (containers.read: their
-headers only) and its one XMP box's packet read, at most clip_patch.OLD_MOST; the new packet is the caller's
+headers only) and its one XMP box's packet read whole, of any size (owner, 2026-11-12: the one bound is the journal's,
+file_journal.PATCH_CAP, its record and the old bytes, whose `saving` refuses a larger patch before a byte is written;
+a box over it is read before it is refused, none live, the largest 206,986 bytes); the new packet is the caller's
 (`new_packet`, segment_edits.new_packet, a blank one for a clip with none), placed by clip_patch: over the old box and
 the free boxes after it, grown where it ends the file, or appended in a new box at the end (the file grows by its last
 range, the record saying its size after). A cleared title also frees the clip's QuickTime title item, four bytes, and
@@ -45,7 +47,7 @@ an undo gives it back the same way (clip_patch, DECISIONS 2026-11-08): the free 
 that, at most clip_patch.FREED_MOST each. The move of a clip's Windows Tags into its XMP frees its Xtra box the same way,
 and an undo gives it back (DECISIONS 2026-11-09): the Xtra, or the free boxes of udta, are read whole for that, at most
 clip_patch.FREED_MOST each. No other byte is read, nor any hash taken, of a clip of any size (DECISIONS
-2026-11-03). It is not a patch's, nothing written, for no MOV/MP4/M4V, two XMP boxes, a box over OLD_MOST, a packet the
+2026-11-03). It is not a patch's, nothing written, for no MOV/MP4/M4V, two XMP boxes, a packet the
 writer cannot make, or a clip clip_patch will not place (a tail, no moov, fragments): such a clip is not written until
 the whole-file rewrite (owner, 2026-11-05, Q2). It is opened once, alone, as a photo is; one another program holds open
 (a player, an editor) is refused at once with a sentence (tagpup.core.result.Refused, OPEN_ELSEWHERE; owner,

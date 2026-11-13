@@ -509,8 +509,9 @@ class APatchInPlace(FilesCase):
                          (keywords_of(a), self.indexed(a), self.recorded(), self.states(change)))
 
     def test_a_patch_larger_than_the_journal_keeps_is_a_failed_write_of_no_byte(self):
-        # A JPEG's patch is at most three segments of 64 KB, under PATCH_CAP (1 MiB): nothing real meets the cap, so a
-        # patch over it is not given to ExifTool's rewrite instead; it fails, the photo as it was (main session, 2026-11-03).
+        # A JPEG's patch is at most three segments of 64 KB, with its record under PATCH_CAP (1 MiB, the record and the
+        # old bytes): nothing real meets the cap, so a patch over it is not given to ExifTool's rewrite instead; it is
+        # refused with its sentence, the photo as it was (main session, 2026-11-03; owner, 2026-11-12).
         a = self.make("a.jpg")
         with open(a, "rb") as handle:
             held = handle.read()
@@ -519,7 +520,7 @@ class APatchInPlace(FilesCase):
         with open(a, "rb") as handle:
             self.assertEqual(held, handle.read(), "a byte was written when the journal refused the patch")
         self.assertEqual(0, result.changed)
-        self.assertIn("more than the journal keeps", str(result.errors))
+        self.assertIn("its metadata is too large to keep a copy of", str(result.errors))
         self.assertEqual((["Beach"], [], ["Beach"]), (keywords_of(a), self.recorded(), self.indexed(a)))
 
 
