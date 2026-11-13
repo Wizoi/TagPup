@@ -207,7 +207,7 @@ def _each_row(conn, photo_paths, columns):
     return found
 
 
-def follow_fields(conn, photo_path, written, stat=None, before=None, batch=None, whole=None, unpooled=None):
+def follow_fields(conn, photo_path, written, stat=None, before=None, batch=None, whole=None):
     """Make a photo's row say what the file journal just left in its file: `written` is
     {field: value} of the fields written, forward, again after a crash, or back in an
     undo (tagpup.services.file_changes). The caller commits, in the transaction that marks
@@ -232,9 +232,7 @@ def follow_fields(conn, photo_path, written, stat=None, before=None, batch=None,
     indexer's shape: tagpup.files.metadata.raw_metadata), as a save reads it: it is the row's
     raw_metadata, its tags and captions are derived from it, its document_id is the DocumentID it holds
     (one holding none keeps the row's, as record_indexed does), and the row is stamped with `stat`
-    whatever it described before, since everything it says was just read.
-
-    `unpooled`, a list, is given the faces the photo's tags named, as face_tags.name_photos gives them."""
+    whatever it described before, since everything it says was just read."""
     where, params = store_roots.sql_equals(conn, "path", photo_path)
     row = conn.execute("SELECT id, raw_metadata, mtime, size FROM photos WHERE " + where + " LIMIT 1",
                        params).fetchone()
@@ -294,7 +292,7 @@ def follow_fields(conn, photo_path, written, stat=None, before=None, batch=None,
     if stat is not None:
         embeddings.restamp(conn, photo_id, before, (stat.st_mtime, stat.st_size))
     people.rebuild(conn, [photo_id])
-    face_tags.name_photos(conn, [photo_id], unpooled=unpooled)
+    face_tags.name_photos(conn, [photo_id])
     date_photos(conn, [photo_id])
     derived.refresh_photos(conn, [photo_id], batch)
     return photo_id

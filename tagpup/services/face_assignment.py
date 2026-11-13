@@ -26,7 +26,7 @@ from tagpup.core.vocabulary import Ref
 from tagpup.services import face_people, file_changes, tagging
 from tagpup.services import faces as faces_service
 from tagpup.services import people as people_service
-from tagpup.services.face_batch import DESCRIPTIONS, EXCLUDE, GUESS, NAME, UNNAME, Work  # noqa: F401  (the ops, for the routes)
+from tagpup.services.face_batch import DESCRIPTIONS, EXCLUDE, GUESS, NAME, UNNAME, Unpooled, Work  # noqa: F401  (the ops, for the routes)
 from tagpup.store import db, faces, person_ids, taxonomy
 
 logger = logging.getLogger(__name__)
@@ -160,13 +160,13 @@ class Outcome:
     """What a run did, counted from what was written: `applied` the faces written with their photos (ids), `left` the faces of the
     plan that were not (a photo that could not be written, a face changed since, a batch stopped), `files` the photo files written,
     `plain` how many faces without a photo were written (`plain_ids` which), `change` the journal's change (None when nothing was planned), `problems` the
-    sentences to say, `runs` the writes that took faces out of identity work ([(face ids, fingerprint before, fingerprint after)]) for
-    the cached grids."""
+    sentences to say, `unpooled` the faces a naming or a ruling out took out of identity work (face_batch.Unpooled: its `runs()`)
+    for the cached grids."""
 
     def __init__(self):
         self.applied, self.left, self.files, self.plain, self.change = [], [], 0, 0, None
         self.plain_ids = []
-        self.problems, self.runs = [], []
+        self.problems, self.unpooled = [], Unpooled()
 
     def warning(self):
         """The sentence a reply adds when it did not all happen, or None."""
@@ -190,7 +190,7 @@ def _write_plain(library, plan, outcome):
         chunk = plan.plain[start:start + PLAIN_CHUNK]
         if plan.op == EXCLUDE:
             done = faces_service.exclude(library, chunk, plan.reason)
-            outcome.runs.extend(faces_service.unpooled(done))
+            outcome.unpooled.extend(faces_service.accounted(done))
         else:
             done = faces_service.unname_faces(library, chunk)
         outcome.plain += done.changed
@@ -214,7 +214,8 @@ def run(library, plan, exiftool_path, told=None):
             result = file_changes.write_fields(
                 library, DESCRIPTIONS[plan.op], exiftool_path, photos, tagging.KEYWORD_READ,
                 tagging.keywords_planner(library, _editor(work, known)),
-                summary={"photos": len(photos), "faces": len(work.face_ids())}, stop_at_first_error=False, alongside=work)
+                summary={"photos": len(photos), "faces": len(work.face_ids())}, stop_at_first_error=False, alongside=work,
+                unpooled=outcome.unpooled if plan.op in (NAME, EXCLUDE) else None)
             change = result.details.get("change")
         finally:
             work.release()
@@ -232,7 +233,6 @@ def run(library, plan, exiftool_path, told=None):
         outcome.applied = list(work.applied)
         written = set(work.applied)
         outcome.left = [face_id for face_id in work.face_ids() if face_id not in written]
-        outcome.runs = work.runs()
         if result.errors:
             outcome.problems.append("%d photo(s) could not be written and were left as they were; the rest was done."
                                     % len(result.errors))

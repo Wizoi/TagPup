@@ -472,7 +472,8 @@ def add_tags(library, additions, exiftool_path, persons=None):
 
 
 @roots_service.canonical_args("changes")
-def change_each(library, changes, exiftool_path, operation, persons=None, et=None, stop_at_first_error=True):
+def change_each(library, changes, exiftool_path, operation, persons=None, et=None, stop_at_first_error=True,
+                unpooled=None):
     """Give each photo in `changes` (path -> (tags to add, tags to take off)) its own, as ONE change of
     photo files named `operation` in the journal. A photo with nothing to add or take off is left alone.
     Held photos are written with their rows and journaled; a photo in a folder
@@ -484,7 +485,8 @@ def change_each(library, changes, exiftool_path, operation, persons=None, et=Non
     `persons`: as add_tags'. `et`: an ExifTool session the caller opened (with a deadline of its own), as
     change_tags'. `stop_at_first_error` False: a photo that cannot be read or written is an error and the others are
     written, as a bulk edit does. Apply All's own is add_tags; the faces' (tagpup.services.face_people) adds and takes
-    off a person per photo."""
+    off a person per photo. `unpooled`: the caller asks which faces the held photos' records take out of identity work
+    (file_changes.write_fields)."""
     adds = dict.fromkeys(t for add, _remove in changes.values() for t in add)
     problem = validation.first_problem("tag", adds) or refuse_under_people(library, adds)
     if problem:
@@ -497,7 +499,7 @@ def change_each(library, changes, exiftool_path, operation, persons=None, et=Non
     done = None
     if held or not loose:
         done = _change_each(library, plan_of(held), exiftool_path, operation, persons=persons, et=et,
-                            stop_at_first_error=stop_at_first_error)
+                            stop_at_first_error=stop_at_first_error, unpooled=unpooled)
     if not loose:
         return file_only.combined(done, None)
     if stop_at_first_error and done is not None and not done.ok:
@@ -633,7 +635,7 @@ def keywords_planner(library, edit):
 
 
 def _change_each(library, plan, exiftool_path, operation, files_only=False, persons=None, stop_at_first_error=True,
-                 et=None):
+                 et=None, unpooled=None):
     """Write each photo in `plan` -- (path, tags to add, tags to take off) -- as one change
     of photo files (tagpup.services.file_changes): planned from what every file holds,
     committed, then written a file at a time, each recorded in its row as it is marked
@@ -672,7 +674,7 @@ def _change_each(library, plan, exiftool_path, operation, files_only=False, pers
                                       stop_at_first_error=stop_at_first_error, et=et)
     return file_changes.write_fields(library, operation, exiftool_path, [path for path, _a, _r in plan],
                                      KEYWORD_READ, plan_one, summary={"photos": len(plan)},
-                                     stop_at_first_error=stop_at_first_error, et=et)
+                                     stop_at_first_error=stop_at_first_error, et=et, unpooled=unpooled)
 
 
 @roots_service.canonical_args("photo_paths")

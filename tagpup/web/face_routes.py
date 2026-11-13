@@ -15,7 +15,7 @@ import os
 from flask import Blueprint, abort, jsonify, make_response, request
 
 from tagpup.jobs import identify as identify_jobs
-from tagpup.services import face_assignment, face_people
+from tagpup.services import face_assignment, face_batch, face_people
 from tagpup.services import faces as faces_service
 from tagpup.services import identify as identify_service
 from tagpup.web import responses, state, tagpup_routes
@@ -122,7 +122,7 @@ def people_face_samples():
 # each register them in their own blueprint, which refuses them while names are given from tags.
 
 
-def faces_write(library, action):
+def faces_write(library, action, writer=None):
     """Run a face action (tagpup.services.faces) on the request's library, and answer
     what went wrong: 404 for a face or a library that is not there, 409 for a face
     that cannot be named as things stand, 400 for a request refused, 500 for anything
@@ -130,9 +130,10 @@ def faces_write(library, action):
 
     The faces an action took out of the identify pool come off the cached grids,
     rather than making the next click rebuild them: the action says which, and the
-    fingerprints either side of its write (tagpup.store.faces.accounted_write), and of the
-    keyword write before it that named faces from the photo's tags (faces_service.unpooled):
-    every committed write, also of an action refused after it.
+    fingerprints either side of its write (tagpup.store.faces.accounted_write,
+    faces_service.accounted); with the `writer` it was given, after the faces its tag's
+    write took out (writer.unpooled): every committed write, also of an action refused
+    after it.
     """
     try:
         result = action(library)
@@ -141,7 +142,11 @@ def faces_write(library, action):
     except Exception as e:
         logger.error("Error in a face action: %s", e)
         abort(500, description="Internal error: %s" % e)
-    for face_ids, before, after in faces_service.unpooled(result):
+    runs = faces_service.accounted(result)
+    if writer is not None:
+        writer.unpooled.extend(runs)
+        runs = writer.unpooled.runs()
+    for face_ids, before, after in runs:
         identify_cache.of(library).forget_faces(face_ids, before, after)
     if result.refused:
         abort(make_response(responses.refused(result)))
@@ -160,7 +165,7 @@ def assigned(library, plan):
                                       told=lambda done: tagpup_routes.records_written(library, done))
     except responses.ANSWERED as why:
         responses.abort_with(why)
-    for face_ids, before, after in outcome.runs:
+    for face_ids, before, after in outcome.unpooled.runs():
         identify_cache.of(library).forget_faces(face_ids, before, after)
     return outcome
 
@@ -189,10 +194,12 @@ def writer_for(library, page_writes_tags=False):
     """Where the photo's person tags are written for a face write (tagpup.services.face_people.Writer): the library's
     ExifTool, TagPup's folder records told of each chunk as it is written. None when the request says the PAGE writes the
     tags itself (`page_writes_tags`: TagPup's boxes, with their queue, their undo and their placement question); the
-    answer then says which to take off (`untag`)."""
+    answer then says which to take off (`untag`). Its `unpooled` is the request's ask for the faces taken out of identity
+    work, which faces_write hands to the cached grids."""
     if page_writes_tags:
         return None
-    return face_people.Writer(state.exiftool(library), told=lambda done: tagpup_routes.records_written(library, done))
+    return face_people.Writer(state.exiftool(library), told=lambda done: tagpup_routes.records_written(library, done),
+                              unpooled=face_batch.Unpooled())
 
 
 def tags_reply(result):
@@ -226,7 +233,7 @@ def face_match():
     except (ValueError, TypeError):
         abort(400, description="Invalid parameters")
     writer = writer_for(library, bool(body.get("page_writes_tags")))
-    result = faces_write(library, lambda lib: face_people.name_face(lib, face_id, person, writer))
+    result = faces_write(library, lambda lib: face_people.name_face(lib, face_id, person, writer), writer)
     # What the write changed, not what was asked: naming a face the name it has is no change.
     return jsonify({"success": True, "changed": result.changed, **tags_reply(result)})
 

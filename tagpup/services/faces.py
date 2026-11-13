@@ -7,10 +7,9 @@ write lock: most of them wrote on a connection of their own.
 TagTuner caches its Identify Faces grids against a fingerprint of the faces table. The
 actions that take faces out of the pool -- naming, excluding -- write through
 tagpup.store.faces.accounted_write and return `fingerprints` (before, after) and
-`face_ids` in details, from which the page's server takes those faces off its cached
-grids instead of rebuilding them (`unpooled` reads them, with the faces a keyword write
-before it named from the photo's tags). The rest move the fingerprint, and a grid built
-before them is rebuilt.
+`face_ids` in details (`accounted` reads them), from which the page's server takes those
+faces off its cached grids instead of rebuilding them. The rest move the fingerprint, and a
+grid built before them is rebuilt.
 """
 import collections
 import functools
@@ -115,17 +114,12 @@ def name_face(library, face_id, person):
     return result
 
 
-def unpooled(result):
-    """[(face ids, fingerprint before, fingerprint after)] of the committed writes a face action's Result reports that took faces
-    out of identity work, in the order they were made: the faces a keyword write named from the photo's tags first
-    (details["unpooled"], tagpup.store.face_tags.name_photos), then the action's own accounted write (`face_ids` and
-    `fingerprints`, when it changed any). What GridCache.forget_faces takes, run by run: each run starts where the one before
-    ended unless something else wrote between them, and an entry is then read again."""
-    runs = list(result.details.get("unpooled", []))
+def accounted(result):
+    """[(face ids, fingerprint before, fingerprint after)] of a face action's own accounted write (its Result's `face_ids` and
+    `fingerprints`, tagpup.store.faces.accounted_write), when it changed any: a list of one run, or none. What
+    GridCache.forget_faces takes, as tagpup.services.face_batch.Unpooled.extend does."""
     fingerprints = result.details.get("fingerprints")
-    if fingerprints and result.changed:
-        runs.append((result.details["face_ids"], *fingerprints))
-    return runs
+    return [(result.details["face_ids"], *fingerprints)] if fingerprints and result.changed else []
 
 
 def check_nameable(library, face_id, person, refused, guesses_yield=False):

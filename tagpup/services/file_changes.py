@@ -369,7 +369,7 @@ def between_chunks(batch):
 @roots_service.canonical_args("photo_paths")
 def write_fields(library, operation, exiftool_path, photo_paths, read, plan_one, summary=None,
                  unreadable="fail", stop_at_first_error=False, et=None, held=None, whole=False, on_planned=None,
-                 uncapped=False, alongside=None, on_chunk=None, patient=False):
+                 uncapped=False, alongside=None, on_chunk=None, patient=False, unpooled=None):
     """Write fields into many photos as one change named `operation` (see the module's
     docstring). `read` is the fields read from each file; `plan_one(path, held)` says
     what one file is to hold (a Plan) from what it holds, {field: [texts]}.
@@ -404,6 +404,11 @@ def write_fields(library, operation, exiftool_path, photo_paths, read, plan_one,
     written in the one that marks each file `done` (a bulk assignment's faces); a photo it names is in the change even when its
     file holds what it is to hold already, and then only its rows are written.
 
+    `unpooled` (tagpup.services.face_batch.Unpooled): the caller asks which faces each file's record took out of identity work
+    (the guesses its tag made, a bulk assignment's faces), counted in the transaction that marks it done, for the cached
+    Identify Faces grids. A file the change does not write (its row followed as it is) is not counted: the fingerprint's
+    generation leaves the cache stale.
+
     More than batches.MAX_BATCH photos are refused (too_many), nothing read, unless `uncapped` (the tag tree's rewrites, and
     the one-off sweep of captions repeating the title, tagging.clear_duplicate_captions). A photo on a share found away is
     its error at once, unless `patient` (the sweep alone; the tag tree's rewrites answer at once, owner 2026-11-08), which
@@ -424,7 +429,8 @@ def write_fields(library, operation, exiftool_path, photo_paths, read, plan_one,
                 refused.details["cancelled"] = isinstance(why, Refused)     # cancelled while it waited, not a queue that is full
                 return refused
         return _write_session(library, operation, exiftool_path, photo_paths, read, plan_one, summary, unreadable,
-                              stop_at_first_error, et, held, whole, on_planned, alongside, on_chunk, patient=patient)
+                              stop_at_first_error, et, held, whole, on_planned, alongside, on_chunk, patient=patient,
+                              unpooled=unpooled)
 
 
 def _holds_already(path, before, after):
@@ -443,7 +449,8 @@ def _refused_whole(photo_paths, why):
 @_exclusive
 @_pinned
 def _write_session(library, operation, exiftool_path, photo_paths, read, plan_one, summary, unreadable,
-                   stop_at_first_error, et, held, whole, on_planned, alongside=None, on_chunk=None, patient=False):
+                   stop_at_first_error, et, held, whole, on_planned, alongside=None, on_chunk=None, patient=False,
+                   unpooled=None):
     if len(photo_paths) > batches.CHUNK and batches.current() is None:
         raise RuntimeError("%d photos are written without a batch's claim (write_fields takes it)" % len(photo_paths))
     since = _counted_so_far()
@@ -455,7 +462,7 @@ def _write_session(library, operation, exiftool_path, photo_paths, read, plan_on
         # (_after_failure, #1927). The caller's session itself is untouched: its next command starts ExifTool again.
         result = _write_fields(exiftool_session.StaysDead(et), library, operation, exiftool_path, photo_paths, read,
                                plan_one, summary, unreadable, stop_at_first_error, held, whole, on_planned, alongside, on_chunk,
-                               patient)
+                               patient, unpooled)
     return _said_removed(result, since)
 
 
@@ -479,7 +486,8 @@ def _looked_at_again(stored, away, stop):
 
 
 def _write_fields(et, library, operation, exiftool_path, photo_paths, read, plan_one, summary, unreadable,
-                  stop_at_first_error, fresh, whole, on_planned=None, alongside=None, on_chunk=None, patient=False):
+                  stop_at_first_error, fresh, whole, on_planned=None, alongside=None, on_chunk=None, patient=False,
+                  unpooled=None):
     result = Result(attempted=len(photo_paths))
     _running.result, _running.internal = result, operation in file_journal.INTERNAL
     written = result.details["written"] = {}
@@ -555,9 +563,6 @@ def _write_fields(et, library, operation, exiftool_path, photo_paths, read, plan
         return result
     if batch is not None and batch.stop.is_set():
         return _stopped_before_writing(result)
-    # The faces the files' records named from their photos' tags, [(face ids, fingerprint before, after)] in the order written
-    # (FileRow.unpooled): committed, whatever became of the file after, for the cached grids (tagpup.services.faces.unpooled).
-    unpooled = result.details["unpooled"] = []
     found = _rows_of(library, [path for path, _b, _a, _d in planned])
     change_id, rows = file_journal.plan(library.path, operation, [
         {"photo_id": (found.get(paths.key(path)) or (None,))[0], "path": path, "before": before, "after": after}
@@ -577,6 +582,8 @@ def _write_fields(et, library, operation, exiftool_path, photo_paths, read, plan
         wrote.clear()
         read_whole.clear()
 
+    if unpooled is not None:
+        unpooled.watch(change_id)
     try:
         _reached("plan committed")
         if on_planned is not None:
@@ -604,7 +611,6 @@ def _write_fields(et, library, operation, exiftool_path, photo_paths, read, plan
                 result.details["stopped"] = {"after": n, "of": len(rows), "share": True}
                 not_answered.extend(each[0] for each in planned[n:])
                 break
-            unpooled.extend(row.unpooled)
             if outcome == OUT:
                 written[path] = detail      # held already, as a file found holding it at the plan is
                 continue
@@ -668,6 +674,9 @@ def _write_fields(et, library, operation, exiftool_path, photo_paths, read, plan
             stopped.change = change_id
         file_journal.release(library.path, change_id)
         raise
+    finally:
+        if unpooled is not None:
+            unpooled.release()
     logger.info("%s: change %d, %s, wrote %d file(s)", library.path, change_id, operation, result.changed)
     return result
 
@@ -748,9 +757,11 @@ def _follow(library, followed):
 
 def _followers(row, state):
     """What a file's change brings besides the field, to be done in the transaction that marks the file `state`: a rotation's face
-    boxes and vectors, a bulk assignment's faces, a bake's fingerprint row. The ONE place that lists them, for a file marked done or undone and for one taken
-    out of its change after it was done (_read_back)."""
-    return [each for each in (rotation.follower(row, state), face_batch.follower(row, state), baking.follower(row, state))
+    boxes and vectors, a bulk assignment's faces, a bake's fingerprint row, and last, when the caller asked, the count of the faces
+    all of it took out of identity work (face_batch.PoolFollower). The ONE place that lists them, for a file marked done or undone
+    and for one taken out of its change after it was done (_read_back)."""
+    return [each for each in (rotation.follower(row, state), face_batch.follower(row, state), baking.follower(row, state),
+                              face_batch.pool_follower(row, state))
             if each is not None]
 
 
@@ -770,18 +781,13 @@ def _record(library, row, values, state, stamp=None, wrote=True, after=None, who
     if wrote and stat is None:
         stat = _stat(row.path)
     follow = _followers(row, state)
-    named = []
 
     def work(conn):
-        # Before the row is recorded: recording can itself change faces (a guess the tag makes), and a follower that accounts
-        # for the faces it writes must start from the faces as they were.
+        # Before the row is recorded: recording can itself change faces (a guess the tag makes), and a follower that counts
+        # the faces the transaction takes out of identity work must start from the faces as they were.
         for each in follow:
             getattr(each, "start", lambda _conn: None)(conn)
-        # The faces the photo's tags name, for the cached grids (row.unpooled), unless a follower accounts for them: a
-        # bulk assignment's span holds its guesses (face_batch.Follower). Begun again on a retry: only the committed one's.
-        accounted = any(getattr(each, "accounts", lambda: False)() for each in follow)
-        named[:] = []
-        photos.follow_fields(conn, row.path, values, stat, stamp, whole=whole, unpooled=None if accounted else named)
+        photos.follow_fields(conn, row.path, values, stat, stamp, whole=whole)
         _follow_rename(conn, row.path, row.known_as, stat)
         for each in follow:
             each(conn)
@@ -790,7 +796,9 @@ def _record(library, row, values, state, stamp=None, wrote=True, after=None, who
         file_journal.set_state(conn, row.id, state)
 
     db.write_with_connection(library.path, work, label="%s: %s" % (row.named(), state))
-    row.unpooled.extend(named)
+    # Committed: what the attempt that committed counted is handed on (a transaction run again began its count again).
+    for each in follow:
+        getattr(each, "committed", lambda: None)()
     return stat
 
 
