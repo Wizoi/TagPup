@@ -31,10 +31,8 @@ ROUTE = "/library/api/face-matches-unmatched"
 #: The likeness New Person gathers a face at, on the face model a new library is on (SCRFD and AdaFace).
 GATHERS_AT = clustering.cuts_of(face_rows.FACE_MODEL).name_without_asking
 
-#: Each photo's picture, on disk when it is read, so its row stores its size as the index's does: its one face
-#: (face_rows.add_face's 10 x 10) is under 2% of 600, in the background (clustering.is_background), so naming it by hand
-#: puts its person on the photo and Name faces from tags names nothing there first. A face the keyword write names
-#: first is a case this file does not hold yet: the pool is read again (docs/findings.md, found 2026-11-12).
+#: Each photo's picture, on disk when it is read, so its row stores its size as the index's does (clustering.is_background
+#: asks it of each face).
 PICTURE = (800, 600)
 
 
@@ -56,6 +54,12 @@ def pool_reads(statements):
 
 
 class NewPerson(unittest.TestCase):
+    """Each photo's one face is 10 x 10, under 2% of 600: in the background (clustering.is_background), so naming it by hand
+    puts its person on the photo and Name faces from tags names nothing there first."""
+
+    #: Each face's box, as detection records it.
+    BOX = (0, 0, 10, 10)
+
     def setUp(self):
         fake_exiftool.standing_in(self)       # naming a face puts the person on its photo (#861)
         self.app, self.home = web_client.app_for(self, "tuner")
@@ -77,7 +81,8 @@ class NewPerson(unittest.TestCase):
                 os.makedirs(os.path.dirname(photo), exist_ok=True)
                 Image.new("RGB", PICTURE, (70, 90, 110)).save(photo, "JPEG")
                 photo_rows.add_read(conn, photo, {"XMP:Subject": []})
-                self.ids[label] = face_rows.add_face(conn, photo, embedding=like(likeness, *towards).tobytes(), **columns)
+                self.ids[label] = face_rows.add_face(conn, photo, box=self.BOX, embedding=like(likeness, *towards).tobytes(),
+                                                     **columns)
             conn.commit()
         finally:
             conn.close()
@@ -107,7 +112,7 @@ class NewPerson(unittest.TestCase):
         self.assertEqual(["close", "just over"], self.labels(matches))
         self.assertAlmostEqual(0.9, matches[0]["similarity"], places=5)
         self.assertEqual("IMG_0001.jpg", matches[0]["filename"])
-        self.assertEqual([0, 0, 10, 10], matches[0]["box"])
+        self.assertEqual(list(self.BOX), matches[0]["box"])
 
     def test_a_second_open_does_not_read_every_nameless_face_again(self):
         self.open_new_person()
@@ -128,11 +133,20 @@ class NewPerson(unittest.TestCase):
         try:
             photo = os.path.join(self.home.root, "Photos", "IMG_0100.jpg")
             photo_rows.add_read(conn, photo, {"XMP:Subject": []})
-            self.ids["new"] = face_rows.add_face(conn, photo, embedding=like(0.85).tobytes())
+            self.ids["new"] = face_rows.add_face(conn, photo, box=self.BOX, embedding=like(0.85).tobytes())
             conn.commit()
         finally:
             conn.close()
         self.assertEqual(["close", "new", "just over"], self.labels(self.open_new_person()))
+
+
+class NewPersonFacesInFront(NewPerson):
+    """Each photo's one face is 100 x 100, not in the background: naming it by hand writes its person to the photo first, and
+    that write's Name faces from tags names the face as its guess, in the transaction that records the file; the hand's
+    choice then confirms it. Both writes tell the cached pool what they named (docs/findings.md, #2881): the pool loses the
+    face and is not read again."""
+
+    BOX = (0, 0, 100, 100)
 
 
 class BuildingThePool(unittest.TestCase):

@@ -123,6 +123,7 @@ def _merge(into, tag_result):
     change = tag_result.details.get("change")
     if change is not None:
         into.details.setdefault("changes", []).append(change)
+    into.details.setdefault("unpooled", []).extend(tag_result.details.get("unpooled", []))
     for what, why in tag_result.errors:
         into.fail(what, why)
     for what, why in tag_result.skipped:
@@ -282,7 +283,8 @@ def name_face(library, face_id, person, writer):
         result = faces_service.name_face(library, face_id, ref)
     except Conflict as late:
         raise Conflict("%s The person was added to the photo." % late) from None
-    result.details.update(tags_written=tagged.details.get("tags_written", 0), written=tagged.details.get("written", {}))
+    result.details.update(tags_written=tagged.details.get("tags_written", 0), written=tagged.details.get("written", {}),
+                          unpooled=tagged.details.get("unpooled", []))
     if tagged.details.get("changes"):
         result.details["changes"] = tagged.details["changes"]
     if result.refused and tagged.details.get("tags_written"):

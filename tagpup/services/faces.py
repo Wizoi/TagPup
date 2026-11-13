@@ -8,8 +8,9 @@ TagTuner caches its Identify Faces grids against a fingerprint of the faces tabl
 actions that take faces out of the pool -- naming, excluding -- write through
 tagpup.store.faces.accounted_write and return `fingerprints` (before, after) and
 `face_ids` in details, from which the page's server takes those faces off its cached
-grids instead of rebuilding them. The rest move the fingerprint, and a grid built before
-them is rebuilt.
+grids instead of rebuilding them (`unpooled` reads them, with the faces a keyword write
+before it named from the photo's tags). The rest move the fingerprint, and a grid built
+before them is rebuilt.
 """
 import collections
 import functools
@@ -112,6 +113,19 @@ def name_face(library, face_id, person):
     result.changed = changed
     result.details.update(face_ids=[face_id], fingerprints=(before, after))
     return result
+
+
+def unpooled(result):
+    """[(face ids, fingerprint before, fingerprint after)] of the committed writes a face action's Result reports that took faces
+    out of identity work, in the order they were made: the faces a keyword write named from the photo's tags first
+    (details["unpooled"], tagpup.store.face_tags.name_photos), then the action's own accounted write (`face_ids` and
+    `fingerprints`, when it changed any). What GridCache.forget_faces takes, run by run: each run starts where the one before
+    ended unless something else wrote between them, and an entry is then read again."""
+    runs = list(result.details.get("unpooled", []))
+    fingerprints = result.details.get("fingerprints")
+    if fingerprints and result.changed:
+        runs.append((result.details["face_ids"], *fingerprints))
+    return runs
 
 
 def check_nameable(library, face_id, person, refused, guesses_yield=False):

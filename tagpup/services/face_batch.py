@@ -102,8 +102,13 @@ class Follower:
         work = _live.get(self.row.change_id)
         return work if work is not None and self.forward and work.op in (NAME, EXCLUDE) else None
 
+    def accounts(self):
+        """Does this follower account for the faces the file's record changes, the guess its tag makes among them (`start` to
+        its call)? The record then reads no fingerprints of its own (file_changes._record)."""
+        return self._work() is not None
+
     def start(self, conn):
-        if self._work() is not None:
+        if self.accounts():
             self.before = faces.fingerprint(conn)
 
     def __call__(self, conn):

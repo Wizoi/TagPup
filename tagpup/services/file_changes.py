@@ -555,6 +555,9 @@ def _write_fields(et, library, operation, exiftool_path, photo_paths, read, plan
         return result
     if batch is not None and batch.stop.is_set():
         return _stopped_before_writing(result)
+    # The faces the files' records named from their photos' tags, [(face ids, fingerprint before, after)] in the order written
+    # (FileRow.unpooled): committed, whatever became of the file after, for the cached grids (tagpup.services.faces.unpooled).
+    unpooled = result.details["unpooled"] = []
     found = _rows_of(library, [path for path, _b, _a, _d in planned])
     change_id, rows = file_journal.plan(library.path, operation, [
         {"photo_id": (found.get(paths.key(path)) or (None,))[0], "path": path, "before": before, "after": after}
@@ -601,6 +604,7 @@ def _write_fields(et, library, operation, exiftool_path, photo_paths, read, plan
                 result.details["stopped"] = {"after": n, "of": len(rows), "share": True}
                 not_answered.extend(each[0] for each in planned[n:])
                 break
+            unpooled.extend(row.unpooled)
             if outcome == OUT:
                 written[path] = detail      # held already, as a file found holding it at the plan is
                 continue
@@ -766,13 +770,18 @@ def _record(library, row, values, state, stamp=None, wrote=True, after=None, who
     if wrote and stat is None:
         stat = _stat(row.path)
     follow = _followers(row, state)
+    named = []
 
     def work(conn):
         # Before the row is recorded: recording can itself change faces (a guess the tag makes), and a follower that accounts
         # for the faces it writes must start from the faces as they were.
         for each in follow:
             getattr(each, "start", lambda _conn: None)(conn)
-        photos.follow_fields(conn, row.path, values, stat, stamp, whole=whole)
+        # The faces the photo's tags name, for the cached grids (row.unpooled), unless a follower accounts for them: a
+        # bulk assignment's span holds its guesses (face_batch.Follower). Begun again on a retry: only the committed one's.
+        accounted = any(getattr(each, "accounts", lambda: False)() for each in follow)
+        named[:] = []
+        photos.follow_fields(conn, row.path, values, stat, stamp, whole=whole, unpooled=None if accounted else named)
         _follow_rename(conn, row.path, row.known_as, stat)
         for each in follow:
             each(conn)
@@ -781,6 +790,7 @@ def _record(library, row, values, state, stamp=None, wrote=True, after=None, who
         file_journal.set_state(conn, row.id, state)
 
     db.write_with_connection(library.path, work, label="%s: %s" % (row.named(), state))
+    row.unpooled.extend(named)
     return stat
 
 

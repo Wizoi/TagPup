@@ -101,6 +101,9 @@ class FileRow:
     turned: Optional[tuple] = None
     #: Not stored: the faces an undo of this file left as they were because they had changed since (tagpup.store.face_batches).
     faces_left: int = 0
+    #: Not stored: the faces recording the file named from its photo's tags, [(face ids, fingerprint before, fingerprint
+    #: after)] (tagpup.store.face_tags.name_photos), of the transactions that committed, for the cached Identify Faces grids.
+    unpooled: list = field(default_factory=list)
     #: Not stored: a forward write failed and the file is marked read-only, which no retry of the write changes
     #: (tagpup.services.file_changes._after_failure; the one failure a write tells from a passing one).
     read_only: bool = False

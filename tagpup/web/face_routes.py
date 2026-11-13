@@ -16,6 +16,7 @@ from flask import Blueprint, abort, jsonify, make_response, request
 
 from tagpup.jobs import identify as identify_jobs
 from tagpup.services import face_assignment, face_people
+from tagpup.services import faces as faces_service
 from tagpup.services import identify as identify_service
 from tagpup.web import responses, state, tagpup_routes
 
@@ -129,7 +130,9 @@ def faces_write(library, action):
 
     The faces an action took out of the identify pool come off the cached grids,
     rather than making the next click rebuild them: the action says which, and the
-    fingerprints either side of its write (tagpup.store.faces.accounted_write).
+    fingerprints either side of its write (tagpup.store.faces.accounted_write), and of the
+    keyword write before it that named faces from the photo's tags (faces_service.unpooled):
+    every committed write, also of an action refused after it.
     """
     try:
         result = action(library)
@@ -138,13 +141,12 @@ def faces_write(library, action):
     except Exception as e:
         logger.error("Error in a face action: %s", e)
         abort(500, description="Internal error: %s" % e)
+    for face_ids, before, after in faces_service.unpooled(result):
+        identify_cache.of(library).forget_faces(face_ids, before, after)
     if result.refused:
         abort(make_response(responses.refused(result)))
     if not result.ok:
         refuse(500, result.message())
-    fingerprints = result.details.get("fingerprints")
-    if fingerprints and result.changed:
-        identify_cache.of(library).forget_faces(result.details["face_ids"], *fingerprints)
     return result
 
 

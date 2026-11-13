@@ -426,14 +426,19 @@ def _remember(conn, cache, choices, done):
         cache[person_id] = clustering.FaceRows.made(rows + new, key)
 
 
-def name_photos(conn, photo_ids, references=None, vocabulary=None, batch=None):
+def name_photos(conn, photo_ids, references=None, vocabulary=None, batch=None, unpooled=None):
     """Name the faces of `photo_ids` that their keyword people name (`plan`), in the caller's
     write: the people the plan read are read in the same transaction as the write, begun here
     when the caller has none open, so a person renamed by another process meanwhile is not
     written under the old spelling. Returns the ids of the faces named -- those the write
     changed, a face named or ruled out meanwhile not counted. `vocabulary` is the tree's people when the
     caller has read them (a batch of photos reads the tree once, #838); `batch` the run's derived.Batch, which
-    keeps each person's decided faces for the run (#841). The caller commits."""
+    keeps each person's decided faces for the run (#841). The caller commits.
+
+    `unpooled`, a list, is given (face ids, fingerprint before, fingerprint after) of the faces named, both fingerprints read in
+    this transaction either side of the naming alone (tagpup.store.faces.fingerprint, as accounted_write reads them), when any
+    is named: what the cached Identify Faces grids take them off by (tagpup.jobs.identify.GridCache.forget_faces). They are
+    read only then, so a write that names nothing costs no read of the faces table."""
     photo_ids = sorted(set(photo_ids))
     if not photo_ids:
         return []
@@ -443,7 +448,10 @@ def name_photos(conn, photo_ids, references=None, vocabulary=None, batch=None):
     found = plan(conn, photo_ids, references, cache)
     if not found.named:
         return []
+    before = faces.fingerprint(conn) if unpooled is not None else None
     done = faces.name_unnamed(conn, {choice.face_id: choice.person.id for choice in found.named}, vocabulary)
+    if unpooled is not None and done:
+        unpooled.append((list(done), before, faces.fingerprint(conn)))
     if cache is not None and done:
         _remember(conn, cache, found.named, done)
     return done

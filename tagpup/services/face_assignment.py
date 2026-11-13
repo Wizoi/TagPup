@@ -190,9 +190,7 @@ def _write_plain(library, plan, outcome):
         chunk = plan.plain[start:start + PLAIN_CHUNK]
         if plan.op == EXCLUDE:
             done = faces_service.exclude(library, chunk, plan.reason)
-            fingerprints = done.details.get("fingerprints")
-            if fingerprints and done.changed:
-                outcome.runs.append((done.details["face_ids"], *fingerprints))
+            outcome.runs.extend(faces_service.unpooled(done))
         else:
             done = faces_service.unname_faces(library, chunk)
         outcome.plain += done.changed
