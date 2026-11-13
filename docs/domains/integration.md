@@ -88,3 +88,4 @@ One line each; the reasons are in docs/DECISIONS.md.
 - 2026-11-06 to 2026-11-08, video: rows 69 to 74 (DECISIONS 2026-11-02, 2026-11-05 to 2026-11-08, the A5 entries),
   `CACHE_VERSION` raised to 6, the settle thread (2026-11-07, "A CANCELLED SETTLE KEEPS ITS PHOTOS UNTIL THE NEXT START").
 - 2026-11-08, the this-PC gate: row 75 (#2745).
+- 2026-11-13, the kept New Person pool: row 76 (#2881).
