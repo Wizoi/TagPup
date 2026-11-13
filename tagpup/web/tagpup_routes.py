@@ -896,16 +896,7 @@ def _clip_converted(library, source, how):
         return {"success": False, "error": how.message(), **responses.STATUS[how.refused_kind][1], **sizes}
     new_path = how.details["path"]
     renamed = not paths.same(source, new_path)
-    if renamed:
-        # What Suggest only looked at is kept under the names the files had (#547, #2415).
-        suggestion_jobs.runs_for(library).renamed({source: new_path})
-        records = _renamed_in_folders(library, source, new_path)
-    else:
-        records = [record for _held, record in folders.of(library).entries_for(source)]
-    written_stamp = photo_actions.file_stamp(new_path)
-    for record in records:
-        if written_stamp:
-            record["mtime"], record["size"] = written_stamp
+    _followed_rename(library, source, new_path, renamed)
     reply = {"success": True, "new_path": new_path, "renamed": renamed, **sizes, **_stamp_reply(new_path)}
     if how.details.get("original_kept"):
         reply["original_kept"] = how.details["original_kept"]
@@ -1041,16 +1032,30 @@ def _stamp_reply(path):
     return {"mtime": stamp[0], "size": stamp[1]} if stamp else {}
 
 
-def _renamed_in_folders(library, old_path, new_path):
-    """Every folder map holding the photo, found under the name it had, holds it under `new_path` (a rename stays in
-    the same directory): its records, moved."""
-    records = []
-    for held, record in folders.of(library).entries_for(old_path):
-        held.pop(paths.key(old_path), None)
-        record["path"] = new_path
-        record["filename"] = os.path.basename(new_path)
-        held[paths.key(new_path)] = record
-        records.append(record)
+def _followed_rename(library, old_path, new_path, renamed):
+    """What the server keeps of a photo follows a write of it that may have renamed it (`renamed`, as the write says:
+    a Smart Rename of one photo, a save renaming it after its title, a clip's conversion to its MP4): the one follow-up
+    of the three (#2852). Renamed, Suggest's looks are kept under the new name (#547, #2415) and every folder map holding
+    the photo, found under the name it had, holds its record under `new_path` (a rename stays in the same directory).
+    Renamed or not, each record takes the file's stamp now: the write wrote the file, and the next save from the record
+    names that stamp. Memory only, nothing of the library's: a crash loses it with the maps, which are scanned again.
+    `library` is the one the write was made in, handed on: the conversion's follow-up runs on its own thread, after
+    the request that asked for it was answered. The records, for a write that tells them more of what it wrote."""
+    if renamed:
+        suggestion_jobs.runs_for(library).renamed({old_path: new_path})
+        records = []
+        for held, record in folders.of(library).entries_for(old_path):
+            held.pop(paths.key(old_path), None)
+            record["path"] = new_path
+            record["filename"] = os.path.basename(new_path)
+            held[paths.key(new_path)] = record
+            records.append(record)
+    else:
+        records = [record for _held, record in folders.of(library).entries_for(old_path)]
+    written_stamp = photo_actions.file_stamp(new_path)
+    if written_stamp:
+        for record in records:
+            record["mtime"], record["size"] = written_stamp
     return records
 
 
@@ -1083,17 +1088,8 @@ def photo_smart_rename():
             return responses.error(500, result.message())
         new_path = result.details["new_path"]
         renamed = bool(result.details["renamed"])
-        if renamed:
-            # What Suggest only looked at is kept under the names the files had (#547, #2415).
-            suggestion_jobs.runs_for(library).renamed({photo_path: new_path})
-            records = _renamed_in_folders(library, photo_path, new_path)
-        else:
-            records = [record for _held, record in folders.of(library).entries_for(photo_path)]
-        # Keeping the name it had wrote the file (photos.preserve_names): the records take its stamp now.
-        written_stamp = photo_actions.file_stamp(new_path)
-        for record in records:
-            if written_stamp:
-                record["mtime"], record["size"] = written_stamp
+        # Keeping the name it had wrote the file too (photos.preserve_names): the records take its stamp all the same.
+        _followed_rename(library, photo_path, new_path, renamed)
     except Exception as e:
         logger.error("Error smart renaming %s: %s", photo_path, e, exc_info=True)
         return responses.error(500, str(e))
@@ -1130,21 +1126,13 @@ def photo_save_metadata():
             logger.error("Error saving metadata for %s: %s", photo_path, result.message())
             return responses.error(500, result.message())
         new_path, renamed, tags = result.details["new_path"], result.details["renamed"], result.details["tags"]
-        if renamed:
-            # What Suggest only looked at is kept under the names the files had (#547, #2415).
-            suggestion_jobs.runs_for(library).renamed({photo_path: new_path})
-        records = (_renamed_in_folders(library, photo_path, new_path) if renamed
-                   else [record for _held, record in folders.of(library).entries_for(photo_path)])
-        for record in records:
+        for record in _followed_rename(library, photo_path, new_path, renamed):
             raw_meta = photo_actions.record_written(
                 library, record, new_path, tags, result.details["flat"], result.details["hierarchical"],
                 result.details["dates"])
             record["tags"] = vocabulary.extract_tags(raw_meta)
             record["captions"] = [title] if title else []
             record["title"] = title
-            written_stamp = photo_actions.file_stamp(new_path)
-            if written_stamp:
-                record["mtime"], record["size"] = written_stamp
     except Exception as e:
         logger.error("Error saving metadata for %s: %s", photo_path, e)
         return responses.error(500, str(e))

@@ -519,5 +519,70 @@ class ARouteAnswersWhatAServiceRaisedThroughTheOneMapper(unittest.TestCase):
         self.assertEqual([], problems)
 
 
+#: The functions of tagpup/web that may tell what the server keeps of a photo a write renamed, and what each may tell:
+#: `_followed_rename`, the one follow-up of a photo's rename (Suggest's looks, the folder maps' records moved, their
+#: stamps); the folder's rename tells the looks and reads its folder again instead of moving records (#2852).
+RENAME_FOLLOWERS = {"_followed_rename": {"looks", "records"}, "folder_rename_photos": {"looks"}}
+
+
+def rename_followups(source):
+    """[(function, line, what)] of each place in `source` that tells what the server keeps of a renamed photo: a call
+    of `.renamed(` (Suggest's looks, "looks") or a record's "path" or "filename" set (a folder map's record moved,
+    "records"), by the innermost function holding it."""
+    found = []
+
+    class Visit(ast.NodeVisitor):
+        def __init__(self):
+            self.within = ["<module>"]
+
+        def visit_FunctionDef(self, node):
+            self.within.append(node.name)
+            self.generic_visit(node)
+            self.within.pop()
+
+        visit_AsyncFunctionDef = visit_FunctionDef
+
+        def visit_Call(self, node):
+            if getattr(node.func, "attr", None) == "renamed":
+                found.append((self.within[-1], node.lineno, "looks"))
+            self.generic_visit(node)
+
+        def visit_Assign(self, node):
+            for target in node.targets:
+                for each in (target.elts if isinstance(target, ast.Tuple) else [target]):
+                    if (isinstance(each, ast.Subscript) and isinstance(each.slice, ast.Constant)
+                            and each.slice.value in ("path", "filename")):
+                        found.append((self.within[-1], node.lineno, "records"))
+            self.generic_visit(node)
+
+    Visit().visit(ast.parse(source))
+    return found
+
+
+class ARenamedPhotoIsFollowedInOnePlace(unittest.TestCase):
+    """The follow-up of a photo's rename -- Suggest's looks kept under the new name, the folder maps' records moved to it,
+    their stamps taken -- was written three times in tagpup_routes (a Smart Rename of one photo, a save renaming it after
+    its title, a clip's conversion), and a fourth write renaming a photo would have written a fourth that could skip a
+    step (#2852). `_followed_rename` is the one; a write that renames a photo calls it
+    (tests/test_what_the_server_keeps_follows_a_rename.py holds each caller to what it does)."""
+
+    def test_a_follow_up_of_its_own_is_found(self):
+        planted = ("def own(library, old, new):\n    runs.renamed({old: new})\n"
+                   "    for held, record in cache.entries_for(old):\n        record['path'] = new\n"
+                   "        record['filename'], x = name, 1\n"
+                   "def _followed_rename(library, old, new, renamed):\n    record['mtime'] = 1\n")
+        self.assertEqual([("own", 2, "looks"), ("own", 4, "records"), ("own", 5, "records")], rename_followups(planted))
+
+    def test_no_route_module_follows_a_rename_itself(self):
+        web = os.path.join("tagpup", "web")
+        found = [(relative, name, line, what) for relative in python_sources() if relative.startswith(web)
+                 for name, line, what in rename_followups(read(relative))]
+        problems = ["%s:%d: %s tells the %s of a renamed photo itself" % (relative, line, name, what)
+                    for relative, name, line, what in found if what not in RENAME_FOLLOWERS.get(name, ())]
+        self.assertEqual([], problems, "call tagpup_routes._followed_rename")
+        self.assertEqual({"looks", "records"}, {what for _r, name, _l, what in found if name == "_followed_rename"},
+                         "the follow-up still tells both: the guard sees what it forbids")
+
+
 if __name__ == "__main__":
     unittest.main()
