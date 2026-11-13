@@ -314,7 +314,8 @@ def _ready(library, exiftool_path, tools, source, reason):
         return NO_ROW
     read = {}
     with field_values.session(exiftool_path) as et:
-        # Whole, in the indexer's shape: its Date Taken is the row's (dates.date_taken of what the indexer records).
+        # Whole, in the indexer's shape: its Date Taken is the row's (dates.date_taken of what the indexer records), but
+        # for a date in its name, which is not carried: the copy has the clip's name and is dated by it again.
         whole = file_changes.read_whole(et, source, list(READ) + [fields.CLIP_CATEGORY], into=read)
     if whole is None:
         return UNREADABLE % "ExifTool could not read it"
@@ -344,7 +345,7 @@ def _ready(library, exiftool_path, tools, source, reason):
     # the copy reads back holding what it carries (_short_of).
     carry = {"tags": list(vocabulary.extract_tags(fields.keyword_fields(*fields.expand_tag_fields(tags + windows)))),
              "title": fields.own_title(held),
-             "name": names.preserved_name(held) or os.path.basename(source), "date": dates.date_taken(whole)}
+             "name": names.preserved_name(held) or os.path.basename(source), "date": dates.date_taken(whole, None)}
     return _Ready(found[0], stamp, streams, carry, clip_convert.target_of(source))
 
 
@@ -634,7 +635,7 @@ def _carrier(library, after):
             wanted.update(fields.title_fields(carry["title"]))
         if carry["name"] and names.preserved_name(held) != carry["name"]:
             wanted[fields.PRESERVED_NAME] = carry["name"]
-        if carry["date"] and dates.date_taken(held) != carry["date"]:
+        if carry["date"] and dates.date_taken(held, None) != carry["date"]:
             wanted.update(fields.held_dates(fields.date_taken_fields(carry["date"], clip=True), held))
         if not wanted:
             return file_changes.skip("its converted copy holds what it carries already")

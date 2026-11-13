@@ -48,7 +48,7 @@ def _dated(raw_json, path):
         raw = json.loads(raw_json) if raw_json else {}
     except (TypeError, ValueError):
         raw = {}
-    return dates.date_taken(raw), dates.photo_year(raw, path)
+    return dates.date_taken(raw, path), dates.photo_year(raw, path)
 
 
 def _dated_paths(conn, photo_paths):

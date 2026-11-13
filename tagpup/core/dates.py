@@ -7,6 +7,11 @@ that, so dropping it changed nothing; taking XMP:CreateDate everywhere moved sev
 photos whose only date it is from after the dated ones to their place among them.
 tests/test_dates.py fails the build on a list of these fields anywhere else.
 
+A clip whose file holds no date (its QuickTime dates zeros, no XMP date) is dated by the date in its file name
+(`name_date`), at midnight: a real date always wins, a photo is never dated by its name, and a folder's date never
+dates one (owner, 2026-11-13). The path reaches the rule as an argument of each reader (date_taken, year_taken,
+date_taken_sort_key), so the row (store.photos.date_photos), the page's record and the folder view's order give one date.
+
 And how TagPup spells a time it records (`recorded`): the journal's, the runs', the Activity page's. It was spelled by
 hand in fourteen places; tests/test_rules_have_one_owner.py fails the build on a copy.
 """
@@ -30,7 +35,7 @@ SHIFTED_FIELDS = tuple(field for field in DATE_TAKEN_FIELDS if ":" in field)
 #: local time. A clip is read by its XMP dates first (CLIP_XMP_DATE_FIELDS), then these, and no photo field: its bare
 #: CreateDate is the QuickTime copy, in UTC, and none of the 58 zero-date photo_index clips holds an EXIF or XMP date
 #: (counted 2026-11-08). A date of zeros ("0000:00:00 00:00:00", a camera
-#: that wrote none) is no date. Never written.
+#: that wrote none) is no date: a clip holding no other is dated by its file name (name_date). Never written.
 CLIP_DATE_FIELDS = ("QuickTime:CreationDate", "QuickTime:CreateDate")
 
 #: A clip's XMP dates, read before its QuickTime ones: the Date Taken a save writes into its XMP
@@ -57,6 +62,10 @@ ERA_FIRST = 1950
 #: the folder scan's records (scripts/metadata.py) and TagTuner's page each spelled it;
 #: the page keeps a copy that tests/test_rules_have_one_owner.py holds to this (#74).
 UNKNOWN_YEAR = "Unknown"
+
+#: A date in a file name: YYYY-MM-DD, YYYY_MM_DD, YYYY.MM.DD or YYYYMMDD (one separator, the same both times, or
+#: none), of a year 1900-2099, with no digit on either side (a longer run of digits is a counter, not a date).
+_NAME_DATE = re.compile(r"(?<!\d)((?:19|20)\d\d)([-_.]?)(\d\d)\2(\d\d)(?!\d)")
 
 _YEAR_AT_START = re.compile(r"^(\d{4})")
 _FOUR_DIGITS = re.compile(r"\d{4}")
@@ -111,47 +120,72 @@ def _local_of_utc(value):
         return None
 
 
-def _dates_given(raw_metadata):
-    """Each date the record holds, as read, the most specific first: the one rule date_taken and year_taken read by. A
-    clip's XMP dates (CLIP_XMP_DATE_FIELDS), then its QuickTime ones (CLIP_DATE_FIELDS), no more; a photo's
-    DATE_TAKEN_FIELDS."""
-    fields = DATE_TAKEN_FIELDS
+def name_date(path):
+    """The date in the file name of `path` as a Date Taken at midnight ("2019:07:04 00:00:00"): the first _NAME_DATE in
+    the name whose month and day are a day of its year; None for a name holding none. The file name alone, never a
+    folder's (owner, 2026-11-13: 11 photo_index clips dated only in their folder stay undated, for the owner to date by
+    hand). What a clip whose file holds no date is dated by (_dates_given): 669 of photo_index's 680, each named
+    YYYY-MM-DD (counted 2026-11-13)."""
+    for found in _NAME_DATE.finditer(PurePath(path).name if path else ""):
+        year, month, day = int(found.group(1)), int(found.group(3)), int(found.group(4))
+        try:
+            datetime.date(year, month, day)
+        except ValueError:
+            continue
+        return "%04d:%02d:%02d 00:00:00" % (year, month, day)
+    return None
+
+
+def _clip_dates(raw_metadata):
+    """Each date a clip's record holds: its XMP dates (CLIP_XMP_DATE_FIELDS), then its QuickTime ones
+    (CLIP_DATE_FIELDS), a date of zeros none."""
+    written = (_clip_date(raw_metadata, field) for field in CLIP_XMP_DATE_FIELDS)
+    yield from (value for value in written if value)
+    creation, create = (_clip_date(raw_metadata, field) for field in CLIP_DATE_FIELDS)
+    if creation:
+        yield creation
+    if create:
+        local = _local_of_utc(create)
+        if local:
+            yield local
+
+
+def _dates_given(raw_metadata, path):
+    """Each date the record of the photo at `path` holds, as read, the most specific first: the one rule date_taken and
+    year_taken read by. A clip's own dates (_clip_dates), else, holding none, the date in its file name (name_date); a
+    photo's DATE_TAKEN_FIELDS, never its name. `path` None reads the record's own dates alone."""
     if any(field in (raw_metadata or {}) for field in CLIP_DATE_FIELDS):
-        written = (_clip_date(raw_metadata, field) for field in CLIP_XMP_DATE_FIELDS)
-        yield from (value for value in written if value)
-        creation, create = (_clip_date(raw_metadata, field) for field in CLIP_DATE_FIELDS)
-        if creation:
-            yield creation
-        if create:
-            local = _local_of_utc(create)
-            if local:
-                yield local
+        given = list(_clip_dates(raw_metadata))
+        named = None if given else name_date(path)
+        yield from given or ([named] if named else [])
         return
-    for field in fields:
+    for field in DATE_TAKEN_FIELDS:
         value = _value(raw_metadata, field)
         if value:
             yield str(value).strip()
 
 
-def date_taken(raw_metadata):
-    """The first Date Taken that has a value (_dates_given), as ExifTool gave it ("2026:06:27 12:00:00"; a clip's UTC
-    CreateDate as local time), or None."""
-    return next(_dates_given(raw_metadata), None)
+def date_taken(raw_metadata, path):
+    """The first Date Taken of the photo at `path` that has a value (_dates_given), as ExifTool gave it ("2026:06:27
+    12:00:00"; a clip's UTC CreateDate as local time; a clip holding none, its file name's date at midnight), or None.
+    `path` None is the file's own dates alone: what a conversion carries into its copy (tagpup.services.convert)."""
+    return next(_dates_given(raw_metadata, path), None)
 
 
-def date_taken_sort_key(raw_metadata, mtime=0.0):
-    """Sorts photos by when they were taken, and those without a date after them by file time.
+def date_taken_sort_key(raw_metadata, path, mtime=0.0):
+    """Sorts photos by when they were taken (date_taken of the photo at `path`), and those without a date after them by
+    file time.
 
     A string, as the folder view has always sorted: the date as ExifTool gives it, or
     "mtime_<file time>", which sorts after every date.
     """
-    taken = date_taken(raw_metadata)
+    taken = date_taken(raw_metadata, path)
     return taken if taken is not None else "mtime_%s" % (mtime,)
 
 
-def year_taken(raw_metadata):
-    """The year of the first Date Taken (_dates_given) that starts with one, or None."""
-    for value in _dates_given(raw_metadata):
+def year_taken(raw_metadata, path):
+    """The year of the first Date Taken of the photo at `path` (_dates_given) that starts with one, or None."""
+    for value in _dates_given(raw_metadata, path):
         match = _YEAR_AT_START.match(value)
         if match and EARLIEST <= int(match.group(1)) <= LATEST:
             return int(match.group(1))
@@ -161,7 +195,8 @@ def year_taken(raw_metadata):
 def era_year(taken):
     """The year of `taken` (photos.taken, the photo's Date Taken: 'YYYY:MM:DD HH:MM:SS', some with a time zone after) as
     a year to match a face by: from ERA_FIRST to the current year, else None (undated); None for a photo with no Date
-    Taken, never a year read from its file or folder name as photos.year falls back to."""
+    Taken, never a year read from its file or folder name as photos.year falls back to (a clip dated by its file name's
+    date, name_date, has that date for its Date Taken)."""
     match = _YEAR_AT_START.match(str(taken or "").strip())
     year = int(match.group(1)) if match else None
     return year if year is not None and ERA_FIRST <= year <= datetime.date.today().year else None
@@ -178,9 +213,9 @@ def year_in_name(path):
     return None
 
 
-def photo_year(raw_metadata, path=None):
+def photo_year(raw_metadata, path):
     """The year a photo was taken: its Date Taken if it has one, else a year in its name."""
-    return year_taken(raw_metadata) or year_in_name(path)
+    return year_taken(raw_metadata, path) or year_in_name(path)
 
 
 def record_year(meta):
