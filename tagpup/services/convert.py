@@ -111,11 +111,13 @@ NAME_TAKEN = "a file or a row is there already under its converted name; nothing
 UNDER_WAY = "it is being converted already, or a conversion of it cut short is still to be settled; nothing was converted"
 TEMP_TAKEN = ("an unfinished converted copy of it is there already (another conversion, or one cut short); nothing was "
               "converted")
-CHANGED = "it changed while it was being converted; its converted copy was removed and the original is as it is"
+#: The sentences of a conversion let go with its copy in the temp claim no removal of it: clip_convert.TEMP_LEFT
+#: follows them when its removal fails (#2884).
+CHANGED = "it changed while it was being converted; the original is as it is"
 NOT_MADE = "its converted copy is not as it was made; the original is as it was"
 NOT_IN_PLACE = ("its converted copy could not be put in its place (%s); the original is deleted and the copy is put in "
                 "place when the change is settled")
-NOT_RENAMED = "its converted copy could not be put in its place (%s); it was removed and the original is as it was"
+NOT_RENAMED = "its converted copy could not be put in its place (%s); the original is as it was"
 NOT_CARRIED = ("its tags, title or kept name could not be written into its converted copy (%s); the original is kept, "
                "and the change is finished when it is settled")
 ROW_THERE = "a row of the library is at its converted name already; both files are kept as they are"
@@ -125,8 +127,8 @@ CHANGED_SINCE = "it changed since it was converted: it holds neither what the co
 PLAYS_ALREADY = "it plays as it is: it is made smaller (Make smaller), not converted; nothing was converted"
 DOES_NOT_PLAY = "it does not play as it is: it is converted (Convert), not made smaller; nothing was converted"
 NOT_SMALLER = "its MP4 came out no smaller than it is: left as it is"
-NOT_DELETED = ("its original could not be deleted (%s), so its converted copy, which takes its name, was removed; the "
-               "original is as it was")
+NOT_DELETED = ("its original could not be deleted (%s), so its converted copy, which takes its name, is not put in "
+               "its place; the original is as it was")
 ASKED_ALREADY = "it is being converted already; wait for it to finish"
 NO_SUCH = "This server has no conversion %d (it may have been long ago, or before the server restarted)."
 

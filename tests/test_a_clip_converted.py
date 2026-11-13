@@ -379,6 +379,45 @@ class Refused(AnOldClipInTheLibrary):
         self.assertTrue(self.read_bytes(source).endswith(b"another program's bytes"), "the changed original kept")
         self.assertEqual([], self.leftovers())
 
+    def test_a_copy_that_could_not_be_removed_is_said_left_never_said_removed(self):
+        # Something holds the copy open as the conversion is let go (a virus scanner, a preview), so its removal fails:
+        # the refusal says the copy is left, after a sentence that claims no removal of it (#2884). Each way of being
+        # let go with its copy in the temp: the original changed meanwhile, the copy not put in its place (the same
+        # handle stops the rename), an .mp4 of its own name whose original a player holds.
+        def held_at_verified(source, also_source=False, append=False):
+            temp = clip_convert.temp_of(clip_convert.target_of(source))
+            handles = []
+            self.addCleanup(lambda: [handle.close() for handle in handles])
+
+            def hold(step):
+                if step != "temp verified":
+                    return
+                if append:
+                    with open(source, "ab") as handle:
+                        handle.write(b"another program's bytes")
+                handles.append(open(temp, "rb"))
+                if also_source:
+                    handles.append(open(source, "rb"))
+            return temp, hold
+
+        cases = (("changed", "inlet.wmv", convert.CHANGED, {"append": True}),
+                 ("not renamed", "estuary.wmv", convert.NOT_RENAMED, {}),
+                 ("not deleted", "lagoon.mp4", convert.NOT_DELETED, {"also_source": True}))
+        for label, name, sentence, how in cases:
+            with self.subTest(label):
+                source, _photo_id = self.clip(name)
+                temp, hold = held_at_verified(source, **how)
+                with mock.patch.object(convert, "_reached", side_effect=hold):
+                    result = self.convert(source)
+                said = result.message()
+                first, _stop, rest = said.partition(". ")
+                self.assertEqual(0, result.changed, said)
+                self.assertTrue(first.startswith(sentence.split("%s")[0]), said)
+                self.assertNotIn("removed", first, "a removal claimed, then denied")
+                self.assertRegex(said, r"as it (is|was)\. Its unfinished copy could not be removed just now \(.+\); it is "
+                                       r"removed when the change is settled\.$", "two whole sentences")
+                self.assertTrue(os.path.exists(temp), "the copy is there, as said")
+
     def test_a_share_that_does_not_answer_at_its_converted_name_is_said_away_not_taken(self):
         real, target = shares.stamp_of, clip_convert.target_of(self.source)
 
