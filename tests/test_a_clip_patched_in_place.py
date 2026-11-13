@@ -489,6 +489,30 @@ class AClipsWindowsTags(unittest.TestCase):
         self.assertIsNone(clip_patch.patch(layout, None, None, (), (), ((one, moved),)))
 
 
+class AFreedBoxOfEitherKind(unittest.TestCase):
+    """A title item and an Xtra are freed and given back by one mechanism (clip_patch._retyped), keyed by the box's kind."""
+
+    def test_a_clear_and_a_give_back_of_either_kind_go_through_the_one_mechanism(self):
+        titled = FTYP + titled_moov(meta(box(b"free", data_atom(TITLE)))) + MDAT
+        tagged = FTYP + titled_moov(meta(), xtra(*WINDOWS_TAGS)) + MDAT
+        freed_tags = FTYP + titled_moov(meta(), xtra(*WINDOWS_TAGS, kind=b"free")) + MDAT
+        layout = layout_of(titled)
+        title_read = tuple((one, titled[one.payload:one.end]) for one in clip_patch.freed_titles(layout))
+        asked = {
+            "a title given back": lambda: clip_patch.patch(layout, None, TITLE, title_read),
+            "an Xtra freed": lambda: clip_patch.patch(layout_of(tagged), None, None, (), (), tuple(
+                (one, tagged[one.offset:one.end]) for one in clip_patch.xtra_boxes(layout_of(tagged), ()))),
+            "an Xtra given back": lambda: clip_patch.patch(layout_of(freed_tags), None, None, (), WINDOWS_TAGS, tuple(
+                (one, freed_tags[one.offset:one.end]) for one in clip_patch.xtra_boxes(layout_of(freed_tags), WINDOWS_TAGS))),
+        }
+        for name, ask in asked.items():
+            with self.subTest(name), mock.patch.object(clip_patch, "_retyped", wraps=clip_patch._retyped) as through:
+                found = ask()
+                self.assertIsNotNone(found)
+                self.assertEqual(1, len(found.ranges))
+                through.assert_called_once()
+
+
 class FfmpegClips(unittest.TestCase):
     """Clips made by the real ffmpeg in a home of the class's own, copied for each test, and read back by ExifTool and
     ffprobe."""
