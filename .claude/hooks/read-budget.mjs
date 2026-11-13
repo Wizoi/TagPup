@@ -18,10 +18,14 @@
  * that is not there or cannot be opened (the Read tool says so itself), or anything else that goes wrong in the hook
  * lets the call through: a broken guard must never stop a call.
  */
-import { closeSync, openSync, readFileSync, readSync } from "node:fs";
+import { closeSync, openSync, readFileSync, readSync, statSync } from "node:fs";
 import path from "node:path";
 
 export const LIMIT = 300;
+/** Bytes too: a saved tool result of one JSON line is under LIMIT lines, and the Read tool cuts only each line at 2,000
+ * characters. Measured 2026-11-13 over this project's saved tool-results: 202 files over 40 KB, 35 of them within
+ * LIMIT lines (largest 413 KB); 40 KB is about 10k tokens, the size of a whole read worth refusing. */
+export const BYTE_LIMIT = 40000;
 const CHUNK = 64 * 1024;
 /** Read by the tool as something other than lines of text. */
 const NOT_TEXT = new Set([".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".ico", ".tif", ".tiff", ".heic", ".pdf",
@@ -63,7 +67,7 @@ export function linesOver(file, most = LIMIT) {
 
 /** The reason to refuse a subagent's Read of `input` (the tool's input), or null; `count(file)` counts the lines of
  * the file as the system names it (a UNC path kept whole). */
-export function reasonToBlock(input, cwd, count = linesOver) {
+export function reasonToBlock(input, cwd, count = linesOver, size = (f) => statSync(f).size) {
   if (!input || typeof input.file_path !== "string" || !input.file_path) return null;
   const file = normal(input.file_path, cwd);
   if (isLedger(file)) {
@@ -73,8 +77,10 @@ export function reasonToBlock(input, cwd, count = linesOver) {
   }
   if (input.offset != null || input.limit != null) return null;
   if (NOT_TEXT.has(path.posix.extname(file).toLowerCase())) return null;
-  if (count(cwd ? path.resolve(String(cwd), input.file_path) : input.file_path) <= LIMIT) return null;
-  return `${input.file_path} has more than ${LIMIT} lines: a whole read is refused for a worker (retro 2026-11-13). ` +
+  const real = cwd ? path.resolve(String(cwd), input.file_path) : input.file_path;
+  const manyLines = count(real) > LIMIT;
+  if (!manyLines && size(real) <= BYTE_LIMIT) return null;
+  return `${input.file_path} has more than ${manyLines ? `${LIMIT} lines` : `${BYTE_LIMIT} bytes`}: a whole read is refused for a worker (retro 2026-11-13). ` +
     `Read it by part: \`python tools/read_code.py outline ${input.file_path}\` lists its definitions or headings with their ` +
     `lines; \`python tools/read_code.py show ${input.file_path}::NAME\` prints one function, class or section; or Read ` +
     "with offset and limit.";
