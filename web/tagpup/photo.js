@@ -11,7 +11,7 @@ import { clearPhotoFaces, nameFaceAs, showPhotoFaces } from './face-boxes.js';
 import { state } from './state.js';
 import {
     btnCancelDateModal, btnCarryForward, btnCloseDateModal, btnEditDateTaken, btnSaveDateModal,
-    dateTakenModal, detailCamera, detailCameraItem, detailDateTaken, detailFileSize, detailPath, detailPeople, detailsPanel, detailTags,
+    dateTakenModal, detailCamera, detailCameraItem, detailDateTaken, detailFileSize, detailPath, detailVideoSize, detailPeople, detailsPanel, detailTags,
     btnAddAllFaces, emptyState, facesSection, facesStrip, facesSummary, folderViewContent, folderViewHeader,
     folderViewStats, inputAddPerson, inputAddTag, inputDateTaken,
     inputPhotoTitle, mainImage, panelContent, photoList, statusDot, statusText
@@ -390,7 +390,11 @@ export function showPhoto(path) {
     // Render values. A photo whose file is gone has no picture to ask for; a video is played in the image's place (media.js).
     showMedia(photo, photo.missing ? '' : photoFileUrl(photo, 800));
     detailPath.textContent = photo.path;
-    detailFileSize.textContent = fileSizeSaid(photo.size);
+    // The size sits under the path for a photo and under Date Taken for a video: one formatter, one of the two lines shown.
+    const sizeSaid = fileSizeSaid(photo.size);
+    detailFileSize.textContent = isVideo(photo) ? '' : sizeSaid;
+    detailVideoSize.textContent = isVideo(photo) ? sizeSaid : '';
+    detailVideoSize.classList.toggle('hidden', !isVideo(photo));
     let dateVal = "Unknown";
     const shownDate = takenOf(photo) && parseExifDateToLocalDate(takenOf(photo));
     if (shownDate) dateVal = formatFriendlyDateSingle(shownDate, getFolderDateStats());
