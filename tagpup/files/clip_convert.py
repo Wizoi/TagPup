@@ -318,14 +318,10 @@ def _end(child):
 
 def removed(temp):
     """None when the temp file at `temp` is gone (removed now, or never made); else TEMP_LEFT, why it is still there.
-    Only a conversion's own temp is passed here: never a listing's find, never the original."""
-    def remove():
-        try:
-            os.remove(temp)
-        except FileNotFoundError:
-            pass
-    state, error = shares.bounded(os.path.dirname(temp), remove, shares.LISTING_WAIT)
-    if state == "ok":
+    Only a conversion's own temp is passed here: never a listing's find, never the original. A "not found" is a temp gone
+    only while its share answers (shares.bounded): of a share asleep it is "the share did not answer"."""
+    state, error = shares.bounded(os.path.dirname(temp), lambda: os.remove(temp), shares.LISTING_WAIT)
+    if state == "ok" or isinstance(error, FileNotFoundError):
         return None
     why = "the share did not answer" if state == "away" else (error.strerror or error)
     logger.warning("A conversion's unfinished copy could not be removed: %s", why)

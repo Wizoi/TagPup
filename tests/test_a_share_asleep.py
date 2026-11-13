@@ -36,6 +36,7 @@ import own_home  # noqa: E402
 import photo_rows  # noqa: E402
 import share_waits  # noqa: E402
 import web_client  # noqa: E402
+from test_file_journal import EXIFTOOL, requires_exiftool, write_outside  # noqa: E402
 from stand_in_models import Hold, NewFaces, RefusableFaces  # noqa: E402
 from view_library import ViewLibrary  # noqa: E402
 
@@ -50,6 +51,7 @@ from tagpup.ml import clip  # noqa: E402
 from tagpup.runtime import Runtime  # noqa: E402
 from tagpup.services import activity, bake_after_index, inspect, library_view, settings, sync, tagging  # noqa: E402
 from tagpup.services import faces as face_service  # noqa: E402
+from tagpup.services import photos as photo_service  # noqa: E402
 from tagpup.services import libraries as library_actions  # noqa: E402
 from tagpup.store import db  # noqa: E402
 from tagpup.store import photos as store_photos  # noqa: E402
@@ -146,7 +148,7 @@ class ASleepingShare(unittest.TestCase):
 
     def test_a_look_for_a_file_that_fails_to_open_ending_late_in_not_found_leaves_the_share_away(self):
         """A server gone while the doctor's look waited answers "not found", late: the look's end asks whether the share
-        answers (shares.read_bounded, as a read of a clip's piece does), and the share stays away. It was taken as back
+        answers (shares.bounded, as of every look), and the share stays away. It was taken as back
         by the late answer, and the next photo was waited on again."""
         with mock.patch.object(shares, "READ_WAIT", 0.05):
             opens = inspect.files_that_fail_to_open(self.vl.library)
@@ -159,6 +161,117 @@ class ASleepingShare(unittest.TestCase):
                 look.join(5)
         self.assertIsNotNone(shares.away_since(shares.share_of(self.vl.pictures)),
                              "the late not-found took the share as back")
+
+
+def read_bytes(path):
+    with open(path, "rb") as handle:
+        return handle.read()
+
+
+class AShareThatFallsAsleepMidLook(unittest.TestCase):
+    """The owner's NAS falls asleep while a look at it is under way: the look says "not found", in time or late, the words
+    Windows uses for a file deleted. Whoever made the look -- a tag write's open of its photo, the faces page's look at a
+    photo's header, a converted clip's unfinished copy removed -- is told the share did not answer, never that the file is
+    gone, and the share stays away, so the next photo on it is answered at once. A file deleted while the share answers is
+    still gone. The ask is shares.bounded's own (#2781). Break: bounded not asking _share_answers of a "not found" (each
+    caller's own ask, as before #2781, missed by these three) fails the three asleep tests."""
+
+    def setUp(self):
+        shares.forget()
+        self.addCleanup(shares.forget)
+        self.vl = ViewLibrary(self)
+        self.share = os.path.normcase(self.vl.pictures)
+        self.root = os.path.normcase(os.path.splitdrive(self.vl.pictures)[0] + os.sep)
+        self.server_up = True
+        real_exists = os.path.exists
+        for patcher in (mock.patch.object(shares, "on_a_network_drive",
+                                          lambda path: os.path.normcase(str(path)).startswith(self.share)),
+                        mock.patch.object(os.path, "exists", lambda path: (self.server_up or os.path.normcase(str(path))
+                                                                           != self.root) and real_exists(path))):
+            patcher.start()
+            self.addCleanup(patcher.stop)
+
+    def away(self):
+        return shares.away_since(shares.share_of(self.vl.pictures)) is not None
+
+    def falls_asleep(self, *args, **kwargs):
+        """A look at the share as it falls asleep: "not found" (WinError 53), and its root not there from then on."""
+        self.server_up = False
+        raise FileNotFoundError(2, "The network path was not found")
+
+    @requires_exiftool
+    def test_a_tag_rename_as_the_share_falls_asleep_says_the_share_did_not_answer_and_opens_no_other_photo(self):
+        """The patch's open of the first photo says "not found": the write stops there, saying to check the share, the
+        second photo is not opened, and both files hold what they held. Was: the open's FileNotFoundError taken as the
+        photo's own failure, the share asked by no one, and the second photo opened in turn."""
+        from tagpup.files import in_place
+        vl = self.vl
+        photo_paths = [os.path.join(vl.pictures, "Coast", "p%d.jpg" % n) for n in range(2)]
+        os.makedirs(os.path.dirname(photo_paths[0]))
+        for path in photo_paths:
+            Image.new("RGB", (16, 12), (90, 110, 130)).save(path, "JPEG")
+            values = {"XMP:Subject": ["Trips/Harbour"], "IPTC:Keywords": ["Trips/Harbour"],
+                      "EXIF:XPKeywords": "Trips/Harbour"}
+            write_outside(path, values)
+            vl.photo("Coast", os.path.basename(path), fields=values)
+        held = [read_bytes(path) for path in photo_paths]
+        with mock.patch.object(in_place, "_alone", side_effect=self.falls_asleep) as opened:
+            done = tagging.replace_tag(vl.library, photo_paths, "Trips/Harbour", "Trips/Coast", EXIFTOOL)
+        self.assertEqual(0, done.changed)
+        self.assertEqual(1, opened.call_count, "a photo on the share asleep was opened")
+        said = " ".join(str(why) for _, why in done.errors)
+        self.assertIn("check that the share or drive is there", said)
+        self.assertNotIn("not found", said)
+        self.assertTrue(self.away(), "the share was taken as answering")
+        self.assertEqual(held, [read_bytes(path) for path in photo_paths])
+
+    def test_a_photo_deleted_while_its_share_answers_is_still_gone(self):
+        """The same "not found" while the share's root is there: the file is gone, and the share is not away."""
+        from tagpup.files import clip_convert
+        temp = os.path.join(self.vl.pictures, "clip.mp4" + clip_convert.SUFFIX)
+        self.assertIsNone(clip_convert.removed(temp), "a temp that is not there is removed")
+        with mock.patch.object(photo_service.images, "shown_shape",
+                               side_effect=FileNotFoundError(2, "The system cannot find the file specified")):
+            self.assertEqual({"size": None, "turn": 1}, photo_service.box_shape(os.path.join(self.vl.pictures, "a.jpg")))
+        self.assertFalse(self.away(), "a file deleted took its share as away")
+
+    def test_a_converted_clips_unfinished_copy_on_a_share_asleep_is_not_said_removed(self):
+        """Was: the remove's "not found" swallowed, and the copy on the share asleep said removed."""
+        from tagpup.files import clip_convert
+        temp = os.path.join(self.vl.pictures, "clip.mp4" + clip_convert.SUFFIX)
+        with mock.patch.object(clip_convert.os, "remove", side_effect=self.falls_asleep):
+            self.assertEqual(clip_convert.TEMP_LEFT % "the share did not answer", clip_convert.removed(temp))
+        self.assertTrue(self.away())
+
+    def test_two_pages_drawing_face_boxes_as_the_share_falls_asleep_leave_it_away_and_the_next_waits_for_nothing(self):
+        """Two requests at once each look at a photo's header; the share hangs, then says "not found", late. Both draw no
+        box; the late answers leave the share away, so a third photo's box is answered without a wait. Was: the late
+        "not found" took the share as back, and the next photo waited out SHAPE_WAIT again."""
+        asleep = threading.Event()
+        self.addCleanup(asleep.set)
+
+        def header(path):
+            asleep.wait(5)
+            self.falls_asleep()
+        photo_paths = [os.path.join(self.vl.pictures, "Coast", "p%d.jpg" % n) for n in range(3)]
+        drawn = {}
+        with mock.patch.object(photo_service.images, "shown_shape", header), \
+                mock.patch.object(photo_service, "SHAPE_WAIT", 0.05):
+            pages = [threading.Thread(target=lambda path=path: drawn.update({path: photo_service.box_shape(path)}))
+                     for path in photo_paths[:2]]
+            for page in pages:
+                page.start()
+            for page in pages:
+                page.join(5)
+            asleep.set()   # the hung looks end: "not found", and the share's root is not there
+            for look in [thread for thread in threading.enumerate() if thread.name == "ShareLook"]:
+                look.join(5)
+            self.assertEqual([{"size": None, "turn": 1}] * 2, [drawn[path] for path in photo_paths[:2]])
+            self.assertTrue(self.away(), "the late not-found took the share as back")
+            waits, counting = share_waits.counted()
+            with counting:
+                self.assertEqual({"size": None, "turn": 1}, photo_service.box_shape(photo_paths[2]))
+            self.assertEqual([], waits, "the third photo waited on the share")
 
 
 class ASyncThatCannotLookAtAFolder(unittest.TestCase):
@@ -439,7 +552,7 @@ class TheSyncCardOfARootOnAShareAsleep(unittest.TestCase):
 
 class ADriveThatSaysNotFound(unittest.TestCase):
     def test_a_file_on_a_share_is_gone_only_when_the_share_answers_and_on_a_local_drive_when_it_is_not_there(self):
-        """Lifted from test_unreachable_is_not_missing (#566); break: _stat_state not asking _share_answers. A mapped
+        """Lifted from test_unreachable_is_not_missing (#566); break: bounded not asking _share_answers. A mapped
         network drive is a share; a local drive letter that is not connected is a drive gone (#1387)."""
         for path, network, drive_answers, gone in (("Q:\\Pictures\\a.jpg", True, False, False),
                                                    ("Q:\\Pictures\\a.jpg", True, True, True),
@@ -456,7 +569,7 @@ class ADriveThatSaysNotFound(unittest.TestCase):
 class AServerThatSaysNotFoundAtOnce(unittest.TestCase):
     """A server asleep answers WinError 53 at once, not by hanging (#1543): the share is away, not its files unreadable.
     Counted 2026-10-17: 1,309 photos of one live library sit on a UNC root, the shape stood in for here. Break:
-    _stat_state answering CANNOT_READ."""
+    stamp_of answering CANNOT_READ."""
 
     SERVER = "\\\\NAS\\PICTURES"
     PHOTOS = ["\\\\Nas\\Pictures\\p%d.jpg" % n for n in range(4)]
@@ -531,7 +644,7 @@ class AServerThatSaysNotFoundAtOnce(unittest.TestCase):
         """The journaled write (file_changes.write_fields; here a TagTuner face write, face_people.write_tags, the path
         a bulk tag, rename, rotate and delete share): each photo of the server that said not found at once is left out
         with AWAY_WHY after ONE stat for the whole selection -- no ExifTool read, no row touched, no change journaled.
-        Break: _stat_state answering CANNOT_READ for it (the trunk before #1543: each photo stat'ed and read)."""
+        Break: stamp_of answering CANNOT_READ for it (the trunk before #1543: each photo stat'ed and read)."""
         from tagpup.services import face_people, file_changes
         vl = ViewLibrary(self)
         for path in self.PHOTOS:
@@ -641,7 +754,7 @@ class OneWalkAtATime(unittest.TestCase):
 
     def test_a_share_that_answers_the_folder_is_not_there_is_could_not_check_and_no_walk_is_started(self):
         with mock.patch.object(shares, "on_a_network_drive", return_value=True), \
-                mock.patch.object(shares, "bounded", return_value=("ok", False)):
+                mock.patch.object(shares, "bounded", return_value=("error", FileNotFoundError(2, "not found"))):
             found = library_actions.membership_checked(self.vl.library, self.folder)
         self.assertTrue(found["could_not_check"])
         self.assertEqual([], self.walks)

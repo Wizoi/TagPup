@@ -319,8 +319,7 @@ def files_that_fail_to_open(library):
     seventy-five on a network share). A JPEG cut short in the middle of its picture is not found here, and takes a
     write of its tags (DECISIONS 2026-10-15). Each photo's look is given shares.READ_WAIT (shares.bounded): a share that
     does not answer within it is taken as away, and its photos after it are not looked at, at once, rather than each
-    holding the run for as long as Windows waits (#2753; shares.read_bounded, which asks the share again of a late
-    "not found"). A clip (photos.kind 'video') is not looked at: it is no
+    holding the run for as long as Windows waits (#2753; a late "not found" asks the share again, in shares.bounded). A clip (photos.kind 'video') is not looked at: it is no
     picture Pillow identifies, and every one was counted as failing to open. {"count", "unreached": photos whose file could not be looked
     at (a share that did not answer, a lock), not counted, and not the missing ones (`missing_files`'s; a file removed
     while the run reads it is one of them), "files": [(id, path, why)] by path}. Reported, not broken. Nothing is
@@ -329,7 +328,7 @@ def files_that_fail_to_open(library):
         held = inspection.photo_files(conn, "photo")
     failed, unreached = [], 0
     for photo_id, path in held:
-        state, found = shares.read_bounded(path, functools.partial(_fails_to_open, path))
+        state, found = shares.bounded(path, functools.partial(_fails_to_open, path), shares.READ_WAIT)
         if state == "ok":
             if found:
                 failed.append((photo_id, path, found))

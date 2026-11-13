@@ -18,11 +18,16 @@ played): bounded, but by a longer wait, and not one another look waits behind.
 Every look at a photo or a photo's folder outside this module goes through one of them, or is the reader's or writer's
 own, named in the guard's list (tests/test_photo_looks_have_one_owner.py).
 
+A look on a network share that says "not found" asks whether the share answers, in `bounded` itself, whoever made the
+look: Windows says "not found" of every file on a server asleep, at once or late, in the words it uses for a file deleted,
+so a "not found" is a file gone only while its share answers (#2781).
+
 It owns "back" as well as "away": the look that did not answer in time is left running, and when it ends with an answer
 the share is awake -- its mark is cleared at once, whoever waits for it (`wait_back`) is woken, and whoever asked to be
 told (`on_back`) is told, on that thread. No thread of its own, no polling: a share that answered late (1.3 s for a 1.0 s
 moment, 2026-10-27 and 2026-10-28) is back when its answer comes, not when its away window runs out (#2101).
 """
+import errno
 import logging
 import os
 import threading
@@ -52,8 +57,6 @@ _back = {}
 #: {share key: {callback: None}}: told once, when the share answers again (on_back).
 _listeners = {}
 _guard = threading.Lock()
-#: On a ShareLook thread: did its own look learn that the share is away (_share_answers)? Its end is then not "back".
-_looking = threading.local()
 
 
 def share_of(folder):
@@ -123,6 +126,10 @@ def bounded(location, call, seconds, away_seconds=None, waited_behind=True):
     thread of its own, waited for `seconds`. A share already taken as away answers "away" at once, and
     one whose earlier look still waits is waited for as long as any -- only a wait that timed out
     makes it away. A look that timed out is left to end: when it ends with an answer, the share is back (_answered).
+    A `call` that raises "not found" (FileNotFoundError, NotADirectoryError) for a `location` on a network drive asks
+    whether its share answers (_share_answers): one that does not answers "away", in time or late, and the look's end does
+    not take the share as back; one that does answers the "not found" (a file deleted). The one place of that rule, so no
+    caller can forget it (#2781).
     `waited_behind` False: the look is not the share's look under way that the next look waits behind -- a read of a
     file's bytes (read_span), slow by its size and its wait, must not hold every thumbnail's stamp_of behind it, nor
     make the share away by holding them past SHARE_WAIT. Whether this look timed out is its own (`ended`), whoever is
@@ -145,9 +152,12 @@ def bounded(location, call, seconds, away_seconds=None, waited_behind=True):
     box = {}
 
     def look():
-        _looking.learned = False
+        asleep = False
         try:
             box["value"] = call()
+        except (FileNotFoundError, NotADirectoryError) as problem:
+            box["error"] = problem
+            asleep = on_a_network_drive(location) and not _share_answers(location)
         except OSError as problem:
             box["error"] = problem
         except Exception as problem:   # a bug in what was asked is its own message, not a hung thread
@@ -155,12 +165,12 @@ def bounded(location, call, seconds, away_seconds=None, waited_behind=True):
             box["error"] = OSError(str(problem))
         finally:
             with _guard:
-                box["ended"] = True
+                box["ended"], box["asleep"] = True, asleep
                 if _reading.get(share) is thread:
                     del _reading[share]
                 # The share answered: an away taken before or during this look is over, but not one the look itself
-                # learned (a server that said "not found" at once, _share_answers).
-                told = [] if _looking.learned else _answered(share)
+                # learned (a server that said "not found", _share_answers).
+                told = [] if asleep else _answered(share)
             _tell(told, share)
 
     thread = threading.Thread(target=look, name="ShareLook", daemon=True)
@@ -177,9 +187,28 @@ def bounded(location, call, seconds, away_seconds=None, waited_behind=True):
         logger.info("%s did not answer within %s s; its share is taken as away for %s s, or until it answers.",
                     location, seconds, away_seconds)
         return "away", None
+    if box["asleep"]:
+        return "away", None
     if "error" in box:
         return "error", box["error"]
     return "ok", box["value"]
+
+
+def _at_once(call):
+    """bounded's answer of `call()`, made here and not bounded: a look at a local disk, which does not stop answering as a
+    share does, and whose "not found" is a file gone (#1387)."""
+    try:
+        return "ok", call()
+    except OSError as problem:
+        return "error", problem
+
+
+def _look(location, call, seconds, away_seconds=None):
+    """bounded's answer of `call()`: on its thread for a `location` on a network drive (on_a_network_drive), else at
+    once (_at_once). The look of stamp_of, folder_state and listing."""
+    if on_a_network_drive(location):
+        return bounded(location, call, seconds, away_seconds)
+    return _at_once(call)
 
 
 def away_since(share):
@@ -217,7 +246,8 @@ def _share_answers(photo_path):
     alone: a local drive letter that is not connected is a drive gone, and what was on it gone (owner, 2026-10-15: no
     USB drives; #1387). The one place that learns a share is away from a quick "not found": one that does not answer
     is taken as away for AWAY_SECONDS from now, as one that did not answer in time is, so the next look -- at a file
-    (stamp_of) or a folder (folder_state) -- is answered at once without asking it (#1543)."""
+    (stamp_of) or a folder (folder_state) -- is answered at once without asking it (#1543). Asked by bounded alone, of
+    a look that said "not found" (#2781)."""
     root = os.path.splitdrive(photo_path)[0]
     if not root:
         return True
@@ -226,16 +256,16 @@ def _share_answers(photo_path):
     share = share_of(root)
     with _guard:
         _mark(share)   # a look answered from the memo never gets here (bounded), so the window runs from this look
-    _looking.learned = True
     logger.info("%s said it is not there; its share is taken as away for %s s.", root, AWAY_SECONDS)
     return False
 
 
-def _folder_state(folder, on_a_share):
-    """"there", "gone" or "unanswered" (a share's only) of a folder, asked of the disk now."""
+def _is_folder(folder):
+    """"there" when `folder` is a folder now; raises FileNotFoundError when it is not (not there, or not a folder), the
+    "not found" a folder on a share then asks the share by (bounded): os.path.isdir says False, never why."""
     if os.path.isdir(folder):
         return "there"
-    return "unanswered" if on_a_share and not _share_answers(folder) else "gone"
+    raise FileNotFoundError(errno.ENOENT, "not a folder", folder)
 
 
 def folder_state(folder, seconds=None):
@@ -244,10 +274,8 @@ def folder_state(folder, seconds=None):
     "gone" -- a local drive letter that is not connected included. What a sync asks of a root and of a missing row's
     folder: a folder on a share it cannot look at is not a folder gone (#1356); only a share (#1387)."""
     folder = paths.stored(folder)
-    if not on_a_network_drive(folder):
-        return _folder_state(folder, False)
-    state, found = bounded(folder, lambda: _folder_state(folder, True), SHARE_WAIT if seconds is None else seconds)
-    return found if state == "ok" else "unanswered"
+    state, _found = _look(folder, lambda: _is_folder(folder), SHARE_WAIT if seconds is None else seconds)
+    return {"ok": "there", "away": "unanswered"}.get(state, "gone")
 
 
 #: What a folder on a network share that did not answer is refused with: the share is named (its server and share, or
@@ -274,16 +302,9 @@ def folder_refusal(folder, state=None):
     return result
 
 
-def _stat_state(photo_path, on_a_share):
-    """(mtime, size); None for a file that is not there; CANNOT_READ for any other OSError; UNANSWERED for a file "not
-    found" on a network share that does not answer (a server asleep, WinError 53: not known to be gone, and the share
-    is away, not the file unreadable; #1543)."""
-    try:
-        stat = os.stat(photo_path)
-    except (FileNotFoundError, NotADirectoryError):
-        return UNANSWERED if on_a_share and not _share_answers(photo_path) else None
-    except OSError:
-        return CANNOT_READ
+def _stat(photo_path):
+    """(mtime, size) of the file, asked of the disk now; raises the OSError of the look."""
+    stat = os.stat(photo_path)
     return (stat.st_mtime, stat.st_size)
 
 
@@ -293,11 +314,14 @@ def stamp_of(photo_path):
     answer within SHARE_WAIT (or is away). What a page's request asks of one file, without waiting on a share gone
     away, and without taking a file it cannot read for one that is gone. A share found away is answered UNANSWERED at
     once for AWAY_SECONDS and no second thread is started while one still waits, so a page of cards on an away share
-    costs one wait and not one for each."""
-    if not on_a_network_drive(photo_path):
-        return _stat_state(photo_path, False)
-    state, found = bounded(photo_path, lambda: _stat_state(photo_path, True), SHARE_WAIT, AWAY_SECONDS)
-    return found if state == "ok" else UNANSWERED
+    costs one wait and not one for each. A file "not found" on a network share that does not answer (a server asleep,
+    WinError 53) is UNANSWERED: not known to be gone, and the share is away, not the file unreadable (#1543; bounded)."""
+    state, found = _look(photo_path, lambda: _stat(photo_path), SHARE_WAIT, AWAY_SECONDS)
+    if state == "ok":
+        return found
+    if state == "away":
+        return UNANSWERED
+    return None if isinstance(found, (FileNotFoundError, NotADirectoryError)) else CANNOT_READ
 
 
 #: How often a patient wait for a share asks whether it is to stop, in seconds.
@@ -329,16 +353,10 @@ def wait_back(share, seconds, stop=None):
 LISTING_WAIT = 10.0
 
 
-def _list(folder, on_a_share):
-    """The entries of `folder`, read to the end; UNANSWERED for a share that says "not found" and does not answer
-    (_share_answers), as folder_state learns it."""
-    try:
-        with os.scandir(folder) as found:
-            return list(found)
-    except (FileNotFoundError, NotADirectoryError):
-        if on_a_share and not _share_answers(folder):
-            return UNANSWERED
-        raise
+def _list(folder):
+    """The entries of `folder`, read to the end; raises the OSError of the listing."""
+    with os.scandir(folder) as found:
+        return list(found)
 
 
 def listing(folder):
@@ -349,9 +367,7 @@ def listing(folder):
     not looked at, which is not "not there" (#1356). A listing that does not answer leaves its thread to end and takes the
     share as away, so a walk's next folder on it is answered at once (bounded)."""
     folder = paths.stored(folder)
-    if not on_a_network_drive(folder):
-        return _list(folder, False)
-    state, found = bounded(folder, lambda: _list(folder, True), LISTING_WAIT)
+    state, found = _look(folder, lambda: _list(folder), LISTING_WAIT)
     if state == "error":
         raise found
     return found if state == "ok" else UNANSWERED
@@ -384,39 +400,15 @@ class FileChanged(OSError):
     name. Nothing of it is answered; the reader asks for the file again."""
 
 
-def _read_span(path, start, length, stamp, on_a_share=False):
-    """read_span's read, asked of the disk now; UNANSWERED for a file "not found" on a network share that does not
-    answer (a server gone while the open waited, WinError 53: _share_answers, as stamp_of and listing learn it, so the
-    end of a look that waited does not take the share as back). Opened sharing delete as well as read and write, so
-    TagPup's own rename or replace of the file is not refused for the length of the read."""
-    try:
-        handle = lock_owners.opened(path, lock_owners.ALL_SHARING)
-    except (FileNotFoundError, NotADirectoryError):
-        if on_a_share and not _share_answers(path):
-            return UNANSWERED
-        raise
-    with handle:
+def _read_span(path, start, length, stamp):
+    """read_span's read, asked of the disk now. Opened sharing delete as well as read and write, so TagPup's own rename
+    or replace of the file is not refused for the length of the read."""
+    with lock_owners.opened(path, lock_owners.ALL_SHARING) as handle:
         found = os.fstat(handle.fileno())
         if (found.st_mtime, found.st_size) != tuple(stamp):
             raise FileChanged("The file changed since it was looked at.")
         handle.seek(start)
         return handle.read(length)
-
-
-def read_bounded(path, read):
-    """("ok", what `read()` returned) | ("error", the OSError it raised) | ("away", None): `read()` of the file at `path`
-    given READ_WAIT (bounded). A "not found" of a file on a network share asks whether the share answers (_share_answers),
-    as _read_span's does: a server gone while the read waited says "not found", late, and the look's end then does not
-    take the share as back, so the next file is not waited on again. What a run over a library's files reads each one by
-    (tagpup.services.inspect.files_that_fail_to_open, segment_census); why_not_read says why one was not read."""
-    def look():
-        try:
-            return read()
-        except (FileNotFoundError, NotADirectoryError):
-            if on_a_network_drive(path):
-                _share_answers(path)
-            raise
-    return bounded(path, look, READ_WAIT)
 
 
 def read_span(path, start, length, stamp):
@@ -431,8 +423,8 @@ def read_span(path, start, length, stamp):
     request is answered at once. The read on a share is bounded but not waited behind (bounded's `waited_behind`)."""
     if not on_a_network_drive(path):
         return _read_span(path, start, length, stamp)
-    state, found = bounded(path, lambda: _read_span(path, start, length, stamp, True), READ_WAIT, waited_behind=False)
-    if state == "away" or found is UNANSWERED:
+    state, found = bounded(path, lambda: _read_span(path, start, length, stamp), READ_WAIT, waited_behind=False)
+    if state == "away":
         raise Unavailable(SHARE_AWAY_SENTENCE % os.path.splitdrive(paths.stored(path))[0])
     if state == "error":
         raise found
