@@ -53,6 +53,9 @@ the whole-file rewrite (owner, 2026-11-05, Q2). It is opened once, alone, as a p
 (a player, an editor) is refused at once with a sentence (tagpup.core.result.Refused, OPEN_ELSEWHERE; owner,
 2026-11-05, Q7), never waited for. A crash after its record is saved, part-way or after the last byte is settled by its bytes like a photo's
 (held: OLD, TORN, NEW); a torn grown file is put back to its old bytes and size (put_back).
+
+**A clip's packet read** (`packet_held`): the packet a patch would read, read alone and bounded, for a conversion that
+carries it whole into its copy (tagpup.services.convert; owner 2026-11-13, #2938). Nothing is written.
 """
 import base64
 import io
@@ -85,6 +88,10 @@ OPEN_ELSEWHERE = ("it is open in another program (a player, an editor): close it
 
 #: What a file holds against its record (held).
 NEW, OLD, TORN, NEITHER = "new", "old", "torn", "neither"
+
+#: What packet_held answers for a clip holding XMP no patch reads: two XMP boxes, or an item list's XMP_ item that is not
+#: one data atom (clip_patch.xmp_box, clip_patch.packet_of).
+UNREAD = "unread"
 
 
 def _spans(record):
@@ -380,28 +387,58 @@ def patch_clip(path, new_packet, saving, title=None, category=None):
         return tuple(stale)
 
 
+def packet_held(path):
+    """The XMP packet the clip at `path` holds, as a patch reads it (_packet_in), for a conversion to carry whole into
+    its copy (tagpup.services.convert): its bytes; None when it holds no XMP box, or is no MOV/MP4/M4V the walk reads
+    (an old format, .wmv, .mpg or .avi, is containers.Unreadable: taken as holding no packet to carry, so its Convert
+    goes on as before; decided by the main session 2026-11-13, #2938); UNREAD when it holds XMP no patch reads. Read
+    with a plain open, bounded by SECONDS: the boxes' headers and the packet, no other byte; nothing written. Raises
+    Away when its share does not answer, or the OSError of the open or a read."""
+    def read():
+        with open(path, "rb") as handle:
+            layout = _video_of(handle)
+            return None if layout is None else _packet_in(handle, layout)
+    return _bounded(path, read)
+
+
+def _video_of(handle):
+    """The layout of the clip open in `handle` (containers.Video), or None when it is no MOV/MP4/M4V. Raises the OSError
+    of a read that failed on the way (a share gone part-way through the walk), which is "could not be read", never "not
+    a patch's" (#2540)."""
+    layout = containers.read(handle)
+    if isinstance(layout, containers.Unreadable) and layout.error is not None:
+        raise layout.error
+    return layout if isinstance(layout, containers.Video) else None
+
+
+def _packet_in(handle, layout):
+    """The packet the one XMP box of the clip open in `handle`, laid out as `layout`, holds: its bytes, None for no XMP
+    box, UNREAD for XMP no patch reads (clip_patch.xmp_box, clip_patch.packet_of)."""
+    if not layout.xmp:
+        return None
+    box = clip_patch.xmp_box(layout)
+    if box is None:
+        return UNREAD
+    packet = clip_patch.packet_of(layout, _read_at(handle, box.payload, box.end - box.payload))
+    return UNREAD if packet is None else packet
+
+
 def _packet_of(handle, title=None, category=None):
     """(the clip's layout, the packet its one XMP box holds, None for none, the freed title boxes an undo giving `title`
     back reads: ((box, its bytes after its header), ...), clip_patch.freed_titles, the boxes a write of `category`
     reads: ((box, its bytes, header and all), ...), clip_patch.xtra_boxes) of the open file, or None when it is
-    not a patch's: no MOV/MP4/M4V, or no XMP box a patch reads (clip_patch.xmp_box). Raises the OSError of a read that
-    failed on the way (a share gone part-way through the walk), which is "could not be read", never "not a patch's"
-    (#2540). Reads the boxes' headers, the packet and those boxes, no other byte."""
-    layout = containers.read(handle)
-    if isinstance(layout, containers.Unreadable) and layout.error is not None:
-        raise layout.error
-    if not isinstance(layout, containers.Video):
+    not a patch's: no MOV/MP4/M4V, or no XMP box a patch reads (_packet_in). Raises the OSError of a read that
+    failed on the way (_video_of). Reads the boxes' headers, the packet and those boxes, no other byte."""
+    layout = _video_of(handle)
+    if layout is None:
+        return None
+    packet = _packet_in(handle, layout)
+    if packet is UNREAD:
         return None
     freed = tuple((box, _read_at(handle, box.payload, box.end - box.payload))
                   for box in (clip_patch.freed_titles(layout) if title else ()))
     xtra_read = tuple((box, _read_at(handle, box.offset, box.size)) for box in clip_patch.xtra_boxes(layout, category))
-    if not layout.xmp:
-        return layout, None, freed, xtra_read
-    box = clip_patch.xmp_box(layout)
-    if box is None:
-        return None
-    packet = clip_patch.packet_of(layout, _read_at(handle, box.payload, box.end - box.payload))
-    return None if packet is None else (layout, packet, freed, xtra_read)
+    return layout, packet, freed, xtra_read
 
 
 # --- the open file, shared by both patches ----------------------------------------------------------------------------

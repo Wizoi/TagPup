@@ -18,8 +18,9 @@ months after the capture, and carried into the MP4's mvhd it would be read as a 
 undated (DECISIONS 2026-11-09, item 6); cleared, the MP4's QuickTime dates are all zero (measured on a generated .wmv
 carrying one, 2026-11-12). The Date Taken the library reads is carried by the caller as well, into the copy's XMP
 (tagpup.services.convert: an XMP date, or a .mov's Apple CreationDate, an MP4 does not keep). And the index at the front (`+faststart`, so the player starts before the whole file has come over a
-share). The clip's XMP is not carried by ffmpeg: its tags, title
-and kept name are written into the MP4 afterwards by the journaled write of a clip (tagpup.services.convert). No
+share). The clip's XMP is not carried by ffmpeg: its caller puts the original's packet whole into the temp before it
+is verified (tagpup.services.convert, #2938), and its tags, title and kept name are written over it into the MP4
+afterwards by the journaled write of a clip. No
 caption is carried: none of the 2,833 clips of photo_index holds one (its Description blank in every row, counted
 2026-11-12), and a clip's journaled write names none (fields.CLIP_WRITES). An MP4 made
 so takes that XMP by a patch in place: it holds no XMP box, its moov before mdat, so the packet is appended at its end in a uuid box (tagpup.files.clip_patch, case 4; measured on a
