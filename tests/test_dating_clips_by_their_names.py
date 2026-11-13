@@ -28,7 +28,8 @@ import test_a_clip_dated_by_its_name as by_name  # noqa: E402
 import test_a_clip_dated_through_the_journal as dated  # noqa: E402
 import test_a_clip_tagged_through_the_journal as tagged  # noqa: E402
 
-from tagpup.core.result import Result  # noqa: E402
+from tagpup.core.result import Refused, Result  # noqa: E402
+from tagpup.files import images, in_place  # noqa: E402
 from tagpup.files.exiftool_session import ExifToolSession  # noqa: E402
 from tagpup.services import tagging  # noqa: E402
 
@@ -169,6 +170,35 @@ class DatingClipsByTheirNames(tagged.ALibraryHoldingAClip):
         self.assertEqual(([self.clip, self.photo, self.loose], [self.clip], 1, ["2019-07"]), self.library_view())
         self.assertIsNone(self.xmp_date(self.clip_path), "the file was not written")
         self.assertEqual([], self.changes())
+
+    def test_a_clip_the_writer_refuses_is_named_by_its_id_and_sentence_and_by_its_real_cause(self):
+        refusals = (images.CLIP_NOT_PATCHED, in_place.OPEN_ELSEWHERE)
+        for sentence in refusals:
+            with self.subTest(sentence=sentence), mock.patch.object(in_place, "patch_clip", side_effect=Refused(sentence)):
+                code, said = self.run_it("--apply")
+                self.assertEqual(1, code, said)
+                cause = (1, 0) if sentence == images.CLIP_NOT_PATCHED else (0, 1)
+                self.assertIn("Refused by the writer: 1 (%d its XMP cannot be patched where it is, %d open in another "
+                              "program)." % cause, said)
+                self.assertIn("Clip %d: %s" % (self.clip, sentence), said)
+                self.assertNotIn(self.clip_path, said, "an id and a sentence, never a path")
+
+    def test_a_ctrl_c_after_the_write_returned_does_not_say_the_write_was_stopped(self):
+        listed, calls = tagging.clips_dated_by_name, []
+
+        def interrupted_in_the_recount(library):
+            calls.append(library)
+            if len(calls) == 2:
+                raise KeyboardInterrupt
+            return listed(library)
+
+        with mock.patch.object(tagging, "clips_dated_by_name", side_effect=interrupted_in_the_recount):
+            code, said = self.run_it("--apply")
+        self.assertEqual(130, code)
+        self.assertIn("the write had finished (1 clip(s) written", said)
+        self.assertNotIn("stopped:", said)
+        self.assertNotIn("stopped again", said)
+        self.assertEqual(by_name.NAMED, self.xmp_date(self.clip_path), "and it had been written")
 
     def test_apply_is_refused_while_an_app_runs(self):
         self.running.return_value = [{"pid": 4242}]

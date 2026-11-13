@@ -6,7 +6,7 @@ from tagpup.core import dates, fields, paths, suggesting, validation, vocabulary
 from tagpup.core.result import CHANGED_ON_DISK, CHANGED_ON_DISK_SENTENCE, UNREADABLE_BASE_SENTENCE, Result
 # Looked up at call time, as exiftool_session.ExifToolSession, so a test standing in for
 # ExifTool there reaches this too.
-from tagpup.files import exiftool_session, field_values, images, metadata, names
+from tagpup.files import exiftool_session, field_values, images, in_place, metadata, names
 from tagpup.services import file_changes, file_only, libraries
 from tagpup.services import photos as photo_actions
 from tagpup.services import roots as roots_service
@@ -209,7 +209,7 @@ DATED_SINCE = "dated since it was listed"
 
 
 def clips_dated_by_name(library):
-    """([(path, date)] of the clips whose file holds no date of its own (its QuickTime dates zeros, no XMP date) and
+    """([(id, path, date)] of the clips whose file holds no date of its own (its QuickTime dates zeros, no XMP date) and
     which the library dates by the date in their file name (dates.date_taken given the path: dates.name_date), by id;
     [id] of those whose name holds none either, left undated for the owner), read from the index alone, no file. The
     library's own reading of each row, so a clip it shows dated by its name is the one listed, and one dated in its file
@@ -222,7 +222,7 @@ def clips_dated_by_name(library):
                 continue
             named = dates.date_taken(raw, path)
             if named:
-                to_date.append((path, named))
+                to_date.append((photo_id, path, named))
             else:
                 undated.append(photo_id)
     finally:
@@ -230,7 +230,7 @@ def clips_dated_by_name(library):
     return to_date, undated
 
 
-def date_clips_by_name(library, exiftool_path, apply=False, on_planned=None, on_chunk=None):
+def date_clips_by_name(library, exiftool_path, apply=False, on_planned=None, on_chunk=None, on_written=None):
     """The one-off (scripts/date_undated_clips.py): write into each clip clips_dated_by_name lists the Date Taken the
     library already reads from its name, into its XMP dates as the panel's save of a clip's date writes them
     (fields.date_taken_fields, clip=True, through fields.held_dates), so the file says what the library shows (owner,
@@ -242,11 +242,14 @@ def date_clips_by_name(library, exiftool_path, apply=False, on_planned=None, on_
     as the caption sweep is, stopping at the first error (a clip its writer refused, open in a player, is its own and
     does not stop it). A clip whose XMP holds a date when it is read is left alone (DATED_SINCE): never written over.
 
+    `on_written`, called once the write has returned (its change recorded): what follows counts and nothing more.
+
     details["undated"]: the ids of the clips whose name holds no date either, left undated for the owner.
     details["counts"]: `listed` the clips planned from the index; `wrote` the files the journal holds done for the change
     (file_changes.files_done: what it wrote, not what it tried); why each other was left alone: DATED_SINCE,
     `unreadable`, `away` (on a share that did not answer); `refused` (its writer refused it before a byte was written),
-    `conflicts`, `failed`; `redated`, the clip rows dated again from their rows alone (photos.redate_clips) before any
+    `conflicts`, `failed` (`not_patched` and `open_elsewhere` name two causes of `refused`; the id and sentence of each
+    error is in details["failures"]); `redated`, the clip rows dated again from their rows alone (photos.redate_clips) before any
     file is read, counted from what the rows hold afterwards (a dry run: how many it would date again, nothing
     written); and `left`, the clips still to date, counted again from the index after the write.
 
@@ -263,11 +266,11 @@ def date_clips_by_name(library, exiftool_path, apply=False, on_planned=None, on_
         finally:
             conn.close()
     to_date, undated = clips_dated_by_name(library)
-    found = [path for path, _date in to_date]
+    found = [path for _id, path, _date in to_date]
     if not apply or not found:
         result = Result(attempted=len(found), details={"change": None, "conflicts": [], "written": {}})
     else:
-        named = {paths.key(path): date for path, date in to_date}
+        named = {paths.key(path): date for _id, path, date in to_date}
 
         def plan_one(path, held):
             if dates.date_taken(held, None):
@@ -280,6 +283,8 @@ def date_clips_by_name(library, exiftool_path, apply=False, on_planned=None, on_
                                            plan_one, summary={"photos": len(found)}, unreadable="skip", uncapped=True,
                                            patient=True, stop_at_first_error=True, on_planned=on_planned,
                                            on_chunk=on_chunk)
+    if on_written:
+        on_written()    # the write is finished and recorded; what follows only counts
     away = {paths.key(path) for path in result.details.get("not_answered", [])}
     change = result.details.get("change")
     counts = {"listed": len(found), "redated": redated,
@@ -287,9 +292,16 @@ def date_clips_by_name(library, exiftool_path, apply=False, on_planned=None, on_
               DATED_SINCE: 0, "unreadable": 0, "away": 0}
     for path, why in result.skipped:
         counts["away" if paths.key(path) in away else DATED_SINCE if why == DATED_SINCE else "unreadable"] += 1
-    refused = len(result.details.get(file_changes.WRITER_REFUSED, []))
+    id_of = {paths.key(path): photo_id for photo_id, path, _date in to_date}
+    sentence_of = {paths.key(path): why for path, why in result.errors}
+    refused_why = [sentence_of.get(paths.key(path)) for path in result.details.get(file_changes.WRITER_REFUSED, [])]
+    refused = len(refused_why)
     conflicts = len(result.details.get("conflicts", []))
-    counts.update(refused=refused, conflicts=conflicts, failed=len(result.errors) - refused - conflicts,
+    # What the owner needs to find each one: the clip's id and the writer's sentence, never its path.
+    result.details["failures"] = [(id_of.get(paths.key(path)), why) for path, why in result.errors]
+    counts.update(refused=refused, not_patched=refused_why.count(images.CLIP_NOT_PATCHED),
+                  open_elsewhere=refused_why.count(in_place.OPEN_ELSEWHERE), conflicts=conflicts,
+                  failed=len(result.errors) - refused - conflicts,
                   left=len(clips_dated_by_name(library)[0]) if apply else len(found))
     result.details.update(counts=counts, undated=undated, dry_run=not apply)
     return result

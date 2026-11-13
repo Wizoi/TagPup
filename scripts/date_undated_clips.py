@@ -50,9 +50,14 @@ class Progress:
         self.out = out
         self.change = None
         self.presses = 0
+        self.written_done = False
 
     def planned(self, change_id):
         self.change = change_id
+
+    def finished_writing(self):
+        """The write returned and is recorded: only the recount of what is left remains."""
+        self.written_done = True
 
     def chunk(self, done, of):
         self.out("%d of %d clips carried out." % (done, of))
@@ -70,7 +75,7 @@ class Progress:
         """Ctrl+C: say so before the read back of the clips written since the last chunk; the second press is the
         read back's end."""
         self.presses += 1
-        if self.presses == 1:
+        if self.presses == 1 and not self.written_done:
             written = self.written()
             self.out("stopping: reading back the clips written (%s recorded so far), press Ctrl+C again only if you must."
                      % ("some" if written is None else written))
@@ -85,7 +90,10 @@ def say(line):
 def stopped_said(name, stopped, progress, out):
     """What a Ctrl+C left, said as the caption sweep says it."""
     change = getattr(stopped, "change", None)
-    if change is None and progress.change is None:
+    if progress.written_done:
+        out("%s: the write had finished (%s clip(s) written, recorded as change %s in History, which can be undone); "
+            "stopped only before counting what is left. A dry run counts it." % (name, progress.written(), progress.change))
+    elif change is None and progress.change is None:
         out("%s: stopped before this run planned or wrote anything. Its --apply first finishes a change an earlier run "
             "left half done, if there is one: one it was finishing as it stopped is finished by the next run." % name)
     elif change is None:
@@ -121,10 +129,11 @@ def run(db_path, apply, out=say):
             taken = snapshots.before_a_long_write(library)
             out("Snapshot of the library: %s." % (", ".join(taken.details["taken"]) or
                                                   "today's stands (%s)" % taken.details.get("today")))
-            # Opened as the apps open it: a change an earlier run left half done is finished first.
+            # Opened as the apps open it. A change an earlier run left half done is finished inside the write
+            # (file_changes.write_fields), which --apply alone reaches.
             exiftool = runtime.exiftool(library)
         result = tagging.date_clips_by_name(library, exiftool, apply=apply, on_planned=progress.planned,
-                                            on_chunk=progress.chunk)
+                                            on_chunk=progress.chunk, on_written=progress.finished_writing)
     except KeyboardInterrupt as stopped:
         stopped_said(name, stopped, progress, out)
         return 130
@@ -143,10 +152,13 @@ def run(db_path, apply, out=say):
         return 0
     out("Re-dated %d clip row(s) in the library from their names, before any file was written." % counts["redated"])
     out("Dated: wrote %d clip file(s). Left alone: %d %s, %d unreadable, %d away (their network share did not answer). "
-        "Refused by the writer (open in another program): %d. Conflicts: %d (changed since they were read; not "
-        "written). Failed: %d. Left to date: %d."
+        "Refused by the writer: %d (%d its XMP cannot be patched where it is, %d open in another program). Conflicts: "
+        "%d (changed since they were read; not written). Failed: %d. Left to date: %d."
         % (counts["wrote"], counts[tagging.DATED_SINCE], tagging.DATED_SINCE, counts["unreadable"], counts["away"],
-           counts["refused"], counts["conflicts"], counts["failed"], counts["left"]))
+           counts["refused"], counts["not_patched"], counts["open_elsewhere"], counts["conflicts"], counts["failed"],
+           counts["left"]))
+    for photo_id, why in result.details["failures"]:
+        out("Clip %s: %s" % (photo_id, why))
     stopped = result.details.get("stopped")
     if stopped:
         out("Stopped after %d of %d clips: run this again to continue." % (stopped["after"], stopped["of"]))
