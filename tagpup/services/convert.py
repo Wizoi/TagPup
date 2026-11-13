@@ -123,8 +123,12 @@ NOT_CARRIED = ("its tags, title or kept name could not be written into its conve
 ROW_THERE = "a row of the library is at its converted name already; both files are kept as they are"
 #: Why an original is still there when its share did not answer (ORIGINAL_KEPT, NOT_DELETED).
 SHARE_AWAY = "its share did not answer"
+#: Why an original is still there when it could not be looked at: neither there nor gone (ORIGINAL_KEPT).
+NOT_LOOKED_AT = "it could not be looked at just now"
 ORIGINAL_KEPT = ("it was converted, but its original could not be deleted (%s); the original and its verified copy "
                  "are both kept, and the original is deleted when the change is settled (the next start)")
+ORIGINAL_CHANGED = ("it was converted, but its original changed meanwhile (another program wrote it), so it is not "
+                    "deleted: it and its verified copy are both kept, and the next sync finds it as a clip of its own")
 CHANGED_SINCE = "it changed since it was converted: it holds neither what the conversion found nor its converted copy"
 PLAYS_ALREADY = "it plays as it is: it is made smaller (Make smaller), not converted; nothing was converted"
 DOES_NOT_PLAY = "it does not play as it is: it is converted (Convert), not made smaller; nothing was converted"
@@ -398,7 +402,9 @@ def settle_change(library, change, exiftool_path):
         if row.state == "planned":
             file_journal.withdraw(library.path, [row.id])
         elif row.state == "writing":
-            if any(shares.stamp_of(path) is shares.UNANSWERED for path in (row.path, row.new_path or row.path)):
+            # Neither there nor gone (a share asleep, or one whose connection dropped): waited for, never decided on.
+            if any(shares.stamp_of(path) in (shares.UNANSWERED, shares.CANNOT_READ)
+                   for path in (row.path, row.new_path or row.path)):
                 settled = False
                 continue
             settled = _onward(library, exiftool_path, row, False, Result()) and settled
@@ -466,13 +472,16 @@ def _onward(library, exiftool_path, row, forward, result, problem=None):
         return False
     _reached("carried")
     if renamed:
-        kept = _original_kept(source, row.before)
+        kept, again = _original_kept(source, row.before)
         if kept:
-            _note(library, row, ORIGINAL_KEPT % kept)
             result.changed = 1
-            result.details["original_kept"] = ORIGINAL_KEPT % kept
-            result.refuse(ORIGINAL_KEPT % kept)
-            return False
+            result.details["original_kept"] = kept
+            result.refuse(kept)
+            if again:
+                _note(library, row, kept)
+                return False
+            file_journal.mark(library.path, [row.id], "done", kept)
+            return True
         _reached("original deleted")
     file_journal.mark(library.path, [row.id], "done")
     result.changed = 1
@@ -555,17 +564,27 @@ def _note(library, row, why):
 
 
 def _original_kept(source, before):
-    """Why the original at `source` is still there once its copy is in place, a phrase; or None: deleted for good now
-    (_removed_for_good), not there to delete (deleted already: a settle after its delete), or not the file the conversion
-    found (`before`, its fingerprint: never deleted). Looked at first by the share's bounded look (shares.stamp_of): a
-    share asleep says "not found" at once, the words of a file deleted (#1543), and is said, never taken as the original
-    gone (#2890)."""
+    """Why the original at `source` is still there once its copy is in place, the sentence the owner is told, and whether
+    a settle deletes it later (True: the file stays `writing`); (None, False) when it was deleted for good now
+    (_removed_for_good) or is not there to delete (deleted already: a settle after its delete). Every other answer is
+    said, never done in silence:
+    - ORIGINAL_KEPT, for the next settle: its share did not answer, or says "not found" at once as one asleep does
+      (shares.stamp_of's UNANSWERED, #1543, #2890); it could not be looked at (CANNOT_READ: a share whose connection
+      dropped, WinError 64, or a look failing after the share answered); its delete failed.
+    - ORIGINAL_CHANGED, finished: it is not the file the conversion found (`before`, its fingerprint), so it is never
+      deleted."""
     there = shares.stamp_of(source)
+    if there is None:
+        return None, False
     if there is shares.UNANSWERED:
-        return SHARE_AWAY
-    if there is None or file_changes.fingerprint(source) != before:
-        return None
-    return _removed_for_good(source)
+        return ORIGINAL_KEPT % SHARE_AWAY, True
+    found = None if there is shares.CANNOT_READ else file_changes.fingerprint(source)
+    if found is None:
+        return ORIGINAL_KEPT % NOT_LOOKED_AT, True
+    if found != before:
+        return ORIGINAL_CHANGED, False
+    why = _removed_for_good(source)
+    return (None, False) if why is None else (ORIGINAL_KEPT % why, True)
 
 
 def _removed_for_good(source):

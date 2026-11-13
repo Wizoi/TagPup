@@ -104,6 +104,12 @@ class AnOldClipInTheLibrary(ALibraryHoldingAClip):
             "SELECT state FROM change_files WHERE photo_id = ? AND change_id IN (SELECT id FROM changes WHERE operation = ?)",
             photo_id, file_journal.CONVERT)]
 
+    def convert_notes(self, photo_id):
+        """The notes of the photo's file in the conversions of the journal."""
+        return [note for note, in self.vl.rows(
+            "SELECT note FROM change_files WHERE photo_id = ? AND change_id IN (SELECT id FROM changes WHERE operation = ?)",
+            photo_id, file_journal.CONVERT)]
+
     def ask(self, photo_id, mode, path, **changed):
         """The panel's button `mode` on the clip `photo_id` at `path` (POST /api/clip/convert), with its stamp as the
         page's record has it (`size`: that many bytes off)."""
@@ -310,10 +316,13 @@ class CutShort(AnOldClipInTheLibrary):
         self.assert_converted(self.source, self.photo_id, TITLE)
 
     @contextlib.contextmanager
-    def on_a_share_that_falls_asleep_at(self, step):
+    def on_a_share_that_falls_asleep_at(self, step, dropped=False):
         """The clip's folder on a share (a stand-in, as test_a_share_asleep's) that falls asleep at the conversion's
         `step` (convert.STEPS): from then, a look in the folder says "not found" at once, the words Windows has for a file
-        deleted (WinError 53, #1543), and the share's root is not there. Awake again after the block, nothing remembered."""
+        deleted (WinError 53, #1543), and the share's root is not there. `dropped`, a share whose connection drops
+        instead: a look says "the specified network name is no longer available" (WinError 64, which Python raises as a
+        plain OSError, errno 22). Awake again after the block, nothing remembered. Yields the Event that is set while
+        it sleeps."""
         under, root = os.path.normcase(self.folder), os.path.normcase(os.path.splitdrive(self.folder)[0] + os.sep)
         asleep, real_stat, real_exists = threading.Event(), os.stat, os.path.exists
         shares.forget()
@@ -321,16 +330,18 @@ class CutShort(AnOldClipInTheLibrary):
 
         def stat(path, *args, **kwargs):
             if asleep.is_set() and os.path.normcase(str(path)).startswith(under):
+                if dropped:
+                    raise OSError(22, "The specified network name is no longer available", str(path), 64)
                 raise FileNotFoundError(2, "The network path was not found")
             return real_stat(path, *args, **kwargs)
 
         def exists(path):
-            return not (asleep.is_set() and os.path.normcase(str(path)) == root) and real_exists(path)
+            return not (asleep.is_set() and not dropped and os.path.normcase(str(path)) == root) and real_exists(path)
         with mock.patch.object(shares, "on_a_network_drive", lambda path: os.path.normcase(str(path)).startswith(under)), \
                 mock.patch.object(os, "stat", stat), mock.patch.object(os.path, "exists", exists), \
                 mock.patch.object(convert, "_reached", side_effect=lambda reached: reached == step and asleep.set()):
             try:
-                yield
+                yield asleep
             finally:
                 asleep.clear()
         shares.forget()
@@ -357,12 +368,48 @@ class CutShort(AnOldClipInTheLibrary):
         self.assertEqual((1, kept, kept), (result.changed, result.details.get("original_kept"), result.message()))
         self.assertEqual(self.before, self.read_bytes(self.source), "the original kept")
         self.assertEqual(["writing"], self.converted_states(self.photo_id), "left for the next settle")
-        self.assertEqual([kept], [note for note, in self.vl.rows(
-            "SELECT note FROM change_files WHERE photo_id = ? AND change_id IN (SELECT id FROM changes WHERE operation = ?)",
-            self.photo_id, file_journal.CONVERT)], "the original kept, noted")
+        self.assertEqual([kept], self.convert_notes(self.photo_id), "the original kept, noted")
         file_changes.settle(self.vl.library, EXIFTOOL)
         self.assertEqual(["done"], self.converted_states(self.photo_id))
         self.assert_converted(self.source, self.photo_id, TITLE)
+
+    def test_its_share_dropping_as_its_original_is_deleted_keeps_both_says_so_and_a_settle_waits_for_it(self):
+        # The share's connection drops once the copy is carried (WinError 64): the look at the original says neither
+        # "there" nor "not found". Both files kept, said and noted, the file left `writing`; a settle while it is still
+        # down leaves it so (never a conflict); back, the next settle deletes the original. Was: the drop read as an
+        # original changed since, the conversion marked done in silence, the original beside its copy.
+        with self.on_a_share_that_falls_asleep_at("carried", dropped=True) as down:
+            result = self.convert(self.source)
+            self.assertEqual(["writing"], self.converted_states(self.photo_id), "left for the next settle")
+            kept = convert.ORIGINAL_KEPT % convert.NOT_LOOKED_AT
+            self.assertEqual((1, kept, kept), (result.changed, result.details.get("original_kept"), result.message()))
+            self.assertEqual([kept], self.convert_notes(self.photo_id), "the original kept, noted")
+            down.set()
+            file_changes.settle(self.vl.library, EXIFTOOL)
+            self.assertEqual(["writing"], self.converted_states(self.photo_id), "a settle while it is down waits")
+        self.assertEqual(self.before, self.read_bytes(self.source), "the original kept")
+        file_changes.settle(self.vl.library, EXIFTOOL)
+        self.assertEqual(["done"], self.converted_states(self.photo_id))
+        self.assert_converted(self.source, self.photo_id, TITLE)
+
+    def test_its_original_changed_by_another_program_after_its_copy_is_carried_is_kept_said_and_the_conversion_done(self):
+        # Another program writes the original between the carry and its delete: never deleted (it is not the file the
+        # conversion found), the conversion done, and the owner told both are kept. Was: done in silence, the changed
+        # original beside its copy for the next sync to find.
+        def rewritten(step):
+            if step == "carried":
+                with open(self.source, "ab") as handle:
+                    handle.write(b"another program's bytes")
+        with mock.patch.object(convert, "_reached", side_effect=rewritten):
+            result = self.convert(self.source)
+        self.assertFalse(result.ok, "the original kept is said, never in silence")
+        said = convert.ORIGINAL_CHANGED
+        self.assertEqual((1, said, said), (result.changed, result.details.get("original_kept"), result.message()))
+        self.assertEqual(["done"], self.converted_states(self.photo_id), "finished: no settle would ever delete it")
+        self.assertEqual([said], self.convert_notes(self.photo_id), "noted in its change")
+        self.assertTrue(self.read_bytes(self.source).endswith(b"another program's bytes"), "the changed original kept")
+        target = clip_convert.target_of(self.source)
+        self.assertEqual(paths.key(target), paths.key(self.row_of(self.photo_id)[0]), "the row at the copy")
 
     def test_its_original_deleted_by_another_program_while_its_share_answers_is_taken_as_gone(self):
         # The same "not found" of the original once the copy is carried, while the share answers: it is gone, the
