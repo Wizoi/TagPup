@@ -516,6 +516,26 @@ class Refused(AnOldClipInTheLibrary):
         self.assertEqual(before, self.read_bytes(source), "the original kept: its copy would take its name")
         self.assertEqual([], self.leftovers())
 
+    def test_a_clip_another_program_writes_while_it_is_read_is_refused_before_anything_is_planned(self):
+        # A player's or an editor's save lands while the conversion reads the clip (ExifTool, its XMP, ffprobe: seconds),
+        # before it plans: the clip is not the one it read, so nothing is planned, converted or deleted.
+        streams, written = video_frames.streams, []
+
+        def written_meanwhile(tools, path, *args, **kwargs):
+            if not written:
+                written.append(path)
+                with open(self.source, "ab") as handle:
+                    handle.write(b"another program's bytes")
+            return streams(tools, path, *args, **kwargs)
+
+        with mock.patch.object(video_frames, "streams", side_effect=written_meanwhile):
+            result = self.convert(self.source)
+        self.assertEqual((0, convert.CHANGED), (result.changed, result.message()))
+        self.assertEqual(self.before + b"another program's bytes", self.read_bytes(self.source), "the clip as it is")
+        self.assertEqual([], [op for _id, op, _status in self.changes() if op == file_journal.CONVERT], "nothing planned")
+        self.assertEqual([], self.leftovers())
+        self.assertEqual(paths.key(self.source), paths.key(self.row_of(self.photo_id)[0]), "the row where it was")
+
     def test_an_mp4_of_its_own_name_changed_while_it_was_converted_is_never_deleted(self):
         source, _photo_id = self.clip("dock.mp4")
 
