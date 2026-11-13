@@ -334,13 +334,14 @@ _FILES = {
             "test_library "
             "test_library_registry_race test_local_server_socket test_log_runs test_logs "
             "test_mcp_config_resolves "
-            "test_patch_tool test_photo_open test_recurring_jobs test_result "
+            "test_code_tool test_patch_tool test_photo_open test_recurring_jobs test_result "
             "test_every_route_answers_this_pc_or_says_why test_roots_ingress_keys_cover_the_routes test_roots_map "
             "test_run_tests_keeps_failures test_server_startup test_serving_photos test_suggest_thread_keeps_its_library test_tagpup_routes "
             "test_web_app undo-from-reply validation"
         ),
         "guard": (
-            "context-budget dom-contract merge-budget no-heredoc-escapes page-modules page-shape plan-first test_config_single_owner test_database_axis_guard test_fixtures_make_photo_rows_like_the_indexer "
+            "context-budget dom-contract merge-budget no-heredoc-escapes page-modules page-shape plan-first "
+            "test_config_single_owner test_database_axis_guard test_fixtures_make_photo_rows_like_the_indexer "
             "test_layers test_lint "
             "test_page_module_names test_processes_single_owner test_rules_have_one_owner test_sandbox_has_all_the_code "
             "test_spec_accuracy test_sync_entry_points "
