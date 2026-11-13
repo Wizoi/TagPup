@@ -405,16 +405,19 @@ def packet_held(path):
 
 def packet_given(scratch, packet):
     """Put `packet`, the XMP packet a clip held (packet_held, its pair), whole into `scratch`, the copy of it a conversion
-    made and has not recorded (tagpup.services.convert), by a patch of its XMP in place (in_place.patch_clip): True once
-    the copy holds it, False when the copy cannot take it (clip_patch places it nowhere), nothing written. Its `saving`
-    is nothing, the one patch saved by no journal: sound only because a scratch nothing records yet is settled by its
-    removal (tagpup.services.file_changes.removed_scratch, the scratch rule), never by its bytes, so a patch of it cut
-    short needs no record to be put back. Raises NotAnswered when its share does not answer, Refused when another
-    program holds it open, the OSError of the open or a write."""
+    made and has not recorded (tagpup.services.convert), by a patch of its XMP in place (in_place.patch_clip), appended
+    in a uuid box at its end: ffmpeg makes it with one moov, at the front, and one sized mdat (clip_convert), which a
+    patch always places. Its `saving` is nothing, the one patch saved by no journal: sound only because a scratch
+    nothing records yet is settled by its removal (tagpup.services.file_changes.removed_scratch, the scratch rule),
+    never by its bytes, so a patch of it cut short needs no record to be put back. Raises NotAnswered when its share
+    does not answer, Refused when another program holds it open or, as any clip's write, when the patch cannot place it
+    (images.CLIP_NOT_PATCHED, nothing written), the OSError of the open or a write."""
     try:
-        return in_place.patch_clip(scratch, lambda _old: (packet, ()), lambda _record, _before: None) is not None
+        stale = in_place.patch_clip(scratch, lambda _old: (packet, ()), lambda _record, _before: None)
     except in_place.Away:
         raise NotAnswered("its folder did not answer the patch of its XMP in %d s" % in_place.SECONDS) from None
+    if stale is None:
+        raise Refused(images.CLIP_NOT_PATCHED)
 
 
 def written_once_more(et, photo_path, values, again, **options):

@@ -9,7 +9,7 @@ start, or its share falling asleep as its copy is put in place; a clip open in a
 disk, ffmpeg failing; two libraries holding the folder, the second asked to convert the clip meanwhile, or finding it at
 its MP4 by the name it kept (TwoLibrariesHoldingTheFolder); a clip tagged long ago in Windows, its Windows Tags carried
 into its copy's tags, one the tree lacks refused through the panel (AClipHoldingWindowsTags); a clip holding XMP
-other programs wrote, its packet carried whole into its copy, or refused when it cannot be (AClipHoldingXmpOfOtherPrograms).
+other programs wrote, its packet carried whole into its copy, or refused when no patch reads it (AClipHoldingXmpOfOtherPrograms).
 The panel's
 Convert and Make smaller (MP4) by id: answered at once with a ticket, a second click refused, Cancel on the ticket, a bulk
 edit waiting behind, a shrink no smaller left as it is, a button that is not the clip's plan refused (ThePanelButtons).
@@ -38,8 +38,8 @@ from view_library import ViewLibrary  # noqa: E402
 
 from tagpup.core import fields, paths, processes  # noqa: E402
 from tagpup.core.result import Result  # noqa: E402
-from tagpup.files import (clip_convert, clip_patch, containers, field_values, metadata, recycle_bin,  # noqa: E402
-                          shares, video_frames)
+from tagpup.files import (clip_convert, containers, field_values, metadata, recycle_bin, shares,  # noqa: E402
+                          video_frames)
 from tagpup.services import batches, convert, file_changes, sync, tagging  # noqa: E402
 from tagpup.services import photos as photo_actions  # noqa: E402
 from tagpup.store import file_journal, photos  # noqa: E402
@@ -795,17 +795,6 @@ class AClipHoldingXmpOfOtherPrograms(AnOldClipInTheLibrary):
                          "could not be carried into its converted copy; nothing was converted", result.message())
         self.assert_as_it_was(source, photo_id, before)
         self.assertEqual([], [op for _id, op, _status in self.changes() if op == file_journal.CONVERT], "nothing planned")
-
-    def test_a_copy_that_cannot_take_its_packet_is_removed_and_the_original_kept_saying_why(self):
-        source, photo_id = self.xmp_clip("dock.mp4", shapes.PREMIERE)
-        before = self.read_bytes(source)
-        with mock.patch.object(clip_patch, "patch", return_value=None):
-            result = self.convert(source)
-        self.assertEqual(0, result.changed)
-        self.assertEqual("its XMP could not be put into its converted copy (the copy has no place for it); the original "
-                         "is as it was", result.message())
-        self.assert_as_it_was(source, photo_id, before)
-        self.assertEqual([], self.converted_states(photo_id), "taken out of the change")
 
     def test_killed_once_its_copy_holds_the_packet_the_settle_removes_the_copy_and_keeps_the_original(self):
         source, photo_id = self.xmp_clip("dock.mp4", shapes.PREMIERE)

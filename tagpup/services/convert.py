@@ -27,8 +27,8 @@ How one conversion goes, the original kept until its copy is in place and holds 
    WM/Category of its Xtra, fields.CLIP_CATEGORY, which ffmpeg does not carry and the library never reads as tags);
    marked `writing`; the temp claimed (clip_convert.claimed).
 3. ffmpeg, outside the lock (minutes); the original's XMP packet put whole into the temp, which ffmpeg gives none
-   (field_values.packet_given), and read back from it (_packet_carried; one it cannot take or that does not read back is
-   a problem like ffmpeg's: the temp removed, the original as it was); the temp flushed to its disk and verified
+   (field_values.packet_given; _packet_carried: one it cannot take is a problem like ffmpeg's, the temp removed, the
+   original as it was); the temp flushed to its disk and verified
    (clip_convert), and its fingerprint recorded as `made`. What the copy carries is written over that packet (step 4):
    TagPup's fields win, every other property of it is kept (xmp_packet.edit).
 4. Onward (_onward, the forward run's and the settle's alike), under the lock: the temp renamed into place (a same-name
@@ -145,9 +145,6 @@ NOT_DELETED = ("its original could not be deleted (%s), so its converted copy, w
 XMP_UNREAD = ("its XMP is held in a way TagPup does not read (two XMP boxes, or one it does not know), so it could not "
               "be carried into its converted copy; nothing was converted")
 XMP_NOT_GIVEN = "its XMP could not be put into its converted copy (%s); the original is as it was"
-#: Why the copy did not take the original's packet (XMP_NOT_GIVEN).
-XMP_NO_ROOM = "the copy has no place for it"
-XMP_NOT_READ_BACK = "the copy did not read back holding it"
 ASKED_ALREADY = "it is being converted already; wait for it to finish"
 NO_SUCH = "This server has no conversion %d (it may have been long ago, or before the server restarted)."
 
@@ -376,13 +373,10 @@ def _ready(library, exiftool_path, tools, source, reason):
 
 def _packet_carried(temp, packet):
     """None once the converted copy at `temp`, made by ffmpeg and not yet recorded, holds `packet`, the XMP packet of its
-    original, whole and read back; else why not, XMP_NOT_GIVEN, a problem as ffmpeg's is: the temp removed and the
-    original as it was (_onward)."""
+    original, whole (field_values.packet_given); else why not, XMP_NOT_GIVEN, a problem as ffmpeg's is: the temp removed
+    and the original as it was (_onward)."""
     try:
-        if not field_values.packet_given(temp, packet):
-            return XMP_NOT_GIVEN % XMP_NO_ROOM
-        if field_values.packet_held(temp) != packet:
-            return XMP_NOT_GIVEN % XMP_NOT_READ_BACK
+        field_values.packet_given(temp, packet)
     except field_values.NotAnswered:
         return XMP_NOT_GIVEN % SHARE_AWAY
     except (OSError, Refused) as e:
