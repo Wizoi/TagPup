@@ -115,7 +115,9 @@ second round beats reaching for it after the fourth.
 
 **A one-time command or backfill is briefed with its steady state first**: "a photo added or changed afterwards: which
 writer keeps it right, with no command run?" Unless the answer names a command, it is a one-off script that calls that
-service, never a copy of it, and is deleted only when its dry run says 0 left (retros 2026-10-28, 2026-11-13).
+service, never a copy of it, and is deleted only when its dry run says 0 left, the merge saying so in a line
+`<name>: dry run 0 left`; a one-off (a `scripts/` program, or a service only a script calls) never merges over the
+budget (`.claude/hooks/merge-budget.mjs`; retros 2026-10-28, 2026-11-13).
 
 **Check the destination before moving data into it.** Re-pointing rows at paths that
 already had rows created 233 duplicate faces.
