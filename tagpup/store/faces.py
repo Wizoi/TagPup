@@ -155,6 +155,15 @@ def accounted_write(db_path, work, label="faces write"):
     return db.write_with_connection(db_path, accounted, label=label)
 
 
+def pooled_of(conn, photo_id):
+    """{face id: is it in identity work's pool (nameless, not excluded)} of the faces of photo `photo_id`, by
+    idx_faces_photo_id: what a write's transaction compares before and after to say which faces it took out
+    (tagpup.services.face_batch.PoolFollower)."""
+    return {face_id: bool(there) for face_id, there in conn.execute(
+        "SELECT id, name IS NULL AND excluded = 0 FROM faces INDEXED BY idx_faces_photo_id WHERE photo_id = ?",
+        (photo_id,))}
+
+
 def face_refs(photo_path, db_path=None, conn=None):
     """The people a photo's faces were given, as Refs, excluded faces left out, in detection order.
 

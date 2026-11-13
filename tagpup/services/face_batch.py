@@ -9,9 +9,15 @@ photo's face boxes (tagpup.services.rotation).
 
 Because the faces are written inside that transaction, a photo and its faces never disagree: forward, settled after a crash, or
 undone from History. The only thing kept in memory is for the page that asked: which faces were written and which left (`applied`,
-`left`), and the fingerprints either side of each write that took faces out of identity work (`accounted`), so the cached Identify
-Faces grids lose those faces instead of being built again (tagpup.jobs.identify.GridCache.forget_faces). A change settled by another
-process has neither; nothing depends on them.
+`left`). A change settled by another process has neither; nothing depends on them.
+
+`Unpooled` is the other thing kept in memory, and only when a caller asks for it (write_fields' `unpooled`): the faces each file's
+record took out of identity work, with the fingerprints of the faces table either side of that record, so that the cached
+Identify Faces grids and New Person's pool lose those faces instead of being read again
+(tagpup.jobs.identify.GridCache.forget_faces). `PoolFollower` counts them, in the transaction that marks the file done, by
+comparing the photo's faces before and after everything that transaction did -- the tag's guesses, a bulk assignment's faces
+-- so nothing that writes faces need know of the cache. Only a record that committed is handed on; a write nobody asked of
+reports nothing, and the fingerprint's generation leaves what was cached before it stale, never wrongly trimmed.
 """
 import threading
 
@@ -25,6 +31,7 @@ DESCRIPTIONS = {NAME: "assign faces to a person", UNNAME: "take the names off fa
                 GUESS: "re-examine a folder"}
 
 _live = {}            # {change id: Work} of the changes this process planned and is carrying out
+_asked = {}           # {change id: Unpooled} of the changes whose caller asked which faces left identity work
 _guard = threading.Lock()
 
 
@@ -36,7 +43,6 @@ class Work:
         self.remove = {}           # {paths.key(path): [person]}: the people a photo is to lose (a Ref), when no face carries them
         self.people = []           # the people the faces are to be given: the ids of their nodes
         self.applied, self.left = [], []
-        self.accounted = []
 
     def face(self, path, face_id, old, new):
         self._photos.setdefault(paths.key(path), (path, []))[1].append((face_id, old, new))
@@ -77,34 +83,13 @@ class Work:
             for change_id in [each for each, work in _live.items() if work is self]:
                 del _live[change_id]
 
-    def runs(self):
-        """[(face ids, fingerprint before, fingerprint after)] of the faces that left identity work, consecutive writes joined while
-        nothing else wrote between them (each began at the fingerprint the one before left): what GridCache.forget_faces takes."""
-        joined = []
-        for ids, before, after in self.accounted:
-            if joined and joined[-1][2] == before:
-                joined[-1] = (joined[-1][0] + ids, joined[-1][1], after)
-            else:
-                joined.append((list(ids), before, after))
-        return joined
-
 
 class Follower:
     """What the row of a file must do for its photo's faces in the transaction that marks it `state` ('done', or 'undone' going
-    back). `start(conn)` is called first thing in that transaction, before the file's row is recorded (recording can name a guess,
-    which the cached grids must not take for the write's own); then the follower is called with the connection."""
+    back): it is called with the connection."""
 
     def __init__(self, row, state):
         self.row, self.forward = row, state == "done"
-        self.before = None
-
-    def _work(self):
-        work = _live.get(self.row.change_id)
-        return work if work is not None and self.forward and work.op in (NAME, EXCLUDE) else None
-
-    def start(self, conn):
-        if self._work() is not None:
-            self.before = faces.fingerprint(conn)
 
     def __call__(self, conn):
         row = self.row
@@ -121,14 +106,85 @@ class Follower:
             return
         work.applied.extend(done.written)
         work.left.extend(done.left)
-        if self.before is not None and done.unpooled:
-            work.accounted.append((done.unpooled, self.before, faces.fingerprint(conn)))
 
 
 def follower(row, state):
     """A Follower for the row of a file, or None for a file that is not a photo's. It finds no faces of its own in a change that
     holds none."""
     return None if row.is_rename or row.photo_id is None else Follower(row, state)
+
+
+class Unpooled:
+    """A caller's ask: which faces its writes took out of identity work (named or ruled out), for the cached grids. Handed to
+    file_changes.write_fields, which `watch`es the change it plans and `release`s it when the write is over; each file of the
+    change recorded done adds its span (PoolFollower); a caller that writes faces itself adds its own (`extend`). `runs()` is
+    what GridCache.forget_faces takes. Memory only, the caller's: a crash loses it with the cache."""
+
+    def __init__(self):
+        self._spans = []           # [(face ids, fingerprint before, fingerprint after)], in the order they were committed
+
+    def watch(self, change_id):
+        """Change `change_id`'s records count the faces they take out of identity work, for this ask."""
+        with _guard:
+            _asked[change_id] = self
+
+    def release(self):
+        """The write is over (finished, refused or raised): its records count nothing more."""
+        with _guard:
+            for change_id in [each for each, asked in _asked.items() if asked is self]:
+                del _asked[change_id]
+
+    def extend(self, spans):
+        """Add committed writes' spans, (face ids, fingerprint before, fingerprint after) each, in the order committed."""
+        self._spans.extend(spans)
+
+    def runs(self):
+        """[(face ids, fingerprint before, fingerprint after)] of the faces that left identity work, consecutive writes joined while
+        nothing else wrote between them (each began at the fingerprint the one before left), a write that took no face out
+        joining the chain all the same; the runs that took none out are left out."""
+        joined = []
+        for ids, before, after in self._spans:
+            if joined and joined[-1][2] == before:
+                joined[-1] = (joined[-1][0] + list(ids), joined[-1][1], after)
+            else:
+                joined.append((list(ids), before, after))
+        return [run for run in joined if run[0]]
+
+
+class PoolFollower:
+    """The faces of a photo that the transaction marking its file done took out of identity work, counted for the caller who
+    asked (Unpooled): `start(conn)` first thing in that transaction, which it begins IMMEDIATE so that nobody else writes between
+    the two fingerprints (as tagpup.store.faces.accounted_write); called last, after every other follower; `committed()` once
+    the transaction committed, so a transaction run again hands on only the attempt that committed. The span is the photo's faces
+    in the pool before and not after: a guess the tag made and a bulk assignment gave back meanwhile is in neither."""
+
+    def __init__(self, row, unpooled):
+        self.row, self.unpooled = row, unpooled
+        self._before = self._span = None
+
+    def start(self, conn):
+        self._span = None
+        db.begin(conn, immediate=True)
+        self._before = (faces.fingerprint(conn), faces.pooled_of(conn, self.row.photo_id))
+
+    def __call__(self, conn):
+        fingerprint, pooled = self._before
+        now = faces.pooled_of(conn, self.row.photo_id)
+        self._span = ([face_id for face_id, there in pooled.items() if there and not now.get(face_id)], fingerprint,
+                      faces.fingerprint(conn))
+
+    def committed(self):
+        if self._span is not None:
+            self.unpooled.extend([self._span])
+
+
+def pool_follower(row, state):
+    """A PoolFollower for the row of a file recorded done, when the caller of its change asked (Unpooled.watch); else None."""
+    if state != "done" or row.is_rename or row.photo_id is None:
+        return None
+    with _guard:
+        asked = _asked.get(row.change_id)
+    return None if asked is None else PoolFollower(row, asked)
 
 
 def photos_kept(library, change_id):

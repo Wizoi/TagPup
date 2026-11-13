@@ -113,11 +113,11 @@ def _guess_of(current, old, new):
 
 
 class Followed:
-    """What a photo's file did to its faces: the ids `written` (put as the change says), `left` (not what the change expected), and
-    `unpooled` (written ids that left identity work: named or ruled out)."""
+    """What a photo's file did to its faces: the ids `written` (put as the change says) and `left` (not what the change
+    expected)."""
 
     def __init__(self):
-        self.written, self.left, self.unpooled = [], [], []
+        self.written, self.left = [], []
 
 
 def follow(conn, change_id, photo_id, forward):
@@ -149,8 +149,6 @@ def follow(conn, change_id, photo_id, forward):
             if current is not None:
                 writes[face_id] = values
                 done.written.append(face_id)
-                if forward and (values.get("excluded") or values.get("name") is not None):
-                    done.unpooled.append(face_id)
                 continue
         done.left.append(face_id)
     if forward:

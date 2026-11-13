@@ -519,6 +519,57 @@ class InterruptedAndAtOnce(Bulk):
                          "settling the undo took away what History shows of the change")
 
 
+class TheKeptPool(Bulk):
+    """New Person's pool of nameless faces, kept against the faces' fingerprint (docs/findings.md, #5), loses the faces an
+    assignment took out of identity work instead of being read again: every one of them, the guess a tag made in the same
+    record as well as the faces named (#2881). A write nobody asked of reads no fingerprint: the pool is then read again."""
+
+    def open_new_person(self, seed):
+        reply = self.tuner_client.get("/library/api/face-matches-unmatched", query_string={"id": seed})
+        self.assertEqual(200, reply.status_code, reply.get_json())
+
+    def kept(self):
+        """(the fingerprint the kept pool is stamped with, the ids it holds in play: those not masked as gone since)."""
+        entry = face_routes.identify_cache.of(self.library).entry("unnamed_faces")
+        pool = entry["value"]
+        return entry["fingerprint"], set(pool.ids[~pool.gone].tolist())
+
+    def test_a_guess_an_earlier_photo_of_the_assignment_let_the_tag_make_comes_off_the_kept_pool(self):
+        """The first photo holds Oda and one nameless face; the second holds Oda, a face the owner took Wren off (nobody, the
+        removal recorded) and a nameless face. Oda has two photos with a face to name, so the tag names neither (#839). Wren is
+        assigned the first photo's face and the second's first face: the first record names its face, so the second, which puts
+        Wren back on its photo (not to be guessed there: taken off on purpose), finds Oda one photo to name and guesses Oda on
+        the other face. On the code before, the kept pool lost the faces named and not that guess, and was stamped as the table
+        after it: a named face kept as nameless, the next open none the wiser."""
+        first = self.held("pool_01.jpg", [PEOPLE + ODA])
+        alone = self.face(first)
+        second = self.held("pool_02.jpg", [PEOPLE + ODA])
+        taken_off, other = self.face(second), self.face(second, box=(70, 10, 110, 60))
+        self.assertEqual(200, self.tuner_post("face/match", {"face_id": taken_off, "person_name": WREN}).status_code)
+        reply = self.client.post("/library/api/photo/save-metadata", json={"path": second, "title": "", "tags": [PEOPLE + ODA]})
+        self.assertEqual(200, reply.status_code, reply.get_json())
+        self.assertEqual([(None, None), (None, "manual"), (None, None)], [self.row(f)[:2] for f in (alone, taken_off, other)])
+        self.open_new_person(alone)
+        body = self.tuner_post("faces/match-bulk", {"face_ids": [alone, taken_off], "person_name": WREN}).get_json()
+        self.assertEqual({alone, taken_off}, set(body["matched_ids"]), body)
+        self.assertEqual((ODA, None), self.row(other)[:2], "the second record guessed Oda on the other face")
+        stamp, kept = self.kept()
+        self.assertEqual(identify.fingerprint(self.library), stamp, "the pool is to be trimmed, not read again")
+        self.assertEqual(set(), {alone, taken_off, other} & kept, "a face named or guessed is kept as nameless")
+
+    def test_a_persons_tag_put_on_photos_reads_no_fingerprint(self):
+        """Bulk tags puts Wren on three photos, each with one face the tag could guess: nobody asked which faces left the
+        pool, so no record reads the faces' fingerprint or the photo's faces for it."""
+        made = self.many(3)
+        with mock.patch.object(store_faces, "fingerprint", wraps=store_faces.fingerprint) as fingerprint, \
+                mock.patch.object(store_faces, "pooled_of", wraps=store_faces.pooled_of) as pooled:
+            reply = self.client.post("/library/api/photos/bulk-tags",
+                                     json={"paths": [photo for photo, _face in made], "add_tags": [PEOPLE + WREN]})
+        self.assertEqual(200, reply.status_code, reply.get_json())
+        self.assertEqual(3, len(reply.get_json()["written"]), reply.get_json())
+        self.assertEqual((0, 0), (fingerprint.call_count, pooled.call_count))
+
+
 class TheOldAssignmentRecordsAreLetGo(Bulk):
     def test_a_run_an_older_version_recorded_is_still_listed_in_activity(self):
         claim = job_runs.claim(self.library, "assign faces", self.library.name, time.time())

@@ -7,9 +7,9 @@ write lock: most of them wrote on a connection of their own.
 TagTuner caches its Identify Faces grids against a fingerprint of the faces table. The
 actions that take faces out of the pool -- naming, excluding -- write through
 tagpup.store.faces.accounted_write and return `fingerprints` (before, after) and
-`face_ids` in details, from which the page's server takes those faces off its cached
-grids instead of rebuilding them. The rest move the fingerprint, and a grid built before
-them is rebuilt.
+`face_ids` in details (`accounted` reads them), from which the page's server takes those
+faces off its cached grids instead of rebuilding them. The rest move the fingerprint, and a
+grid built before them is rebuilt.
 """
 import collections
 import functools
@@ -112,6 +112,14 @@ def name_face(library, face_id, person):
     result.changed = changed
     result.details.update(face_ids=[face_id], fingerprints=(before, after))
     return result
+
+
+def accounted(result):
+    """[(face ids, fingerprint before, fingerprint after)] of a face action's own accounted write (its Result's `face_ids` and
+    `fingerprints`, tagpup.store.faces.accounted_write), when it changed any: a list of one run, or none. What
+    GridCache.forget_faces takes, as tagpup.services.face_batch.Unpooled.extend does."""
+    fingerprints = result.details.get("fingerprints")
+    return [(result.details["face_ids"], *fingerprints)] if fingerprints and result.changed else []
 
 
 def check_nameable(library, face_id, person, refused, guesses_yield=False):
