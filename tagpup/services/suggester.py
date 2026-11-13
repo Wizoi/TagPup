@@ -490,7 +490,7 @@ class TagSuggester:
             # for, a look, has no stored size and so no face in the background).
             size = store_photos.picture_size(self.index.conn, photo_path) if self.index.conn else None
             valid_detected_faces = [f for f in detected_faces
-                                    if not clustering.is_background(f.get("box"), size) and f.get("embedding") is not None]
+                                    if not clustering.is_background(f["box"], size) and f.get("embedding") is not None]
 
             if valid_detected_faces:
                 if known_faces[2] is not None:

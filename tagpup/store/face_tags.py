@@ -178,10 +178,7 @@ def _not_taken_off(conn, free, faces_here):
 def _background(box_json, size):
     """Is a face's stored box (JSON) in the background of its picture, `size` the photo's stored (width, height)
     (clustering.is_background)?"""
-    try:
-        return clustering.is_background(json.loads(box_json), size)
-    except (TypeError, ValueError):
-        return False
+    return clustering.is_background(json.loads(box_json), size)
 
 
 def _to_be_named(faces_here, size):

@@ -658,10 +658,7 @@ def _faces_shown(rows, eras, everyone, key, known, stored, shape=None):
     found = []
     for face_id, box_json, carried, prob, emb, excluded, reason in rows:
         name = carried.name if carried else None
-        try:
-            box = json.loads(box_json) if box_json else []
-        except Exception:
-            box = []
+        box = json.loads(box_json)   # four numbers, as detection records it (clustering.is_background)
         # A face nobody is named, behind the subject (clustering.is_background): not in the answer, so no box, no card and
         # no Add all for it. A named face stays whatever its size.
         if name is None and not excluded and clustering.is_background(box, stored):
@@ -676,8 +673,8 @@ def _faces_shown(rows, eras, everyone, key, known, stored, shape=None):
                     suggested = None
         found.append({
             "id": face_id, "box": box,
-            "shown_box": orientation.to_upright(box, size[0], size[1], turn) if size and len(box) == 4 else None,
-            "area": (box[2] - box[0]) * (box[3] - box[1]) if len(box) >= 4 else 0,
+            "shown_box": orientation.to_upright(box, size[0], size[1], turn) if size else None,
+            "area": (box[2] - box[0]) * (box[3] - box[1]),
             "name": name, "person": everyone.of_id(carried.id) if carried else None, "prob": prob,
             "excluded": bool(excluded), "excluded_reason": reason,
             "suggestion": suggestion if name is None else None,
