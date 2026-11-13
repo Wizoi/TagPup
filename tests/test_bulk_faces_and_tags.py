@@ -557,6 +557,40 @@ class TheKeptPool(Bulk):
         self.assertEqual(identify.fingerprint(self.library), stamp, "the pool is to be trimmed, not read again")
         self.assertEqual(set(), {alone, taken_off, other} & kept, "a face named or guessed is kept as nameless")
 
+    def test_a_face_another_process_rules_out_while_the_record_reads_is_not_kept_as_nameless(self):
+        """Another writer excludes a nameless face between the record's first fingerprint and its first write. The record
+        begins IMMEDIATE before it reads, so that writer is refused (locked) and the kept pool is never stamped current
+        with the ruled-out face in it. On the code before (the fingerprint read outside the transaction) the other writer
+        landed between the two reads (#2881)."""
+        chosen = self.face(self.held("race_01.jpg"))
+        bystander = self.face(self.held("race_02.jpg"))
+        self.open_new_person(chosen)
+        real, meddled = store_faces.fingerprint, []
+
+        def meddling(conn):
+            stamp = real(conn)
+            if not meddled:
+                other = db.connect(self.path)
+                try:
+                    other.execute("PRAGMA busy_timeout=0")
+                    try:
+                        other.execute("UPDATE faces SET excluded = 1 WHERE id = ?", (bystander,))
+                        other.commit()
+                        meddled.append("written")
+                    except Exception as why:
+                        meddled.append("refused: %s" % why)
+                finally:
+                    other.close()
+            return stamp
+
+        with mock.patch.object(store_faces, "fingerprint", side_effect=meddling):
+            body = self.tuner_post("faces/match-bulk", {"face_ids": [chosen], "person_name": WREN}).get_json()
+        self.assertEqual([chosen], body["matched_ids"], body)
+        self.assertTrue(meddled, "the other writer was never tried")
+        stamp, kept = self.kept()
+        if meddled == ["written"] and stamp == identify.fingerprint(self.library):
+            self.assertNotIn(bystander, kept, "a face ruled out by another process is kept as nameless in a current pool")
+
     def test_a_persons_tag_put_on_photos_reads_no_fingerprint(self):
         """Bulk tags puts Wren on three photos, each with one face the tag could guess: nobody asked which faces left the
         pool, so no record reads the faces' fingerprint or the photo's faces for it."""
