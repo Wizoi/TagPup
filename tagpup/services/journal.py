@@ -104,6 +104,7 @@ UNDO_CHECKS = {
     "rename tag": None,
     "remove tag": None,
     tagging.CLEAR_DUPLICATES: None,
+    tagging.DATE_CLIPS: None,
     "rename after caption": None,
     "smart rename": None,
     "smart rename: original names": None,

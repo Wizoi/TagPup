@@ -28,27 +28,27 @@ class WhenItWasTaken(unittest.TestCase):
     def test_the_original_date_comes_first(self):
         raw = {"EXIF:CreateDate": "2019:01:01 00:00:00",
                "EXIF:DateTimeOriginal": "2018:07:04 09:30:00"}
-        self.assertEqual(dates.date_taken(raw), "2018:07:04 09:30:00")
-        self.assertEqual(dates.year_taken(raw), 2018)
+        self.assertEqual(dates.date_taken(raw, None), "2018:07:04 09:30:00")
+        self.assertEqual(dates.year_taken(raw, None), 2018)
 
     def test_the_xmp_creation_date_counts(self):
-        self.assertEqual(dates.year_taken({"XMP:CreateDate": "2012:05:06"}), 2012)
+        self.assertEqual(dates.year_taken({"XMP:CreateDate": "2012:05:06"}, None), 2012)
 
     def test_a_modification_date_is_not_when_it_was_taken(self):
         raw = {"EXIF:ModifyDate": "2021:03:03 10:00:00"}
-        self.assertIsNone(dates.date_taken(raw))
-        self.assertIsNone(dates.year_taken(raw))
+        self.assertIsNone(dates.date_taken(raw, None))
+        self.assertIsNone(dates.year_taken(raw, None))
 
     def test_a_list_value_is_its_first_entry(self):
-        self.assertEqual(dates.year_taken({"DateTimeOriginal": ["2009:01:01", "2010:01:01"]}), 2009)
+        self.assertEqual(dates.year_taken({"DateTimeOriginal": ["2009:01:01", "2010:01:01"]}, None), 2009)
 
     def test_a_field_without_a_year_is_passed_over_for_the_next(self):
         raw = {"EXIF:DateTimeOriginal": "0000:00:00 00:00:00", "EXIF:CreateDate": "2016:02:02"}
-        self.assertEqual(dates.year_taken(raw), 2016)
+        self.assertEqual(dates.year_taken(raw, None), 2016)
 
     def test_nothing_is_none(self):
-        self.assertIsNone(dates.date_taken(None))
-        self.assertIsNone(dates.year_taken({}))
+        self.assertIsNone(dates.date_taken(None, None))
+        self.assertIsNone(dates.year_taken({}, None))
 
 
 class TheYearFromItsName(unittest.TestCase):
@@ -64,6 +64,23 @@ class TheYearFromItsName(unittest.TestCase):
     def test_the_metadata_wins_over_the_name(self):
         self.assertEqual(dates.photo_year({"DateTimeOriginal": "2011:01:01"}, r"D:\2008\a.jpg"), 2011)
         self.assertEqual(dates.photo_year({}, r"D:\2008\a.jpg"), 2008)
+
+
+class TheDateInAClipsName(unittest.TestCase):
+    """dates.name_date: what a clip whose file holds no date is dated by (the flow: test_a_clip_dated_by_its_name)."""
+
+    def test_four_spellings_of_a_day_in_the_file_name_alone(self):
+        for name in ("2019-07-04 Regatta.mp4", "VID_20190704_183000.mp4", "Regatta 2019_07_04.mp4", "2019.07.04.mp4"):
+            self.assertEqual("2019:07:04 00:00:00", dates.name_date(os.path.join("D:" + os.sep, "Clips", name)), name)
+        self.assertIsNone(dates.name_date(r"D:\Clips\2019-07-04 Regatta\jetty.mp4"), "never the folder's")
+
+    def test_a_counter_a_day_that_is_none_and_mixed_separators_are_no_date(self):
+        for name in ("IMG_0001.mp4", "MVI_12019070412.mp4", "2019-02-30.mp4", "2019-13-01.mp4", "1899-07-04.mp4",
+                     "2100-07-04.mp4", "2019-07_04.mp4", "jetty.mp4"):
+            self.assertIsNone(dates.name_date(os.path.join("D:" + os.sep, name)), name)
+        self.assertEqual("2019:07:05 00:00:00", dates.name_date(r"D:\2019-02-30 then 2019-07-05.mp4"),
+                         "the first that is a day")
+        self.assertIsNone(dates.name_date(None))
 
 
 class TheEraOfAFace(unittest.TestCase):
@@ -90,11 +107,11 @@ class TheSortKey(unittest.TestCase):
     def test_it_is_the_string_the_folder_view_always_sorted_by(self):
         # Kept exactly, so nothing moves: the date as ExifTool gives it, or the file
         # time behind "mtime_", which sorts after every date.
-        self.assertEqual(dates.date_taken_sort_key({"EXIF:DateTimeOriginal": "2026:06:27 12:00:00"}, 5.0),
+        self.assertEqual(dates.date_taken_sort_key({"EXIF:DateTimeOriginal": "2026:06:27 12:00:00"}, None, 5.0),
                          "2026:06:27 12:00:00")
-        self.assertEqual(dates.date_taken_sort_key({}, 1234.5), "mtime_1234.5")
-        self.assertLess(dates.date_taken_sort_key({"CreateDate": "2099:12:31"}),
-                        dates.date_taken_sort_key({}, 1.0))
+        self.assertEqual(dates.date_taken_sort_key({}, None, 1234.5), "mtime_1234.5")
+        self.assertLess(dates.date_taken_sort_key({"CreateDate": "2099:12:31"}, None),
+                        dates.date_taken_sort_key({}, None, 1.0))
 
 
 def date_rule_lists(source):

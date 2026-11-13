@@ -45,7 +45,7 @@ def page_record(path, meta, mtime=0.0, size=0):
         "mtime": mtime,
         "size": size,
         "year": dates.shown_year(None if year is None else str(year)),
-        "taken": dates.date_taken(raw_meta),
+        "taken": dates.date_taken(raw_meta, path),
         "raw_metadata": raw_meta,
         # The camera and lens it was taken with, named as a search finds them (photo_meta.gear): "" for what the
         # metadata does not say, which the panel shows as nothing.
@@ -108,7 +108,7 @@ def read_file(library, path, exiftool_path, stamp=None):
 
 def taken_order(record):
     """The folder view's order for a page record: when it was taken, then file time."""
-    return dates.date_taken_sort_key(record.get("raw_metadata", {}), record.get("mtime", 0.0))
+    return dates.date_taken_sort_key(record.get("raw_metadata", {}), record.get("path"), record.get("mtime", 0.0))
 
 
 @roots_service.canonical_args("folder")

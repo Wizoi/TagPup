@@ -48,7 +48,7 @@ def _dated(raw_json, path):
         raw = json.loads(raw_json) if raw_json else {}
     except (TypeError, ValueError):
         raw = {}
-    return dates.date_taken(raw), dates.photo_year(raw, path)
+    return dates.date_taken(raw, path), dates.photo_year(raw, path)
 
 
 def _dated_paths(conn, photo_paths):
@@ -647,6 +647,16 @@ def raw_rows(conn):
     for path, raw_json in conn.execute("SELECT path, raw_metadata FROM photos"
                                        " WHERE raw_metadata IS NOT NULL AND raw_metadata != ''"):
         yield paths.from_row(path, roots), json.loads(raw_json)
+
+
+def clip_raw_rows(conn):
+    """(id, path, raw_metadata as read) of every clip (a row of kind 'video') holding raw_metadata, one row at a time:
+    what the one-off dating of clips by their names reads (tagpup.services.tagging.clips_dated_by_name). The path
+    native. One walk of the clips' own index, idx_photos_clips (photo_index: 2,910 clips, 2026-11-13)."""
+    roots = store_roots.roots_for(conn)
+    for photo_id, path, raw_json in conn.execute("SELECT id, path, raw_metadata FROM photos WHERE kind = ?"
+                                                 " AND raw_metadata IS NOT NULL AND raw_metadata != ''", ("video",)):
+        yield photo_id, paths.from_row(path, roots), json.loads(raw_json)
 
 
 def row_paths(conn):

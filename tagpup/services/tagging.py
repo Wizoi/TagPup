@@ -2,7 +2,7 @@
 import logging
 import os
 
-from tagpup.core import fields, paths, suggesting, validation, vocabulary
+from tagpup.core import dates, fields, paths, suggesting, validation, vocabulary
 from tagpup.core.result import CHANGED_ON_DISK, CHANGED_ON_DISK_SENTENCE, UNREADABLE_BASE_SENTENCE, Result
 # Looked up at call time, as exiftool_session.ExifToolSession, so a test standing in for
 # ExifTool there reaches this too.
@@ -196,6 +196,86 @@ def clear_duplicate_captions(library, exiftool_path, apply=False, on_planned=Non
         left["away" if paths.key(path) in away else "nothing to clear" if why == NO_DUPLICATE else "unreadable"] += 1
     result.details.update(counts=counts, dry_run=not apply)
     result.details["left alone"] = left
+    return result
+
+
+# ---- The one-off dating of clips by their names ---------------------------------------------------------------------
+
+#: The one-off's change, as History names it (scripts/date_undated_clips.py).
+DATE_CLIPS = "date clips by their names"
+#: Why a clip listed is left alone when its file is read: its XMP holds a date now (a save between the listing and the
+#: write).
+DATED_SINCE = "dated since it was listed"
+
+
+def clips_dated_by_name(library):
+    """([(path, date)] of the clips whose file holds no date of its own (its QuickTime dates zeros, no XMP date) and
+    which the library dates by the date in their file name (dates.date_taken given the path: dates.name_date), by id;
+    [id] of those whose name holds none either, left undated for the owner), read from the index alone, no file. The
+    library's own reading of each row, so a clip it shows dated by its name is the one listed, and one dated in its file
+    since (its row followed) is not: a run stopped part-way is continued by running it again."""
+    to_date, undated = [], []
+    conn = db.connect(db.readonly_uri(library.path), uri=True)
+    try:
+        for photo_id, path, raw in photos.clip_raw_rows(conn):
+            if dates.date_taken(raw, None) is not None:
+                continue
+            named = dates.date_taken(raw, path)
+            if named:
+                to_date.append((path, named))
+            else:
+                undated.append(photo_id)
+    finally:
+        conn.close()
+    return to_date, undated
+
+
+def date_clips_by_name(library, exiftool_path, apply=False, on_planned=None, on_chunk=None):
+    """The one-off (scripts/date_undated_clips.py): write into each clip clips_dated_by_name lists the Date Taken the
+    library already reads from its name, into its XMP dates as the panel's save of a clip's date writes them
+    (fields.date_taken_fields, clip=True, through fields.held_dates), so the file says what the library shows (owner,
+    2026-11-13; docs/plans/clip-date-from-name.md). Its QuickTime dates are never written.
+
+    A dry run (the default) reads the index alone and writes nothing. With `apply`, one change of clip files
+    (file_changes.write_fields: each clip patched in place, read again before its write, a clip changed since a conflict,
+    its row following its file in the transaction that marks it done, undoable as one from History), uncapped and patient
+    as the caption sweep is, stopping at the first error (a clip its writer refused, open in a player, is its own and
+    does not stop it). A clip whose XMP holds a date when it is read is left alone (DATED_SINCE): never written over.
+
+    details["undated"]: the ids of the clips whose name holds no date either, left undated for the owner.
+    details["counts"]: `listed` the clips planned from the index; `wrote` the files the journal holds done for the change
+    (file_changes.files_done: what it wrote, not what it tried); why each other was left alone: DATED_SINCE,
+    `unreadable`, `away` (on a share that did not answer); `refused` (its writer refused it before a byte was written),
+    `conflicts`, `failed`; and `left`, the clips still to date, counted again from the index after the write."""
+    to_date, undated = clips_dated_by_name(library)
+    found = [path for path, _date in to_date]
+    if not apply or not found:
+        result = Result(attempted=len(found), details={"change": None, "conflicts": [], "written": {}})
+    else:
+        named = {paths.key(path): date for path, date in to_date}
+
+        def plan_one(path, held):
+            if dates.date_taken(held, None):
+                return file_changes.skip(DATED_SINCE)
+            date = named[paths.key(path)]
+            return file_changes.Plan(after=fields.held_dates(fields.date_taken_fields(date, clip=True), held),
+                                     detail=date)
+
+        result = file_changes.write_fields(library, DATE_CLIPS, exiftool_path, found, list(dates.CLIP_XMP_DATE_FIELDS),
+                                           plan_one, summary={"photos": len(found)}, unreadable="skip", uncapped=True,
+                                           patient=True, stop_at_first_error=True, on_planned=on_planned,
+                                           on_chunk=on_chunk)
+    away = {paths.key(path) for path in result.details.get("not_answered", [])}
+    change = result.details.get("change")
+    counts = {"listed": len(found), "wrote": file_changes.files_done(library, change) if change is not None else 0,
+              DATED_SINCE: 0, "unreadable": 0, "away": 0}
+    for path, why in result.skipped:
+        counts["away" if paths.key(path) in away else DATED_SINCE if why == DATED_SINCE else "unreadable"] += 1
+    refused = len(result.details.get(file_changes.WRITER_REFUSED, []))
+    conflicts = len(result.details.get("conflicts", []))
+    counts.update(refused=refused, conflicts=conflicts, failed=len(result.errors) - refused - conflicts,
+                  left=len(clips_dated_by_name(library)[0]) if apply else len(found))
+    result.details.update(counts=counts, undated=undated, dry_run=not apply)
     return result
 
 

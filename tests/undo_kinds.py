@@ -50,6 +50,7 @@ ROWS_ALONE = {AS_ROWS}
 #: Every other kind UNDO_CHECKS names that the code makes, and why it is not a row of the matrix.
 LEFT = {
     tagging.ADD_TO_ALL: AS_SAVE,
+    tagging.DATE_CLIPS: AS_SAVE,
     "apply all suggestions": AS_SAVE,
     "rename tag": AS_SAVE,
     "remove tag": AS_SAVE,
