@@ -578,7 +578,10 @@ def folder_rename_photos():
             return responses.error(500, result.message(), updated_paths=result.details["updated_paths"],
                                    updated_photos=_sorted(_shown(library, folder, photos)))
     except Exception as e:
-        # The rename raises only when it renamed nothing; the follow-up has run before anything after it raises.
+        # The rename mostly raises when it renamed nothing, but it can raise with files already moved (the move-aside of
+        # a file not asked for, outside rename_all's try; file_changes.rename failing in _record_renames after
+        # rename_all returned): then no follow-up ran, the answer is a 500, and the kept scans serve the old names until
+        # the library's counter moves, the idle period lets them go or the page's Refresh reads the files (#2906).
         logger.error("Error smart renaming photos: %s", e, exc_info=True)
         return responses.error(500, str(e))
     return jsonify({
