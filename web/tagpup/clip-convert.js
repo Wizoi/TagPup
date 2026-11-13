@@ -13,6 +13,7 @@
 //    still the one shown: a photo stepped to meanwhile is not touched. A closed tab, or another library (another page),
 //    stops the reading and loses nothing: the server finishes the conversion and the clip's row follows the MP4.
 import { api } from './common/api.js';
+import { showEnded } from './common/batch-strip.js';
 import { baseName, samePath } from './common/paths.js';
 import { upper } from './hooks.js';
 import { state } from './state.js';
@@ -75,6 +76,12 @@ function offerShrink() {
     draw();
 }
 
+/** Say how a conversion ended on the status line and in the batch strip (its sentence, with the file's name, not the strip's generic one). */
+function sayEnd(sentence, problem) {
+    setStatus(problem ? 'error' : 'ready', sentence, { transient: !problem });
+    showEnded({ text: sentence, problem });
+}
+
 /** End `key`'s live ticket with `sentence` said, nothing taken. */
 function endWith(key, live, sentence) {
     if (state.clipConvert.live[key] === live) delete state.clipConvert.live[key];
@@ -100,7 +107,7 @@ export async function convertShownClip() {
     }
     const name = baseName(photo.path);
     // Taken before anything is asked: a second click meanwhile finds it and sends nothing.
-    const live = { photo, from: photo.path, ticket: null, library: '', note: `Asking what ${name} needs...`, cancelling: false };
+    const live = { photo, from: photo.path, ticket: null, library: '', mode: offer.mode, note: `Asking what ${name} needs...`, cancelling: false };
     state.clipConvert.live[key] = live;
     draw();
     const mode = offer.mode;
@@ -185,7 +192,10 @@ function pollTicket(key, live) {
 
 /** The ticket ended: taken by the clip's own record, and the panel redrawn while it is still the clip shown. */
 function converted(key, live, said) {
-    if (!said.success) return endWith(key, live, said.error ? `Not converted: ${said.error}` : 'Not converted.');
+    if (!said.success) {
+        endWith(key, live, '');
+        return sayEnd(`Could not convert ${baseName(live.from)}: ${said.error || 'the server gave no reason'}`, true);
+    }
     delete state.clipConvert.live[key];
     const photo = live.photo;
     takeStamp(photo, said);
@@ -205,10 +215,11 @@ function converted(key, live, said) {
     }
     draw();
     const sizes = `${megabytes(said.size_before)} to ${megabytes(said.size_after)}`;
+    const verb = live.mode === 'shrink' ? 'Made smaller' : 'Converted';
     if (said.original_kept) {
-        setStatus('error', `Converted ${baseName(photo.path)}: ${sizes}. ${said.original_kept}`, { transient: false });
+        sayEnd(`${verb} ${baseName(photo.path)}: ${sizes}. ${said.original_kept}`, true);
     } else {
-        setStatus('ready', `Converted ${baseName(photo.path)}: ${sizes}`);
+        sayEnd(`${verb} ${baseName(photo.path)}: ${sizes}`, false);
     }
 }
 

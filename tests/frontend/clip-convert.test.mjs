@@ -28,6 +28,8 @@ const el = (ctx, id) => ctx.document.getElementById(id);
 const video = (ctx) => el(ctx, "main-video");
 const status = (ctx) => el(ctx, "status-text").textContent;
 const shown = (ctx, id) => !el(ctx, id).classList.contains("hidden");
+/** The sentences the batch strip shows (the one under the status line, with History and Dismiss). */
+const stripSaid = (ctx) => [...ctx.document.querySelectorAll(".batch-strip-sentence")].map((each) => each.textContent);
 const callsTo = (ctx, path) => ctx.server.calls.filter((call) => call.url.split("?")[0].endsWith(path));
 
 /**
@@ -114,6 +116,7 @@ describe("the clip panel's Convert and Make smaller (MP4)", () => {
 
     assert.ok(await ctx.until(() => ctx.said.some((each) => /Converted/.test(each))), `the end is said (${ctx.said})`);
     assert.ok(ctx.said.includes("Converted IMG_13.mp4: 120 MB to 18 MB"), ctx.said.join(" | "));
+    assert.deepEqual(stripSaid(ctx), ["Converted IMG_13.mp4: 120 MB to 18 MB"], "the strip says the page's sentence, with the file's name");
     assert.ok(callsTo(ctx, "/api/clip/converted").length >= 3, "its ticket is read until it ends");
     assert.ok(callsTo(ctx, "/api/clip/converted").every((call) => call.url.endsWith("?ticket=7")));
     const record = ctx.state.folderPhotos.find((photo) => photo.id === CLIP);
@@ -144,6 +147,7 @@ describe("the clip panel's Convert and Make smaller (MP4)", () => {
     assert.deepEqual(ctx.confirmed, [REPLACES]);
     assert.equal(callsTo(ctx, "/api/clip/convert")[0].body.mode, "shrink");
     assert.ok(await ctx.until(() => status(ctx).includes(LEFT)), `the server's sentence is said (${status(ctx)})`);
+    assert.deepEqual(stripSaid(ctx), [`Could not convert IMG_13.wmv: ${LEFT}`], "the strip names the file and gives the server's sentence");
     assert.equal(ctx.state.folderPhotos.find((photo) => photo.id === CLIP).path, OLD, "the clip is left as it is");
     assert.equal(el(ctx, "btn-clip-shrink").disabled, false, "it may be asked again");
   });
@@ -201,8 +205,20 @@ describe("the clip panel's Convert and Make smaller (MP4)", () => {
     assert.equal(el(ctx, "btn-clip-convert-cancel").disabled, true, "pressed once");
     ctx.ends = [{ done: true, success: false, error: "Cancelled: IMG_13.wmv is left as it is." }];
     assert.ok(await ctx.until(() => /Cancelled/.test(status(ctx))), `its end is said (${status(ctx)})`);
+    assert.deepEqual(stripSaid(ctx), ["Could not convert IMG_13.wmv: Cancelled: IMG_13.wmv is left as it is."]);
     assert.equal(ctx.state.folderPhotos.find((photo) => photo.id === CLIP).path, OLD);
     assert.equal(el(ctx, "btn-clip-convert").disabled, false);
+  });
+
+  test("Make smaller says so in the strip, with the sizes; no photo count is ever said for a conversion", async (t) => {
+    const ctx = await viewWithAClip(t, { plan: { action: "NOTHING", sentence: "", replaces: REPLACES } });
+    await open(ctx, CLIP);
+    await plays(ctx);
+    ctx.ends = [{ ...converted, size_after: 4 * MB }];
+    el(ctx, "btn-clip-shrink").click();
+    assert.ok(await ctx.until(() => stripSaid(ctx).length > 0));
+    assert.deepEqual(stripSaid(ctx), ["Made smaller IMG_13.mp4: 120 MB to 4 MB"]);
+    assert.ok(!/photo/.test(stripSaid(ctx)[0]));
   });
 
   test("a stamp the clip no longer has (409 changed_on_disk): nothing converted, the clip read again and the owner told", async (t) => {
