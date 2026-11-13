@@ -137,9 +137,11 @@ def run(db_path, apply, out=say):
     if result.refused:
         out("Refused: %s" % result.refused)
     if not apply:
+        out("%d clip row(s) hold no Date Taken yet: --apply dates them in the library first (no file read)." % counts["redated"])
         out("A dry run: nothing was read or written. --apply (TagPup closed) writes the date of each of the %d clip(s) "
             "into its XMP." % counts["listed"])
         return 0
+    out("Re-dated %d clip row(s) in the library from their names, before any file was written." % counts["redated"])
     out("Dated: wrote %d clip file(s). Left alone: %d %s, %d unreadable, %d away (their network share did not answer). "
         "Refused by the writer (open in another program): %d. Conflicts: %d (changed since they were read; not "
         "written). Failed: %d. Left to date: %d."

@@ -659,6 +659,27 @@ def clip_raw_rows(conn):
         yield photo_id, paths.from_row(path, roots), json.loads(raw_json)
 
 
+def clips_to_redate(conn):
+    """[id] of the clips whose `taken` is NULL and which the library dates now (dates.date_taken of their raw metadata
+    and path: by the date in their file name): rows indexed before a clip was dated by its name, or whose file has not
+    been written since (the 669 of photo_index, 2026-11-13; docs/findings.md #2933). A clip whose name holds no date is
+    not listed: it stays NULL. One walk of the clips' own index, no file read."""
+    roots = store_roots.roots_for(conn)
+    return [photo_id for photo_id, path, raw_json in conn.execute(
+        "SELECT id, path, raw_metadata FROM photos WHERE kind = ? AND taken IS NULL", ("video",)).fetchall()
+            if _dated(raw_json, paths.from_row(path, roots))[0] is not None]
+
+
+def redate_clips(conn):
+    """Date the clips clips_to_redate lists again, from their rows alone (date_photos), the caller committing; how many
+    hold a `taken` afterwards, counted from the rows, not from the statement. Run again, it finds none."""
+    listed = clips_to_redate(conn)
+    date_photos(conn, listed)
+    return sum(conn.execute("SELECT COUNT(*) FROM photos WHERE id IN (%s) AND taken IS NOT NULL"
+                            % ",".join("?" * len(chunk)), chunk).fetchone()[0]
+               for chunk in (listed[at:at + 500] for at in range(0, len(listed), 500)))
+
+
 def row_paths(conn):
     """{photo id: path as the row holds it} of every photo: what sweeping the cache compares its entries
     with. 68,000 short strings; one scan of the table, once per sweep."""

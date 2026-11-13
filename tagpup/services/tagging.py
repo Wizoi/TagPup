@@ -246,7 +246,22 @@ def date_clips_by_name(library, exiftool_path, apply=False, on_planned=None, on_
     details["counts"]: `listed` the clips planned from the index; `wrote` the files the journal holds done for the change
     (file_changes.files_done: what it wrote, not what it tried); why each other was left alone: DATED_SINCE,
     `unreadable`, `away` (on a share that did not answer); `refused` (its writer refused it before a byte was written),
-    `conflicts`, `failed`; and `left`, the clips still to date, counted again from the index after the write."""
+    `conflicts`, `failed`; `redated`, the clip rows dated again from their rows alone (photos.redate_clips) before any
+    file is read, counted from what the rows hold afterwards (a dry run: how many it would date again, nothing
+    written); and `left`, the clips still to date, counted again from the index after the write.
+
+    The clips this lists are dated by name in the panel and the folder scan from the start, but their rows hold no
+    `taken` until their file is written (or indexed again): the library view's order, month and tally read the column
+    (docs/findings.md #2933). So `apply` first dates the rows again, a clip its write then leaves (away, refused,
+    stopped) included; run again it finds none to date again, and a clip whose name holds no date stays as it is."""
+    if apply:
+        redated = db.write_with_connection(library.path, photos.redate_clips, label="the clips dated by their names: rows")
+    else:
+        conn = db.connect(db.readonly_uri(library.path), uri=True)
+        try:
+            redated = len(photos.clips_to_redate(conn))
+        finally:
+            conn.close()
     to_date, undated = clips_dated_by_name(library)
     found = [path for path, _date in to_date]
     if not apply or not found:
@@ -267,7 +282,8 @@ def date_clips_by_name(library, exiftool_path, apply=False, on_planned=None, on_
                                            on_chunk=on_chunk)
     away = {paths.key(path) for path in result.details.get("not_answered", [])}
     change = result.details.get("change")
-    counts = {"listed": len(found), "wrote": file_changes.files_done(library, change) if change is not None else 0,
+    counts = {"listed": len(found), "redated": redated,
+              "wrote": file_changes.files_done(library, change) if change is not None else 0,
               DATED_SINCE: 0, "unreadable": 0, "away": 0}
     for path, why in result.skipped:
         counts["away" if paths.key(path) in away else DATED_SINCE if why == DATED_SINCE else "unreadable"] += 1
