@@ -290,5 +290,49 @@ class AFolderRenamedThatTheLibraryDoesNotHold(unittest.TestCase):
                          "the folder's scan is the one answered")
 
 
+class AFolderRenamedWhileAnAncestorIsScanned(unittest.TestCase):
+    """A folder of many photos renamed (the keys of the kept maps move) while the owner's other tab opens the ancestor,
+    whose scan reads the very map the rename re-keys: every scan answers every photo, never a map the rename has taken
+    the photos out of and not yet put back (#2907)."""
+
+    COUNT = 3000
+
+    def setUp(self):
+        self.lib = Library(self)
+        self.folder = os.path.join(self.lib.photos, "Day 1")
+        os.makedirs(self.folder)
+        self.names = [paths.stored(os.path.join(self.folder, "Harbour - %04d.jpg" % number)) for number in range(self.COUNT)]
+        self.records = {}
+        for path in self.names:
+            self.records[paths.key(path)] = photo_actions.page_record(path, {"tags": [], "raw_metadata": {}}, *OLD_STAMP)
+        self.lib.folders().put(self.lib.photos, dict(self.records))
+
+    def renamed(self, to_new):
+        """Every photo's name changed (or changed back), the follow-up the routes make."""
+        moves = [(old.replace("Harbour", "Quay") if not to_new else old, old if not to_new else old.replace("Harbour", "Quay"),
+                  True) for old in self.names]
+        tagpup_routes._followed_rename(self.lib.library, moves)
+
+    def test_scans_of_the_ancestor_always_hold_every_photo_while_the_folder_is_renamed_back_and_forth(self):
+        import threading
+        failed, stop = [], threading.Event()
+
+        def scanning():
+            while not stop.is_set():
+                status, reply = self.lib.get("/api/folder/scan", {"path": self.lib.photos})
+                if status != 200 or len(reply) != self.COUNT:
+                    failed.append((status, reply if status != 200 else len(reply)))
+        scanner = threading.Thread(target=scanning)
+        scanner.start()
+        try:
+            for round_ in range(20):
+                self.renamed(round_ % 2 == 0)
+        finally:
+            stop.set()
+            scanner.join()
+        self.assertEqual([], failed[:3])
+        self.assertEqual(self.COUNT, len(self.lib.folders().peek(self.lib.photos)), "every record kept")
+
+
 if __name__ == "__main__":
     unittest.main()
