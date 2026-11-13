@@ -9,7 +9,8 @@ date always wins: a clip whose QuickTime date is set keeps it, and a Date Taken 
 name, its undo from History bringing the name's date back. A folder's date never dates a clip (the 11 dated only in
 their folder stay undated, for the owner), and a photo is never dated by its name. A clip with no Date Taken has no year
 either, neither its folder's nor a year alone in its name, so the owner finds it among the undated (#2941); a photo
-beside it keeps its folder's year.
+beside it keeps its folder's year. A clip is told from a photo by its kind (photos.kind, as the index gave it), never by
+the fields its metadata holds: an older-format clip, a .avi holding no QuickTime date, is dated as every clip (#2952).
 
 The one-off that writes the name's date into each such clip's XMP is tests/test_dating_clips_by_their_names.py.
 
@@ -137,6 +138,23 @@ class AClipDatedByItsName(tagged.ALibraryHoldingAClip):
                           "jetty.mp4": (None, dates.UNKNOWN_YEAR), "2016-07 slipway.mp4": (None, dates.UNKNOWN_YEAR),
                           "quay.jpg": (None, "2021")}, scanned,
                          "the folder view's records the same, the clip dated by its name its name's year")
+
+    def test_an_older_format_clip_holding_no_quicktime_date_is_dated_as_every_clip(self):
+        """A .avi's header is RIFF's: it holds no QuickTime date, and was dated as a photo, by its folder's year and never
+        by its name, while the dating rules told a clip by the QuickTime date its record holds. Copied into a folder before
+        its Convert, it is a row of kind video (images.VIDEO_TYPES lists the older formats so the owner sees them; none is
+        in the live libraries now, each converted, counted read-only 2026-11-13), dated by its kind as every clip is."""
+        named = zeroed_clip(os.path.join(self.folder, "2019-07-04 regatta.avi"))
+        loose = zeroed_clip(os.path.join(self.folder, "slipway.avi"))
+        by_name, undated = self.index(named, loose)
+        self.assertEqual([("video",), ("video",)], self.vl.rows("SELECT kind FROM photos WHERE id IN (?, ?)", by_name, undated))
+        self.assertEqual((NAMED, 2019), (self.taken(by_name), self.year(by_name)), "dated by the date in its name")
+        self.assertEqual((None, None), (self.taken(undated), self.year(undated)), "never by its folder's year")
+        self.assertEqual((NAMED, "2019"), self.panel(by_name), "the panel's record the same")
+        self.assertEqual((None, dates.UNKNOWN_YEAR), self.panel(undated))
+        scanned = {name: (taken, year) for name, taken, year in self.scanned()}
+        self.assertEqual((NAMED, "2019"), scanned["2019-07-04 regatta.avi"], "and the folder view's")
+        self.assertEqual((None, dates.UNKNOWN_YEAR), scanned["slipway.avi"])
 
     def test_a_photo_with_a_date_in_its_name_is_never_dated_by_it(self):
         named = os.path.join(self.folder, "2019-07-04 dock.jpg")

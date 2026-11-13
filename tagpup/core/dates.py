@@ -9,8 +9,10 @@ tests/test_dates.py fails the build on a list of these fields anywhere else.
 
 A clip whose file holds no date (its QuickTime dates zeros, no XMP date) is dated by the date in its file name
 (`name_date`), at midnight: a real date always wins, a photo is never dated by its name, and a folder's date never
-dates one (owner, 2026-11-13). The path reaches the rule as an argument of each reader (date_taken, year_taken,
-date_taken_sort_key), so the row (store.photos.date_photos), the page's record and the folder view's order give one date.
+dates one (owner, 2026-11-13). The path and the kind ('photo' or 'video': photos.kind, as the index gave the row it by
+images.kind_of) reach the rule as arguments of each reader (date_taken, year_taken, date_taken_sort_key), so the row
+(store.photos.date_photos), the page's record and the folder view's order give one date; a clip is told from a photo by
+its kind alone, never by the fields its metadata holds (#2952).
 A clip's year is the year of that date alone (photo_year): one with no Date Taken has no year, so the owner finds it
 among the undated (owner, 2026-11-13, #2941); a photo with none takes a year from its file or folder names.
 
@@ -45,6 +47,9 @@ CLIP_DATE_FIELDS = ("QuickTime:CreationDate", "QuickTime:CreateDate")
 #: 39 a DateTimeOriginal and 41 a CreateDate; counted 2026-11-08). XMP is the copy the index reads, the QuickTime copy
 #: the fallback, as a clip's title and keywords are (DECISIONS 2026-11-08, A5 (D) REVISED).
 CLIP_XMP_DATE_FIELDS = ("XMP:DateTimeOriginal", "XMP:CreateDate")
+
+#: The kind of a clip (photos.kind, images.kind_of): what the dating rules tell a clip from a photo by.
+VIDEO = "video"
 
 #: What a QuickTime date with no date in it starts with.
 _ZERO_DATE = "0000:00:00"
@@ -152,18 +157,11 @@ def _clip_dates(raw_metadata):
             yield local
 
 
-def _a_clips(raw_metadata):
-    """Is `raw_metadata` a clip's record: does it hold a QuickTime date (CLIP_DATE_FIELDS), zeros or not? The one test
-    of a clip the dating rules read by (_dates_given, photo_year): every clip of the three libraries holds one and no
-    photo does (2,915 clips, counted read-only 2026-11-13)."""
-    return any(field in (raw_metadata or {}) for field in CLIP_DATE_FIELDS)
-
-
-def _dates_given(raw_metadata, path):
-    """Each date the record of the photo at `path` holds, as read, the most specific first: the one rule date_taken and
-    year_taken read by. A clip's own dates (_clip_dates), else, holding none, the date in its file name (name_date); a
-    photo's DATE_TAKEN_FIELDS, never its name. `path` None reads the record's own dates alone."""
-    if _a_clips(raw_metadata):
+def _dates_given(raw_metadata, path, kind):
+    """Each date the record of the photo at `path`, of `kind` (photos.kind), holds, as read, the most specific first: the
+    one rule date_taken and year_taken read by. A clip's own dates (_clip_dates), else, holding none, the date in its file
+    name (name_date); a photo's DATE_TAKEN_FIELDS, never its name. `path` None reads the record's own dates alone."""
+    if kind == VIDEO:
         given = list(_clip_dates(raw_metadata))
         named = None if given else name_date(path)
         yield from given or ([named] if named else [])
@@ -174,27 +172,29 @@ def _dates_given(raw_metadata, path):
             yield str(value).strip()
 
 
-def date_taken(raw_metadata, path):
-    """The first Date Taken of the photo at `path` that has a value (_dates_given), as ExifTool gave it ("2026:06:27
-    12:00:00"; a clip's UTC CreateDate as local time; a clip holding none, its file name's date at midnight), or None.
-    `path` None is the file's own dates alone: what a conversion carries into its copy (tagpup.services.convert)."""
-    return next(_dates_given(raw_metadata, path), None)
+def date_taken(raw_metadata, path, kind):
+    """The first Date Taken of the photo at `path`, of `kind` (photos.kind), that has a value (_dates_given), as ExifTool
+    gave it ("2026:06:27 12:00:00"; a clip's UTC CreateDate as local time; a clip holding none, its file name's date at
+    midnight), or None. `path` None is the file's own dates alone: what a conversion carries into its copy
+    (tagpup.services.convert)."""
+    return next(_dates_given(raw_metadata, path, kind), None)
 
 
-def date_taken_sort_key(raw_metadata, path, mtime=0.0):
-    """Sorts photos by when they were taken (date_taken of the photo at `path`), and those without a date after them by
-    file time.
+def date_taken_sort_key(raw_metadata, path, kind, mtime=0.0):
+    """Sorts photos by when they were taken (date_taken of the photo at `path`, of `kind`), and those without a date
+    after them by file time.
 
     A string, as the folder view has always sorted: the date as ExifTool gives it, or
     "mtime_<file time>", which sorts after every date.
     """
-    taken = date_taken(raw_metadata, path)
+    taken = date_taken(raw_metadata, path, kind)
     return taken if taken is not None else "mtime_%s" % (mtime,)
 
 
-def year_taken(raw_metadata, path):
-    """The year of the first Date Taken of the photo at `path` (_dates_given) that starts with one, or None."""
-    for value in _dates_given(raw_metadata, path):
+def year_taken(raw_metadata, path, kind):
+    """The year of the first Date Taken of the photo at `path`, of `kind` (_dates_given), that starts with one, or
+    None."""
+    for value in _dates_given(raw_metadata, path, kind):
         match = _YEAR_AT_START.match(value)
         if match and EARLIEST <= int(match.group(1)) <= LATEST:
             return int(match.group(1))
@@ -222,15 +222,15 @@ def year_in_name(path):
     return None
 
 
-def photo_year(raw_metadata, path):
-    """The year a photo was taken: the year of its Date Taken (year_taken), else, for a photo, a year in its file or
-    folder names (year_in_name). A clip's is the year of its Date Taken alone, the date in its file name included
+def photo_year(raw_metadata, path, kind):
+    """The year the photo at `path`, of `kind` (photos.kind), was taken: the year of its Date Taken (year_taken), else, for
+    a photo, a year in its file or folder names (year_in_name). A clip's is the year of its Date Taken alone, the date in its file name included
     (name_date, a whole date: `2019-07-04 jetty.mp4`), never a folder's year nor a year alone in its name (`2016-07
     slipway.mp4`): a clip with no Date Taken has no year, undated where the owner looks for the clips to date by hand
     (owner, 2026-11-13, #2941; photo_index's 11 such clips, 2 of them with a year in their folder only, 9 with a year
     alone in their name, counted read-only 2026-11-13)."""
-    year = year_taken(raw_metadata, path)
-    if year is not None or _a_clips(raw_metadata):
+    year = year_taken(raw_metadata, path, kind)
+    if year is not None or kind == VIDEO:
         return year
     return year_in_name(path)
 
@@ -238,8 +238,8 @@ def photo_year(raw_metadata, path):
 def record_year(meta):
     """The year a photo was taken, from a record of it: the record's "year", as the
     library records it (photos.year) and the reader gives it; else, for a record without
-    one, photo_year of its raw_metadata (every record carries one) and path. What the suggester's time decay and
-    clustering's years go by.
+    one, photo_year of its raw_metadata (every record carries one), path and kind (the page's record's "media"). What the
+    suggester's time decay and clustering's years go by.
 
     A number or None, whatever the record's shape: the library gives its year as a
     number, the page's record of a photo as text ("2020", or "Unknown"), and Suggest
@@ -250,7 +250,7 @@ def record_year(meta):
             return year
         text = str(year).strip() if year is not None else ""
         return int(text) if text.isdigit() else None
-    return photo_year(meta.get("raw_metadata"), meta.get("path"))
+    return photo_year(meta.get("raw_metadata"), meta.get("path"), meta.get("media"))
 
 
 #: How every time TagPup records is spelled: local time, "YYYY-MM-DD HH:MM:SS".

@@ -376,7 +376,7 @@ def _ready(library, exiftool_path, tools, source, reason):
     # the copy reads back holding what it carries (_short_of).
     carry = {"tags": list(vocabulary.extract_tags(fields.keyword_fields(*fields.expand_tag_fields(tags + windows)))),
              "title": fields.own_title(held),
-             "name": names.preserved_name(held) or os.path.basename(source), "date": dates.date_taken(whole, None)}
+             "name": names.preserved_name(held) or os.path.basename(source), "date": dates.date_taken(whole, None, dates.VIDEO)}
     return _Ready(found[0], stamp, before, streams, carry, clip_convert.target_of(source), packet)
 
 
@@ -679,7 +679,7 @@ def _carrier(library, after):
             wanted.update(fields.title_fields(carry["title"]))
         if carry["name"] and names.preserved_name(held) != carry["name"]:
             wanted[fields.PRESERVED_NAME] = carry["name"]
-        if carry["date"] and dates.date_taken(held, None) != carry["date"]:
+        if carry["date"] and dates.date_taken(held, None, dates.VIDEO) != carry["date"]:
             wanted.update(fields.held_dates(fields.date_taken_fields(carry["date"], clip=True), held))
         if not wanted:
             return file_changes.skip("its converted copy holds what it carries already")

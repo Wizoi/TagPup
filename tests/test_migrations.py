@@ -59,6 +59,7 @@ import sys
 import textwrap
 import threading
 import unittest
+import unittest.mock
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import own_home  # noqa: E402
@@ -68,12 +69,15 @@ from face_rows import FACENET, add_vector_of_face, photo_id  # noqa: E402
 from journal_library import MODEL, JournalLibrary, vector  # noqa: E402
 from migration_names import step  # noqa: E402
 
-from tagpup.core import processes  # noqa: E402
+from tagpup.core import dates, processes  # noqa: E402
 from tagpup.core.library import Library  # noqa: E402
 from tagpup.services import journal as journal_service  # noqa: E402
 from tagpup.store import db, file_journal, generations, job_runs, journal, photo_fingerprints, photos as store_photos, schema  # noqa: E402
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+#: Today's dating of the photos, which a library before migration 37 is not dated by (Migrated.date).
+DATE_PHOTOS = store_photos.date_photos
 
 
 def backups(db_path):
@@ -100,6 +104,22 @@ class Migrated(JournalLibrary):
         super().setUp()
         self.steps = contextlib.ExitStack()
         self.addCleanup(self.steps.close)
+
+    def date(self, conn, photo_ids=None):
+        """Date the photos `photo_ids` (every one, without) as the app the library was made by did
+        (store.photos.date_photos): one made before migration 37 has no photos.kind, every row of it a photo (37 gave each
+        'photo'), dated as a photo. What a class at 36 writes its library with today's journal through
+        (TheOwnersLibraryAt36MeetsMigration37), as the app at 36 dated."""
+        if "kind" in {row[1] for row in conn.execute("PRAGMA table_info(photos)")}:
+            return DATE_PHOTOS(conn, photo_ids)
+        query, params = "SELECT id, path, raw_metadata FROM photos", ()
+        if photo_ids is not None:
+            params = tuple(photo_ids)
+            query += " WHERE id IN (%s)" % ",".join("?" * len(params))
+        for row_id, path, raw_json in conn.execute(query, params).fetchall():
+            raw = json.loads(raw_json) if raw_json else {}
+            conn.execute("UPDATE photos SET taken = ?, year = ? WHERE id = ?",
+                         (dates.date_taken(raw, path, "photo"), dates.photo_year(raw, path, "photo"), row_id))
 
     def migrate(self, *added):
         """Open the library with the code knowing `added` after the baseline, and go on knowing them: the library is now
@@ -1024,7 +1044,7 @@ class TheOwnersLibraryAt36MeetsMigration37(Migrated):
     PHOTOS, FILES = ("table", "photos"), ("table", "change_files")
 
     def setUp(self):
-        with migration_names.up_to(36):
+        with migration_names.up_to(36), unittest.mock.patch.object(store_photos, "date_photos", self.date):
             super().setUp()
             self.whole = self.dump()
             # A file of a change of photo files as the app at 36 leaves one: planned, marked writing with its stamp, done.

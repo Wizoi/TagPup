@@ -107,13 +107,17 @@ class JournalLibrary(unittest.TestCase):
                          (ids["prize"], json.dumps([{"tag": "Activity/Sailing", "score": 0.61}]), MODEL))
             # As the indexer leaves a photo: dated, and its people by the rule; and the faces as
             # naming them left them, holding their person's id (tagpup.store.person_ids).
-            store_photos.date_photos(conn)
+            self.date(conn)
             people.rebuild(conn)
             person_ids.sync(conn)
             conn.commit()
             return ids
         finally:
             conn.close()
+
+    def date(self, conn):
+        """Date every photo as the indexer does (tagpup.store.photos.date_photos)."""
+        store_photos.date_photos(conn)
 
     def detected(self, conn, path, box, embedding, crop, prob):
         """Record a face as the indexer does (tagpup.store.faces.insert), its vector under the library's model. Returns its id."""

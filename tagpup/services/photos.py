@@ -31,7 +31,9 @@ def page_record(path, meta, mtime=0.0, size=0):
     """
     path = paths.stored(path)
     raw_meta = meta.get("raw_metadata", {})
-    year = meta["year"] if "year" in meta else dates.photo_year(raw_meta, path)
+    # 'photo' or 'video', as the index gives a row its kind (images.kind_of, photos.kind): what it is dated by as well.
+    media = images.kind_of(path)
+    year = meta["year"] if "year" in meta else dates.photo_year(raw_meta, path, media)
     gear = photo_meta.gear(raw_meta)
     record = {
         "path": path,
@@ -45,15 +47,15 @@ def page_record(path, meta, mtime=0.0, size=0):
         "mtime": mtime,
         "size": size,
         "year": dates.shown_year(None if year is None else str(year)),
-        "taken": dates.date_taken(raw_meta, path),
+        "taken": dates.date_taken(raw_meta, path, media),
         "raw_metadata": raw_meta,
         # The camera and lens it was taken with, named as a search finds them (photo_meta.gear): "" for what the
         # metadata does not say, which the panel shows as nothing.
         "camera": gear.camera or "",
         "lens": gear.lens or "",
-        # 'photo' or 'video', as the index gives a row its kind (images.kind_of, photos.kind) and a library card carries
-        # it: the page plays a video and draws it by its poster, never asks /api/photo-file for it (media.js, grid.js).
-        "media": images.kind_of(path),
+        # A library card carries the kind as well: the page plays a video and draws it by its poster, never asks
+        # /api/photo-file for it (media.js, grid.js).
+        "media": media,
         # What a save may change of it, by name (field_values.writes): the page offers no other edit of it.
         "writes": list(field_values.writes(path)),
     }
@@ -108,7 +110,8 @@ def read_file(library, path, exiftool_path, stamp=None):
 
 def taken_order(record):
     """The folder view's order for a page record: when it was taken, then file time."""
-    return dates.date_taken_sort_key(record.get("raw_metadata", {}), record.get("path"), record.get("mtime", 0.0))
+    return dates.date_taken_sort_key(record.get("raw_metadata", {}), record.get("path"), record["media"],
+                                     record.get("mtime", 0.0))
 
 
 @roots_service.canonical_args("folder")
