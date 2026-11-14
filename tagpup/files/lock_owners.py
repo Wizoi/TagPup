@@ -319,16 +319,16 @@ def looks_held(error, writable=False):
     "open in another program" (#2970). No words of ExifTool's count as access denied: a write is `-o` to a new file beside
     the photo, which it refuses as "Error creating file", and the move over the photo is os.replace's, with its number."""
     number = getattr(error, "winerror", None)
-    if number in SHARING:
+    if number in SHARING or (number is None and HELD_WORDS.search(str(error))):
         return True
-    if number == DENIED:
-        return writable
-    if number is not None:
-        return False
-    text = str(error)
-    if HELD_WORDS.search(text):
-        return True
-    return writable and isinstance(error, PermissionError)
+    return writable and denied(error)
+
+
+def denied(error):
+    """Is `error` an access denied (DENIED, or a PermissionError with no number), the kind looks_held counts a holder's
+    only when `writable`? A site whose look at the file costs (an os.stat on a share) asks it first, and looks only then."""
+    number = getattr(error, "winerror", None)
+    return number == DENIED or (number is None and isinstance(error, PermissionError))
 
 
 def _on_a_share(path):

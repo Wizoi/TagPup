@@ -340,10 +340,15 @@ class AFailedWrite(Base):
             said = self.only(PermissionError(13, "Permission denied"))
         self.assertEqual("[Errno 13] Permission denied", str(said))
 
-    def test_a_failure_of_another_kind_asks_nobody(self):
-        with mock.patch.object(lock_owners, "holders", side_effect=AssertionError("asked")):
-            said = self.only(RuntimeError("ExifTool said: File format error"))
-        self.assertEqual("ExifTool said: File format error", str(said))
+    def test_a_failure_of_another_kind_asks_nobody_and_looks_at_the_file_no_more(self):
+        """A Just-look save on a share that stopped answering: its failure is no access denied, so neither a holder nor
+        the file (an os.stat with no deadline) is asked after it, and the next photo is reached as soon."""
+        gone = OSError(None, "The specified network name is no longer available", None, 64)
+        for error in (RuntimeError("ExifTool said: File format error"), gone):
+            with mock.patch.object(lock_owners, "holders", side_effect=AssertionError("asked")), \
+                    mock.patch.object(file_changes, "_stat", side_effect=AssertionError("looked at")):
+                said = self.only(error)
+            self.assertEqual(str(error), str(said))
 
     def test_a_journaled_write_names_the_holder(self):
         library = mock.Mock(path="library.db")
