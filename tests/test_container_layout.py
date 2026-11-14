@@ -7,10 +7,15 @@ read that fails part-way. None of them raises."""
 import io
 import os
 import struct
+import sys
 import tempfile
 import unittest
 
-from tagpup.files import containers
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from test_a_clip_dated_through_the_journal import (  # noqa: E402
+    DISAGREEING, SHAPES, THREE_TRACKS, VERSION_ONE, ZERO_HEADERS, clip_of)
+from tagpup.files import containers  # noqa: E402
 
 XMP_UUID = bytes.fromhex("BE7ACFCB97A942E89C71999491E3AFAC")
 
@@ -143,6 +148,47 @@ class AClip(Reading):
     def test_moof_is_a_fragmented_clip(self):
         layout = self.read(FTYP + MOOV + box(b"moof", bytes(16)) + MDAT)
         self.assertTrue(layout.fragmented)
+
+
+class AClipsHeaders(Reading):
+    """The creation times of a clip's movie, track and media headers (Video.headers, Box.version, .width, .created), on
+    the layouts real clips have (tests/fixtures/clip_headers.json: the header bytes of each, read here and by
+    tests/test_a_clip_dated_through_the_journal.py)."""
+
+    def test_the_headers_of_each_layout_real_clips_have_are_read_with_their_versions_widths_and_times(self):
+        zero_two_tracks = ["mvhd", "tkhd", "mdhd", "tkhd", "mdhd"]
+        dated = 3517120800
+        expected = {
+            ZERO_HEADERS: (zero_two_tracks, [0, 0, 0, 0, 0], [4, 4, 4, 4, 4], [0, 0, 0, 0, 0]),
+            VERSION_ONE: (zero_two_tracks, [1, 1, 0, 1, 0], [8, 8, 4, 8, 4], [0, 0, 0, 0, 0]),
+            THREE_TRACKS: (zero_two_tracks + ["tkhd", "mdhd"], [0] * 7, [4] * 7, [dated] * 7),
+            DISAGREEING: (zero_two_tracks + ["tkhd", "mdhd"] * 2, [0] * 9, [4] * 9, [dated] * 5 + [dated + 1] * 4),
+        }
+        self.assertEqual(set(SHAPES), set(expected), "a case for every layout the fixture holds")
+        for shape, (types, versions, widths, created) in expected.items():
+            for moov_after_mdat in (False, True):
+                with self.subTest(shape=shape, moov_after_mdat=moov_after_mdat):
+                    headers = self.read(clip_of(shape, moov_after_mdat)).headers
+                    self.assertEqual(
+                        (types, versions, widths, created),
+                        ([h.type for h in headers], [h.version for h in headers], [h.width for h in headers],
+                         [h.created for h in headers]))
+
+    def test_a_header_of_another_version_or_too_short_to_hold_a_time_has_none(self):
+        for content, version, width in ((bytes([2]) + bytes(3) + bytes(8), 2, None), (bytes([1]) + bytes(3) + bytes(4), 1, 8),
+                                        (bytes([0]), 0, 4)):
+            with self.subTest(version=version, size=len(content)):
+                moov = box(b"moov", box(b"mvhd", content))
+                header, = self.read(FTYP + moov + MDAT).headers
+                self.assertEqual((version, width, None), (header.version, header.width, header.created))
+
+    def test_a_media_box_whose_children_do_not_fit_has_its_clip_say_so(self):
+        media = box(b"mdia", struct.pack(">I", 500) + b"mdhd" + bytes(8))
+        layout = self.read(FTYP + box(b"moov", box(b"mvhd", bytes(20)) + box(b"trak", media)) + MDAT)
+        self.assertEqual((False, ["mvhd"]), (layout.headers_whole, [h.type for h in layout.headers]))
+        whole = box(b"mdia", box(b"mdhd", bytes(20)))
+        layout = self.read(FTYP + box(b"moov", box(b"mvhd", bytes(20)) + box(b"trak", whole)) + MDAT)
+        self.assertEqual((True, ["mvhd", "mdhd"]), (layout.headers_whole, [h.type for h in layout.headers]))
 
 
 class AClipThatStopsBeingOne(Reading):
