@@ -602,3 +602,4 @@ def finish(db_path, change_id, also=None):
                          (_now(), json.dumps(summary, sort_keys=True), change_id))
         return states
 
+    return db.write_with_connection(db_path, work, label="finish change %d" % change_id)
