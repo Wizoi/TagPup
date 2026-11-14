@@ -206,12 +206,13 @@ class AWriteThatChangedNothing(KeptCase):
         self.assertEqual(["done"], self.states(change), "the file that did not change is still in the change")
         self.assertEqual("applied", self.status(change))
 
-    def test_nothing_changed_is_a_failed_change(self):
+    def test_nothing_changed_leaves_no_change(self):
         a = self.make_read("a.jpg")
+        last = self.last_change()
         with mock.patch.object(field_values, "write"):
             result = self.add([a])
         self.assertEqual((0, 1), (result.changed, len(result.errors)))
-        self.assertEqual(("failed", []), (self.status(result.details["change"]), self.states(result.details["change"])))
+        self.assertEqual((None, last), (result.details["change"], self.last_change()), "History lists no change that wrote nothing")
 
 
 #: Another program's MWG region (a name holding the serialised form's special characters) and its Microsoft Photo one.

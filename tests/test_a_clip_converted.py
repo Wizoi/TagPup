@@ -482,8 +482,8 @@ class Refused(AnOldClipInTheLibrary):
         self.assertEqual(self.before, self.read_bytes(self.source))
         self.assertEqual([], self.leftovers())
         self.assertFalse(os.path.exists(clip_convert.target_of(self.source)))
-        self.assertEqual([(file_journal.CONVERT, "failed")],
-                         [(op, status) for _id, op, status in self.changes() if op == file_journal.CONVERT])
+        self.assertEqual([], [(op, status) for _id, op, status in self.changes() if op == file_journal.CONVERT],
+                         "a conversion that wrote nothing leaves no change")
 
     def test_a_clip_opened_in_a_player_after_it_was_planned_keeps_its_original_and_copy_and_the_next_settle_deletes_it(self):
         # Refused open before the plan (HELD_OPEN), it is opened as ffmpeg ends: a handle that does not share delete, as a

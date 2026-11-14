@@ -219,10 +219,11 @@ class AClipDatedThroughTheJournal(tagged.ALibraryHoldingAClip):
     @unittest.skipUnless(os.name == "nt", "a clip held open is refused by Windows' sharing")
     def test_a_date_save_of_a_clip_another_handle_holds_is_refused_and_names_who_holds_it(self):
         clip, = self.index(self.clip_path)
-        before = self.read_bytes(self.clip_path)
+        before, changes = self.read_bytes(self.clip_path), self.vl.rows("SELECT id FROM changes")
         with open(self.clip_path, "rb"):
             reply = self.save_date_from_the_panel(clip)
         self.assertNotEqual(200, reply.status_code)
+        self.assertEqual(changes, self.vl.rows("SELECT id FROM changes"), "nothing is journaled")
         error = reply.get_json()["error"]
         self.assertIn(in_place.OPEN_ELSEWHERE, error)
         self.assertRegex(error, r"It is held open by python\w*\.exe \(this TagPup process\)\.",
