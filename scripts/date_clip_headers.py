@@ -31,7 +31,7 @@ import _root  # noqa: E402,F401
 from tagpup import config as tagpup_config  # noqa: E402
 from tagpup import launcher, runtime  # noqa: E402
 from tagpup.core.library import Library  # noqa: E402
-from tagpup.services import snapshots, tagging  # noqa: E402
+from tagpup.services import file_changes, snapshots, tagging  # noqa: E402
 
 #: Why --apply is refused while an app runs: a running app writes the same clips and library (a save, an index).
 APP_RUNNING = ("Not run: TagPup is running (%d app server(s)). Close it first (from its tray or its window), then run "
@@ -67,22 +67,25 @@ def run(db_path, csv_path, apply, limit, out=say):
         return 1
     library = Library(db_path)
     named, kept = named_in(csv_path) if csv_path else ([], 0)
-    exiftool = None
     if apply:
         servers = launcher.running()
         if servers:
             out(APP_RUNNING % len(servers))
             return 1
-        taken = snapshots.before_a_long_write(library)
-        out("Snapshot of the library: %s." % (", ".join(taken.details["taken"]) or
-                                              "today's stands (%s)" % taken.details.get("today")))
-        exiftool = runtime.exiftool(library)
+    planned = []
     try:
-        result = tagging.date_clip_headers(library, exiftool, named, apply=apply, limit=limit,
+        exiftool = None
+        if apply:
+            taken = snapshots.before_a_long_write(library)
+            out("Snapshot of the library: %s." % (", ".join(taken.details["taken"]) or
+                                                  "today's stands (%s)" % taken.details.get("today")))
+            exiftool = runtime.exiftool(library)
+        result = tagging.date_clip_headers(library, exiftool, named, apply=apply, limit=limit, on_planned=planned.append,
                                            on_chunk=lambda done, of: out("%d of %d clips carried out." % (done, of)))
     except KeyboardInterrupt as stopped:
-        out("%s: stopped: %s clip(s) written, recorded as change %s in History, which can be undone; run this again to "
-            "continue." % (name, getattr(stopped, "written", None), getattr(stopped, "change", None)))
+        # A press while the clips are listed or read, the snapshot taken, or the clips left counted after the write is
+        # no stop of the write's own: what it left is the journal's (#3020).
+        out(file_changes.what_a_stop_left(library, stopped, planned[-1] if planned else None, "clip", who=name))
         return 130
     listed, counts = result.details["listed"], result.details["counts"]
     groups = collections.Counter(group for group, *_ in listed)

@@ -204,6 +204,19 @@ class TheApply(Mending):
         self.assertEqual([], self.operations())
         self.assertEqual([], [photo for photo in photos if self.files.tags_of(photo)])
 
+    def test_ctrl_c_after_the_change_was_applied_names_it(self):
+        """#2997, #3020: a press once the write returned (ExifTool closing) carries no `change`; the journal says the change
+        is applied, and the CLI names it and how many files it holds done, not '? photo file(s)', 'change ?'."""
+        photos = [self.drifted("drift_%d.jpg" % n) for n in range(batches.CHUNK + 1)]
+        with mock.patch.object(file_changes, "_said_removed", side_effect=KeyboardInterrupt):
+            said = self.run_cli("--apply")
+        self.assertEqual(1, said.exit_code, said.output)
+        [(change, status)] = self.look("SELECT id, status FROM changes WHERE operation = ?", (tags_from_faces.OPERATION,))
+        self.assertEqual("applied", status)
+        self.assertIn("Stopped: %d photo file(s) written, recorded as change %d in History, which can be undone"
+                      % (len(photos), change), said.output)
+        self.assertEqual(len(photos), sum(1 for photo in photos if self.files.tags_of(photo)))
+
     def test_ctrl_c_after_a_file_is_written_before_it_is_recorded_keeps_it(self):
         self.stopped_by_ctrl_c_at("file written", on_disk=3)
 

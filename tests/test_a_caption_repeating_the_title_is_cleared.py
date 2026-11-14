@@ -393,7 +393,7 @@ class StoppedPartWay(CaptionSweep):
             code, said = self.sweep("--apply")
         self.assertEqual(130, code, said)
         self.assertNotIn("before anything was written", said)
-        self.assertIn("stopped again: at least 8 file(s) written", said)
+        self.assertIn("stopped: at least 8 file(s) written", said)
         self.assertIn("the next open of the library finishes settling them", said)
         self.assertEqual([0], read_at_the_stop, "the ninth file is under way, its chunk's eight read back already")
         # The files not reached were taken out before the read back: the next open settles the one under way, not

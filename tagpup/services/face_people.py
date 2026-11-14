@@ -143,7 +143,8 @@ class Writer:
         self.unpooled = unpooled
 
 
-def write_tags(library, changes, writer, operation, persons=None, stop_at_first_error=True, unpooled=None):
+def write_tags(library, changes, writer, operation, persons=None, stop_at_first_error=True, unpooled=None,
+               on_planned=None):
     """Give each photo of `changes` ({path: (tags to add, tags to take off)}) its own, as ONE journaled change of photo files
     (tagging.change_each, through file_changes.write_fields): more than batches.CHUNK photos are a batch -- its turn taken
     before the lock (file_changes.batch_exclusively), written a chunk at a time, Cancel and a hand-over stopping it at a chunk --
@@ -152,12 +153,13 @@ def write_tags(library, changes, writer, operation, persons=None, stop_at_first_
     the first photo that fails, unless `stop_at_first_error` is False (the repair: a photo that cannot be written is an error,
     and the others are written). A Result: `changed` the files written, details["written"] and `changes`, the journal's ids;
     refused, nothing written, when too many batches wait or it was cancelled before its turn. `unpooled`: the caller asks
-    which faces the records take out of identity work (file_changes.write_fields)."""
+    which faces the records take out of identity work, `on_planned` is told the change's id (file_changes.write_fields)."""
     result = Result(attempted=len(changes))
     try:
         with file_changes.batch_exclusively(library, operation, len(changes)):
             done = tagging.change_each(library, changes, writer.exiftool_path, operation, persons=persons,
-                                       stop_at_first_error=stop_at_first_error, unpooled=unpooled)
+                                       stop_at_first_error=stop_at_first_error, unpooled=unpooled,
+                                       on_planned=on_planned)
             if writer.told:
                 writer.told(done)
     except (Conflict, Refused) as why:
@@ -168,11 +170,13 @@ def write_tags(library, changes, writer, operation, persons=None, stop_at_first_
     return result
 
 
-def add_people(library, wanted, writer, filer=None, operation=ADDED, stop_at_first_error=True, unpooled=None):
+def add_people(library, wanted, writer, filer=None, operation=ADDED, stop_at_first_error=True, unpooled=None,
+               on_planned=None):
     """Add the person of each (photo path, person) of `wanted` to the photo's keywords, a photo given all its people in
     one write; a person is the id of their node. A Result: `changed` the files written, details `written`. A photo whose
     keywords name the person already (by the id of their node: already_names) is not read or written again.
-    Refused, nothing written, for a person whose node is gone (merged or removed meanwhile). `unpooled`: as write_tags'."""
+    Refused, nothing written, for a person whose node is gone (merged or removed meanwhile). `unpooled`, `on_planned`: as
+    write_tags'."""
     filer = filer or Filer(library)
     result = Result(attempted=len(wanted))
     held = {paths.key(path): tags for path, tags, _raw in photos.read_tags(library.path, [path for path, _name in wanted])}
@@ -189,8 +193,8 @@ def add_people(library, wanted, writer, filer=None, operation=ADDED, stop_at_fir
         if tag not in add:
             add.append(tag)
         persons.setdefault(paths.key(photo_path), set()).add(tag)
-    return (write_tags(library, changes, writer, operation, persons, stop_at_first_error, unpooled=unpooled) if changes
-            else result)
+    return (write_tags(library, changes, writer, operation, persons, stop_at_first_error, unpooled=unpooled,
+                       on_planned=on_planned) if changes else result)
 
 
 def untag_plan(library, items):

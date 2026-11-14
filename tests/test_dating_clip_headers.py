@@ -146,6 +146,36 @@ class DatingClipHeaders(tagged.ALibraryHoldingAClip):
         self.assertIn("Dated: wrote 1 clip file(s).", said)
         self.assertIn("Left to date: 0.", said)
 
+    def test_a_ctrl_c_while_the_clips_are_read_says_nothing_was_planned_or_written(self):
+        """A press during the plan's read of the clips (minutes over a share) comes before the write's own handler: the
+        stop carries no change, and none was planned (#3020: it said 'None clip(s) written, recorded as change None')."""
+        before = self.files()
+        with mock.patch.object(field_values, "read", side_effect=KeyboardInterrupt):
+            code, said = self.run_it("--apply")
+        self.assertEqual(130, code, said)
+        self.assertIn("stopped before this run planned or wrote anything", said)
+        self.assertNotIn("None", said)
+        self.assertEqual((before, []), (self.files(), self.changes()))
+
+    def test_a_ctrl_c_after_the_write_returned_names_the_change_it_applied(self):
+        """A press once the write returned, while the clips left are counted again: the change is applied and undoable,
+        which the line says from the journal (#3020: it said 'None clip(s) written, recorded as change None')."""
+        listed, calls = tagging.clips_to_date_headers, []
+
+        def counted_again(library, named=()):
+            calls.append(library)
+            if len(calls) == 2:
+                raise KeyboardInterrupt
+            return listed(library, named)
+
+        with mock.patch.object(tagging, "clips_to_date_headers", side_effect=counted_again):
+            code, said = self.run_it("--apply")
+        self.assertEqual(130, code, said)
+        [change] = self.changes()
+        self.assertIn("stopped: 2 clip(s) written, recorded as change %d in History, which can be undone" % change, said)
+        self.assertNotIn("None", said)
+        self.assertTrue(self.headers(self.zero, dated.SAVED), "the A clip written")
+
     def test_a_clip_dated_since_the_listing_or_holding_the_date_already_is_not_written_nor_counted_written(self):
         listed, calls = tagging.clips_to_date_headers, []
 

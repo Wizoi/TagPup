@@ -1521,28 +1521,12 @@ def tags_from_faces(ctx, apply_, guesses, folder):
         return
     exiftool = get_exiftool_path(library.path)
     console.print("Writing %d photo file(s)..." % counts["photos_to_write"])
+    changes = []
     try:
         with _break_is_an_interrupt():
-            result = tags_from_faces_service.apply(library, planned, exiftool)
+            result = tags_from_faces_service.apply(library, planned, exiftool, on_planned=changes.append)
     except KeyboardInterrupt as stopped:
-        written, left = getattr(stopped, "written", None), getattr(stopped, "left", 0)
-        if left:
-            # The file under way could not be read (the Ctrl+C ended ExifTool too): its count is not known yet.
-            console.print("Stopped: %s photo file(s) written, recorded as change %s of the journal; %d more is settled the "
-                          "next time the library is opened, and then `undo` takes the change back. The rest were not "
-                          "written. Run it again for them."
-                          % ("?" if written is None else written, getattr(stopped, "change", None), left),
-                          markup=False, soft_wrap=True)
-            raise SystemExit(1) from None
-        if hasattr(stopped, "change") and stopped.change is None:
-            # It wrote nothing, and a change that wrote nothing is erased (#2974): none to undo. A stop with no `change` came
-            # after the write returned, the change applied (#2997): the line below, its id not known here.
-            console.print("Stopped: no photo file written, no change recorded, nothing to undo. Run it again for them.",
-                          markup=False, soft_wrap=True)
-            raise SystemExit(1) from None
-        console.print("Stopped: %s photo file(s) written, recorded as change %s of the journal (`undo` takes it back); "
-                      "the rest were not written. Run it again for them."
-                      % ("?" if written is None else written, getattr(stopped, "change", "?")),
+        console.print(file_changes.what_a_stop_left(library, stopped, changes[-1] if changes else None, "photo file"),
                       markup=False, soft_wrap=True)
         raise SystemExit(1) from None
     console.print("Wrote %d photo file(s) in %d change(s) of the journal (`history` lists them)."
