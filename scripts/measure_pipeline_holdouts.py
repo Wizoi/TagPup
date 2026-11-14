@@ -34,7 +34,7 @@ or a person.
   photos, the held-out ones and others drawn at random as their neighbours; the baseline's neighbours are still every
   photo's, so a pooled run checks the harness and compares nothing.
 
-* `clips` (d), no model, on a copy of the library in `--work`: Suggest's neighbour cut (NEIGHBOUR_CUT) read for clips
+* `clips` (d), no model, on a copy of the library in `--work`: Suggest's neighbour cut (suggesting.NEIGHBOUR_CUT) read for clips
   (findings #2626): a clip is matched on the best of its five frames (PhotoIndex.search), so its likeness is the most of
   five draws, against its frame 0 alone. `--sample` photos with a tag that is not a person and every clip are searched
   under each, held out by photo and by folder: each neighbour's likeness by rank, clips and photos apart, and at each cut
@@ -217,11 +217,11 @@ CANDIDATES = (
     "ViT-SO400M-14-SigLIP2:webli:",
 )
 
-#: Suggest's neighbour cut, and the baseline's (CANDIDATES[0], the libraries' model) zero-shot word cut as the table of
+#: The baseline's (CANDIDATES[0], the libraries' model) zero-shot word cut as the table of
 #: photo models holds it (tagpup.ml.photo_models, read through services.settings: a program may not import tagpup.ml,
 #: tests/test_layers.py). A cut read on one model's likenesses is not another's, so every model is scored with no
-#: neighbour cut, and the cut it would need to keep what the baseline's keep is read off the held-out set (cuts_needed).
-NEIGHBOUR_CUT = 0.35
+#: neighbour cut, and the cut it would need to keep what the baseline's keep (at Suggest's, suggesting.NEIGHBOUR_CUT) is
+#: read off the held-out set (cuts_needed).
 WORD_CUT = settings_service.photo_word_cut(*CANDIDATES[0].split(":")[:2])
 
 #: The floors the tags offered are scored at (Suggest's is suggesting.OFFER_A_TAG), and the word path's cuts.
@@ -327,7 +327,7 @@ def neighbour_likeness(seen):
     below Suggest's neighbour cut, and every neighbour's likeness at each of PERCENTILES."""
     every = [sim for sims in seen for sim in sims]
     return {"nearest": sandbox.summary([sims[0] for sims in seen if sims]),
-            "share_below_cut": sum(1 for sim in every if sim < NEIGHBOUR_CUT) / len(every) if every else None,
+            "share_below_cut": sum(1 for sim in every if sim < suggesting.NEIGHBOUR_CUT) / len(every) if every else None,
             "percentiles": [float(v) for v in np.percentile(every, PERCENTILES)] if every else []}
 
 
@@ -388,7 +388,7 @@ def word_scores(model, clip, held, truths):
 
 def cuts_needed(found, baseline):
     """The cuts the candidate `found` would need to keep what the baseline's keep, read off the held-out set (by
-    folder): the neighbour cut keeping the share of neighbours the baseline's NEIGHBOUR_CUT keeps; the offered floor
+    folder): the neighbour cut keeping the share of neighbours the baseline's suggesting.NEIGHBOUR_CUT keeps; the offered floor
     giving the precision the baseline's has at Suggest's floor; the word cut giving the precision the baseline's word
     path has at WORD_CUT. None where no cut reaches it. Where the baseline's own cut drops nothing (a share of 0 below it, as on the
     libraries' run) the neighbour cut is only the least likeness this model gave a neighbour, which drops nothing
@@ -718,7 +718,7 @@ def table(out, report):
 
 # ---- (d) Suggest's neighbour cut for clips (findings #2626, #2628) ------------------------------------------------
 
-#: The cuts the clips check reads Suggest's neighbours at, NEIGHBOUR_CUT (Suggest's, unchanged) among them.
+#: The cuts the clips check reads Suggest's neighbours at, suggesting.NEIGHBOUR_CUT (Suggest's, unchanged) among them.
 CLIP_CUTS = tuple(round(0.20 + 0.05 * n, 2) for n in range(15))
 
 #: The ranks the clips check's table of likeness prints, of the NEIGHBOURS.
@@ -881,7 +881,7 @@ def clips_table(found, report):
                     cells.append("%d | %s | %s / %s (%d)" % (
                         point["slots"], number(point["clip_slots"] / point["slots"] if point["slots"] else None),
                         number(tags["precision"]), number(tags["recall"]), tags["offered"]))
-                report("| %.2f%s | %s |" % (cut, " (Suggest's)" if cut == NEIGHBOUR_CUT else "", " | ".join(cells)))
+                report("| %.2f%s | %s |" % (cut, " (Suggest's)" if cut == suggesting.NEIGHBOUR_CUT else "", " | ".join(cells)))
 
 
 def clips_main(args, source, out):

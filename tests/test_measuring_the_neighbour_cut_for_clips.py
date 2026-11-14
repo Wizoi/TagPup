@@ -31,6 +31,7 @@ import photo_rows  # noqa: E402
 import stand_in_models  # noqa: E402
 
 import measure_pipeline_holdouts as holdouts  # noqa: E402
+from tagpup.core import suggesting  # noqa: E402
 from tagpup.runtime import Runtime  # noqa: E402
 from tagpup.services import settings, suggester  # noqa: E402
 from tagpup.services.search import PhotoIndex  # noqa: E402
@@ -94,8 +95,8 @@ class ALibraryWithAClip(unittest.TestCase):
             self.assertEqual(1, best["likeness"]["photo"]["photo"]["1"]["n"])
             self.assertEqual({}, first["likeness"]["photo"]["clip"])
             self.assertEqual(2, first["likeness"]["photo"]["photo"]["1"]["n"])
-            at_cut = best["cuts"]["%.2f" % holdouts.NEIGHBOUR_CUT]["photo"]
-            before = first["cuts"]["%.2f" % holdouts.NEIGHBOUR_CUT]["photo"]
+            at_cut = best["cuts"]["%.2f" % suggesting.NEIGHBOUR_CUT]["photo"]
+            before = first["cuts"]["%.2f" % suggesting.NEIGHBOUR_CUT]["photo"]
             self.assertEqual((2, 1), (at_cut["slots"], at_cut["clip_slots"]))
             self.assertEqual((2, 0), (before["slots"], before["clip_slots"]))
             # The clip carries no tag: the asked photo is offered nothing; the other photo, its own tag.
@@ -113,7 +114,7 @@ class ALibraryWithAClip(unittest.TestCase):
             asked = found["by_folder"][match]
             self.assertEqual(0.8, round(asked["likeness"]["clip"]["photo"]["1"]["median"], 2))
             self.assertEqual({}, asked["likeness"]["clip"]["clip"])
-            self.assertEqual(0, asked["cuts"]["0.35"]["clip"]["offered"]["photos"])   # it has no tag of its own
+            self.assertEqual(0, asked["cuts"]["%.2f" % suggesting.NEIGHBOUR_CUT]["clip"]["offered"]["photos"])   # it has no tag of its own
 
     def test_the_run_reads_a_copy_and_writes_nothing_to_the_library(self):
         work, out = tempfile.mkdtemp(prefix="clip_cut_work_"), tempfile.mkdtemp(prefix="clip_cut_out_")
@@ -140,7 +141,7 @@ class ALibraryWithAClip(unittest.TestCase):
         for secret in ("Quay", "Mole", "Ferry", "Dune", "Place", self.home.root):
             self.assertNotIn(secret, text)
             self.assertNotIn(secret, printed.getvalue().replace(work, "").replace(out, ""))
-        self.assertIn("| 0.35 (Suggest's) |", printed.getvalue())
+        self.assertIn("| %.2f (Suggest's) |" % suggesting.NEIGHBOUR_CUT, printed.getvalue())
 
 
     def test_a_work_folder_kept_from_another_library_is_refused_not_measured(self):

@@ -8,8 +8,8 @@ library's photos counter as it was before the scan, which the triggers move for 
 
 A folder's clips are listed beside its photos (video, merge B2): a clip the index has not recorded is a card with no
 picture until it is; once recorded, the next open gives it its id and its poster by id (/api/photo-thumb), the one way a
-clip's picture is served. A clip and a photo of one base name are two records. Suggest and a time shift are a folder's
-photos only. Smart Rename answers the folder as a scan gives it, its clips with it, scanned again when anything moved the
+clip's picture is served. A clip and a photo of one base name are two records. Suggest is handed a folder's photos and
+its clips (DECISIONS 2026-11-13), a time shift its photos only. Smart Rename answers the folder as a scan gives it, its clips with it, scanned again when anything moved the
 library since the folder was opened (#2564: a tag saved on one of its photos, the index recording the clip).
 """
 import os
@@ -122,7 +122,7 @@ class AFolderOfPhotosAndAClip(unittest.TestCase):
         self.assertTrue(clip["thumb"].startswith("/api/photo-thumb?id=%d&v=" % clip_id), clip["thumb"])
         self.assertEqual("video", clip["media"])
 
-    def test_suggest_and_a_time_shift_are_the_folders_photos_only(self):
+    def test_suggest_is_handed_the_folders_clips_and_a_time_shift_its_photos_only(self):
         self.record_the_clip()
         started = {}
 
@@ -133,7 +133,7 @@ class AFolderOfPhotosAndAClip(unittest.TestCase):
         with mock.patch.object(tagpup_routes.suggestion_jobs, "runs_for", lambda library: Runs()):
             reply = self.client.post("/library/api/folder/suggest-start", json={"folder_path": self.folder})
         self.assertEqual(200, reply.status_code, reply.data)
-        self.assertEqual(["dawn.jpg", "dusk.jpg"], started["photos"], "Suggest was handed the clip")
+        self.assertEqual(["dawn.jpg", "dusk.jpg", "dusk.mp4"], started["photos"], "Suggest was not handed the clip")
 
         shifted = {}
 

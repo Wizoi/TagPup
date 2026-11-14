@@ -1,0 +1,10 @@
+# Findings of a branch
+
+Provisional numbers `B-n`: `tools/add_findings.py --take` gives each row its number in
+docs/findings.md when the main session merges the branch, and removes this file.
+
+| # | Found | Finding | Status |
+|---|---|---|---|
+| B-1 | 2026-11-13 | low: Views: Suggest's neighbour cut 0.35 was written three times: `suggest_for_photo`'s default `min_sim` and `SuggestionModel.suggest`'s call in `tagpup/services/suggester.py`, and `NEIGHBOUR_CUT` in `scripts/measure_pipeline_holdouts.py` (with a literal 0.35 in `tagpup/ml/photo_models.py`'s docstring and two tests): a cut set for clips in one would not move the measurement's baseline. Now one constant, `tagpup.core.suggesting.NEIGHBOUR_CUT`, read by the suggester, the script and the tests. | fixed: 94597bea |
+| B-2 | 2026-11-13 | low: Views: with clips made Suggest subjects, the suggester's face step would show the face model each clip (no face rows on file for a clip: 0 faces on the 2,910 clips of photo_index), taking a GPU turn and logging a detection error per clip; the step now runs only for `store.photos.FACE_KINDS` (by `images.kind_of`), so a clip is offered tags alone. V3's clips test fails on the code before it. | fixed: f41fb0b3 |
+| B-3 | 2026-11-13 | low: Views/Data: a clip with no row yet in a folder the library holds (copied in before the index read it, or a folder added and Suggested before its index) got a row of kind 'photo' when Suggest kept its vector: `store.photos.ensure_row` -> `_unread_row` inserted with the column default; the indexer later corrects it (`kind = excluded.kind`), but until then the row is dated, thumbnailed and owed a face look as a photo. 0 unread rows (mtime NULL) on all three libraries now (counted read-only 2026-11-13); the instance is the user action, reproduced through the route by V3's new test, which fails on the old code (['photo']). `ensure_row` now takes the kind from its callers (`images.kind_of`) through `embeddings.put` and `suggestions.put`. | fixed: 740305ce |

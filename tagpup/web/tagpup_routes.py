@@ -408,9 +408,9 @@ def folder_suggest_start():
         return responses.error(409, refusal)
 
     def photos():
-        # A folder's photos: its clips are listed with them (scan_folder) and Suggest does not look at a clip.
+        # A folder's photos and its clips (scan_folder): a clip is offered tags alone (the suggester's face step).
         return {key: meta for key, meta in _folder_photos(library, folder).items()
-                if meta["media"] == "photo" and not library_actions.is_ignored(meta["path"], ignored)}
+                if not library_actions.is_ignored(meta["path"], ignored)}
     runtime = state.runtime()
     work = suggestion_jobs.work_for(library, photos, runtime, runtime.index_queues.of(library), looking=looking,
                                     held_now=(lambda: not library_actions.suggest_how(library, folder, ignored)[1])

@@ -51,15 +51,15 @@ def get(conn, photo_path, model):
     return Stored(*row) if row else None
 
 
-def put(conn, photo_path, model, mtime, size, vector, fingerprint, frames=()):
+def put(conn, photo_path, model, mtime, size, vector, fingerprint, frames=(), kind="photo"):
     """Keep `vector` as the photo's under `model`, computed from the file at `mtime` and
-    `size`, replacing any before it. A photo with no row gets one (photos.ensure_row).
+    `size`, replacing any before it. A photo with no row gets one, of `kind` (photos.ensure_row).
     `fingerprint`, required, is the (key, hash) of the picture the vector was made of, recorded as the photo's row, or
     None, which forgets the row (photo_fingerprints.follows). `frames`, a clip's, are its frames 1 to n (at most FRAMES,
     float32 bytes each), replacing all it had under `model`; a photo has none. The caller commits."""
     from tagpup.store import photos   # photos imports this module
     frames = _checked(frames)
-    photo_id = photos.ensure_row(conn, photo_path)
+    photo_id = photos.ensure_row(conn, photo_path, kind=kind)
     _drop_frames(conn, photo_id, model)
     conn.execute("INSERT OR REPLACE INTO embeddings (photo_id, model, mtime, size, vector)"
                  " VALUES (?, ?, ?, ?, ?)", (photo_id, model, mtime, size, vector))

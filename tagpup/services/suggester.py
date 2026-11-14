@@ -21,6 +21,7 @@ import numpy as np
 
 from tagpup.core import clustering, dates, paths, suggesting, vocabulary
 from tagpup.core.library import Library
+from tagpup.files import images
 from tagpup.ml import photo_models
 from tagpup.services import identify
 from tagpup.services import faces as face_records
@@ -94,7 +95,8 @@ def saved_in(db_path, folder):
 
 def keep(db_path, photo, found, model_key=None):
     """Keep `found` as what was suggested for `photo`, through the write lock."""
-    db.write_with_connection(db_path, lambda conn: store_suggestions.put(conn, photo, found, model_key),
+    db.write_with_connection(db_path, lambda conn: store_suggestions.put(conn, photo, found, model_key,
+                                                                         kind=images.kind_of(photo)),
                              label="suggestions for %s" % os.path.basename(photo))
 
 
@@ -318,7 +320,7 @@ class TagSuggester:
         photo_path: str,
         embedding: List[float],
         k: int = 15,
-        min_sim: float = 0.35,
+        min_sim: float = suggesting.NEIGHBOUR_CUT,
         target_metadata: Optional[Dict[str, Any]] = None
     ) -> Dict[str, Any]:
         """Query index for nearest neighbors, expand hierarchical tags, aggregate and score tags."""
@@ -458,32 +460,38 @@ class TagSuggester:
                         self.index.conn, photo_path, face_records.detector_of(self.faces))
             return has_rows, detected
 
-        # Check database cache first
-        has_face_rows, detected_faces = on_file()
-
-        # A face model that waits for its turn on the graphics card (a Suggest run's,
-        # tagpup.runtime) is waited for first, and the library asked again: the turn
-        # may have been the index's, recording this photo's faces (#750).
-        if not has_face_rows:
-            self.faces.ready()
+        # A kind the index does not look at for faces (a clip, store.photos.FACE_KINDS, by its name as the index gave its
+        # row its kind) has none on file and is never shown the face model: it takes no turn on the graphics card and is
+        # offered tags alone, no one.
+        detected_faces = []
+        if images.kind_of(photo_path) in store_photos.FACE_KINDS:
+            # Check database cache first
             has_face_rows, detected_faces = on_file()
 
-        # If not in database, detect and embed on-the-fly
-        if not has_face_rows:
-            detected_faces = self.faces.detect_and_embed_faces(photo_path)
+            # A face model that waits for its turn on the graphics card (a Suggest run's,
+            # tagpup.runtime) is waited for first, and the library asked again: the turn
+            # may have been the index's, recording this photo's faces (#750).
+            if not has_face_rows:
+                self.faces.ready()
+                has_face_rows, detected_faces = on_file()
 
-            # Keep what we just computed. Detection and embedding are the expensive
-            # part of this whole pipeline, and they were previously discarded when the
-            # request ended -- so a photo could be suggested for repeatedly and never
-            # contribute a single face to the database. Recording them means ordinary
-            # tagging feeds TagTuner's identify queue, and a folder added but not yet
-            # indexed still accumulates face data. Strictly additive: photos that already have face
-            # rows are left untouched, so manual names and exclusions are safe.
-            if self.remember:
-                saved = face_records.record_detected(self.index.db_path, photo_path, detected_faces, model=self.faces.key,
-                                                     detector=face_records.detector_of(self.faces))
-                if saved:
-                    logger.info(f"Recorded {saved} newly detected face(s) for {photo_path}")
+            # If not in database, detect and embed on-the-fly
+            if not has_face_rows:
+                detected_faces = self.faces.detect_and_embed_faces(photo_path)
+
+                # Keep what we just computed. Detection and embedding are the expensive
+                # part of this whole pipeline, and they were previously discarded when the
+                # request ended -- so a photo could be suggested for repeatedly and never
+                # contribute a single face to the database. Recording them means ordinary
+                # tagging feeds TagTuner's identify queue, and a folder added but not yet
+                # indexed still accumulates face data. Strictly additive: photos that already have face
+                # rows are left untouched, so manual names and exclusions are safe.
+                if self.remember:
+                    saved = face_records.record_detected(self.index.db_path, photo_path, detected_faces,
+                                                         model=self.faces.key,
+                                                         detector=face_records.detector_of(self.faces))
+                    if saved:
+                        logger.info(f"Recorded {saved} newly detected face(s) for {photo_path}")
 
         if detected_faces:
             # A face too small for its picture is in the background: no name is offered for it (clustering.is_background,
@@ -745,7 +753,7 @@ class SuggestionModel:
 
     def suggest(self, photo, meta):
         return self.suggester.suggest_for_photo(
-            photo, self.embeddings.of(photo), k=15, min_sim=0.35, target_metadata=meta)
+            photo, self.embeddings.of(photo), k=15, min_sim=suggesting.NEIGHBOUR_CUT, target_metadata=meta)
 
     def offered(self, suggestion):
         """What the panel shows for one suggestion: tags, people, title -- what Apply All and the writers take too.

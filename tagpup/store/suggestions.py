@@ -49,11 +49,11 @@ def in_folder(conn, folder):
     return found
 
 
-def put(conn, photo_path, found, model=None):
+def put(conn, photo_path, found, model=None, kind="photo"):
     """Keep `found` (an entry) as what was suggested for the photo, replacing any before.
-    A photo with no row gets one (photos.ensure_row). The caller commits."""
+    A photo with no row gets one, of `kind` (photos.ensure_row). The caller commits."""
     from tagpup.store import photos   # photos imports this module's neighbours
-    put_for(conn, photos.ensure_row(conn, photo_path), found, model)
+    put_for(conn, photos.ensure_row(conn, photo_path, kind=kind), found, model)
 
 
 def put_for(conn, photo_id, found, model=None):

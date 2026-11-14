@@ -24,7 +24,7 @@ import numpy as np  # noqa: E402
 
 import measure_pipeline_holdouts as holdouts  # noqa: E402
 import sandbox  # noqa: E402
-from tagpup.core import clustering, holdout  # noqa: E402
+from tagpup.core import clustering, holdout, suggesting  # noqa: E402
 
 
 def library_rows(rng):
@@ -212,7 +212,7 @@ class TheOtherChecks(unittest.TestCase):
         def found(shift, floors, words):
             likeness = np.linspace(0.30, 0.90, 2001) + shift
             return {"suggest": {"by_folder": {
-                        "neighbours": {"share_below_cut": float(np.mean(likeness < holdouts.NEIGHBOUR_CUT)),
+                        "neighbours": {"share_below_cut": float(np.mean(likeness < suggesting.NEIGHBOUR_CUT)),
                                        "percentiles": list(np.percentile(likeness, holdouts.PERCENTILES))},
                         "offered": {"precision": floors["0.60"]},
                         "floors": {cut: {"precision": precision} for cut, precision in floors.items()}}},
@@ -220,11 +220,11 @@ class TheOtherChecks(unittest.TestCase):
         baseline = found(0.0, {"0.55": 0.7, "0.60": 0.8, "0.65": 0.9},
                          {lower: (20, 9), under: (10, 5), at: (8, 6), over: (4, 3)})
         itself = holdouts.cuts_needed(baseline, baseline)
-        self.assertAlmostEqual(holdouts.NEIGHBOUR_CUT, itself["neighbour_cut"], places=3)
+        self.assertAlmostEqual(suggesting.NEIGHBOUR_CUT, itself["neighbour_cut"], places=3)
         self.assertEqual((0.60, float(at)), (itself["offered_floor"], itself["word_cut"]))
         higher = holdouts.cuts_needed(found(0.2, {"0.55": 0.6, "0.60": 0.7, "0.65": 0.8},
                                             {lower: (8, 6), at: (2, 2)}), baseline)
-        self.assertAlmostEqual(holdouts.NEIGHBOUR_CUT + 0.2, higher["neighbour_cut"], places=3)
+        self.assertAlmostEqual(suggesting.NEIGHBOUR_CUT + 0.2, higher["neighbour_cut"], places=3)
         self.assertEqual((0.65, float(lower)), (higher["offered_floor"], higher["word_cut"]))
         never = holdouts.cuts_needed(found(0.0, {"0.60": 0.1}, {at: (0, 0)}), baseline)
         self.assertEqual((None, None), (never["offered_floor"], never["word_cut"]))
@@ -248,7 +248,7 @@ class TheTableSaysWhatItPrints(unittest.TestCase):
         scores = {"precision": 0.5, "recall": 0.4, "offered": 10, "right": 5, "truth": 12, "photos": 3,
                   "photos_with_a_right_tag": 2}
         suggest = {"offered": scores, "top_1": scores, "top_5": scores, "floors": {"0.60": scores},
-                   "neighbours": {"share_below_cut": float(np.mean(likeness < holdouts.NEIGHBOUR_CUT)),
+                   "neighbours": {"share_below_cut": float(np.mean(likeness < suggesting.NEIGHBOUR_CUT)),
                                   "percentiles": list(np.percentile(likeness, holdouts.PERCENTILES))}}
         cuts = {"%.2f" % cut: {"pairs": word_pairs if cut <= 0.40 else 0, "right": 1 if cut <= 0.40 else 0}
                 for cut in holdouts.WORD_CUTS}

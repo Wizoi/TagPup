@@ -458,12 +458,12 @@ def _row_id(conn, photo_path):
     return next(iter(store_roots.photo_ids_at(conn, [photo_path])), None)
 
 
-def _unread_row(conn, photo_path):
-    return conn.execute("INSERT INTO photos (path, tags, captions, raw_metadata)"
-                        " VALUES (?, '[]', '[]', '{}')", (store_roots.to_row(conn, photo_path),)).lastrowid
+def _unread_row(conn, photo_path, kind):
+    return conn.execute("INSERT INTO photos (path, kind, tags, captions, raw_metadata)"
+                        " VALUES (?, ?, '[]', '[]', '{}')", (store_roots.to_row(conn, photo_path), kind)).lastrowid
 
 
-def ensure_row(conn, photo_path, admit=False):
+def ensure_row(conn, photo_path, admit=False, kind="photo"):
     """The id of a photo's row, making the row if it has none -- only in a folder the
     library holds or was asked to add (tagpup.store.folders.holds), unless `admit` (a migration that
     kept what an older version made). Raises NotHeld, and makes nothing, for a photo in
@@ -476,7 +476,9 @@ def ensure_row(conn, photo_path, admit=False):
     from their tags. Suggest in a folder of another library's made 25 rows in kr-track
     that way, without asking (2026-09-28). A row made here holds the path and nothing
     read from the file: its mtime and size stay empty, so the folder scan and the refresh
-    read the file rather than trust it. The caller commits.
+    read the file rather than trust it. `kind` ('photo' or 'video', photos.kind) is the kind of the row it makes, named by
+    its caller from the file's name (files.images.kind_of): a clip Suggest keeps a vector for before the index read it is
+    a clip's row from the start. The caller commits.
     """
     photo_id = _row_id(conn, photo_path)
     if photo_id is not None:
@@ -485,7 +487,7 @@ def ensure_row(conn, photo_path, admit=False):
         folder = os.path.dirname(paths.stored(photo_path))
         if not folders.holds(conn, folder):
             raise NotHeld(folder)
-    photo_id = _unread_row(conn, photo_path)
+    photo_id = _unread_row(conn, photo_path, kind)
     date_photos(conn, [photo_id])
     derived.refresh_photos(conn, [photo_id])
     return photo_id
