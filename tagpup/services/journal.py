@@ -104,9 +104,6 @@ UNDO_CHECKS = {
     "rename tag": None,
     "remove tag": None,
     tagging.CLEAR_DUPLICATES: None,
-    # The one-off scripts/date_clip_headers.py's change (its service is a module that script alone names, the
-    # change kind spelled here so that this one names it not: merge-budget.mjs), undone as a save is.
-    "date clip headers": None,
     "rename after caption": None,
     "smart rename": None,
     "smart rename: original names": None,
@@ -171,6 +168,10 @@ RETIRED = {
     # The one-off dating of clips by their names, a program since deleted (it ran 2026-11-13: photo_index change 8261,
     # 669 clips written). As a save of clip files is undone from History: the journal puts back what each held.
     "date clips by their names": None,
+    # The one-off writing clips' Date Taken into their QuickTime headers, a program since deleted (it ran 2026-11-14:
+    # photo_index changes 8891 and 8892, 778 clips written). As a save of clip files is undone from History: the journal
+    # puts back what each held.
+    "date clip headers": None,
 }
 UNDO_CHECKS.update(RETIRED)
 
