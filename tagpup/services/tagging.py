@@ -269,9 +269,10 @@ def save_photo(library, photo_path, title, tags, date_taken, exiftool_path, rena
     if not file_changes.leave_out_clips(Result(), [photo_path], read=clip_read):
         result.refuse(images.CLIP_NOT_EDITED)
         return result
-    # A clip's Date Taken goes into its QuickTime headers too, which hold no date before 1904 or after early 2040.
+    # A clip's Date Taken goes into its QuickTime headers too, which hold no date before 1904 or after early 2040: the
+    # digits asked are the ones the write sets (date_taken_fields), a zone left out, as Convert's carry asks.
     problem = date_taken and images.is_clip(photo_path) and field_values.clip_date_refused(
-        fields.date_taken_value(date_taken))
+        wanted[fields.CLIP_HEADER_DATES[0]])
     if problem:
         result.refuse(problem)
         return result

@@ -399,6 +399,24 @@ class AClipDatedThroughTheJournal(tagged.ALibraryHoldingAClip):
                 self.assertEqual((before, changes), (self.read_bytes(self.clip_path),
                                                      self.vl.rows("SELECT id FROM changes")))
 
+    def test_a_zoned_date_taken_saved_on_a_clip_writes_its_digits_into_the_headers_and_keeps_its_zone_in_the_xmp(self):
+        # The one-off saves a clip's own Date Taken as its XMP holds it, zone included (the panel never sends one): the
+        # save and Convert's carry decide the header digits by one rule (fields.date_taken_fields).
+        clip, = self.index(self.clip_path)
+        reply = self.save_date_from_the_panel(clip, "2018:03:02 09:15:00-07:00")
+        self.assertEqual(200, reply.status_code, reply.get_json())
+        self.assertEqual("2018:03:02 09:15:00-07:00", self.read(self.clip_path, XMP_DATES)["XMP:DateTimeOriginal"])
+        written = self.read_bytes(self.clip_path)
+        self.assertEqual(saved_times(written, "2018:03:02 09:15:00"), creation_times(written))
+
+    def test_a_zoned_date_taken_no_header_holds_is_refused_as_an_unzoned_one_is(self):
+        clip, = self.index(self.clip_path)
+        before = self.read_bytes(self.clip_path)
+        reply = self.save_date_from_the_panel(clip, "2041:01:01 10:00:00+01:00")
+        self.assertNotEqual(200, reply.status_code)
+        self.assertIn("holds a date from 1904 to early 2040 only", reply.get_json()["error"])
+        self.assertEqual(before, self.read_bytes(self.clip_path))
+
     def test_an_xmp_create_date_the_clip_held_is_refreshed_with_the_date_and_its_undo_gives_the_old_one_back(self):
         held = os.path.join(self.folder, "slipway.mp4")
         shutil.copyfile(self.clip_path, held)
