@@ -501,10 +501,11 @@ def _onward(library, exiftool_path, row, forward, result, problem=None):
         except FileExistsError:
             return _given_up(library, row, temp, result, NAME_TAKEN)
         except OSError as e:
+            why = lock_owners.explain(e, temp, e.strerror or str(e))   # who holds the copy, if a program does
             if renamed:
-                return _given_up(library, row, temp, result, NOT_RENAMED % (e.strerror or e))
-            _note(library, row, NOT_IN_PLACE % (e.strerror or e))
-            result.refuse(NOT_IN_PLACE % (e.strerror or e))
+                return _given_up(library, row, temp, result, NOT_RENAMED % why)
+            _note(library, row, NOT_IN_PLACE % why)
+            result.refuse(NOT_IN_PLACE % why)
             return False
     _reached("renamed")
     if not _followed(library, exiftool_path, row, target):
@@ -638,11 +639,14 @@ def _original_kept(source, before):
 
 def _removed_for_good(source):
     """None when the original at `source` was deleted for good (never to a Recycle Bin: the module), by one call bounded
-    as a listing is (shares.bounded); else why it is still there, a phrase."""
+    as a listing is (shares.bounded); else why it is still there, a phrase, naming who holds it open if a program does
+    (lock_owners.explain)."""
     state, error = shares.bounded(os.path.dirname(source), lambda: os.remove(source), shares.LISTING_WAIT)
     if state == "ok":
         return None
-    return SHARE_AWAY if state == "away" else (getattr(error, "strerror", None) or str(error))
+    if state == "away":
+        return SHARE_AWAY
+    return lock_owners.explain(error, source, getattr(error, "strerror", None) or str(error))
 
 
 def _followed(library, exiftool_path, row, target):
