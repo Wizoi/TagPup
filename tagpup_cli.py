@@ -1534,10 +1534,14 @@ def tags_from_faces(ctx, apply_, guesses, folder):
                           % ("?" if written is None else written, getattr(stopped, "change", None), left),
                           markup=False, soft_wrap=True)
             raise SystemExit(1) from None
+        if not getattr(stopped, "change", None):
+            # It wrote nothing, and a change that wrote nothing is erased (#2974): none to undo.
+            console.print("Stopped: no photo file written, no change recorded, nothing to undo. Run it again for them.",
+                          markup=False, soft_wrap=True)
+            raise SystemExit(1) from None
         console.print("Stopped: %s photo file(s) written, recorded as change %s of the journal (`undo` takes it back); "
                       "the rest were not written. Run it again for them."
-                      % ("?" if written is None else written, getattr(stopped, "change", None) or "none"), markup=False,
-                      soft_wrap=True)
+                      % ("?" if written is None else written, stopped.change), markup=False, soft_wrap=True)
         raise SystemExit(1) from None
     console.print("Wrote %d photo file(s) in %d change(s) of the journal (`history` lists them)."
                   % (result.changed, len(result.details.get("changes", []))), markup=False)

@@ -329,6 +329,18 @@ class StoppedPartWay(CaptionSweep):
             self.assert_cleared(path)
         self.assertEqual(["applied", "applied"], [status for _id, _op, status in self.changes()])
 
+    def test_a_ctrl_c_before_the_first_file_is_written_says_nothing_was_written_and_leaves_no_change(self):
+        # #2974: that change is erased, so the stop's `change` is None as it is for a second press; it is not a second press.
+        with mock.patch.object(file_changes, "_reached", side_effect=stopped_at("file writing", 1)):
+            code, said = self.sweep("--apply")
+        self.assertEqual(130, code, said)
+        self.assertIn("stopped: no file written, no change recorded, nothing to undo", said)
+        self.assertNotIn("stopped again", said)
+        self.assertNotIn("change None", said)
+        self.assertEqual([], self.changes())
+        for path in self.photos:
+            self.assertEqual((TITLE, TITLE, TITLE), self.captions_of(path), "a file was written")
+
     def test_a_ctrl_c_says_it_is_reading_back_and_a_second_says_how_many_were_written(self):
         # More than a few files written when it stops: a stop is a read back of every one of them.
         more = [self.repeated("more %d.jpg" % n) for n in range(7)]
