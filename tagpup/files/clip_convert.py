@@ -71,7 +71,7 @@ import time
 from typing import Optional
 
 from tagpup.core import processes
-from tagpup.files import images, shares, video_frames
+from tagpup.files import images, lock_owners, shares, video_frames
 from tagpup.files.exiftool_session import unnamed
 
 logger = logging.getLogger(__name__)
@@ -318,11 +318,15 @@ def _end(child):
 def removed(temp):
     """None when the temp file at `temp` is gone (removed now, or never made); else TEMP_LEFT, why it is still there.
     Only a conversion's own temp is passed here: never a listing's find, never the original. A "not found" is a temp gone
-    only while its share answers (shares.bounded): of a share asleep it is "the share did not answer"."""
+    only while its share answers (shares.bounded): of a share asleep it is "the share did not answer"; of a temp another
+    program holds open (a scanner given the new file), who holds it (lock_owners.explain)."""
     state, error = shares.bounded(os.path.dirname(temp), lambda: os.remove(temp), shares.LISTING_WAIT)
     if state == "ok" or isinstance(error, FileNotFoundError):
         return None
-    why = "the share did not answer" if state == "away" else (error.strerror or error)
+    if state == "away":
+        why = "the share did not answer"
+    else:
+        why = lock_owners.explain(error, temp, error.strerror or str(error))
     logger.warning("A conversion's unfinished copy could not be removed: %s", why)
     return TEMP_LEFT % why
 
