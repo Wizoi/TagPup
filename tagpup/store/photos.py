@@ -396,12 +396,23 @@ def frame_vectors(conn, model):
 #: clip's is made of its five frames, frame 0 its vector and frames 1 to 4 beside it (embeddings.FRAMES; DECISIONS
 #: 2026-11-02, "THE OWNERS' PLANS", item 5, and 2026-11-06, migration 38; tagpup_cli.py's _index_clips).
 VECTOR_KINDS = ("photo", "video")
-#: The kinds the index looks at for faces (photo_fingerprints.owed's UNEXAMINED): not a clip, whose faces wait for the
-#: faces merge (migration 40).
+#: The kinds the index looks at for faces (photo_fingerprints.owed's UNEXAMINED) and the library keeps faces of
+#: (refuse_faces_on): not a clip, whose people Suggest reads from its frames and keeps nothing of (owner, 2026-11-13,
+#: DECISIONS "PEOPLE ON CLIPS ARE TRANSIENT").
 FACE_KINDS = ("photo",)
 #: The kinds whose file a bake writes faces into (services.bake_after_index): never a clip (DECISIONS 2026-11-02,
 #: "THE OWNERS' PLANS", item 10; a clip's faces are no field its write may change, fields.CLIP_WRITES).
 BAKED_KINDS = ("photo",)
+
+
+def refuse_faces_on(conn, photo_id):
+    """Raise ValueError, with its sentence, when the row `photo_id` is of a kind the library keeps no face of (not in
+    FACE_KINDS: a clip). The one refusal at the source of a face's row and a detection's (faces.insert,
+    faces_detected.record): a clip's people are read from its frames by Suggest and nothing of a face is stored (owner,
+    2026-11-13), so a writer that reached a clip would make a face nothing reads, kept by nothing."""
+    if conn.execute("SELECT kind FROM photos WHERE id = ?", (photo_id,)).fetchone()[0] not in FACE_KINDS:
+        raise ValueError("The library keeps no face of a clip: its people are read from its frames when it is "
+                         "suggested for, and nothing of them is stored.")
 
 
 def owes_a_vector(kind):

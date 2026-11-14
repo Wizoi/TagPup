@@ -318,9 +318,11 @@ def insert(conn, photo_path, box, embedding, *, model, name=None, crop=None, pro
     """Record one detected face: `box` as a list, `embedding` as float32 bytes filed under `model`, the key of the face model
     that made it (never the library's setting, which may have moved since the detection began), and its
     crop, if one was cut, in face_crops. `name` is a person who has a node (the id; _target), or None. Returns the face's
-    id. The caller commits."""
+    id. ValueError for a clip, whose faces are not kept (photos.refuse_faces_on). The caller commits."""
     from tagpup.store import photos   # photos imports this module
     photo_id = photos.ensure_row(conn, photo_path)
+    # A clip's faces are not kept (photos.refuse_faces_on): refused before the first row is written.
+    photos.refuse_faces_on(conn, photo_id)
     tag_id, name = _target(conn, name) if name is not None else (None, None)
     face_id = conn.execute(
         "INSERT INTO faces (photo_id, box, name, tag_id, prob) VALUES (?, ?, ?, ?, ?)",
