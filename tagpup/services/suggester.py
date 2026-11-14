@@ -319,7 +319,7 @@ class TagSuggester:
         photo_path: str,
         embedding: List[float],
         k: int = 15,
-        min_sim: float = 0.35,
+        min_sim: float = suggesting.NEIGHBOUR_CUT,
         target_metadata: Optional[Dict[str, Any]] = None
     ) -> Dict[str, Any]:
         """Query index for nearest neighbors, expand hierarchical tags, aggregate and score tags."""
@@ -752,7 +752,7 @@ class SuggestionModel:
 
     def suggest(self, photo, meta):
         return self.suggester.suggest_for_photo(
-            photo, self.embeddings.of(photo), k=15, min_sim=0.35, target_metadata=meta)
+            photo, self.embeddings.of(photo), k=15, min_sim=suggesting.NEIGHBOUR_CUT, target_metadata=meta)
 
     def offered(self, suggestion):
         """What the panel shows for one suggestion: tags, people, title -- what Apply All and the writers take too.

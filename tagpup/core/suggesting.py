@@ -32,6 +32,11 @@ from tagpup.core import vocabulary
 #: made that offer (tagpup.core.clustering.Cuts.is_offered; owner, 2026-10-20).
 OFFER_A_TAG = 0.60
 
+#: A photo's neighbour counts towards its suggested tags when its CLIP likeness is at least this: the suggester's cut,
+#: and the baseline the pipeline measurement reads other models' cuts against (scripts/measure_pipeline_holdouts.py).
+#: A clip is cut here too, until the owner sets its own from the clips measurement (DECISIONS 2026-11-07).
+NEIGHBOUR_CUT = 0.35
+
 
 def zero_shot_words(configured, tag_paths, face_roots):
     """The words CLIP scores a photo against: `configured` (the library's candidates, in

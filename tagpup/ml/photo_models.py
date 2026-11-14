@@ -5,7 +5,8 @@ model (tagpup.ml.clip loads one).
 
 The numbers are the phase 5 spike's (docs/AI_PIPELINE.md, section 7, "Phase 5 model spike (2026-10-24)"): SigLIP's
 cosines are lower than the first model's (OpenCLIP ViT-H-14, deleted 2026-10-28: no library holds its vectors), so the
-word cut a word must reach is 0.11 under SO400M; the neighbour cut (0.35) and the panel's floor (0.60) are not here.
+word cut a word must reach is 0.11 under SO400M; the neighbour cut and the panel's floor are not here
+(tagpup.core.suggesting: NEIGHBOUR_CUT, OFFER_A_TAG).
 """
 
 #: (model name, weights): {"word_cut": the least cosine a zero-shot word keeps, "sizes": whether the library may force
