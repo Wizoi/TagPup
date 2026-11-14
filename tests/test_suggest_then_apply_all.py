@@ -373,12 +373,15 @@ class AHeldFolderOfPhotosAndClips(Base):
             self.start(self.dock)
         offered = self.suggested(self.dock)
         self.assertIn("ffmpeg", offered["dock_03.mp4"].get("error", ""), "the clip with no vector says why")
-        self.assertNotIn("error", offered["dock_02.mp4"], "the clip whose vector is kept needs no frame read")
+        # Its frames are read for its people (a face of the library is named): not read for the moment, it is not kept
+        # as done either (P13, tests/test_a_clips_people_are_the_people_its_frames_show.py).
+        self.assertIn("ffmpeg", offered["dock_02.mp4"].get("error", ""), "the clip whose vector is kept says why too")
         self.assertNotIn("error", offered["dock_01.jpg"])
         self.assertEqual(0, self.rows("SELECT COUNT(*) FROM embeddings WHERE photo_id = ?", (self.clip_ids[1],))[0][0])
         suggestion_jobs.forget(self.library)
         self.start(self.dock)
         self.assertNotIn("error", self.suggested(self.dock)["dock_03.mp4"])
+        self.assertNotIn("error", self.suggested(self.dock)["dock_02.mp4"])
         self.assertEqual("completed", self.status(self.dock)["status"])
 
     def test_a_clip_only_looked_at_is_offered_tags_keeps_nothing_and_apply_all_writes_the_photos_beside_it(self):

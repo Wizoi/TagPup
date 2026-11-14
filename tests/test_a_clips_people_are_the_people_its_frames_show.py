@@ -4,8 +4,9 @@ A person adds a folder of clips and asks for suggestions. Each clip's frames (fi
 vector was kept or is made now) are looked at as a photo is, and a named person any frame shows is offered once, the chip
 saying in how many of the frames looked at; Apply All files them as a click on the chip does and the clip's people row
 follows its keywords. Nothing of a face is kept of a clip, and the library refuses one at the source. Frames that cannot
-be read -- a file ffmpeg cannot decode, or no ffmpeg -- leave the clip its tags and say why beside them; a cancel part-way
-through a clip keeps nothing of it.
+be read as the file is -- one ffmpeg cannot decode -- leave the clip its tags and say why, in the run's closing line;
+frames not read for the moment -- no ffmpeg, ffmpeg past its deadline -- keep nothing of the clip, and the next run
+suggests for it again; a cancel part-way through a clip keeps nothing of it.
 
 The clips are made here by the machine's ffmpeg (skipped without it): five one-second colour segments joined, so each of
 the five frames read (at (2i+1)/10 of the clip) is one segment's colour. The stand-in face model reads the colour at the
@@ -142,10 +143,14 @@ class AClipsPeopleAreThePeopleItsFramesShow(base.Base):
         super().setUp()
         self.reel = os.path.join(self.home.root, "Pictures", "Reel")
         self.passes = Counter()
+        #: Set, ffmpeg's answer for the moment instead of the frames: (problem, whose).
+        self.slow = None
         real = video_frames.frames
 
         def counted(tools, path, count, *args, **kwargs):
             self.passes[os.path.basename(path)] += 1
+            if self.slow:
+                return video_frames.Frames((), *self.slow)
             return real(tools, path, count, *args, **kwargs)
         patcher = mock.patch.object(video_frames, "frames", counted)
         patcher.start()
@@ -234,20 +239,39 @@ class AClipsPeopleAreThePeopleItsFramesShow(base.Base):
         raw, error = self.raw_of("reel_06.mp4")
         self.assertIsNone(error)
         self.assertTrue(raw.get("faces_unread"), "why its people were not read, beside its tags")
+        said = " ".join(self.status(self.reel)["notes"])
+        self.assertIn("1 clip(s)", said, "the run's closing line says it")
+        self.assertIn(raw["faces_unread"], said)
         self.assertEqual([0, 0], self.face_rows_of_clips())
 
-    def test_with_no_ffmpeg_a_clip_whose_vector_is_kept_is_offered_its_tags_and_says_why(self):
+    def frames_not_read_for_the_moment_then_read(self, unread, problem):
+        """Suggest in Pictures/Reel (reel_02, its vector kept) while `unread` (a context) keeps ffmpeg from giving its
+        frames for the moment, then again without: the first run keeps nothing of the clip and says why; the second
+        offers the people its frames show."""
         self.hold(["reel_02.mp4"], kept=["reel_02.mp4"])
-        with mock.patch.object(config, "locate_ffmpeg", return_value=config.Ffmpeg(None, None, config.FFMPEG_MISSING)):
+        with unread:
             self.start(self.reel)
+        entry = self.suggested(self.reel)["reel_02.mp4"]
+        self.assertIn(problem, entry.get("error", ""), "not kept as done: the next run suggests for it again")
+        self.assertEqual([], self.faces.looked)
+        self.assertIn(problem, " ".join(self.status(self.reel)["notes"]), "the run's closing line says why")
+        self.start(self.reel)
         entry = self.suggested(self.reel)["reel_02.mp4"]
         self.assertNotIn("error", entry, entry)
         self.assertIn("Trips/Regatta", [t["tag"] for t in entry["tags"]])
-        self.assertEqual([], entry["people"])
-        raw, error = self.raw_of("reel_02.mp4")
-        self.assertIsNone(error)
-        self.assertIn("ffmpeg", raw.get("faces_unread", ""))
-        self.assertEqual([], self.faces.looked)
+        self.assertEqual([(ROWAN_TAG, {"seen": 4, "of": 5})], self.people(entry), "its people, once its frames are read")
+        self.assertIsNone(self.raw_of("reel_02.mp4")[0].get("faces_unread"))
+        self.assertEqual([0, 0], self.face_rows_of_clips())
+
+    def test_with_no_ffmpeg_for_a_run_a_clip_is_kept_for_the_next_which_offers_its_people(self):
+        self.frames_not_read_for_the_moment_then_read(
+            mock.patch.object(config, "locate_ffmpeg", return_value=config.Ffmpeg(None, None, config.FFMPEG_MISSING)),
+            config.FFMPEG_MISSING)
+
+    def test_ffmpeg_past_its_deadline_for_a_run_keeps_the_clip_for_the_next_which_offers_its_people(self):
+        problem = video_frames.TOO_LONG % 30
+        self.frames_not_read_for_the_moment_then_read(
+            mock.patch.object(self, "slow", (problem, video_frames.TOO_SLOW)), problem)
 
     def test_a_run_cancelled_part_way_through_a_clips_frames_keeps_nothing_of_it(self):
         self.hold(["reel_02.mp4"], kept=["reel_02.mp4"])

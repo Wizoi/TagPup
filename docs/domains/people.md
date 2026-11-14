@@ -113,8 +113,9 @@ a tree edit; two cousins called alike; ignore, assign, restore and undo) are in 
   show: the five frames it reads (one ffmpeg pass a clip, `search.PhotoEmbeddings.frames_of`) are each looked at as a
   photo is (`ScrfdAdaFace.picture_of_frame`, the 40 px floor on the frame's own pixels), a named person any frame offers
   is offered once with in how many frames (`clustering.across_frames`), nothing of a face is kept, and no frame is read
-  for faces when no face of the library is named. Frames ffmpeg does not give leave the clip its tags and say why
-  (`faces_unread`). P13, `tests/test_a_clips_people_are_the_people_its_frames_show.py` (DECISIONS 2026-11-13, "PEOPLE ON
+  for faces when no face of the library is named. Frames the file does not give as it is leave the clip its tags and say
+  why (`faces_unread`, counted in the run's closing `notes`); frames not given for the moment (no ffmpeg, its deadline, a
+  share away) fail the clip, which the next run suggests for again. P13, `tests/test_a_clips_people_are_the_people_its_frames_show.py` (DECISIONS 2026-11-13, "PEOPLE ON
   CLIPS ARE TRANSIENT"; docs/plans/suggest-for-clips.md, merge 2).
 
 ## By design (each row closed `decided:`)

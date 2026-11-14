@@ -270,13 +270,24 @@ def _succeeded(found):
     return isinstance(found, dict) and "error" not in found
 
 
-def _unread_notes(failed):
-    """The sentence a finished run says of the photos it could not suggest for (`failed`: their entries), for the
-    page: none when every photo was read. One wording for a run that remembers and one that only looks."""
-    if not failed:
-        return []
-    return ["%d photo(s) could not be analysed, nothing was recorded of them (%s)."
-            % (len(failed), failed[0].get("error", "unreadable"))]
+def _unread(entries):
+    """What a finished run says of the photos of its folder it could not read (`entries`: each one's entry, as kept),
+    for the page: {"notes": the sentences, "unread": how many it could not suggest for}. Those it could not suggest for,
+    tried again by the next run; and the clips it suggested tags for whose frames the file does not give, so no people
+    (the suggestion's `faces_unread`, kept as done: TagSuggester.suggest_for_photo). No sentence when every photo was
+    read. One wording for a run that remembers and one that only looks."""
+    failed = [found for found in entries if not _succeeded(found)]
+    notes = []
+    if failed:
+        notes.append("%d photo(s) could not be analysed, nothing was recorded of them (%s)."
+                     % (len(failed), failed[0].get("error", "unreadable")))
+    no_people = [found["raw_suggestions"]["faces_unread"] for found in entries
+                 if _succeeded(found) and isinstance(found.get("raw_suggestions"), dict)
+                 and found["raw_suggestions"].get("faces_unread")]
+    if no_people:
+        notes.append("%d clip(s) were suggested tags but no people: their frames could not be read (%s)."
+                     % (len(no_people), no_people[0]))
+    return {"notes": notes, "unread": len(failed)}
 
 
 class SuggestionRuns:
@@ -591,10 +602,10 @@ class SuggestionRuns:
                     self._take_consensus(folder, photos, model)
                 # The library is read outside the lock a poll waits on.
                 wanted = {paths.key(meta["path"]) for meta in photos.values()}
-                failed = [found for photo, found in self._saved(folder, photos).items()
-                          if paths.key(photo) in wanted and not _succeeded(found)]
+                unread = _unread([found for photo, found in self._saved(folder, photos).items()
+                                  if paths.key(photo) in wanted])
                 with self.lock:
-                    self.statuses[key].update(notes=_unread_notes(failed), unread=len(failed))
+                    self.statuses[key].update(unread)
                     self.statuses[key]["status"] = "completed"
             finally:
                 _end(model)
@@ -724,13 +735,13 @@ class SuggestionRuns:
         wanted = {paths.key(meta["path"]) for meta in photos.values()}
         with self.lock:
             memory = dict(self.looks.get(key, {}))
-        failed = [found for photo, found in memory.items() if paths.key(photo) in wanted and not _succeeded(found)]
-        notes.extend(_unread_notes(failed))
+        unread = _unread([found for photo, found in memory.items() if paths.key(photo) in wanted])
+        notes.extend(unread["notes"])
         if left_out:
             notes.append("%d photo(s) were left out: a look keeps the suggestions of at most %d photos of a folder "
                          "in memory. Add the folder to the library to suggest for all of them."
                          % (len(left_out), MAX_LOOKED_PHOTOS))
-        return {"notes": notes, "unread": len(failed)}
+        return {"notes": notes, "unread": unread["unread"]}
 
     def _suggest_in_memory(self, key, meta, model):
         """`_suggest` that keeps the suggestion in memory only. None when the folder's run is gone or the

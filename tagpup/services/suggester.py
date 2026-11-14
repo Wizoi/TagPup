@@ -526,11 +526,16 @@ class TagSuggester:
             # a new face on the frame's own pixels (new_faces) and the background on its size. Nothing of a face is
             # kept: a clip has no face on file, and the library refuses one (store.faces.insert; owner, 2026-11-13,
             # "PEOPLE ON CLIPS ARE TRANSIENT"). With no one named in the library there is no one to offer, and no
-            # frame is read for it. Frames ffmpeg does not give leave the clip its tags: the sentence is said beside
-            # them (`faces_unread`), not as an error, which the run would try again and again.
+            # frame is read for it. Frames the file does not give as it is (NoFrames.lasting) leave the clip its tags,
+            # the sentence kept beside them (`faces_unread`, said in the run's closing line), not as an error the run
+            # would try again and again; frames not given for the moment -- a share away, ffmpeg past its deadline or
+            # not found -- fail the clip, kept as nothing done, and the next run suggests for it again (the one
+            # distinction of NoFrames, as photo_reembed draws it).
             try:
                 shown = frames()
             except NoFrames as error:
+                if not error.lasting:
+                    raise
                 shown, faces_unread = [], error.problem
             if shown:
                 self.faces.ready()
