@@ -54,7 +54,8 @@ from exiftool.exceptions import ExifToolNotRunning
 
 from tagpup.core import dates, fields, paths
 from tagpup.core.result import Refused
-from tagpup.files import bake, containers, exiftool_session, identity, images, in_place, segment_edits, shares
+from tagpup.files import (bake, clip_patch, containers, exiftool_session, identity, images, in_place, segment_edits,
+                          shares)
 
 logger = logging.getLogger(__name__)
 
@@ -386,6 +387,25 @@ def clip_refused(path, values):
     if any(field in values for field in fields.CLIP_HEADER_DATES) and dates.CLIP_XMP_DATE_FIELDS[0] not in values:
         return images.CLIP_NOT_EDITED
     return None
+
+
+#: Why a clip's Date Taken is refused, nothing written: its QuickTime headers hold no such date (clip_date_refused).
+CLIP_DATE_OUTSIDE = ("A video's Date Taken is written into its QuickTime header as well, which holds a date from 1904 to "
+                     "early 2040 only; %s is outside that, and nothing was written")
+CLIP_DATE_UNSPELLED = ("A video's Date Taken is written to the second (YYYY-MM-DD HH:MM:SS) into its QuickTime header as "
+                       "well; %s is not spelled so, and nothing was written")
+
+
+def clip_date_refused(date):
+    """The sentence refusing a clip's Date Taken `date` (fields.date_taken_value's spelling) before anything is read or
+    written, else None: its QuickTime headers are written with it (DECISIONS 2026-11-13), and a version 0 box holds no
+    date before 1904 or after early 2040 (clip_patch.holds_date). The one check of it: no page or route checks a Date
+    Taken; tagpup.services.tagging.save_photo asks it."""
+    try:
+        held = clip_patch.holds_date(date)
+    except ValueError:
+        return CLIP_DATE_UNSPELLED % date
+    return None if held else CLIP_DATE_OUTSIDE % date
 
 
 def _clip_written(photo_path, values, saving):

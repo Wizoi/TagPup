@@ -111,6 +111,10 @@ _BOX_OF = dict(zip(fields.CLIP_HEADER_DATES, containers.HEADER_TYPES))
 _EPOCH = datetime.datetime(1904, 1, 1)
 _ZERO = "0000:00:00 00:00:00"
 _DATE = re.compile(r"(\d{4}):(\d{2}):(\d{2}) (\d{2}):(\d{2}):(\d{2})\Z")
+#: The seconds every QuickTime header holds: a version 0 box's 32 bits (all but 28 photo_index clips' movie headers),
+#: from just after 1904-01-01 00:00:00 (0 reads as no date) to 2040-02-06 06:28:15. A save cannot know which version
+#: its clip's boxes are when it plans, so every clip's Date Taken is held to it (holds_date).
+_HELD_SECONDS = range(1, 1 << 32)
 
 
 @dataclass(frozen=True)
@@ -163,6 +167,12 @@ def seconds_of(text):
     if not found:
         raise ValueError("%r is not a date a QuickTime header holds (YYYY:MM:DD HH:MM:SS)" % (text,))
     return int((datetime.datetime(*map(int, found.groups())) - _EPOCH).total_seconds())
+
+
+def holds_date(text):
+    """Whether every QuickTime header can hold the date `text` (seconds_of): one from 1904 to early 2040
+    (_HELD_SECONDS). Raises ValueError for a date not spelled "YYYY:MM:DD HH:MM:SS"."""
+    return seconds_of(text) in _HELD_SECONDS
 
 
 def date_of(seconds):
