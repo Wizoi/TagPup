@@ -27,7 +27,9 @@ test declares in the table of photo models (stand_in_models.OTHER_PHOTO_MODEL). 
   makes a clip's vector of its five frames as the index does (frame 0's the vector, frames 1 to 4 beside it in the
   same write) and counts it among those embedded; a clip ffmpeg cannot read as it is is listed by the CLI, not counted
   as a photo that could not be read, and one ffmpeg could not read at the moment (a share away) is counted unread and
-  tried again. ffmpeg is stood in for at its seam (video_frames.frames).
+  tried again. ffmpeg removed while the run goes on stops it at once with the sentence that says what to install,
+  exit 1, not one clip counted as unread; the photos it made are kept, and the next run, ffmpeg back, makes the clips.
+  ffmpeg is stood in for at its seam (video_frames.frames).
 - A run waits for its turn on the graphics card before it reads what is left: one that waited behind another run finds
   what that run made.
 - Beside a running server (#1843): the server, which keeps its turn on the card between Suggest runs, gives it up to
@@ -658,6 +660,26 @@ class ClipsBesideThePhotos(_Library):
         self.assertEqual((2, 1, 1), (counts["to_embed"], counts["kept"], len(counts["clips_unread"])))
         self.assertEqual(sorted([(damaged, 5), (away, 5)]), sorted(self.asked))
         self.assertEqual(4, len(self.held_new(self.clip_paths[1])[1]))
+
+    def test_ffmpeg_removed_while_it_runs_stops_it_at_once_and_the_next_run_makes_the_clips(self):
+        looks = []
+
+        def removed_after_the_start_check():
+            looks.append(1)
+            return None if len(looks) == 1 else config.FFMPEG_MISSING
+        with mock.patch.object(config, "ffmpeg_problem", removed_after_the_start_check):
+            result = self.cli("--apply")
+        self.assertEqual(1, result.exit_code, result.output)
+        said = " ".join(result.output.split())
+        self.assertIn("Stopped: %s" % config.FFMPEG_MISSING, said)
+        self.assertNotIn("FfmpegGone", said, "ffmpeg's going was counted as a clip not read")
+        self.assertNotIn("now hold a vector", said)
+        self.assertEqual([], self.asked, "a clip's frames were asked of an ffmpeg that is gone")
+        self.assertEqual({paths.key(path) for path in self.photos}, self.new_vectors(), "the photos made were not kept")
+
+        counts = self.embed()   # ffmpeg is back
+        self.assertEqual((3, 3, {}), (counts["to_embed"], counts["kept"], counts["unread"]))
+        self.assertEqual(13, len(self.new_vectors()))
 
 
 class ARunWaitsForTheCard(_Library):

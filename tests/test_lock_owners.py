@@ -262,16 +262,19 @@ class ExplainAFailure(Base):
             self.assertEqual("the disk is full", lock_owners.explain("the disk is full", self.path))
         self.assertEqual([], asked)
 
-    def test_exiftools_words_count_as_its_numbers_do(self):
+    def test_words_of_a_held_file_name_the_holder_and_exiftools_refusals_ask_nobody(self):
+        """A numberless error in a held file's words names the holder. ExifTool's refusals of a write are never a held
+        file's, even of a file known writable: its words when the new file beside the photo cannot be made, and the
+        rename over a photo no write of TagPup's asks of it (every write is `-o`; the move is os.replace's)."""
         stand_in, asked = holding([{"name": "OneDrive.exe", "pid": 9, "kind": "application", "service": None}])
+        refusals = ("ExifTool: Error: Error creating file: <file> - <file> (exit status 1)",
+                    "ExifTool: Error renaming temporary file to <file> (exit status 1)")
         with stand_in:
-            said = lock_owners.explain("Error renaming temporary file to IMG_0001.jpg", self.path, writable=True)
             held = lock_owners.explain("The file is used by another process", self.path)
-            unknown = lock_owners.explain("Error renaming temporary file to IMG_0001.jpg", self.path)
-        self.assertTrue(said.endswith("It is held open by OneDrive.exe (OneDrive sync, pid 9)."), said)
+            refused = [lock_owners.explain(RuntimeError(said), self.path, writable=True) for said in refusals]
         self.assertTrue(held.endswith("It is held open by OneDrive.exe (OneDrive sync, pid 9)."), held)
-        self.assertEqual("Error renaming temporary file to IMG_0001.jpg", unknown, "access denied's words need writable")
-        self.assertEqual(2, len(asked))
+        self.assertEqual(list(refusals), [str(said) for said in refused], "ExifTool's refusal was taken for a holder's")
+        self.assertEqual(1, len(asked))
 
     def test_a_lookup_that_raises_leaves_the_error(self):
         def raises(*_a, **_k):
@@ -286,25 +289,73 @@ MSMPENG = [{"name": "MsMpEng.exe", "pid": 9, "kind": "service", "service": "WinD
 FIELDS_BEFORE, FIELDS_AFTER = {"XMP-dc:Subject": ["a"]}, {"XMP-dc:Subject": ["b"]}
 
 
+def logged_names(test, records, folder):
+    """Fail `test` if a log line names `folder` (a person's name, as the owner's folders are) or a file in it."""
+    for record in records:
+        line = record.getMessage()
+        test.assertNotIn("Rowan Thackeray", line, "a log line names the folder")
+        for name in ("Rowan at the regatta", "Regatta - ", "tmp_rename_", folder):
+            test.assertNotIn(name, line, "a log line names a path")
+
+
 @unittest.skipUnless(sys.platform == "win32", "a held file is Windows'")
 class ARenameOfAHeldFile(unittest.TestCase):
+    """Smart Rename in a folder named for a person: the page is told which file, the log never names one (#2973)."""
+
+    def setUp(self):
+        top = tempfile.TemporaryDirectory(prefix="held_rename_")
+        self.addCleanup(top.cleanup)
+        self.folder = os.path.join(top.name, "Rowan Thackeray")
+        os.makedirs(self.folder)
+
     def test_names_the_process_that_holds_it(self):
-        with tempfile.TemporaryDirectory(prefix="held_rename_") as folder:
-            old, new = os.path.join(folder, "IMG_0001.jpg"), os.path.join(folder, "Regatta - 1.jpg")
-            with open(old, "wb") as handle:
+        old, new = os.path.join(self.folder, "Rowan at the regatta.jpg"), os.path.join(self.folder, "Regatta - 1.jpg")
+        with open(old, "wb") as handle:
+            handle.write(b"x")
+        handle = hold_exclusively(old)
+        try:
+            with self.assertLogs("tagpup.files", "INFO") as logged, self.assertRaises(names.RenameFailed) as raised:
+                names.rename_all({old: new})
+        finally:
+            release(handle)
+        said = raised.exception.message()
+        self.assertIn("It is held open by", said)
+        self.assertIn("this TagPup process", said)
+        self.assertIn("Every photo was put back under its old name.", said)
+        self.assertNotIn("..", said)
+        self.assertTrue(os.path.exists(old))
+        self.assertIn("Smart Rename failed and was undone: The process cannot access the file because it is being used "
+                      "by another process (32)", logged.output[-1])
+        logged_names(self, logged.records, self.folder)
+
+    def test_a_photo_that_cannot_be_put_back_is_named_to_the_page_and_never_in_the_log(self):
+        """Two photos renamed; the second is held, and the first, already moved to its temporary name, cannot be put back
+        (its share went away part-way): the page lists the file left stranded, the log names no path."""
+        first, second = (os.path.join(self.folder, "Rowan at the regatta %d.jpg" % n) for n in (1, 2))
+        for path in (first, second):
+            with open(path, "wb") as handle:
                 handle.write(b"x")
-            handle = hold_exclusively(old)
-            try:
-                with self.assertRaises(names.RenameFailed) as raised:
-                    names.rename_all({old: new})
-            finally:
-                release(handle)
-            said = raised.exception.message()
-            self.assertIn("It is held open by", said)
-            self.assertIn("this TagPup process", said)
-            self.assertIn("Every photo was put back under its old name.", said)
-            self.assertNotIn("..", said)
-            self.assertTrue(os.path.exists(old))
+        real = os.rename
+
+        def rename(source, target):
+            if source == second:
+                raise OSError(None, "The process cannot access the file because it is being used by another process",
+                              source, 32, target)
+            if target == first:
+                raise OSError(None, "The specified network name is no longer available", source, 64, target)
+            return real(source, target)
+
+        renames = {first: os.path.join(self.folder, "Regatta - 1.jpg"), second: os.path.join(self.folder, "Regatta - 2.jpg")}
+        with mock.patch.object(names.os, "rename", rename), mock.patch.object(lock_owners, "holders", return_value=MSMPENG), \
+                self.assertLogs("tagpup.files", "INFO") as logged, self.assertRaises(names.RenameFailed) as raised:
+            names.rename_all(renames)
+        stranded = raised.exception.stranded
+        self.assertEqual(1, len(stranded))
+        self.assertIn("These could not be put back: %s" % stranded[0], raised.exception.message())
+        self.assertIn("It is held open by MsMpEng.exe", raised.exception.message())
+        self.assertIn("Smart Rename could not put a photo back under its old name: The specified network name is no "
+                      "longer available (64)", "\n".join(logged.output))
+        logged_names(self, logged.records, self.folder)
 
     def test_a_rename_that_works_asks_nobody(self):
         with tempfile.TemporaryDirectory(prefix="held_rename_") as folder:
@@ -337,15 +388,20 @@ class AFailedWrite(Base):
             said = self.only(PermissionError(13, "Permission denied"))
         self.assertEqual("[Errno 13] Permission denied", str(said))
 
-    def test_a_failure_of_another_kind_asks_nobody(self):
-        with mock.patch.object(lock_owners, "holders", side_effect=AssertionError("asked")):
-            said = self.only(RuntimeError("ExifTool said: File format error"))
-        self.assertEqual("ExifTool said: File format error", str(said))
+    def test_a_failure_of_another_kind_asks_nobody_and_looks_at_the_file_no_more(self):
+        """A Just-look save on a share that stopped answering: its failure is no access denied, so neither a holder nor
+        the file (an os.stat with no deadline) is asked after it, and the next photo is reached as soon."""
+        gone = OSError(None, "The specified network name is no longer available", None, 64)
+        for error in (RuntimeError("ExifTool said: File format error"), gone):
+            with mock.patch.object(lock_owners, "holders", side_effect=AssertionError("asked")), \
+                    mock.patch.object(file_changes, "_stat", side_effect=AssertionError("looked at")):
+                said = self.only(error)
+            self.assertEqual(str(error), str(said))
 
     def test_a_journaled_write_names_the_holder(self):
         library = mock.Mock(path="library.db")
         row = mock.Mock(path=self.path, id=3, stamp=None, patched=False, stale=())
-        error = RuntimeError("Error renaming temporary file to IMG_0001.jpg")
+        error = PermissionError(13, "Permission denied")   # the picture check's open of a held photo
         with mock.patch.object(field_values, "read_one", return_value=FIELDS_BEFORE), \
                 mock.patch.object(file_changes.file_journal, "withdraw") as withdraw, \
                 mock.patch.object(lock_owners, "holders", return_value=MSMPENG):

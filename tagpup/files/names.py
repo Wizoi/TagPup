@@ -70,6 +70,14 @@ class RenameFailed(Exception):
         return "Could not rename: %s. Every photo was put back under its old name." % str(self.cause).rstrip(".")
 
 
+def _unnamed(error):
+    """What a rename's OSError says without the paths it names, for the log (a folder or a file name can name a person,
+    #2973): its reason and its number. The caller is told the error itself (RenameFailed), on the owner's own page."""
+    number = getattr(error, "winerror", None) or getattr(error, "errno", None)
+    reason = getattr(error, "strerror", None) or type(error).__name__
+    return "%s (%s)" % (reason, number) if number else reason
+
+
 def aside_for(renames):
     """{a file outside `renames` that holds one of the new names: where it is to be
     moved aside}, "<name>_conflict_<n>" beside it. Worked out before anything is renamed,
@@ -142,23 +150,21 @@ def rename_all(renames, aside=None):
                 temp_of[old_path] = temp_path
             except OSError as back_err:
                 stranded.append(new_path)
-                logger.error("Smart Rename could not undo %s: %s", new_path, back_err)
+                logger.error("Smart Rename could not undo a rename: %s", _unnamed(back_err))
         for old_path, temp_path in temp_of.items():
             try:
                 os.rename(temp_path, old_path)
             except OSError as back_err:
                 stranded.append(temp_path)
-                logger.error("Smart Rename could not put %s back as %s: %s",
-                             temp_path, old_path, back_err)
+                logger.error("Smart Rename could not put a photo back under its old name: %s", _unnamed(back_err))
         for original, aside in moved_aside.items():
             try:
                 os.rename(aside, original)
             except OSError as back_err:
                 stranded.append(aside)
-                logger.error("Smart Rename could not put %s back as %s: %s",
-                             aside, original, back_err)
+                logger.error("Smart Rename could not put a file moved aside back: %s", _unnamed(back_err))
         # Only now, with everything put back: who holds the file, when the error is the kind a held file makes.
         why = lock_owners.explain(rename_err, getattr(rename_err, "filename", None))
-        logger.error("Smart Rename failed and was undone: %s", why)
+        logger.error("Smart Rename failed and was undone: %s", _unnamed(rename_err))
         raise RenameFailed(why, stranded) from rename_err
     return done, moved_aside
