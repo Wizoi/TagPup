@@ -158,6 +158,8 @@ export const sidebarPaneFolder = document.getElementById('sidebar-pane-folder');
 
 // Moving between a folder and its view of the library (library-moves.js), and when the library was last in step (sync-state.js)
 export const btnShowInLibrary = document.getElementById('btn-show-in-library');
+// Name faces from tags, the open folder's (name-faces.js), shown with Show in library (folder.js)
+export const btnNameFaces = document.getElementById('btn-name-faces');
 export const libraryStripSync = document.getElementById('library-strip-sync');
 export const movesBanner = document.getElementById('moves-banner');
 export const movesBannerText = document.getElementById('moves-banner-text');

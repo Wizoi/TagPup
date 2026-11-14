@@ -42,13 +42,14 @@
                     <button id="btn-change-db" class="btn btn-secondary btn-sm hidden" title="Switch to a different dog park; the folder you have open will be closed" style="padding: 4px 10px; font-size: 12px; height: 32px; cursor: pointer;">Change</button>
                     <button id="btn-create-db" class="btn btn-secondary btn-sm" title="Create a new dog park" style="padding: 4px 8px; font-size: 13px; height: 32px; display: flex; align-items: center; justify-content: center; width: 32px; cursor: pointer;">➕</button>
                 </div>
-                <!-- The gear (web/common/gear.js): the tag editor, the settings, the history, and TagTuner on this library. -->
+                <!-- The gear (web/common/gear.js): the tag editor, the settings, the history, naming faces, and TagTuner on this library. -->
                 <div class="gear">
                     <button id="btn-gear" class="btn btn-secondary" title="Tag editor, settings, and TagTuner on this dog park" aria-label="Tools" aria-controls="gear-menu" style="display: flex; align-items: center; gap: 8px;">⚙️</button>
                     <div id="gear-menu" class="gear-menu hidden" role="menu" aria-label="Tools">
                         <button type="button" role="menuitem" data-action="tag-editor">Tag editor</button>
                         <button type="button" role="menuitem" data-action="library-settings" title="Settings for Suggest's words and Smart Rename's format">Settings</button>
                         <button type="button" role="menuitem" data-action="library-history" title="This dog park's last changes, and Undo beside each that can be undone">History...</button>
+                        <button type="button" role="menuitem" data-action="name-faces" title="Name the faces the photos' person tags name, in the whole library. You are shown the plan and asked before anything is written.">Name faces from tags (whole library)...</button>
                         <button type="button" role="menuitem" data-action="browse-library" title="Show every photo of this dog park in the grid, by date taken, from its index">Browse the whole library</button>
                         <button type="button" role="menuitem" data-action="library-of-folder" aria-disabled="true" title="Open a folder first">Library view of this folder</button>
                         <a role="menuitem" href="/activity/" target="_blank" rel="noopener" title="What runs and what ran in every library: indexing, jobs, syncs, snapshots, logs">Activity...</a>
@@ -376,8 +377,8 @@
                                     <p class="folder-subtitle">Select images to batch edit tags, time shift, or cleanly rename.</p>
                                 </div>
                                 <div class="folder-view-actions">
-                                    <!-- Name faces from tags, in this folder or the whole library (web/tagpup/name-faces.js, web/common/name-faces.js). -->
-                                    <button id="btn-name-faces" type="button" class="btn btn-secondary btn-sm" title="Name the faces the photos' person tags name: only this folder and its subfolders (the default), or the whole library, as you choose. You are shown the plan and asked before anything is written.">Name faces from tags</button>
+                                    <!-- Name faces from tags, in this folder or the whole library (web/tagpup/name-faces.js, web/common/name-faces.js): shown only while a folder is open on disk. -->
+                                    <button id="btn-name-faces" type="button" class="btn btn-secondary btn-sm hidden" title="Name the faces the photos' person tags name: only this folder and its subfolders (the default), or the whole library, as you choose. You are shown the plan and asked before anything is written.">Name faces from tags</button>
                                     <button id="btn-show-in-library" class="btn btn-secondary btn-sm hidden" title="Open this folder's photos as the library holds them: by Date Taken, from the index, with the folder's subfolders">Show in library</button>
                                     <div class="selection-actions">
                                         <!-- In a narrow window only (style.css): the Selection Details panel is collapsed behind this, and opened lies over the grid (web/tagpup/details-panel.js, #720). -->
