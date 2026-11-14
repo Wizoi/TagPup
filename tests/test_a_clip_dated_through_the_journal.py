@@ -256,6 +256,35 @@ class AClipDatedThroughTheJournal(tagged.ALibraryHoldingAClip):
         self.assertEqual((4, 2), (len(tracks), len(set(tracks))),
                          "the four-track clip's track headers disagree, each given back its own")
 
+    def add_clip_with_a_garbage_header(self, name):
+        """A version 1 clip (VERSION_ONE) whose first version 1 header holds 8 bytes of 0xFF as its creation time: a time
+        no date holds (#3005); its path."""
+        path = self.add_clip(VERSION_ONE, name)
+        data = bytearray(self.read_bytes(path))
+        box = [box for box in containers.read(io.BytesIO(bytes(data))).headers if box.version == 1][0]
+        data[box.payload + 4:box.payload + 12] = b"\xff" * 8
+        with open(path, "wb") as handle:
+            handle.write(bytes(data))
+        return path
+
+    def test_a_clip_whose_header_holds_a_time_no_date_holds_is_unreadable_for_its_save_not_a_failed_batch(self):
+        """#3005: 8 bytes of 0xFF in a version 1 header is past every date; the clip answers the per-clip sentence, the
+        clip beside it in the same read is read, and the save of the clip is refused with nothing written."""
+        bad = self.add_clip_with_a_garbage_header("garbled.mp4")
+        good = self.add_clip(ZERO_HEADERS, "sound.mp4")
+        bad_id, good_id = self.index(bad, good)
+        with ExifToolSession(executable=EXIFTOOL) as et:
+            held = field_values.read(et, [bad, good], fields.CLIP_HEADER_DATES)
+        unreadable = [one for one in held.values() if isinstance(one, field_values.Unreadable)]
+        self.assertEqual(1, len(unreadable), "the garbled clip alone is unreadable")
+        self.assertIn("its QuickTime headers could not be read", str(unreadable[0]))
+        self.assertEqual(1, len([one for one in held.values() if isinstance(one, dict)]), "the clip beside it is read")
+        before, changes = self.read_bytes(bad), self.vl.rows("SELECT id FROM changes")
+        reply = self.save_date_from_the_panel(bad_id)
+        self.assertIn("its QuickTime headers could not be read", reply.get_json()["error"], "a sentence, not a traceback")
+        self.assertEqual(before, self.read_bytes(bad))
+        self.assertEqual(changes, self.vl.rows("SELECT id FROM changes"))
+
     def test_a_clip_whose_xmp_holds_the_date_already_has_its_zero_headers_written(self):
         """#3002: a clip saved before the headers were written (its XMP dated, its headers 0), saved again with the same
         date, has its headers written; nothing else changes."""

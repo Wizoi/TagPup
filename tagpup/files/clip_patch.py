@@ -177,10 +177,15 @@ def holds_date(text):
 
 def date_of(seconds):
     """The date a QuickTime header's `seconds` say, as ExifTool reads it (seconds_of's inverse). Raises ValueError for
-    None, a header whose time containers does not read."""
+    None, a header whose time containers does not read, or a time past every date (a version 1 box of garbage)."""
     if seconds is None:
         raise ValueError("a QuickTime header whose creation time TagPup does not read")
-    return _ZERO if seconds == 0 else (_EPOCH + datetime.timedelta(seconds=seconds)).strftime("%Y:%m:%d %H:%M:%S")
+    if seconds == 0:
+        return _ZERO
+    try:
+        return (_EPOCH + datetime.timedelta(seconds=seconds)).strftime("%Y:%m:%d %H:%M:%S")
+    except OverflowError:
+        raise ValueError("a QuickTime header whose creation time (%d s) is past every date" % seconds) from None
 
 
 def _header_ranges(layout, dates):
