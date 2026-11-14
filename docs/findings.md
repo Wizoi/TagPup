@@ -35,3 +35,5 @@ Findings fixed before 2026-09-23 are in the git log (`git log --grep="^fix"`). T
 
 | # | Found | Finding | Status |
 |---|---|---|---|
+| 2967 | 2026-11-13 | low: People: `docs/domains/people.md:21` and `:107` say a clip has no `photo_people` row (0, counted 2026-11-08); photo_index holds 3,707 rows on 2,033 clips, all `source='keyword'` with a `tag_id` (counted read-only 2026-11-13): the derived rebuild lists a clip's keyword people, which is right and is why Suggest's people on a clip need no face link. Update the page in the people-on-clips merge. | open |
+| 2968 | 2026-11-13 | low: `tagpup/ml/scrfd_adaface.py:209` `ScrfdPicture` reads `upright.info[images.BOXES_TURN_INFO]`; `images.from_jpeg` (`tagpup/files/images.py:458`) sets no such key, so a clip frame handed to the face model as a photo's picture raises KeyError. The frame needs one maker (`picture_of_frame`) before any clip face step. Fixed by the people-on-clips merge (docs/plans/suggest-for-clips.md). | open |

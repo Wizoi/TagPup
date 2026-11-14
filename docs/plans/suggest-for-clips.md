@@ -41,4 +41,24 @@ Cuts: one merge of about 350-450 lines, brief for one Views worker:
 Performance claim, if made: the Suggest click in a folder of N photos and M clips, timed in a sandbox browser, baseline first.
 Open for the owner (defaults stand until said otherwise): frame-0-only query; keep the 0.35 cut for clips; the title wand
 stays; the button's "Start Photo Analysis" wording and "photo files" -> "files" in the confirm.
-Later, separate: people on clips (face detection on a clip's frames), and a clip rotate action (a display matrix write, Media).
+## Merge 2: people on clips (owner, 2026-11-13: "look and aggregate any people found across all of the clips made from a video")
+People owner's sweep, recommended and planned as TRANSIENT: at Suggest time the clip's frames are decoded
+(`PhotoEmbeddings.frames_of`), each frame's faces are detected and matched by the one matrix, and the people found are
+aggregated across the frames; nothing of a face is stored (no migration, no `faces` rows, no new meaning for "a face").
+Counted 2026-11-13: 648 untagged clips; 3,707 `photo_people` rows on 2,033 clips already come from keywords, so a person tag
+written to a clip needs no face link (the derived rebuild lists it).
+| Mechanism | The ONE place it lives | Owner | New or existing |
+|---|---|---|---|
+| A frame as the face model's picture | `ScrfdAdaFace.picture_of_frame(jpeg)` beside `picture(path)` (`from_jpeg` sets no turn: a frame raises KeyError today) | People | new, one maker |
+| Detect, embed, match, offer | the suggester's step 4b, with `known_faces.likeness`, `clustering.best`, `Cuts.is_offered`; a clip takes the frames instead of one file | People / Views seam | existing, reuse |
+| Aggregate across frames | `clustering.across_frames(offers)`: union of the people offered in any frame, best likeness, frames seen carried; NO new threshold | People | new, the one rule |
+| Record nothing for a clip | `store.faces.insert` / `faces_detected.record` refuse a kind not in `FACE_KINDS`; this REPLACES merge 1's face-step guard line | People | refusal at the source |
+| Person to tag | `tags_by_id` then `tagging.person_filer` at Apply All | People / Files | existing |
+Defaults (owner may change): a person offered from ONE frame at `is_offered` stands, the chip says "seen in N of M frames";
+the 40 px face floor applies to the frame's pixels (3.9% of a 1,024 px frame, so a clip's small faces are not offered);
+the migration-40 reservation for a clip's frame faces is dropped from DECISIONS. Cost per clip about 2 s of ffmpeg on the
+share plus about 0.3-0.5 s GPU (estimates, not measured; measure in a sandbox before claiming a speed).
+Branch about 500-700 lines, one People worker, Views reviews the suggester seam; one new scenario file P13 (a clip's people are
+the people its frames show; Apply All writes the tag; nothing of a face stored; frames unreadable means tags only), mapped in
+`tests/owners.py`; flip V3's `people == []` for a clip; `people.md:21,107` corrected.
+Later, separate: a clip rotate action (a display matrix write, Media).
