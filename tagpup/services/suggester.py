@@ -541,7 +541,14 @@ class TagSuggester:
                 self.faces.ready()
             for number, frame in enumerate(shown, 1):
                 picture = self.faces.picture_of_frame(frame, "%s, frame %d" % (photo_path, number))
-                pictures.append((self.faces.new_faces(self.faces.detect_and_embed(picture), picture), frame.size))
+                detected = self.faces.detect_and_embed(picture)
+                # A frame the face model failed on (NotDetected) is not a frame with no one: not looked at, as a
+                # photo's detection that failed is not run (face_records.ran), and not counted in the frames' `of`.
+                if face_records.ran(detected):
+                    pictures.append((self.faces.new_faces(detected, picture), frame.size))
+            if shown and not pictures:
+                # The model read none of them: the moment's, as frames not given for the moment are.
+                raise RuntimeError("The face model could not look at any frame of the clip.")
 
         if pictures and known_faces[2] is not None:
             # A person any picture offers stands: no second threshold across a clip's frames (clustering.across_frames).

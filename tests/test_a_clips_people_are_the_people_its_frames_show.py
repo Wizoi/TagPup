@@ -88,7 +88,8 @@ def make_clip(path, colours):
 
 class FrameFaces(base.FakeFaces):
     """The face model: a frame's faces by the colour at its centre (SHOWN); `looked`, the clips whose frames it was
-    shown, a frame each; `on_frame`, called with each frame's label before it is looked at. The faces it keeps are the
+    shown, a frame each; `on_frame`, called with each frame's label before it is looked at; `failing`, {clip: frame
+    numbers} whose detection fails (NotDetected, as the real model answers a CUDA error). The faces it keeps are the
     real model's (as NewFaces has them): the 40 px floor, and a crop cut from the frame."""
     new_faces = scrfd_adaface.ScrfdAdaFace.new_faces
 
@@ -96,12 +97,16 @@ class FrameFaces(base.FakeFaces):
         super().__init__()
         self.looked = []
         self.on_frame = None
+        self.failing = {}
 
     def detect_and_embed(self, picture):
         clip = picture.path.split(",")[0]
         self.looked.append(os.path.basename(clip))
         if self.on_frame:
             self.on_frame(picture.path)
+        clip, frame = picture.path.rsplit(", frame ", 1)
+        if int(frame) in self.failing.get(os.path.basename(clip), ()):
+            return scrfd_adaface.NotDetected()
         upright = picture.upright
         centre = upright.getpixel((upright.width // 2, upright.height // 2))
         colour = min(PALETTE, key=lambda name: sum((a - b) ** 2 for a, b in zip(PALETTE[name], centre)))
@@ -215,6 +220,22 @@ class AClipsPeopleAreThePeopleItsFramesShow(base.Base):
         self.assertEqual({name: 1 for name in CLIPS}, dict(self.passes), "one ffmpeg pass a clip, kept vector or not")
         self.assertEqual([0, 0], self.face_rows_of_clips(), "no face and no detection of a clip")
         self.assertEqual(faces_before, self.rows("SELECT COUNT(*) FROM faces")[0][0])
+
+    def test_a_frame_the_face_model_failed_on_is_not_a_frame_with_no_one_and_a_clip_of_only_those_is_tried_again(self):
+        self.hold(["reel_02.mp4", "reel_05.mp4"])
+        self.faces.failing = {"reel_02.mp4": {1}, "reel_05.mp4": {1, 2, 3, 4, 5}}
+        self.start(self.reel)
+        offered = self.suggested(self.reel)
+        self.assertEqual([(ROWAN_TAG, {"seen": 3, "of": 4})], self.people(offered["reel_02.mp4"]),
+                         "counted of the frames the model read")
+        self.assertIn("error", offered["reel_05.mp4"], "no frame read: not kept as done")
+        self.assertIn("could not be analysed", " ".join(self.status(self.reel)["notes"]))
+        self.assertEqual([0, 0], self.face_rows_of_clips())
+        self.faces.failing = {}
+        self.start(self.reel)
+        offered = self.suggested(self.reel)
+        self.assertEqual([(INES_TAG, {"seen": 5, "of": 5})], self.people(offered["reel_05.mp4"]), "the next run reads it")
+        self.assertEqual([(ROWAN_TAG, {"seen": 3, "of": 4})], self.people(offered["reel_02.mp4"]), "kept as it was")
 
     def test_apply_all_files_the_person_a_clip_shows_and_its_people_row_follows(self):
         self.hold(["reel_02.mp4"])
