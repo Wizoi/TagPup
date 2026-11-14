@@ -14,7 +14,8 @@ A photo deleted from a place with no Recycle Bin goes through this PC (#694, the
 Recycle Bin, and only then the original deleted. Any step that fails leaves the original. (tagpup.files.recycle_bin.delete_file,
 the one owner, used by Organize's delete and the bulk Delete.) And it is refused, nothing copied, where the copy could not be
 kept: this PC's Recycle Bin too small or set to delete at once (#703), a path too long for the Bin (#704), a Downloads folder
-synced to the cloud (#706).
+synced to the cloud (#706). A delete of a file another program holds open (a viewer, a scanner) fails, the file kept, and
+says who holds it when this PC can tell (lock_owners.explain, owner 2026-11-13), whichever step met it.
 
 The share is a folder of this test's home that the test says has no Recycle Bin (no real share is needed); the Downloads folder
 is the test home's (own_home sets TAGPUP_DOWNLOADS), and so is the Recycle Bin's size and settings (TAGPUP_RECYCLE_BIN, which
@@ -42,6 +43,9 @@ from tagpup.core import paths, processes  # noqa: E402
 from tagpup.files import recycle_bin  # noqa: E402
 from tagpup.services import libraries as library_actions  # noqa: E402
 from tagpup.services import photos as photo_actions  # noqa: E402
+
+#: The real send to the Recycle Bin, before any test stands in for it; asked only with SHFileOperationW stood in for too.
+REAL_SEND = recycle_bin.send_to_recycle_bin
 
 
 class Share(unittest.TestCase):
@@ -140,6 +144,28 @@ class Through(Share):
         self.assertTrue(os.path.exists(self.photo), "the original stays")
         self.assertEqual(1, len(self.binned), "and a copy is in this PC's Recycle Bin")
         self.assertIn("twice", str(raised.exception))
+
+    @unittest.skipUnless(os.name == "nt", "a file held open is refused by Windows' sharing")
+    def test_a_delete_of_a_file_another_program_holds_keeps_it_and_says_who_holds_it(self):
+        held_by_us = r"It is held open by python\w*\.exe \(this TagPup process, pid %d\)\." % os.getpid()
+        # Through this PC: the copy is in this PC's Bin, the original's delete is refused while it is held.
+        with open(self.photo, "rb"), self.assertRaises(OSError) as raised:
+            recycle_bin.delete_file(self.photo)
+        self.assertIn("twice", str(raised.exception))
+        self.assertRegex(str(raised.exception), held_by_us)
+        self.assertTrue(os.path.exists(self.photo), "the original stays")
+        # To its own drive's Bin: Windows answers a sharing violation (32); nothing reaches a real Recycle Bin.
+        local = os.path.join(self.home.root, "Local", "IMG_0002.jpg")
+        make_jpeg(local)
+        shell = mock.MagicMock()
+        shell.SHFileOperationW.return_value = 32
+        with mock.patch.object(ctypes.windll, "shell32", shell), \
+                mock.patch("tagpup.files.recycle_bin.send_to_recycle_bin", REAL_SEND), \
+                open(local, "rb"), self.assertRaises(OSError) as raised:
+            recycle_bin.delete_file(local)
+        self.assertTrue(str(raised.exception).startswith("Failed to move file to Recycle Bin ("), str(raised.exception))
+        self.assertRegex(str(raised.exception), held_by_us)
+        self.assertTrue(os.path.exists(local), "the file stays")
 
     def test_no_room_on_this_pcs_drive_refuses_and_copies_nothing(self):
         usage = shutil._ntuple_diskusage(10 ** 12, 10 ** 12 - 1000, 1000)
@@ -412,7 +438,8 @@ class DeletingAPhoto(unittest.TestCase):
         self.assertEqual((False, 0), (refused.ok, refused.changed))
         self.assertIn("Recycle Bin", refused.message())
         failed = self.delete(moved=OSError("the file is open elsewhere"))
-        self.assertEqual((0, "the file is open elsewhere"), (failed.changed, failed.message()))
+        self.assertEqual((0, "Failed to move file to Recycle Bin (the file is open elsewhere)"),
+                         (failed.changed, failed.message()))
         self.assertEqual((1, 1, 1), self.counts(self.photo), "kept whole")
         result = self.delete()
         self.assertEqual((1, 1, []), (result.attempted, result.changed, result.errors))
