@@ -553,8 +553,8 @@ def counts(conn, change_ids):
 def finish(db_path, change_id, also=None):
     """Mark change `change_id` applied -- or undone, when it was being undone -- now that
     every file is done, undone or a conflict; its summary takes the files' counts. Returns the counts,
-    or None when files are left to write, or ERASED when the change is gone (it wrote nothing: an internal change's files
-    all gone, or a forward change with no file done and no row left). `also(conn, change id)` runs in the same
+    or None when files are left to write, or ERASED when the change is gone, whatever it wrote (an internal change's files
+    all gone, as after a bake that wrote files, or a forward change with no file done and no row left). `also(conn, change id)` runs in the same
     transaction when a forward change finishes (the records of faces whose photo was never written go:
     tagpup.store.face_batches.tidy); an undo keeps everything the change recorded.
 

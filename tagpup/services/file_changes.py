@@ -396,7 +396,7 @@ def write_fields(library, operation, exiftool_path, photo_paths, read, plan_one,
     more. It writes nothing; one that raises ends the write as a crash does (the rest settled forward at the next open).
 
     A Result: `changed` the files written, errors the photos that failed and the
-    conflicts. details: `change` (its id, or None when nothing was written), `written`
+    conflicts. details: `change` (its id, or None when the change is gone: nothing was written, or an internal one's files are done and it is erased), `written`
     {path: detail} of each photo written or already holding it, `conflicts` the photos,
     named by id, found changed outside since they were read; `read_only`, when one failed so, the paths of the photos
     whose write failed and whose file is marked read-only: a failure no retry changes, where every other (a file held
