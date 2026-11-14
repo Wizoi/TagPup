@@ -321,9 +321,12 @@ class TagSuggester:
         embedding: List[float],
         k: int = 15,
         min_sim: float = suggesting.NEIGHBOUR_CUT,
-        target_metadata: Optional[Dict[str, Any]] = None
+        target_metadata: Optional[Dict[str, Any]] = None,
+        frames=None
     ) -> Dict[str, Any]:
-        """Query index for nearest neighbors, expand hierarchical tags, aggregate and score tags."""
+        """Query index for nearest neighbors, expand hierarchical tags, aggregate and score tags. `frames`, called, gives a
+        clip's frames (PhotoEmbeddings.frames_of: upright pictures, or NoFrames), whose faces offer its people; a clip
+        given none (a measurement of tags alone, scripts/measure_pipeline_holdouts.py) is offered tags alone."""
         known_people, known_faces, labels, tags_by_id = self._known_people()
 
         # 1. Search index for neighbors
@@ -752,8 +755,13 @@ class SuggestionModel:
         return self.embeddings.model_key
 
     def suggest(self, photo, meta):
+        """The suggestion for one photo. A clip's frames are read once: those its vector was made from, when it was
+        made now; else read for its people (TagSuggester.suggest_for_photo's `frames`), only when it is a clip."""
+        decoded = []
+        vector = self.embeddings.of(photo, decoded=decoded)
         return self.suggester.suggest_for_photo(
-            photo, self.embeddings.of(photo), k=15, min_sim=suggesting.NEIGHBOUR_CUT, target_metadata=meta)
+            photo, vector, k=15, min_sim=suggesting.NEIGHBOUR_CUT, target_metadata=meta,
+            frames=lambda: decoded or self.embeddings.frames_of(photo))
 
     def offered(self, suggestion):
         """What the panel shows for one suggestion: tags, people, title -- what Apply All and the writers take too.

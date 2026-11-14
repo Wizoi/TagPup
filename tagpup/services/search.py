@@ -177,8 +177,10 @@ class PhotoEmbeddings:
 
         return self.photo_index.write_on_own_connection(store, label="the vectors of %d photos" % len(rows))
 
-    def of(self, file_path, force_recompute=False):
-        """A photo's vector: the one kept, unless `force_recompute`; else made and kept (made(prepared))."""
+    def of(self, file_path, force_recompute=False, decoded=None):
+        """A photo's vector: the one kept, unless `force_recompute`; else made and kept (made(prepared)). `decoded`, a
+        list, is extended with a clip's frames when they are read to make it (prepared): Suggest looks at them for the
+        clip's people, and reads them again only when the vector was kept (SuggestionModel.suggest)."""
         if not force_recompute:
             cached = self.cached(file_path)
             if cached is not None:
@@ -192,9 +194,9 @@ class PhotoEmbeddings:
                 cached = self.cached(file_path)
                 if cached is not None:
                     return cached
-        return self.made(file_path, self.prepared(file_path))
+        return self.made(file_path, self.prepared(file_path, decoded=decoded))
 
-    def prepared(self, file_path, seen=None, load=True):
+    def prepared(self, file_path, seen=None, load=True, decoded=None):
         """The processor's half of making a photo's vector (Prepared): the file's stamp, taken before it is opened
         (see keep), and what CLIP is shown of the picture decoded from it (ClipModel.input_of, which hands the
         decoded picture to `seen` when given: what the indexer knows of the file from that read). Nothing is kept and
@@ -203,11 +205,14 @@ class PhotoEmbeddings:
         the model (ClipModel.picture_input). Raises images.Unreadable for a picture that does not decode.
 
         A clip (images.is_clip, by its name, as the index gave its row its kind) is shown its CLIP_PICTURES frames,
-        read by ffmpeg (video_frames.frames; `seen` is not told): NoFrames when ffmpeg gives none."""
+        read by ffmpeg (video_frames.frames; `seen` is not told, `decoded`, a list, is extended with them): NoFrames
+        when ffmpeg gives none."""
         stamp = shares.read_stamp(file_path)
         if images.is_clip(file_path):
-            return Prepared(stamp, [self.clip.picture_input(picture, load=load)
-                                    for picture in self.frames_of(file_path)], frames=True)
+            pictures = self.frames_of(file_path)
+            if decoded is not None:
+                decoded.extend(pictures)
+            return Prepared(stamp, [self.clip.picture_input(picture, load=load) for picture in pictures], frames=True)
         return Prepared(stamp, self.clip.input_of(file_path, seen=seen, load=load))
 
     def frames_bytes(self):
