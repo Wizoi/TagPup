@@ -1,5 +1,5 @@
 """The one-off that writes each clip's Date Taken into its QuickTime headers (scripts/date_clip_headers.py;
-tagpup.services.tagging.date_clip_headers), as the owner runs it with TagPup closed: a dry run, --limit 1, then the rest,
+tagpup.services.clip_headers.date_clip_headers), as the owner runs it with TagPup closed: a dry run, --limit 1, then the rest,
 then a dry run that finds none left (scenario C5; deleted with the script once its dry run says 0 left).
 
 Listed: a clip whose XMP holds a Date Taken and whose headers are zero (A), and a clip the owner's list names whose header
@@ -32,7 +32,7 @@ import test_a_clip_tagged_through_the_journal as tagged  # noqa: E402
 from tagpup.core import paths  # noqa: E402
 from tagpup.files import field_values, in_place  # noqa: E402
 from tagpup.files.exiftool_session import ExifToolSession  # noqa: E402
-from tagpup.services import tagging  # noqa: E402
+from tagpup.services import clip_headers  # noqa: E402
 
 EXIFTOOL = tagged.EXIFTOOL
 ZONED = "2018:03:02 09:15:00-07:00"
@@ -94,7 +94,7 @@ class DatingClipHeaders(tagged.ALibraryHoldingAClip):
 
     def changes(self):
         return [change for change, in self.vl.rows("SELECT id FROM changes WHERE operation = ? ORDER BY id",
-                                                   tagging.DATE_HEADERS)]
+                                                   clip_headers.DATE_HEADERS)]
 
     def headers(self, path, date):
         written = self.read_bytes(path)
@@ -160,7 +160,7 @@ class DatingClipHeaders(tagged.ALibraryHoldingAClip):
     def test_a_ctrl_c_after_the_write_returned_names_the_change_it_applied(self):
         """A press once the write returned, while the clips left are counted again: the change is applied and undoable,
         which the line says from the journal (#3020: it said 'None clip(s) written, recorded as change None')."""
-        listed, calls = tagging.clips_to_date_headers, []
+        listed, calls = clip_headers.clips_to_date_headers, []
 
         def counted_again(library, named=()):
             calls.append(library)
@@ -168,7 +168,7 @@ class DatingClipHeaders(tagged.ALibraryHoldingAClip):
                 raise KeyboardInterrupt
             return listed(library, named)
 
-        with mock.patch.object(tagging, "clips_to_date_headers", side_effect=counted_again):
+        with mock.patch.object(clip_headers, "clips_to_date_headers", side_effect=counted_again):
             code, said = self.run_it("--apply")
         self.assertEqual(130, code, said)
         [change] = self.changes()
@@ -177,7 +177,7 @@ class DatingClipHeaders(tagged.ALibraryHoldingAClip):
         self.assertTrue(self.headers(self.zero, dated.SAVED), "the A clip written")
 
     def test_a_clip_dated_since_the_listing_or_holding_the_date_already_is_not_written_nor_counted_written(self):
-        listed, calls = tagging.clips_to_date_headers, []
+        listed, calls = clip_headers.clips_to_date_headers, []
 
         def then_saved_by_hand(library, named=()):
             found = listed(library, named)
@@ -192,9 +192,9 @@ class DatingClipHeaders(tagged.ALibraryHoldingAClip):
                                    saving=lambda record, before: None)
             return found
 
-        with mock.patch.object(tagging, "clips_to_date_headers", side_effect=then_saved_by_hand):
+        with mock.patch.object(clip_headers, "clips_to_date_headers", side_effect=then_saved_by_hand):
             code, said = self.run_it("--apply")
-        self.assertIn("Dated: wrote 0 clip file(s). Held it already: 1. Left alone: 1 %s" % tagging.REDATED_SINCE, said)
+        self.assertIn("Dated: wrote 0 clip file(s). Held it already: 1. Left alone: 1 %s" % clip_headers.REDATED_SINCE, said)
         self.assertIn("Nothing was recorded: no file was written.", said)
         self.assertTrue(self.headers(self.zero, "2024:09:01 08:00:00"), "the panel's date kept")
 

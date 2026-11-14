@@ -1,7 +1,7 @@
 """Write each clip's Date Taken into its QuickTime headers, as a save of its date from the panel now does: a clip whose
 XMP holds a Date Taken and whose movie header is zero or absent (group A), and each clip of the owner's reviewed list
 whose header holds another time (group B, `--csv`), are saved with the date the library shows, through the same
-journaled clip save (tagpup.services.tagging.date_clip_headers; DECISIONS 2026-11-13, A CLIP'S DATE TAKEN IS WRITTEN INTO
+journaled clip save (tagpup.services.clip_headers.date_clip_headers; DECISIONS 2026-11-13, A CLIP'S DATE TAKEN IS WRITTEN INTO
 ITS QUICKTIME HEADERS; docs/plans/clip-date-in-quicktime-headers.md). A one-off, deleted once its dry run says 0 left:
 a clip dated afterwards gets its headers from the save that dates it.
 
@@ -31,7 +31,7 @@ import _root  # noqa: E402,F401
 from tagpup import config as tagpup_config  # noqa: E402
 from tagpup import launcher, runtime  # noqa: E402
 from tagpup.core.library import Library  # noqa: E402
-from tagpup.services import file_changes, snapshots, tagging  # noqa: E402
+from tagpup.services import clip_headers, file_changes, snapshots  # noqa: E402
 
 #: Why --apply is refused while an app runs: a running app writes the same clips and library (a save, an index).
 APP_RUNNING = ("Not run: TagPup is running (%d app server(s)). Close it first (from its tray or its window), then run "
@@ -80,7 +80,7 @@ def run(db_path, csv_path, apply, limit, out=say):
             out("Snapshot of the library: %s." % (", ".join(taken.details["taken"]) or
                                                   "today's stands (%s)" % taken.details.get("today")))
             exiftool = runtime.exiftool(library)
-        result = tagging.date_clip_headers(library, exiftool, named, apply=apply, limit=limit, on_planned=planned.append,
+        result = clip_headers.date_clip_headers(library, exiftool, named, apply=apply, limit=limit, on_planned=planned.append,
                                            on_chunk=lambda done, of: out("%d of %d clips carried out." % (done, of)))
     except KeyboardInterrupt as stopped:
         # A press while the clips are listed or read, the snapshot taken, or the clips left counted after the write is
@@ -104,7 +104,7 @@ def run(db_path, csv_path, apply, limit, out=say):
         return 0
     out("Dated: wrote %d clip file(s). Held it already: %d. Left alone: %d %s, %d unreadable or gone, %d away (their "
         "network share did not answer). Conflicts: %d (changed since they were read; not written). Failed: %d. Left to "
-        "date: %d." % (counts["wrote"], counts["held"], counts[tagging.REDATED_SINCE], tagging.REDATED_SINCE,
+        "date: %d." % (counts["wrote"], counts["held"], counts[clip_headers.REDATED_SINCE], clip_headers.REDATED_SINCE,
                        counts["unreadable"], counts["away"], counts["conflicts"], counts["failed"], counts["left"]))
     for photo_id, why in result.details["failures"]:
         out("Clip %s: %s" % (photo_id, why))
