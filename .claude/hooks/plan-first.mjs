@@ -8,7 +8,7 @@
  * has a short plan first (docs/plans/README.md says what it holds), and each worker launched for it cites the plan.
  *
  * Refuses launching a `tagpup-worker` or `tagpup-worker-small` whose prompt names two or more distinct owners (each
- * `Domain:` line's value split on `and` and commas, plus each charter `tagpup-owner-<name>` named; the integration
+ * `Domain:` line's value split on `and`, `&`, `/` and commas, plus each charter `tagpup-owner-<name>` named; the integration
  * owner counts like any other, so a brief for its own shell alone passes), unless the prompt has a line
  * `Plan: docs/plans/<name>.md` naming a plan that is committed (the template README.md is not a plan; a worker's
  * worktree is made from HEAD, so an uncommitted plan is absent where it reads). The plan is looked for under the
@@ -28,13 +28,13 @@ const CHARTER = /tagpup-owner-([a-z]+)/gi;
 const PLAN_LINE = /^[ \t]*Plan:[ \t]*(docs\/plans\/[A-Za-z0-9_.-]+\.md)[ \t]*$/gm;
 const TEMPLATE = "docs/plans/README.md";
 
-/** The owners a brief names: the first word of each part of a `Domain:` value (split on `and`, commas), and each charter. */
+/** The owners a brief names: the first word of each part of a `Domain:` value (split on `and`, `&`, `/`, commas), and each charter. */
 export function ownersNamed(prompt) {
   const text = prompt || "";
   const owners = new Set();
   for (const m of text.matchAll(DOMAIN_VALUE)) {
     const value = m[1].replace(/\([^)]*\)/g, " ");
-    for (const part of value.split(/,|\band\b/i)) {
+    for (const part of value.split(/,|&|\/|\band\b/i)) {
       const word = part.trim().match(/^[A-Za-z]+/);
       if (word) owners.add(word[0].toLowerCase());
     }
