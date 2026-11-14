@@ -2,15 +2,18 @@
 Live count: 681 of photo_index's 2,910 clips hold an XMP Date Taken and a zero or unset header (all .mp4; 669 are the
 name-dated clips of change 8261); kr-track 0 of 5, renton_parkrun 0 clips; every row of photo_index is on the share
 (counted read-only 2026-11-13; `raw_metadata` agreed with the file's mvhd on zero-or-not in 150 of 150 sampled).
-109 more hold a header that disagrees with their XMP date after the UTC shift (decision 4 below, not in this plan).
+109 more hold a header that disagrees with their XMP date after the UTC shift; the owner reviewed them (2026-11-13,
+`reports/clip_date_disagreements.csv`, untracked): the 17 whose header holds a year 1981-1989 and the 81 others (73
+within minutes, 7 about 2 h, 1 at 26 h) take the XMP date in their header; the 11 about 9 h later keep their header (the
+owner reads them as a UTC difference). The one-off therefore covers 681 + 98 = 779 clips and leaves those 11 alone.
 Domains: Media (the patch's ranges, Convert), Files (containers' read-only walk of trak/mdia, the write door, reviewed
 beside); integration reviews the seam.
 
 Owner's answers (2026-11-13): (1) the QuickTime dates of a clip are written, reversing 2026-11-08 "never written"
 (modification times untouched); (2) the Date Taken's digits are written as if UTC ("local as-is"; SmugMug shows them as
 local), though a camera stores true UTC; TagPup's reader keeps preferring XMP; (3) the 681 existing clips are touched by a
-dry-run-first, journaled, undoable one-off; (4) the 109 clips whose header disagrees with their XMP are NOT in this
-feature: the owner reviews a list and may decide to overwrite the XMP instead; (5) Convert stops carrying creation_time
+dry-run-first, journaled, undoable one-off; (4) of the 109 clips whose header disagrees with their XMP, 98 take the XMP
+date in their header and the 11 about 9 h later keep theirs (see the count above); (5) Convert stops carrying creation_time
 through ffmpeg; the carry through the clip save is the only writer.
 
 | Mechanism | The ONE place it lives | Its owner | New or existing |
@@ -40,8 +43,8 @@ headers in one patch, no command run. A clip added with zero headers and a date 
 `dates.name_date` and its file is not touched (2026-11-13, never automatic): its header is written when the owner saves
 its Date Taken.
 One-offs: `scripts/date_clip_headers.py`: lists the rows of kind `video` holding an XMP date and a zero or absent
-`QuickTime:CreateDate`, and saves each clip's own Date Taken through the same journaled clip save (never its own byte
-writer); dry run by default, `--apply`, `--limit`, TagPup stopped, one undoable change, "wrote N" from the files
+`QuickTime:CreateDate` (and the 98 named from the CSV: a `--paths` list, the 11 left out), and saves each clip's own
+Date Taken through the same journaled clip save (never its own byte writer); dry run by default, `--apply`, `--limit`, TagPup stopped, one undoable change, "wrote N" from the files
 changed. Deleted when its dry run says 0 left (the merge saying so in a line `date_clip_headers: dry run 0 left`).
 Cuts:
 1. Media, with `containers.py` reviewed beside Files (about 700 lines): `containers` walks trak/mdia, `Video.headers`;
