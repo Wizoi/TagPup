@@ -1,6 +1,7 @@
 /**
- * "Name faces from tags", from TagTuner's Folder Matches header and gear and from TagPup's Organize folder view
- * (web/common/name-faces.js; docs/findings.md, #789).
+ * "Name faces from tags", from TagTuner's Folder Matches header and gear and from TagPup's Organize folder view and gear
+ * (web/common/name-faces.js; docs/findings.md, #789). TagPup's button is the open folder's: it is shown only while a folder is
+ * open on disk, and the gear's item is the whole library's, with no folder step.
  *
  * One dialog for both pages: it starts the job (the plan is read, nothing is written), shows the question the plan
  * makes -- "Name N faces in M photos (X by their tag, Y by looking like the person's confirmed faces)? Z are left for
@@ -11,7 +12,8 @@
  */
 import { test, describe, afterEach } from "node:test";
 import assert from "node:assert/strict";
-import { loadApp, FakeServer, flush, click, closeAllApps, pageExports, REAL, realLibrary, until } from "./harness.mjs";
+import { loadApp, FakeServer, flush, click, closeAllApps, openFolder, pageExports, REAL, realLibrary, until } from "./harness.mjs";
+import { loadViewPage } from "./view-page.mjs";
 import { OPEN_DIALOG } from "../../web/common/dialog.js";
 import { questionText, folderText, scopeLabel } from "../../web/common/name-faces.js";
 
@@ -52,10 +54,12 @@ async function openFrom(appName, t, { start, confirm, cancel, statusAnswer, curr
   const ctx = await loadApp(appName, { t, url: real ? real.url : `http://localhost:8080/${LIBRARY}/`, server });
   await flush(ctx.window, 6);
   ctx.server = server;
-  // The folder the page has open, as each page holds it: TagPup's Organize view's, TagTuner's selected photo's folder group.
+  // The folder the page has open, as each page holds it: TagPup's Organize view's (and its header says so), TagTuner's
+  // selected photo's folder group.
   ctx.openFolder = (folder) => {
     if (appName === "tagpup") {
       pageExports(ctx.window, "web/tagpup/state.js").state.scannedFolder = folder;
+      pageExports(ctx.window, "web/tagpup/folder.js").updateCurrentFolderLabel();
     } else {
       const state = pageExports(ctx.window, "web/tuner/state.js").state;
       state.allPhotos = [{ path: folder + "\\a.jpg", folder, folderGroup: { name: folder } }];
@@ -64,8 +68,16 @@ async function openFrom(appName, t, { start, confirm, cancel, statusAnswer, curr
   };
   ctx.button = ctx.document.getElementById("btn-name-faces");
   ctx.modal = () => ctx.document.getElementById("name-faces-modal");
+  ctx.gearItem = () => ctx.document.querySelector('#gear-menu [data-action="name-faces"]');
+  // As a person opens it: the button where it is shown, else (TagPup with no folder open) the gear's item.
   ctx.open = async () => {
-    click(ctx.window, ctx.button);
+    if (ctx.button.classList.contains("hidden")) {
+      click(ctx.window, ctx.document.getElementById("btn-gear"));
+      await flush(ctx.window);
+      click(ctx.window, ctx.gearItem());
+    } else {
+      click(ctx.window, ctx.button);
+    }
     await flush(ctx.window, 8);
   };
   ctx.posts = (path) => server.calls.filter((c) => c.url.includes(path) && c.method === "POST").map((c) => c.body);
@@ -363,9 +375,70 @@ describe("TagTuner's header", () => {
 });
 
 describe("TagPup's folder view", () => {
+  const hidden = (ctx) => ctx.document.getElementById("btn-name-faces").classList.contains("hidden");
+
   test("the button sits in the folder view's header with its reach in the title", async (t) => {
     const ctx = await openFrom("tagpup", t);
     assert.ok(ctx.button.closest(".folder-view-actions"));
     assert.match(ctx.button.title, /only this folder and its subfolders \(the default\), or the whole library, as you choose/);
+  });
+
+  test("the button is there only while a folder is open on disk: not with none, nor in a library view, nor in a search's results", async (t) => {
+    const none = await loadViewPage(t);
+    assert.ok(hidden(none), "no folder is open: there is no folder for it to offer");
+    await openFolder(none, "D:\\Pictures\\kr-track\\Run");
+    await none.settle(60);
+    assert.ok(!hidden(none), "a folder open on disk offers Only this folder");
+    none.document.getElementById("btn-show-in-library").click();
+    await none.settle();
+    assert.ok(none.state.library, "the view of the folder is open");
+    assert.ok(hidden(none), "a view's photos are not what the button would name");
+    const all = await loadViewPage(t, { search: "?view=all" });
+    assert.ok(hidden(all), "the whole library's view");
+    const value = { all_of: [{ kind: "person", value: "People/Wren Halloway" }] };
+    const search = await loadViewPage(t, { search: `?view=search&value=${encodeURIComponent(JSON.stringify(value))}` });
+    assert.equal(search.state.library.kind, "search");
+    assert.ok(hidden(search), "a search's results: it cannot act on them, and would name the whole library");
+  });
+
+  test("another dog park closes the folder, and the button goes with it", async (t) => {
+    const ctx = await loadViewPage(t);
+    await openFolder(ctx, "D:\\Pictures\\kr-track\\Run");
+    await ctx.settle(60);
+    assert.ok(!hidden(ctx));
+    ctx.document.getElementById("btn-change-db").click();
+    await ctx.settle();
+    assert.equal(ctx.state.scannedFolder, null);
+    assert.ok(hidden(ctx));
+  });
+
+  test("the gear's item names faces in the whole library, with no folder step, even with a folder open", async (t) => {
+    const ctx = await openFrom("tagpup", t);
+    ctx.openFolder(FOLDER);
+    assert.equal(ctx.gearItem().textContent, "Name faces from tags (whole library)...");
+    click(ctx.window, ctx.document.getElementById("btn-gear"));
+    await flush(ctx.window);
+    click(ctx.window, ctx.gearItem());
+    await flush(ctx.window, 8);
+    assert.ok(!ctx.modal().classList.contains("hidden"));
+    assert.equal(ctx.modal().querySelector(".name-faces-choice"), null, "no choice of how much to look at");
+    assert.ok(!ctx.server.urls().some((u) => u.includes("/api/name-faces/scope")), "no folder is counted");
+    assert.deepEqual(ctx.posts("/api/name-faces/start"), [{ folder: null, only_folder: false }]);
+    assert.match(ctx.text(".name-faces-scope"), /^This works on the whole library/);
+    assert.equal(ctx.text(".name-faces-question"), questionText(PLAN, "the whole library"));
+  });
+
+  test("the view changed under the open dialog: the plan is of the folder it named, and says so", async (t) => {
+    const ONLY = status("asking", { plan: { ...PLAN, faces: 12, photos: 12, by_tag: 12, by_comparison: 0, left: 3 }, ask_seconds: 900,
+                                    can_cancel: true, only_folder: true, folder: true });
+    const ctx = await openFrom("tagpup", t, { start: { success: true, status: ONLY } });
+    ctx.openFolder(FOLDER);
+    await ctx.open();
+    assert.ok(ctx.modal().querySelector("#name-faces-only-folder").checked);
+    ctx.openFolder(null);   // Back to a view, the folder put to rest, while the choice was on screen
+    assert.ok(hidden(ctx));
+    await ctx.press("Read the plan");
+    assert.deepEqual(ctx.posts("/api/name-faces/start"), [{ folder: FOLDER, only_folder: true }]);
+    assert.match(ctx.text(".name-faces-question"), /^In the folder "Run" and its subfolders: name 12 faces/);
   });
 });

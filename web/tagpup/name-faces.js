@@ -1,28 +1,31 @@
-// TagPup's "Name faces from tags" (web/common/name-faces.js; docs/findings.md, #789): the button in the Organize folder
-// view's header opens the one dialog, which asks how much to look at (only the folder that is open, or the whole library),
-// reads the plan, asks, and writes. What this adds is the page's side of it: the folder that is open, which the dialog offers
-// as "Only this folder" and whose faces the result counts before and after, and, once names were written, the open photo's
-// faces read again.
+// TagPup's "Name faces from tags" (web/common/name-faces.js; docs/findings.md, #789): two ways into the one dialog. The button in
+// the Organize folder view's header is the open folder's: the dialog asks how much to look at (only that folder, the default, or
+// the whole library), and the result counts the folder's faces before and after. It is shown only while a folder is open on disk
+// (folder.js, updateCurrentFolderLabel, with Show in library): in a library view or a search's results it could not act on the
+// photos shown, and would name the whole library. The gear's item is the whole library's, with no folder step. What this adds is
+// the page's side of it: the folder that is open, and, once names were written, the open photo's faces read again.
 import { attachNameFaces, openNameFaces } from './common/name-faces.js';
+import { btnNameFaces } from './elements.js';
 import { upper } from './hooks.js';
 import { state } from './state.js';
 
-/** What the page gives the dialog: the folder that is open (none is no problem: the job is the library's), and what to draw again. */
-const nameFacesOptions = {
-    folder: () => state.scannedFolder || null,
-    changed: () => {
-        if (state.activePhotoPath) upper.renderPhotoFaces(state.activePhotoPath);
-    },
-};
+/** Names were written: the open photo's faces are drawn again. */
+function namesWritten() {
+    if (state.activePhotoPath) upper.renderPhotoFaces(state.activePhotoPath);
+}
 
-/** Open the dialog for the folder that is open. */
+/** The folder view's button: the dialog offers the folder that is open as "Only this folder". */
 export function startNamingFacesInFolder() {
-    return openNameFaces(nameFacesOptions);
+    return openNameFaces({ folder: () => state.scannedFolder || null, changed: namesWritten });
+}
+
+/** The gear's item: the whole library, whatever is open. */
+export function startNamingFacesInLibrary() {
+    return openNameFaces({ folder: null, changed: namesWritten });
 }
 
 export function wireNameFaces() {
-    const button = document.getElementById('btn-name-faces');
-    if (button) button.addEventListener('click', startNamingFacesInFolder);
+    btnNameFaces.addEventListener('click', startNamingFacesInFolder);
     // A job already under way (another page, a reload) shows its progress.
-    attachNameFaces(nameFacesOptions);
+    attachNameFaces({ changed: namesWritten });
 }

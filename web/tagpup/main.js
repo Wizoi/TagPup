@@ -189,7 +189,7 @@ document.addEventListener('DOMContentLoaded', () => {
     // The gear: the tag editor (web/common/tag-editor.js) and TagTuner on this library.
     wireTagPupGear();
 
-    // The folder view's "Name faces from tags".
+    // The folder view's "Name faces from tags" (the gear's item is wired with the gear).
     wireNameFaces();
 
     // A library whose root this computer does not place says so, at the top of the page.

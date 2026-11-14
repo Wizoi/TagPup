@@ -5,7 +5,7 @@ import { baseName, samePath } from './common/paths.js';
 import { upper } from './hooks.js';
 import { state } from './state.js';
 import {
-    btnChangeDb, btnCreateDb, btnFolderAutoApply, btnShowInLibrary, btnToggleRename, btnToggleTimeshift,
+    btnChangeDb, btnCreateDb, btnFolderAutoApply, btnNameFaces, btnShowInLibrary, btnToggleRename, btnToggleTimeshift,
     currentFolderName, dbSelect, emptyState, facesSection, folderPathInput, folderViewContent,
     folderViewHeader, folderViewStats, listStats, panelContent, photoList, photoPosition,
     photoSearch, sidebar, sidebarResizer, statusDot, statusText
@@ -195,8 +195,11 @@ export function updateCurrentFolderLabel() {
         currentFolderName.classList.toggle('hidden', !leaf);
     }
     document.title = leaf ? `${leaf} — TagPup` : 'TagPup GUI';
-    // Show in library: a folder is open on disk, and no view of the library is.
-    btnShowInLibrary.classList.toggle('hidden', !state.scannedFolder || Boolean(state.library));
+    // A folder is open on disk, and no view of the library is: Show in library, and Name faces from tags with its "Only this
+    // folder" (name-faces.js; the gear's item is the whole library's).
+    const onDisk = Boolean(state.scannedFolder) && !state.library;
+    btnShowInLibrary.classList.toggle('hidden', !onDisk);
+    btnNameFaces.classList.toggle('hidden', !onDisk);
     if (folderViewHeader) {
         const label = leaf ? `Folder View — ${leaf}` : 'Folder View (Thumbnails)';
         folderViewHeader.innerHTML = '';

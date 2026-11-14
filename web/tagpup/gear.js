@@ -1,7 +1,8 @@
 // TagPup's page: the gear in its top bar (web/common/gear.js) -- the tag editor, which
 // was the Manage Tags button, the settings of TagPup's own features (Suggest's words,
 // Smart Rename's format: web/common/settings-dialog.js), the library's history of
-// changes, each undoable (web/common/history-dialog.js), and TagTuner on this library.
+// changes, each undoable (web/common/history-dialog.js), Name faces from tags in the whole
+// library (name-faces.js), and TagTuner on this library.
 import { wireGear } from './common/gear.js';
 import { wireTagEditor } from './common/tag-editor.js';
 import { openSettings } from './common/settings-dialog.js';
@@ -12,6 +13,7 @@ import { statusDot, statusText } from './elements.js';
 import { fetchKnownTagsAndPeople, loadTaxonomy } from './tags.js';
 import { scanFolder } from './folder.js';
 import { browseWholeLibrary, libraryViewOfFolder, syncLibraryMenu } from './library-view.js';
+import { startNamingFacesInLibrary } from './name-faces.js';
 
 /**
  * The tag editor, over the tree this page keeps (state.taxonomyNodes, read by
@@ -43,6 +45,7 @@ export function wireTagPupGear() {
         'library-of-folder': libraryViewOfFolder,
         'tag-editor': editor.open,
         'library-settings': openSettings,
+        'name-faces': startNamingFacesInLibrary,
         // An undo may have put back tags, captions and names: what the page shows is read again.
         'library-history': () => openHistory({
             undone: () => {
