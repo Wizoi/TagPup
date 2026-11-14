@@ -89,7 +89,8 @@ def photo_meta(path, tags=(), year=None, people=()):
     """A photo's record as the page builds it (tagpup.services.photos.page_record): its raw metadata always, a Date Taken
     in it when `year` is given."""
     raw = {} if year is None else {"EXIF:DateTimeOriginal": f"{year}:06:15 12:00:00"}
-    return {"path": path, "tags": list(tags), "people": list(people), "raw_metadata": raw}
+    return {"path": path, "tags": list(tags), "people": list(people), "raw_metadata": raw,
+            "year": year}
 
 
 class SuggesterTestBase(unittest.TestCase):
