@@ -249,7 +249,7 @@ class TheApply(Mending):
         self.assertEqual(1, said.exit_code, said.output)
         self.assertEqual(on_disk, sum(1 for photo in photos if self.files.tags_of(photo)))
         self.assertIn("Stopped: 2 photo file(s) written", said.output)
-        self.assertIn("1 more is settled the next time the library is opened", said.output)
+        self.assertIn("1 more is settled the next time it can be read", said.output)
         query = ("SELECT c.id, c.status, f.state FROM changes c JOIN change_files f ON f.change_id = c.id"
                  " WHERE c.operation = ? ORDER BY f.id")
         rows = self.look(query, (tags_from_faces.OPERATION,))

@@ -728,10 +728,8 @@ def what_a_stop_left(library, stopped, planned=None, noun="file", who=None):
     if said is None and change is None:
         said = "stopped: no %s written, no change recorded, nothing to undo. Run it again to continue." % noun
     elif said is None:
-        kept = ("; %d more is settled the next time the library is opened, and then the change can be undone" % left
-                if left else ", which can be undone")
-        said = ("stopped: %s %s(s) written, recorded as change %d in History%s. Run it again to continue."
-                % ("some" if written is None else written, noun, change, kept))
+        said = ("stopped: %s %s(s) written%s. Run it again to continue."
+                % ("some" if written is None else written, noun, _kept_as(False, change, left)))
     return "%s: %s" % (who, said) if who else said[0].upper() + said[1:]
 
 
