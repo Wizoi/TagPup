@@ -68,9 +68,22 @@ file. None, the rewrite's, for a clear of a clip holding no Xtra, two, or one ho
 clips hold an empty Xtra; the move asks only of a clip whose Category ExifTool read), and a give-back to a clip
 holding an Xtra again (Windows wrote its Tags since).
 
+A clip's Date Taken in its QuickTime headers (DECISIONS 2026-11-13, A CLIP'S DATE TAKEN IS WRITTEN INTO ITS QUICKTIME
+HEADERS): a save of its Date Taken writes, in the same Patch as its XMP date, the creation time of every movie, track
+and media header (containers.Video.headers: mvhd, tkhd, mdhd; fields.CLIP_HEADER_DATES, each a list of the texts of its
+boxes in file order, one text when they all agree: header_dates), the date's digits as seconds since 1904-01-01 as if
+UTC (`seconds_of`), at the box's own width (4 bytes in version 0, 8 in version 1; both live, 28 photo_index clips hold
+both, counted 2026-11-13), modification times untouched. One text sets every box of its kind (a save cannot know how
+many there are when it plans); n texts set each box in turn, the undo of a clip whose tracks disagreed (31 photo_index
+clips, counted 2026-11-13), each box given back its own seconds. A box holding its date already is not written. None,
+the rewrite's, for texts that are not one nor one a box, and a header of a version other than 0 or 1 or too short to
+hold its time (none live).
+
 A `Patch`'s last range may start at the file's end (an append) or run past it (a box that grows there): `size` is the
 file's size once written. Its ranges are in file order and do not overlap.
 """
+import datetime
+import re
 import struct
 from dataclasses import dataclass
 
@@ -91,6 +104,13 @@ _UTF8 = b"\0\0\0\1"
 #: The Xtra entry of a clip's Windows Tags; each of its values is UTF-16LE text ended by a NUL (type 8: all 7,293 values
 #: of the 2,093 clips holding one, counted 2026-11-09).
 CATEGORY = b"WM/Category"
+#: Which header box holds each of a clip's QuickTime dates (fields.CLIP_HEADER_DATES): the movie's, each track's, each
+#: media's.
+_BOX_OF = dict(zip(fields.CLIP_HEADER_DATES, containers.HEADER_TYPES))
+#: When a QuickTime header's seconds count from, and how a header holding none (0) reads, as ExifTool reads it.
+_EPOCH = datetime.datetime(1904, 1, 1)
+_ZERO = "0000:00:00 00:00:00"
+_DATE = re.compile(r"(\d{4}):(\d{2}):(\d{2}) (\d{2}):(\d{2}):(\d{2})\Z")
 
 
 @dataclass(frozen=True)
@@ -102,21 +122,71 @@ class Patch:
     how: str
 
 
-def patch(layout, packet, title=None, freed=(), category=None, xtra_read=()):
+def patch(layout, packet, title=None, freed=(), category=None, xtra_read=(), dates=None):
     """The `Patch` that puts `packet` (bytes, the whole new XMP packet; None, the XMP as it is) into the clip laid out as
     `layout` (containers.Video), and, with `title` given, frees its QuickTime title ("") or gives it back (its text) to
     the one of the `freed` ((box, its bytes after its header), ...: freed_titles' boxes, read) that holds it; with
     `category` given, frees its Xtra (()) or gives it back (its Windows Tags, texts) to the one of `xtra_read` ((box,
-    its bytes, header and all), ...: xtra_boxes(layout, category), read) that holds them; None when the clip needs the
-    rewrite (the module says when). A Patch with no ranges is nothing to write."""
+    its bytes, header and all), ...: xtra_boxes(layout, category), read) that holds them; with `dates` given
+    ({field of fields.CLIP_HEADER_DATES: its texts}), sets its headers' creation times to them (the module); None when
+    the clip needs the rewrite (the module says when). A Patch with no ranges is nothing to write. Raises ValueError for
+    a date that is not "YYYY:MM:DD HH:MM:SS" (seconds_of)."""
     if not _understood(layout):
         return None
     titled = () if title is None else _title_ranges(layout, title, freed)
     tagged = () if category is None else _xtra_ranges(category, xtra_read)
+    headed = _header_ranges(layout, dates or {})
     placed = Patch((), layout.file_size, IN_PLACE) if packet is None else _xmp_patch(layout, packet)
-    if titled is None or tagged is None or placed is None:
+    if titled is None or tagged is None or headed is None or placed is None:
         return None
-    return Patch(tuple(sorted(placed.ranges + titled + tagged)), placed.size, placed.how)
+    return Patch(tuple(sorted(placed.ranges + titled + tagged + headed)), placed.size, placed.how)
+
+
+def header_dates(layout):
+    """{field of fields.CLIP_HEADER_DATES: the texts its boxes hold} of the clip laid out as `layout`: the texts of its
+    boxes in file order, one text when they all hold the same (what a save of one date leaves, and what an undo of it
+    gives back to every box). Raises ValueError for a header whose time this does not read (none live)."""
+    found = {}
+    for field, kind in _BOX_OF.items():
+        texts = [date_of(box.created) for box in layout.headers if box.type == kind]
+        found[field] = texts[:1] if len(set(texts)) == 1 else texts
+    return found
+
+
+def seconds_of(text):
+    """The seconds since 1904-01-01 a QuickTime header stores for the date `text` ("YYYY:MM:DD HH:MM:SS", its digits
+    as if UTC: DECISIONS 2026-11-13), 0 for a date of zeros. Raises ValueError for any other spelling (a fraction or a
+    zone: Convert's carry hands the date over without them)."""
+    if text == _ZERO:
+        return 0
+    found = _DATE.match(text)
+    if not found:
+        raise ValueError("%r is not a date a QuickTime header holds (YYYY:MM:DD HH:MM:SS)" % (text,))
+    return int((datetime.datetime(*map(int, found.groups())) - _EPOCH).total_seconds())
+
+
+def date_of(seconds):
+    """The date a QuickTime header's `seconds` say, as ExifTool reads it (seconds_of's inverse). Raises ValueError for
+    None, a header whose time containers does not read."""
+    if seconds is None:
+        raise ValueError("a QuickTime header whose creation time TagPup does not read")
+    return _ZERO if seconds == 0 else (_EPOCH + datetime.timedelta(seconds=seconds)).strftime("%Y:%m:%d %H:%M:%S")
+
+
+def _header_ranges(layout, dates):
+    """The ranges that set each header's creation time to `dates` (patch), a box holding it already left out; None,
+    the rewrite's, for a field whose texts are neither one nor one a box, or whose boxes hold a time this does not read
+    (the module)."""
+    ranges = []
+    for field, texts in dates.items():
+        boxes = [box for box in layout.headers if box.type == _BOX_OF[field]]
+        if not boxes or len(texts) not in (1, len(boxes)) or any(box.created is None for box in boxes):
+            return None
+        for box, text in zip(boxes, texts * len(boxes) if len(texts) == 1 else texts):
+            seconds = seconds_of(text)
+            if seconds != box.created:
+                ranges.append((box.payload + 4, seconds.to_bytes(8 if box.version == 1 else 4, "big")))
+    return tuple(ranges)
 
 
 def freed_titles(layout):

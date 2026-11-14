@@ -357,7 +357,7 @@ def patch_jpeg(path, new_header, saving):
 # --- a clip's patch ------------------------------------------------------------------------------------------------
 
 
-def patch_clip(path, new_packet, saving, title=None, category=None):
+def patch_clip(path, new_packet, saving, title=None, category=None, dates=None):
     """Write a journaled write's fields into the XMP of the clip (MOV/MP4/M4V) at `path` by a patch (the module): the
     fields it left holding what they held (a tuple) once the file holds them -- a patch saved by `saving(record, before)`
     (the journal's, which commits the record before this writes a byte, and raises when it will not, nothing then
@@ -369,6 +369,9 @@ def patch_clip(path, new_packet, saving, title=None, category=None):
     `title`, the write's QuickTime:Title (clip_patch.patch): None not written, "" freed, a text given back by an undo.
     `category`, the write's Windows Tags (fields.CLIP_CATEGORY; clip_patch.patch): None not written, () its Xtra freed,
     texts given back by an undo.
+    `dates`, the write's QuickTime header dates ({field of fields.CLIP_HEADER_DATES: texts}; clip_patch.patch): None or
+    {} not written; a box holding its date already is not written, so a save whose XMP holds the date and whose headers
+    do not writes the headers (#3002).
     Raises Refused(OPEN_ELSEWHERE) at once when another program holds the
     clip open; Away when its share does not answer, the file as it was or as far as the patch wrote it (held settles
     it); any other OSError the open or a write raised; whatever `new_packet` or `saving` raises."""
@@ -381,9 +384,9 @@ def patch_clip(path, new_packet, saving, title=None, category=None):
         if made is None:
             return None
         packet, stale = made
-        if packet == old and title is None and category is None:
+        if packet == old and title is None and category is None and not dates:
             return tuple(stale)
-        placed = clip_patch.patch(layout, None if packet == old else packet, title, freed, category, xtra_read)
+        placed = clip_patch.patch(layout, None if packet == old else packet, title, freed, category, xtra_read, dates)
         if placed is None:
             return None
         if placed.ranges:
@@ -403,6 +406,19 @@ def packet_held(path):
             layout = _video_of(handle)
             return None if layout is None else _packet_in(handle, layout)
     return _bounded(path, read)
+
+
+def headers_held(path):
+    """The QuickTime header dates the clip at `path` holds (clip_patch.header_dates: {field of fields.CLIP_HEADER_DATES:
+    the texts of its boxes}), as a patch reads its boxes, for field_values.read, its one caller; None when it is no
+    MOV/MP4/M4V the walk reads. Read with a plain open, bounded by SECONDS: the boxes' headers, no other byte; nothing
+    written. Raises Away when its share does not answer, the OSError of the open or a read, ValueError for a header whose
+    time it does not read."""
+    def read():
+        with open(path, "rb") as handle:
+            return _video_of(handle)
+    layout = _bounded(path, read)
+    return None if layout is None else clip_patch.header_dates(layout)
 
 
 def _video_of(handle):

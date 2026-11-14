@@ -144,6 +144,9 @@ CLIP_TITLE = "QuickTime:Title"
 #: one-time move of those Tags into XMP (a clip's tags write, _CLIP_WRITE_FIELDS; tagpup.files.clip_patch; DECISIONS
 #: 2026-11-09). ExifTool reads it under its group 1 name, Microsoft, and answers it under group 0's (read_key).
 CLIP_CATEGORY = "Microsoft:Category"
+#: A clip's QuickTime dates (DECISIONS 2026-11-13): the creation time of its movie header, of each track's and of each
+#: media's (tagpup.files.clip_patch), each the texts of its boxes in file order, one when they agree.
+CLIP_HEADER_DATES = ("QuickTime:CreateDate", "QuickTime:TrackCreateDate", "QuickTime:MediaCreateDate")
 #: The fields of a clip's write that clip_patch writes outside its XMP packet, which the packet's editor leaves out.
 CLIP_OUTSIDE_XMP = frozenset({CLIP_TITLE, CLIP_CATEGORY})
 
