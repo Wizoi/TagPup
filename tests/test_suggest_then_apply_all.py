@@ -1,5 +1,6 @@
 """V3 and V9: Suggest in a folder the library holds, then Apply All -- and what becomes of the suggestions and the photos'
-CLIP vectors when the photos are renamed, deleted or their folder removed.
+CLIP vectors when the photos are renamed, deleted or their folder removed. A folder's clips are Suggest's subjects too
+(DECISIONS 2026-11-13): tags only, the face model never shown one, Apply All patching each clip's XMP in place.
 
 A person adds a folder, asks for suggestions, closes the tab or restarts the server, comes back and finds them, files
 them with Apply All (tags written to the files as the panel listed them), renames some photos, undoes that, deletes one,
@@ -24,10 +25,13 @@ Mutation, each made in a scratch copy of the code and failing the test named:
 - A failed photo stored without its error; "completed" set before the consensus; the consensus taken over this run's
   photos only; the model asked for before the folder is known to hold a photo: the second-run, the restart and the
   empty-folder tests.
+Clips (AHeldFolderOfPhotosAndClips), on clips the machine's ffmpeg makes and its frames read, skipped without it: each
+fails on the code before it (the route's photos-only filter: no clip is a subject).
 Not kept: Apply All's `threshold`, deleted (the page always sent 0.0: no one narrowed); and the pipeline test that a score is not boosted twice, which cannot happen
 now that a run reads its raw list from the library's rows each time.
 """
 import os
+import shutil
 import sys
 import types
 import unittest
@@ -37,18 +41,26 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import damaged_photos  # noqa: E402
+import numpy as np  # noqa: E402
+import own_home  # noqa: E402
+import photo_rows  # noqa: E402
 import test_analyse_only_suggest as base  # noqa: E402
 
-from tagpup.core import paths  # noqa: E402
+from tagpup import config  # noqa: E402
+from tagpup.core import paths, processes  # noqa: E402
+from tagpup.files import field_values, images, shares  # noqa: E402
 from tagpup.jobs import suggestions as suggestion_jobs  # noqa: E402
 from tagpup.services import faces as faces_service  # noqa: E402
 from tagpup.services import libraries as library_actions  # noqa: E402
 from tagpup.services import suggester  # noqa: E402
+from tagpup.store import db  # noqa: E402
+from tagpup.store import embeddings as store_embeddings  # noqa: E402
 from tagpup.web import tagpup_routes  # noqa: E402
 
 Base = base.Base
 EXTRA = {"tag": "People/Emory Kade", "score": 0.31, "has_face_match": True}   # in the raw list only, never offered
 FIVE = ["cup_01.jpg", "cup_02.jpg", "cup_03.jpg", "cup_04.jpg", "cup_05.jpg"]
+TOOLS = config.locate_ffmpeg()
 
 
 class ASuggestRunInAHeldFolder(Base):
@@ -217,6 +229,148 @@ class ASuggestRunInAHeldFolder(Base):
         self.assertEqual(3, self.rows("SELECT COUNT(*) FROM embeddings")[0][0], "the library's own vectors stay")
         self.restart()
         self.assertEqual({"status": "idle"}, self.status(self.cup))
+
+
+class FramesClip(base.FakeClip):
+    """The stand-in CLIP shown a clip as the real one is (search.PhotoEmbeddings.prepared): each frame the machine's ffmpeg
+    reads of it is a picture, made a vector near the photos of one set."""
+
+    def picture_input(self, picture, load=True):
+        self.images.append(picture)
+        return picture
+
+    def embed_inputs(self, pictures):
+        return [base.vector_of("frame_%02d" % n) for n in range(len(pictures))]
+
+
+@unittest.skipIf(TOOLS.problem, "ffmpeg is not installed on this machine")
+class AHeldFolderOfPhotosAndClips(Base):
+    """Pictures/Dock is the library's: a photo and two clips the index has read, one clip with its vector and frames kept
+    as the index keeps them, the other's not made yet (its frames are read when Suggest asks). Suggest offers each clip
+    tags and no people, the face model never shown one; Apply All patches each clip's XMP in place, journaled, beside the
+    photo's write, and Undo takes it off again."""
+
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        cls.made = os.path.join(own_home.for_class(cls, "tagpup_suggest_clips_").root, "made.mp4")
+        processes.run([TOOLS.ffmpeg, "-v", "error", "-y", "-f", "lavfi", "-i", "testsrc=size=64x48:rate=10", "-t", "1",
+                       "-pix_fmt", "yuv420p", "-movflags", "+faststart", cls.made],
+                      check=True, capture_output=True, timeout=60)
+
+    def app_home(self):
+        super().app_home()
+        self.clip = FramesClip(self.clip.settings)
+
+    def setUp(self):
+        super().setUp()
+        self.dock = os.path.join(self.home.root, "Pictures", "Dock")
+        self.photo = os.path.join(self.dock, "dock_01.jpg")
+        self.clips = [os.path.join(self.dock, name) for name in ("dock_02.mp4", "dock_03.mp4")]
+        damaged_photos.whole_jpeg(self.photo, seed=11)
+        for path in self.clips:
+            shutil.copyfile(self.made, path)
+        library_actions.record_added(self.library, [self.dock])
+        vector = np.array(base.vector_of("frame_00"), dtype=np.float32).tobytes()
+        conn = db.connect(self.library.path)
+        try:
+            self.ids = {os.path.basename(path): photo_rows.add_read(conn, path, {})
+                        for path in [self.photo] + self.clips}
+            stamp = shares.read_stamp(self.clips[0])
+            store_embeddings.put(conn, self.clips[0], store_embeddings.model_key(**self.clip.settings), stamp[0],
+                                 stamp[1], vector, None, frames=[vector] * 4)
+            conn.commit()
+        finally:
+            conn.close()
+        self.before = base.library_dump.dump(self.library.path)
+        self.clip_ids = tuple(self.ids[os.path.basename(path)] for path in self.clips)
+
+    def only_patched(self):
+        """ExifTool's whole-file write refuses a clip: a clip's tags are patched into its XMP (field_values)."""
+        real = field_values._command
+
+        def command(et, source, target, params, clear):
+            if images.is_clip(source):
+                raise AssertionError("ExifTool asked to write the clip %s" % os.path.basename(source))
+            return real(et, source, target, params, clear)
+        patcher = mock.patch.object(field_values, "_command", command)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def change_files(self, change):
+        return self.rows("SELECT photo_id, state FROM change_files WHERE change_id = ? AND photo_id IN (?, ?)"
+                         " ORDER BY photo_id", (change,) + self.clip_ids)
+
+    def test_each_clip_is_offered_tags_alone_and_apply_all_then_undo_write_its_xmp(self):
+        self.assertEqual({"success": True, "status": "running", "in_memory": False}, self.start(self.dock))
+        offered = self.suggested(self.dock)
+        self.assertEqual(["dock_01.jpg", "dock_02.mp4", "dock_03.mp4"], sorted(offered), "the clips are subjects")
+        for name in ("dock_02.mp4", "dock_03.mp4"):
+            self.assertNotIn("error", offered[name], offered[name])
+            self.assertEqual([], offered[name]["people"], "a clip is offered no one")
+            self.assertIn("Trips/Regatta", [t["tag"] for t in offered[name]["tags"]], "its neighbours' tags")
+            self.assertTrue(offered[name]["title"], "the title wand stays offered")
+        self.assertTrue(offered["dock_01.jpg"]["people"], "the photo beside them is offered its face's person")
+        self.assertEqual(["dock_01.jpg"], [os.path.basename(path) for path in self.faces.detected],
+                         "the face model was shown a clip")
+        self.assertEqual([("[]", None)] * 2, self.rows(
+            "SELECT people, error FROM suggestions WHERE photo_id IN (?, ?) ORDER BY photo_id", self.clip_ids),
+            "the clips' rows, by id")
+        self.assertEqual((0, 0), (
+            self.rows("SELECT COUNT(*) FROM faces WHERE photo_id IN (?, ?)", self.clip_ids)[0][0],
+            self.rows("SELECT COUNT(*) FROM faces_detected WHERE photo_id IN (?, ?)", self.clip_ids)[0][0]),
+            "nothing of a face is recorded of a clip")
+        self.assertEqual([(self.clip_ids[1], "video")], self.rows(
+            "SELECT p.id, p.kind FROM photos p JOIN embeddings e ON e.photo_id = p.id WHERE p.id = ?",
+            (self.clip_ids[1],)), "the vector made of its frames is kept, at its row")
+
+        self.only_patched()
+        reply = self.post("/folder/auto-apply", {"folder_path": self.dock})
+        self.assertEqual(200, reply.status_code, reply.data)
+        for path in self.clips:
+            self.assertEqual([t["tag"] for t in offered[os.path.basename(path)]["tags"]], base.tags_in(path))
+        self.assertIn("People/Rowan Thackeray", base.tags_in(self.photo))
+        change = self.client.get("/library/api/history").get_json()["changes"][0]["id"]
+        self.assertEqual([(clip, "done") for clip in self.clip_ids], self.change_files(change), "journaled")
+
+        undone = self.post("/history/%d/undo" % change, {"apply": True})
+        self.assertEqual(200, undone.status_code, undone.data)
+        self.assertEqual([[], [], []], [base.tags_in(path) for path in [self.photo] + self.clips])
+        self.assertEqual([(clip, "undone") for clip in self.clip_ids], self.change_files(change))
+
+    def test_a_clip_whose_frames_cannot_be_read_carries_why_and_the_next_run_tries_it_again(self):
+        with mock.patch.object(config, "locate_ffmpeg", return_value=None):
+            self.start(self.dock)
+        offered = self.suggested(self.dock)
+        self.assertIn("ffmpeg", offered["dock_03.mp4"].get("error", ""), "the clip with no vector says why")
+        self.assertNotIn("error", offered["dock_02.mp4"], "the clip whose vector is kept needs no frame read")
+        self.assertNotIn("error", offered["dock_01.jpg"])
+        self.assertEqual(0, self.rows("SELECT COUNT(*) FROM embeddings WHERE photo_id = ?", (self.clip_ids[1],))[0][0])
+        suggestion_jobs.forget(self.library)
+        self.start(self.dock)
+        self.assertNotIn("error", self.suggested(self.dock)["dock_03.mp4"])
+        self.assertEqual("completed", self.status(self.dock)["status"])
+
+    def test_a_clip_only_looked_at_is_offered_tags_keeps_nothing_and_apply_all_writes_the_photos_beside_it(self):
+        looked = os.path.join(self.cup, "cup_09.mp4")
+        shutil.copyfile(self.made, looked)
+        with open(looked, "rb") as handle:
+            before = handle.read()
+        self.assertEqual({"success": True, "status": "running", "in_memory": True}, self.start(self.cup))
+        entry = self.suggested(self.cup)["cup_09.mp4"]
+        self.assertNotIn("error", entry, entry)
+        self.assertEqual([], entry["people"])
+        self.assertIn("Trips/Regatta", [t["tag"] for t in entry["tags"]])
+        self.assertNotIn(looked, self.faces.detected)
+        self.assert_library_unchanged()          # no vector, no row, no suggestion kept for it
+
+        self.only_patched()
+        reply = self.post("/folder/auto-apply", {"folder_path": self.cup})
+        self.assertIn(images.CLIP_NOT_EDITED, reply.get_json().get("error", ""), "the clip's refusal is said")
+        self.assertTrue(base.tags_in(self.loose[0]), "the photos beside it are written")
+        with open(looked, "rb") as handle:
+            self.assertEqual(before, handle.read(), "the clip a write of files alone cannot journal is left as it was")
+        self.assert_library_unchanged()
 
 
 if __name__ == "__main__":

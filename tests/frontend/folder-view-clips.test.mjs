@@ -6,7 +6,8 @@
  * A folder's card is selected by its path, a clip's too (a folder view's selection is by path, not by id, whatever
  * picture the card shows). Opening a recorded clip plays it from /api/video-file by its id, as a library view's does;
  * opening one not recorded says so and asks for nothing. A folder's counts say its photos and its videos apart, and Smart
- * Rename's and Apply All's confirmations count what they will do: photos (#2565). Fictional names only.
+ * Rename's and Apply All's confirmations count what they will do, its photos and its videos (#2565; Suggest offers a clip
+ * its tags, DECISIONS 2026-11-13). Fictional names only.
  */
 import { test, describe, afterEach } from "node:test";
 import assert from "node:assert/strict";
@@ -152,15 +153,16 @@ describe("a folder's counts with clips in it", () => {
     assert.match(asked[0], /smart-rename the 1 photo selected\?$/);
   });
 
-  test("Apply All's confirmation counts the photos, which are all Suggest looks at", async (t) => {
+  test("Apply All's confirmation counts the photos and the videos, which Suggest offers tags too", async (t) => {
     const ctx = await folderWithClips(t);
     select(ctx, ["dusk.jpg", "dusk.mp4", "noon.mov"]);
     const asked = asking(ctx);
     pageExports(ctx.window, "web/tagpup/suggestions.js").applyFolderSuggestionsLevel();
-    assert.match(asked[0], /^Auto-apply AI suggestions to the 1 photo selected\?/);
+    assert.match(asked[0], /^Auto-apply AI suggestions to the 1 photo, 2 videos selected\?/);
+    assert.match(asked[0], /This writes keywords into the files\./);
   });
 
-  test("with only videos selected, Smart Rename asks about the videos and Apply All says there is no photo", async (t) => {
+  test("with only videos selected, Smart Rename and Apply All both ask about the videos", async (t) => {
     const ctx = await folderWithClips(t);
     select(ctx, ["dusk.mp4", "noon.mov"]);
     const asked = asking(ctx);
@@ -169,8 +171,9 @@ describe("a folder's counts with clips in it", () => {
     ctx.document.getElementById("rename-grouping-input").value = "Lighthouse";
     ctx.document.getElementById("btn-apply-rename").click();
     pageExports(ctx.window, "web/tagpup/suggestions.js").applyFolderSuggestionsLevel();
-    assert.equal(asked.length, 1, "Smart Rename asks first");
+    assert.equal(asked.length, 2, "each asks first");
     assert.match(asked[0], /smart-rename the 2 videos selected\?$/);
-    assert.equal(told.length, 1, "Apply All says why it did nothing");
+    assert.match(asked[1], /^Auto-apply AI suggestions to the 2 videos selected\?/);
+    assert.deepEqual(told, [], "Apply All turns no one away");
   });
 });

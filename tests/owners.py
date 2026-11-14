@@ -72,7 +72,7 @@ SCENARIOS = {
     "C9": ("media", "A clip in the grid shows its poster frame, its middle frame, kept as a photo's thumbnail is: made once (two cards at once one ffmpeg run, a folder scrolled fast at most three at once), found again by its stamp, made again once renamed or changed, its last poster shown once its file is gone; a clip cut short or a machine with no ffmpeg answered the placeholder and nothing kept, a share asleep one bounded look and no ffmpeg; `thumbs warm` making the posters ahead."),
     "V1": ("views", "A view lists each photo once, in the owner's order, with its count; a clip by its XMP date first, then its QuickTime one, a date of zeros no date; under the Photos / Videos filter its photos or its clips alone, the source's whole count beside."),
     "V2": ("views", "A typed search ANDs its words and ranks nothing."),
-    "V3": ("views", "Suggest, and the analyse-only run, from start to end."),
+    "V3": ("views", "Suggest, and the analyse-only run, from start to end: a folder's photos and its clips, a clip offered tags alone (its frames read when it has no vector, why it could not be said on its entry and tried again), Apply All patching a held clip's XMP in place and Undo taking it off, a clip only looked at kept nowhere and left unwritten beside the photos written."),
     "V4": ("views", "One process at a time has a model on the graphics card; the waiter is told who holds it."),
     "V5": ("views", "The navigator's counts are the photos under a node, each once."),
     "V6": ("views", "The server goes idle: models, vectors and caches are let go, and the next ask loads them again."),

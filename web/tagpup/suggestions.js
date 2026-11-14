@@ -21,7 +21,6 @@ import { saveSingleTitle } from './photo.js';
 import { recordUndo, snapshotPhotos } from './undo.js';
 import { updateSelectedThumbnailsCount } from './selection.js';
 import { selectedRecords } from './selected.js';
-import { isVideo } from './media.js';
 
 /**
  * A photo the folder's run has suggestions for: an entry, and not one the run could not read (the server's _succeeded:
@@ -615,22 +614,18 @@ export function applyFolderSuggestionsLevel() {
     // Say what will be written, and to how many photos that already carry work,
     // before writing it. The common mistake is not misreading the button -- it is
     // having the wrong selection, and a count of photos alone does not surface
-    // that. This is the last point at which it costs nothing.
-    // Suggest looks at a folder's photos only, never a clip: the count is of the photos (#2565).
-    const photos = selectedRecords().filter(photo => !isVideo(photo));
-    if (photos.length === 0) {
-        alert('Suggestions are for photos, and only videos are selected.');
-        return;
-    }
-    const alreadyTagged = photos.filter(isPhotoTagged).length;
+    // that. This is the last point at which it costs nothing. Suggest offers a clip its tags as a photo its own: the
+    // count is of both, as Smart Rename's (#2565).
+    const records = selectedRecords();
+    const alreadyTagged = records.filter(isPhotoTagged).length;
     const scope = [
-        `Auto-apply AI suggestions to the ${countSaid(photos)} selected?`,
+        `Auto-apply AI suggestions to the ${countSaid(records)} selected?`,
         '',
         alreadyTagged
             ? `${alreadyTagged} of them already have tags. Suggestions are added to what is there; nothing is removed.`
             : 'None of them are tagged yet.',
         '',
-        'This writes keywords into the photo files. Undo restores the previous tags for this session only.',
+        'This writes keywords into the files. Undo restores the previous tags for this session only.',
     ].join('\n');
     if (!confirm(scope)) return;
 
