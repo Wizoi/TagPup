@@ -42,8 +42,9 @@ import {
     carryTagsForward, deleteActivePhoto, facesFollowTags, openLibraryPhoto, openPhotoInDefaultApp, removePhotoTags,
     renderPhotoFaces, renderPhotoFacesHere, renderTags, rotatePhoto,
     reloadChangedPhoto, saveSingleAddPerson, saveSingleAddTag, saveSingleTitle, selectPhoto,
-    updateCarryForwardState, wireDateTakenModal, wireZoom
+    updateCarryForwardState, wireZoom
 } from './photo.js';
+import { wireDateTakenModal } from './date-taken.js';
 import {
     renderThumbnails, selectAllThumbnails, selectNoneThumbnails, wireGridContextMenu,
     wireThumbnailGrid, wireThumbnailSize

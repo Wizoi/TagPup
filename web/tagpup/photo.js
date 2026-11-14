@@ -1,5 +1,5 @@
 // TagPup's page: the open photo -- its details, tags, faces and zoom, carrying tags
-// forward, opening, rotating and deleting it, and editing when it was taken.
+// forward, opening, rotating and deleting it.
 import { api } from './common/api.js';
 import { buildElement, replaceContent } from './common/dom.js';
 import { openImageZoom, wireImageZoom } from './common/image-zoom.js';
@@ -10,10 +10,10 @@ import { upper } from './hooks.js';
 import { clearPhotoFaces, nameFaceAs, showPhotoFaces } from './face-boxes.js';
 import { state } from './state.js';
 import {
-    btnCancelDateModal, btnCarryForward, btnCloseDateModal, btnEditDateTaken, btnSaveDateModal,
-    dateTakenModal, detailCamera, detailCameraItem, detailDateTaken, detailPath, detailPeople, detailsPanel, detailTags,
+    btnCarryForward,
+    detailCamera, detailCameraItem, detailDateTaken, detailPath, detailPeople, detailsPanel, detailTags,
     btnAddAllFaces, emptyState, facesSection, facesStrip, facesSummary, folderViewContent, folderViewHeader,
-    folderViewStats, inputAddPerson, inputAddTag, inputDateTaken,
+    folderViewStats, inputAddPerson, inputAddTag,
     inputPhotoTitle, mainImage, panelContent, photoList, statusDot, statusText
 } from './elements.js';
 import { setStatus } from './status.js';
@@ -21,8 +21,7 @@ import { isJustLooking, libraryName } from './looking.js';
 import { pictureCheckSaid, whereWritten } from './write-queue.js';
 import { forgetCachedPhoto, saveToLocalStorageCache } from './cache.js';
 import {
-    exifDateToIso, formatFriendlyDateSingle, getCurrentDateTimeIso,
-    getFolderDateStats, parseExifDateToLocalDate, takenOf
+    formatFriendlyDateSingle, getFolderDateStats, parseExifDateToLocalDate, takenOf
 } from './format.js';
 import { namesAPerson, normalizeTag, updateTagsDatalist } from './tags.js';
 import {
@@ -923,76 +922,4 @@ export function deleteActivePhoto() {
         holdDeletes(false, state.folderPhotos.find(p => samePath(p.path, state.activePhotoPath)) || null);
         if (stayed && video && samePath(state.activePhotoPath, path)) showMedia(asked, '');
     });
-}
-
-export function wireDateTakenModal() {
-    if (btnEditDateTaken && dateTakenModal) {
-        btnEditDateTaken.addEventListener('click', () => {
-            const photo = state.folderPhotos.find(p => p.path === state.activePhotoPath);
-            if (!photo) return;
-            
-            const isoDate = exifDateToIso(takenOf(photo)) || getCurrentDateTimeIso();
-            inputDateTaken.value = isoDate;
-            dateTakenModal.classList.add('active');
-        });
-
-        const closeDateModal = () => {
-            dateTakenModal.classList.remove('active');
-        };
-        
-        btnCloseDateModal.addEventListener('click', closeDateModal);
-        btnCancelDateModal.addEventListener('click', closeDateModal);
-
-        btnSaveDateModal.addEventListener('click', () => {
-            const path = state.activePhotoPath;
-            if (!path) return;
-            
-            const photo = state.folderPhotos.find(p => p.path === path);
-            if (!photo) return;
-            
-            const newDateVal = inputDateTaken.value; // format: "YYYY-MM-DDTHH:MM:SS.sss"
-            if (!newDateVal) {
-                alert("Please enter a valid date and time.");
-                return;
-            }
-            
-            closeDateModal();
-
-            // In the photo write queue with every other write: it sends the tags and
-            // title too, and those are read when it runs, not when Save was clicked.
-            queueWriteOf(photo.path, async () => {
-                let saved;
-                setStatus('busy', 'Saving date taken...');
-                try {
-                    saved = await postPhotoMetadata(photo, { date_taken: newDateVal });
-                } catch (err) {
-                    console.error(err);
-                    setStatus('error', 'Error');
-                    alert("Error saving date taken: " + err.message);
-                    return false;
-                }
-                const formattedDate = saved.taken;   // as the server spells it (fields.date_taken_value)
-
-                // What the server now records as when it was taken.
-                photo.taken = formattedDate;
-
-                // Format and display in UI -- if this photo is still the one shown.
-                if (state.activePhotoPath === photo.path) {
-                    const localD = parseExifDateToLocalDate(formattedDate);
-                    if (localD) {
-                        const stats = getFolderDateStats();
-                        detailDateTaken.textContent = formatFriendlyDateSingle(localD, stats);
-                    } else {
-                        detailDateTaken.textContent = newDateVal;
-                    }
-                }
-
-                setStatus('ready', 'Saved the date taken.' + whereWritten(saved));
-                saveToLocalStorageCache();
-                renderFileList();
-                upper.renderThumbnails();
-                return true;
-            });
-        });
-    }
 }

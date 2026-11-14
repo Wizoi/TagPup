@@ -29,7 +29,7 @@ function press(window, target, key, mods = {}) {
 }
 
 /** TagPup on the second of two photos, the first carrying a tag Ctrl+D would carry over. */
-async function tagpupOnSecondPhoto(t, server = new FakeServer()) {
+async function tagpupOnSecondPhoto(t, server = new FakeServer(), second = {}) {
   server
     .on("/api/apps", { this: "tagpup", apps: {} })
     .on("/api/taxonomy/tree", TREE)
@@ -39,7 +39,7 @@ async function tagpupOnSecondPhoto(t, server = new FakeServer()) {
     .on("/api/databases", { databases: ["photo_index"] })
     .on("/api/folder/suggest-status", { status: "idle" })
     .on("/api/folder/index-status", { status: "completed", percent: 100, message: "Ready" })
-    .on("/api/folder/scan", [photoRecord({ filename: "a.jpg", tags: ["Activity"] }), photoRecord({ filename: "b.jpg" })])
+    .on("/api/folder/scan", [photoRecord({ filename: "a.jpg", tags: ["Activity"] }), photoRecord({ filename: "b.jpg", ...second })])
     .on("/api/photo-faces", { faces: [], total: 0, unmatched: 0 })
     .on("/api/photo/save-metadata", { success: true });
   const ctx = await loadApp("tagpup", { t, server });
@@ -154,6 +154,63 @@ describe("TagPup: the page behind a dialog hears none of its shortcuts", () => {
     const modal = ctx.document.getElementById("date-taken-modal");
     assert.ok(modal.classList.contains("active"), "the Date Taken dialog did not open");
     await assertThePageKeepsStill(ctx, modal.querySelector("button"), "Date Taken");
+  });
+
+  test("the Date Taken dialog: Enter saves, Escape cancels, the file name is shown", async (t) => {
+    const ctx = await tagpupOnSecondPhoto(t);
+    const { window, document } = ctx;
+    const modal = document.getElementById("date-taken-modal");
+    const input = document.getElementById("input-date-taken");
+    const dateSaves = () => ctx.saves();
+    const open = async () => {
+      click(window, document.getElementById("btn-edit-date-taken"));
+      await flush(window, 2);
+    };
+
+    await open();
+    assert.equal(document.getElementById("date-taken-file").textContent, "b.jpg", "the dialog does not name the file");
+    assert.equal(document.getElementById("date-taken-file").title, "b.jpg");
+    assert.match(document.getElementById("date-taken-note").textContent, /this photo was taken/);
+
+    // Enter with nothing typed (or a part-typed date, which the field reports as empty): no save, still open.
+    let alerted = 0;
+    window.alert = () => { alerted += 1; };
+    input.value = "";
+    press(window, input, "Enter");
+    await flush(window, 6);
+    assert.equal(dateSaves(), 0, "an empty date was written");
+    assert.ok(modal.classList.contains("active"), "the dialog closed on an empty date");
+    assert.equal(alerted, 1, "the owner was not told why nothing was saved");
+
+    // Enter on a good date saves once and closes, and does not reach the page (it would open a photo); rapid Enters write once.
+    input.value = "2018-03-04T09:08:07";
+    const first = press(window, input, "Enter");
+    const second = press(window, input, "Enter");
+    await flush(window, 8);
+    assert.equal(dateSaves(), 1, "Enter did not save once");
+    assert.ok(!modal.classList.contains("active"), "Enter did not close the dialog");
+    assert.ok(first.defaultPrevented && second.defaultPrevented);
+
+    // Escape cancels without a write.
+    await open();
+    press(window, input, "Escape");
+    await flush(window, 4);
+    assert.ok(!modal.classList.contains("active"), "Escape did not close the dialog");
+    assert.equal(dateSaves(), 1);
+
+    // Enter on the Cancel button is the button's own: it does not save.
+    await open();
+    press(window, document.getElementById("btn-cancel-date-modal"), "Enter");
+    await flush(window, 4);
+    assert.equal(dateSaves(), 1, "Enter on Cancel saved");
+  });
+
+  test("the Date Taken dialog says photo or video for a clip", async (t) => {
+    const ctx = await tagpupOnSecondPhoto(t, new FakeServer(), { filename: "c.mp4", media: "video" });
+    click(ctx.window, ctx.document.getElementById("btn-edit-date-taken"));
+    await flush(ctx.window, 2);
+    assert.equal(ctx.document.getElementById("date-taken-file").textContent, "c.mp4");
+    assert.match(ctx.document.getElementById("date-taken-note").textContent, /this photo or video was taken/);
   });
 
   test("with no dialog open, the shortcuts act as before", async (t) => {

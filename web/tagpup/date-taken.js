@@ -1,0 +1,113 @@
+// TagPup's page: the Edit Date Taken dialog of the open photo or clip -- the file's name, the date field, Save (a click or
+// Enter in the field) and Cancel (or Escape); the write goes through the photo write queue with every other.
+import { baseName } from './common/paths.js';
+import { upper } from './hooks.js';
+import { state } from './state.js';
+import {
+    btnCancelDateModal, btnCloseDateModal, btnEditDateTaken, btnSaveDateModal, dateTakenFile, dateTakenModal,
+    dateTakenNote, detailDateTaken, inputDateTaken
+} from './elements.js';
+import { setStatus } from './status.js';
+import { whereWritten } from './write-queue.js';
+import { saveToLocalStorageCache } from './cache.js';
+import {
+    exifDateToIso, formatFriendlyDateSingle, getCurrentDateTimeIso, getFolderDateStats, parseExifDateToLocalDate, takenOf
+} from './format.js';
+import { postPhotoMetadata, queueWriteOf } from './edits.js';
+import { renderFileList } from './folder.js';
+import { isVideo } from './media.js';
+
+export function wireDateTakenModal() {
+    if (btnEditDateTaken && dateTakenModal) {
+        btnEditDateTaken.addEventListener('click', () => {
+            const photo = state.folderPhotos.find(p => p.path === state.activePhotoPath);
+            if (!photo) return;
+            
+            const isoDate = exifDateToIso(takenOf(photo)) || getCurrentDateTimeIso();
+            inputDateTaken.value = isoDate;
+            // The date is often in the file's name: shown, as text to select, whole in the tooltip. One photo is
+            // ever the subject here (the button is the details panel's, which a selection of several does not show).
+            const name = baseName(photo.path);
+            dateTakenFile.textContent = name;
+            dateTakenFile.title = name;
+            dateTakenNote.textContent = `Specify the date and time when this ${isVideo(photo) ? 'photo or video' : 'photo'} was taken.`;
+            dateTakenModal.classList.add('active');
+        });
+
+        const closeDateModal = () => {
+            dateTakenModal.classList.remove('active');
+        };
+
+        btnCloseDateModal.addEventListener('click', closeDateModal);
+        btnCancelDateModal.addEventListener('click', closeDateModal);
+
+        const saveDate = () => {
+            // Closed means asked already: a second Enter or click while the first is being written finds it shut.
+            if (!dateTakenModal.classList.contains('active')) return;
+            const path = state.activePhotoPath;
+            if (!path) return;
+
+            const photo = state.folderPhotos.find(p => p.path === path);
+            if (!photo) return;
+
+            const newDateVal = inputDateTaken.value; // format: "YYYY-MM-DDTHH:MM:SS.sss"; '' when empty or not a whole date
+            if (!newDateVal) {
+                alert("Please enter a valid date and time.");
+                return;
+            }
+
+            closeDateModal();
+
+            // In the photo write queue with every other write: it sends the tags and
+            // title too, and those are read when it runs, not when Save was clicked.
+            queueWriteOf(photo.path, async () => {
+                let saved;
+                setStatus('busy', 'Saving date taken...');
+                try {
+                    saved = await postPhotoMetadata(photo, { date_taken: newDateVal });
+                } catch (err) {
+                    console.error(err);
+                    setStatus('error', 'Error');
+                    alert("Error saving date taken: " + err.message);
+                    return false;
+                }
+                const formattedDate = saved.taken;   // as the server spells it (fields.date_taken_value)
+
+                // What the server now records as when it was taken.
+                photo.taken = formattedDate;
+
+                // Format and display in UI -- if this photo is still the one shown.
+                if (state.activePhotoPath === photo.path) {
+                    const localD = parseExifDateToLocalDate(formattedDate);
+                    if (localD) {
+                        const stats = getFolderDateStats();
+                        detailDateTaken.textContent = formatFriendlyDateSingle(localD, stats);
+                    } else {
+                        detailDateTaken.textContent = newDateVal;
+                    }
+                }
+
+                setStatus('ready', 'Saved the date taken.' + whereWritten(saved));
+                saveToLocalStorageCache();
+                renderFileList();
+                upper.renderThumbnails();
+                return true;
+            });
+        };
+        btnSaveDateModal.addEventListener('click', saveDate);
+
+        // Enter in the date field saves (also from inside its day, month and time parts), Escape cancels; a button
+        // keeps its own Enter. The dialog hears the keys alone: closing it here must not let the same Enter reach
+        // the page's grid (it would open a photo), as askToSaveEdits does.
+        dateTakenModal.addEventListener('keydown', (e) => {
+            e.stopPropagation();
+            if (e.key === 'Escape') {
+                e.preventDefault();
+                closeDateModal();
+            } else if (e.key === 'Enter' && !(e.target.closest && e.target.closest('button'))) {
+                e.preventDefault();
+                saveDate();
+            }
+        });
+    }
+}

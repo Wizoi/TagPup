@@ -178,7 +178,9 @@ export const dateTakenModal = document.getElementById('date-taken-modal');
 export const btnCloseDateModal = document.getElementById('btn-close-date-modal');
 export const btnCancelDateModal = document.getElementById('btn-cancel-date-modal');
 export const btnSaveDateModal = document.getElementById('btn-save-date-modal');
-export const inputDateTaken = document.getElementById('input-date-taken');
+export const dateTakenFile = document.getElementById('date-taken-file');
+export const dateTakenNote = document.getElementById('date-taken-note');
+export const inputDateTaken =document.getElementById('input-date-taken');
 
 // Add this folder to the library? (membership.js)
 export const addFolderModal = document.getElementById('add-folder-modal');
