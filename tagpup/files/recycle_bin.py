@@ -55,7 +55,7 @@ import uuid
 import winreg
 
 from tagpup.core import paths
-from tagpup.files import images
+from tagpup.files import images, lock_owners
 
 #: GetDriveType's answers.
 DRIVE_REMOVABLE, DRIVE_FIXED, DRIVE_REMOTE = 2, 3, 4
@@ -499,13 +499,13 @@ def _not_kept_said(file_path, why):
 
 
 def _remove_for_good(source):
-    """Remove `source`, confirmed for good: an OSError with a sentence when it cannot be (a player holding it open, a share
-    that refused), the file then still where it was."""
+    """Remove `source`, confirmed for good: an OSError with a sentence when it cannot be (a player holding it open: who,
+    lock_owners.explain; a share that refused), the file then still where it was."""
     try:
         os.remove(source)
     except OSError as e:
         raise OSError("It could not be deleted (%s): it is still where it was, and nothing was deleted."
-                      % (e.strerror or e)) from None
+                      % lock_owners.explain(e, source, e.strerror or str(e))) from None
 
 
 #: What copies_not_kept says of this PC's Recycle Bin: full (Windows would make room by purging its oldest items for good), or
@@ -715,23 +715,28 @@ def recycle_through_this_pc(file_path, root=None, for_good=False, fresh=True):
             raise OSError("the copy did not match the file")
         os.replace(partial, target)
     except OSError as e:
+        why = lock_owners.explain(e, getattr(e, "filename", None) or source, e.strerror or str(e))
         _take_away(partial)
         _take_away(target)
         raise OSError("Could not copy it to this PC to recycle it there (%s): the original was left where it is."
-                      % (e.strerror or e)) from None
+                      % why) from None
+    held = None
     try:
         moved = send_to_recycle_bin(target)
+    except OSError as e:
+        moved, held = False, lock_owners.explain(e, target, e.strerror or str(e))   # asked before the copy is taken away
     except Exception:
         moved = False
     if not moved:
         _take_away(target)
-        raise OSError("This PC's Recycle Bin would not take the copy: the original was left where it is.")
+        raise OSError("This PC's Recycle Bin would not take the copy%s: the original was left where it is."
+                      % (" (%s)" % held if held else ""))
     note_binned(root, size)
     try:
         os.remove(source)
     except OSError as e:
         raise OSError("A copy is in this PC's Recycle Bin, but the original could not be deleted (%s): it is still where it was, so "
-                      "the file is there twice." % (e.strerror or e)) from None
+                      "the file is there twice." % lock_owners.explain(e, source, e.strerror or str(e))) from None
     return target, None
 
 
@@ -825,7 +830,11 @@ def _delete_file(file_path, for_good, fresh):
             raise NotKept(_not_kept_said(source, refused[1]), full=True)
         _remove_for_good(source)
         return {"through_this_pc": False, "reason": None, "copy": None, "for_good": True, "why_for_good": OWN_BIN_FULL_WHY}
-    if not send_to_recycle_bin(file_path):
+    try:
+        moved = send_to_recycle_bin(file_path)
+    except OSError as e:     # another program holds it open (send_to_recycle_bin): who, when this PC can tell
+        raise OSError("Failed to move file to Recycle Bin (%s)" % lock_owners.explain(e, source, e.strerror or str(e))) from None
+    if not moved:
         raise OSError("Failed to move file to Recycle Bin")
     note_binned(os.path.dirname(source), size)
     return {"through_this_pc": False, "reason": None, "copy": None, "for_good": False, "why_for_good": None}
@@ -839,7 +848,8 @@ def goes_to_bin(file_path):
 
 def send_to_recycle_bin(file_path):
     """Move the photo or clip file to the Recycle Bin; False when Windows would not. Raises ValueError,
-    moving nothing, for anything `problem` names. A file for which `no_bin_reason` names a reason is
+    moving nothing, for anything `problem` names, and the OSError of a sharing or lock violation (lock_owners.SHARING:
+    another program holds it open) for its caller to say who. A file for which `no_bin_reason` names a reason is
     deleted permanently, and Windows says it succeeded."""
     from ctypes import wintypes
 
@@ -884,4 +894,6 @@ def send_to_recycle_bin(file_path):
     SHFileOperationW.restype = ctypes.c_int
 
     res = SHFileOperationW(ctypes.byref(fileop))
+    if res in lock_owners.SHARING:
+        raise ctypes.WinError(res)
     return res == 0 and not fileop.fAnyOperationsAborted

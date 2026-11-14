@@ -773,6 +773,18 @@ def _stat(path):
         return None
 
 
+def _read_only(seen):
+    """Is the file whose stat is `seen` (None: not there) marked read-only? The one rule of it (row.read_only, writable)."""
+    return seen is not None and not seen.st_mode & S_IWRITE
+
+
+def writable(path):
+    """Is the file at `path` there and not marked read-only? Asked after a write to it failed: then an access denied of
+    the write is a program holding the file open (lock_owners.looks_held's `writable`), not the file's own mark."""
+    seen = _stat(path)
+    return seen is not None and not _read_only(seen)
+
+
 def _record(library, row, values, state, stamp=None, wrote=True, after=None, whole=None, stat=None):
     """Record what a file holds now in its row, and mark it `state`, in one transaction;
     with `after`, the journal's after too (file_journal.set_after); with `whole`, the file
@@ -1193,7 +1205,7 @@ def _after_failure(et, library, row, origin, target, finished, on_failure, error
     cannot be read now (_by_bytes), for the next settle. Read through ExifTool instead, it, and the next photo on that
     share, would each wait ExifTool's whole deadline (#2400)."""
     seen = _stat(row.path)
-    row.read_only = seen is not None and not seen.st_mode & S_IWRITE
+    row.read_only = _read_only(seen)
     away = stall_stops and isinstance(error, (field_values.NotAnswered, in_place.Away))
     if row.patched:
         settled = _by_bytes(library, row)
@@ -1210,7 +1222,9 @@ def _after_failure(et, library, row, origin, target, finished, on_failure, error
     if now is not None and fields.reads_same(now, fields.as_patched(origin, target, row.stale)):
         _record_held(library, row, now, target, finished, row.stamp, seen)
         return finished, None
-    error = lock_owners.explain(error, row.path)   # after a failure only: who holds the file, if it is held
+    # After a failure only: who holds the file, if it is held; access denied is a holder's only of a file there and not
+    # read-only (lock_owners.looks_held).
+    error = lock_owners.explain(error, row.path, writable=seen is not None and not row.read_only)
     if now is not None and fields.reads_same(now, origin):
         if on_failure == "withdraw":
             file_journal.withdraw(library.path, [row.id])

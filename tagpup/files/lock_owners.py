@@ -8,9 +8,11 @@ Manager (the API an installer asks "which programs must close to replace this fi
 them, with no administrator and without touching the file: RmStartSession,
 RmRegisterResources, RmGetList, RmEndSession.
 
-`holders(path)` is that list, `describe(holders)` a short sentence for the owner, and
-`explain(error, path)` an error with that sentence added, when -- and only when -- the error
-is the kind a held file makes. `opened(path, sharing)` is the one open of a file that says what
+`holders(path)` is that list, `describe(holders)` a short sentence for the owner (each program once, with
+every pid that holds the file), and `explain(error, path)` THE explanation of a failure: every operation that
+can fail on a file another program holds open -- a write, a patch in place, a rename, a delete, a Convert --
+asks it, and no site spells its own sentence of who (owner, 2026-11-13). `looks_held(error)` is the one test of
+"is this a held file's error". `opened(path, sharing)` is the one open of a file that says what
 others may do while it is open (CreateFileW): nothing (a patch in place), or anything, a
 rename and a delete too (a piece of a video read while it plays). It is called after a failure, never on the way to a success, and
 it is bounded: a lookup that is not answered within `timeout` seconds (a share that stopped
@@ -21,6 +23,7 @@ off Windows it is [].
 Names only, as `MsMpEng.exe`: no path, no command line, no user.
 """
 import ctypes
+import logging
 import os
 import re
 import sys
@@ -30,6 +33,8 @@ try:
     import ctypes.wintypes as wintypes
 except (ImportError, ValueError):   # a platform without the Windows types: every lookup there is []
     wintypes = None
+
+logger = logging.getLogger(__name__)
 
 #: How long a lookup is waited for, in seconds.
 TIMEOUT = 2.0
@@ -86,14 +91,20 @@ KNOWN = {
 TAGPUP = {"python": "another TagPup process", "pythonw": "another TagPup process",
           "exiftool": "ExifTool, which TagPup started", "exiftool(-k)": "ExifTool, which TagPup started"}
 
-#: Windows' error numbers of a file another program has open: a sharing violation, a lock violation. Never access denied,
-#: which a read-only file answers as well (in_place refuses a clip open elsewhere by these alone).
+#: Windows' error numbers of a file another program has open: a sharing violation, a lock violation. An open, a rename
+#: and a delete of a held file answer these (os.rename, os.remove, CreateFileW sharing nothing, SHFileOperation).
 SHARING = (32, 33)
-#: Windows' error numbers of a file held open by another program: access denied, and SHARING.
-HELD = (5,) + SHARING
-#: What an error says in words (ExifTool's, which has no number) when a held file is the likely cause.
-HELD_WORDS = re.compile(r"permission denied|access is denied|used by another process|sharing violation|"
-                        r"error renaming temporary file|locked by another", re.IGNORECASE)
+#: Access denied: what a move OVER a file another program has open answers (os.replace, the write's last step), and
+#: what any change of a file marked read-only answers too. A held file's only where the site has seen the file there
+#: and not read-only (looks_held's `writable`); an open's access denied is never a held file's (#2970).
+DENIED = 5
+#: What an error with no number (ExifTool's) says when another program holds the file.
+HELD_WORDS = re.compile(r"used by another process|sharing violation|locked by another", re.IGNORECASE)
+#: What an error with no number says for access denied: a held file's only as DENIED is.
+DENIED_WORDS = re.compile(r"permission denied|access is denied|error renaming temporary file", re.IGNORECASE)
+#: What follows a held file's failure when no program on this PC holds it and the file is on a network share: Restart
+#: Manager sees this PC's handles alone, and names none for another computer's or the server's own (holders answers []).
+NOT_ON_THIS_PC = "No program on this PC was found holding it: another computer, or the server itself, may have it open."
 
 #: What others may do to a file while `opened` has it open: nothing (they cannot open it, and one that has it open
 #: already makes the open fail, winerror 32), or read, write, rename and delete it (Python's open() shares read and write
@@ -273,52 +284,91 @@ def opened(path, sharing, write=False):
 
 
 def _called(holder):
-    stem = holder["name"]
-    low = stem.lower()
+    """(the program's name, what it is to the owner or None) of a holder."""
+    name = holder["name"]
+    low = name.lower()
     low = low[:-4] if low.endswith(".exe") else low
     if low in TAGPUP:
-        return "%s (%s)" % (holder["name"], "this TagPup process" if holder["pid"] == os.getpid() else TAGPUP[low])
-    if low in KNOWN:
-        return "%s (%s)" % (holder["name"], KNOWN[low])
-    return holder["name"]
+        return name, "this TagPup process" if holder.get("pid") == os.getpid() else TAGPUP[low]
+    return name, KNOWN.get(low)
 
 
 def describe(holders_found):
-    """A short sentence for the owner, to follow "It is": 'held open by MsMpEng.exe (Windows Security / Microsoft
-    Defender real-time scanning)'. '' for no holder known."""
-    if not holders_found:
-        return ""
-    named, seen = [], set()
+    """A short sentence for the owner, to follow "It is": each program once, with every pid that holds the file:
+    'held open by MsMpEng.exe (Windows Security / Microsoft Defender real-time scanning, pid 4120)', 'held open by
+    Sketchy.exe (pids 7, 8)', 'held open by an unknown process (pid 9)'. '' for no holder known."""
+    pids = {}
     for each in holders_found:
-        text = _called(each)
-        if text not in seen:
-            seen.add(text)
-            named.append(text)
-    if named == ["an unknown process"] or not named:
-        return "held open by an unknown process"
-    return "held open by " + ", ".join(named)
+        found = pids.setdefault(_called(each), [])
+        if each.get("pid") is not None and each["pid"] not in found:
+            found.append(each["pid"])
+    named = []
+    for (name, what), found in pids.items():
+        ids = ("pid %d" % found[0] if len(found) == 1 else "pids " + ", ".join("%d" % pid for pid in found)
+               ) if found else ""
+        inside = ", ".join(part for part in (what, ids) if part)
+        named.append("%s (%s)" % (name, inside) if inside else name)
+    return "held open by " + ", ".join(named) if named else ""
 
 
-def looks_held(error):
-    """Is `error` the kind a file held open by another program makes (access denied, a sharing or lock violation,
-    ExifTool's words for them)?"""
-    if isinstance(error, OSError) and getattr(error, "winerror", None) in HELD:
+def looks_held(error, writable=False):
+    """Is `error` the kind a file another program holds open makes? The one test of it. A sharing or lock violation
+    (SHARING), or an error with no number in those words (HELD_WORDS), always. Access denied (DENIED, a PermissionError
+    with no number, DENIED_WORDS) only when `writable`: the site has seen the file there and not marked read-only, so its
+    move over the file was refused by a holder (os.replace answers DENIED for a held file); an open's, a rename's or a
+    delete's access denied is a read-only file's or a share's permission, never "open in another program" (#2970)."""
+    number = getattr(error, "winerror", None)
+    if number in SHARING:
         return True
-    if isinstance(error, PermissionError):
+    if number == DENIED:
+        return writable
+    if number is not None:
+        return False
+    text = str(error)
+    if HELD_WORDS.search(text):
         return True
-    return bool(HELD_WORDS.search(str(error)))
+    return writable and (isinstance(error, PermissionError) or bool(DENIED_WORDS.search(text)))
 
 
-def explain(error, path, timeout=TIMEOUT):
-    """`error` as it is -- the same object -- unless it is the kind a held file makes and a holder is known: then
-    the text of it and ' It is held open by <who>.' Called after a failure only; at most `timeout` seconds."""
+def _on_a_share(path):
+    from tagpup.files import shares     # here, not at the top: shares imports this module
+    return bool(path) and shares.on_a_network_drive(os.fspath(path))
+
+
+def _who(path, timeout):
+    """'It is held open by <who>.' when Restart Manager names a holder of `path` on this PC; NOT_ON_THIS_PC when it names
+    none and `path` is on a network share; '' when it names none on this PC's own disk (the program has let go, or
+    Restart Manager failed: no sentence that cannot be true, #2971). Never raises."""
     try:
-        if not looks_held(error):
-            return error
-        said = describe(holders(path, timeout))
+        who = describe(holders(path, timeout))
+        if who:
+            return "It is %s." % who
+        return NOT_ON_THIS_PC if _on_a_share(path) else ""
     except Exception:
-        return error
-    if not said:
-        return error
-    text = str(error).rstrip()
-    return "%s%s It is %s." % (text, "" if text.endswith((".", "!")) else ".", said)
+        return ""
+
+
+def explain(error, path, said=None, writable=False, timeout=TIMEOUT):
+    """THE explanation of an operation that failed with `error` on the file at `path` (owner, 2026-11-13: every site
+    that can meet a file another program holds open asks this, and none spells its own sentence of who).
+
+    `said` -- the site's own sentence of the failure; `error` itself, the same object, when None -- as it is when
+    `error` is not the kind a held file makes (looks_held, `writable` as it says). Else it followed by who holds the
+    file (_who): 'It is held open by <program> (<what it is>, pid N).', or NOT_ON_THIS_PC for a file on a share no
+    program on this PC holds; nothing more when Restart Manager names none on this PC's own disk. Called after a failure
+    only, never on the way to a success; at most `timeout` seconds; never raises. Logged as a warning, without the
+    path (a folder or a file name can name a person, #2973)."""
+    told = error if said is None else said
+    try:
+        held = looks_held(error, writable)
+    except Exception:
+        held = False
+    if not held:
+        return told
+    more = _who(path, timeout)
+    logger.warning("A file another program holds open (%s): %s", getattr(error, "winerror", None) or "no number",
+                   more or "no program on this PC was found holding it")
+    if not more:
+        return told
+    text = str(told).rstrip()
+    return "%s%s %s" % (text, "" if text.endswith((".", "!")) else ".", more)

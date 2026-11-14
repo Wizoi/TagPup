@@ -647,7 +647,7 @@ class APhotoIsWrittenBesideItselfAndMovedOverIt(KeptCase):
             result = self.add([self.a])
         self.assertEqual(0, result.changed)
         self.assertEqual([self.a], [what for what, _why in result.errors])
-        self.assertIn("It is held open by Viewer.exe.", str(result.errors[0][1]), "the OS's error was not kept")
+        self.assertIn("It is held open by Viewer.exe (pid 4242).", str(result.errors[0][1]), "the OS's error was not kept")
         self.assertIn("the new file was removed and the photo is as it was", str(result.errors[0][1]))
         self.assertEqual(self.before, bytes_of(self.a))
         self.assertFalse(os.path.exists(self.scratch), "the write's own new file is left beside the photo")

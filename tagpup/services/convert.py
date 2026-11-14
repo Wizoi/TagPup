@@ -13,7 +13,7 @@ a thread of the server (batches.claim), the request answered at once with its ti
 How one conversion goes, the original kept until its copy is in place and holds what it carried:
 1. Refused before ffmpeg runs, nothing planned: a clip away or gone, without a row, holding a Windows tag it cannot
    carry (CANNOT_CARRY, _carryable), open in another program (HELD_OPEN, naming who when this PC can tell,
-   in_place.held_open; another failure of that open keeps its own sentence), whose length cannot be read, whose plan
+   lock_owners.explain; another failure of that open keeps its own sentence), whose length cannot be read, whose plan
    is not its reason's (NEEDS: a clip that plays is not converted, one that does not is not made smaller), or with no
    room for its copy on its drive.
    Under the lock of changes of photo files: one a cut-short change has still to settle, one whose converted name holds a
@@ -74,7 +74,7 @@ import threading
 from tagpup.core import dates, fields, paths, vocabulary
 from tagpup.core.result import (CHANGED_ON_DISK, CHANGED_ON_DISK_SENTENCE, Conflict, NotFound, Refused, Result,
                                 Unavailable)
-from tagpup.files import (clip_convert, convertible, field_values, images, in_place, lock_owners, names, shares,
+from tagpup.files import (clip_convert, convertible, field_values, images, lock_owners, names, shares,
                           video_frames)
 from tagpup.services import batches, file_changes, tagging
 from tagpup.services import photos as photo_actions
@@ -353,7 +353,9 @@ def _ready(library, exiftool_path, tools, source, reason):
     try:
         lock_owners.opened(source, lock_owners.NO_SHARING).close()
     except OSError as e:
-        return in_place.held_open(e, source, HELD_OPEN) or UNREADABLE % (e.strerror or e)
+        if lock_owners.looks_held(e):
+            return lock_owners.explain(e, source, HELD_OPEN)
+        return UNREADABLE % (e.strerror or e)
     try:
         packet = field_values.packet_held(source)
     except field_values.NotAnswered:
@@ -499,10 +501,11 @@ def _onward(library, exiftool_path, row, forward, result, problem=None):
         except FileExistsError:
             return _given_up(library, row, temp, result, NAME_TAKEN)
         except OSError as e:
+            why = lock_owners.explain(e, temp, e.strerror or str(e))   # who holds the copy, if a program does
             if renamed:
-                return _given_up(library, row, temp, result, NOT_RENAMED % (e.strerror or e))
-            _note(library, row, NOT_IN_PLACE % (e.strerror or e))
-            result.refuse(NOT_IN_PLACE % (e.strerror or e))
+                return _given_up(library, row, temp, result, NOT_RENAMED % why)
+            _note(library, row, NOT_IN_PLACE % why)
+            result.refuse(NOT_IN_PLACE % why)
             return False
     _reached("renamed")
     if not _followed(library, exiftool_path, row, target):
@@ -636,11 +639,14 @@ def _original_kept(source, before):
 
 def _removed_for_good(source):
     """None when the original at `source` was deleted for good (never to a Recycle Bin: the module), by one call bounded
-    as a listing is (shares.bounded); else why it is still there, a phrase."""
+    as a listing is (shares.bounded); else why it is still there, a phrase, naming who holds it open if a program does
+    (lock_owners.explain)."""
     state, error = shares.bounded(os.path.dirname(source), lambda: os.remove(source), shares.LISTING_WAIT)
     if state == "ok":
         return None
-    return SHARE_AWAY if state == "away" else (getattr(error, "strerror", None) or str(error))
+    if state == "away":
+        return SHARE_AWAY
+    return lock_owners.explain(error, source, getattr(error, "strerror", None) or str(error))
 
 
 def _followed(library, exiftool_path, row, target):

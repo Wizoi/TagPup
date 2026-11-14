@@ -1,12 +1,17 @@
 """Which program holds a file (tagpup.files.lock_owners; docs/ARCHITECTURE.md, "File access check"):
 Restart Manager names the holder of a file this very test holds open exclusively; an unlocked file, a
 file that is not there and a path on a share that does not answer have none; a lookup leaks neither a
-handle nor a session; and a sentence names a known scanner by what it is. A rename of a file held exclusively -- by this very
-test -- names this process; a failed write (file-only or journaled) names the holder the error text has no word for; a write that
-succeeds, and a failure of another kind, ask nobody. (Folded in from test_a_failed_write_names_the_holder.)
+handle nor a session; and a sentence names a known scanner by what it is, each program once with every pid. A rename of a file
+held exclusively -- by this very test -- names this process; a failed write (file-only or journaled) names the holder the error text
+has no word for; a write that succeeds, and a failure of another kind, ask nobody. Access denied is a holder's only of a file there
+and not read-only (#2970); a file on a share no program on this PC holds says so; a lookup that does not answer keeps the error.
+Every operation asks the one explanation (lock_owners.explain, owner 2026-11-13): a rename and a clip's patch refused by the same
+holder say the same sentence of who. (Folded in from test_a_failed_write_names_the_holder.)
 """
 import ctypes
 import os
+import re
+import stat
 import sys
 import tempfile
 import threading
@@ -15,7 +20,8 @@ import unittest
 from ctypes import wintypes
 from unittest import mock
 
-from tagpup.files import field_values, lock_owners, names
+from tagpup.core.result import Refused
+from tagpup.files import field_values, in_place, lock_owners, names
 from tagpup.services import file_changes, file_only
 
 ON_WINDOWS = sys.platform == "win32"
@@ -164,55 +170,108 @@ class TheSentence(unittest.TestCase):
     def holder(self, name, pid=4242):
         return {"name": name, "pid": pid, "kind": "service", "service": None}
 
-    def test_known_programs_are_named_by_what_they_are(self):
-        said = lock_owners.describe([self.holder("MsMpEng.exe")])
-        self.assertEqual("held open by MsMpEng.exe (Windows Security / Microsoft Defender real-time scanning)", said)
-        self.assertIn("(Windows Search)", lock_owners.describe([self.holder("SearchIndexer.exe")]))
-        self.assertEqual("held open by OneDrive.exe (OneDrive sync)", lock_owners.describe([self.holder("OneDrive.exe")]))
+    def test_known_programs_are_named_by_what_they_are_with_their_pid(self):
+        self.assertEqual("held open by MsMpEng.exe (Windows Security / Microsoft Defender real-time scanning, pid 4242)",
+                         lock_owners.describe([self.holder("MsMpEng.exe")]))
+        self.assertEqual("held open by SearchIndexer.exe (Windows Search, pid 4242)",
+                         lock_owners.describe([self.holder("SearchIndexer.exe")]))
+        self.assertEqual("held open by OneDrive.exe (OneDrive sync, pid 4242)",
+                         lock_owners.describe([self.holder("OneDrive.exe")]))
 
     def test_python_is_another_tagpup_process(self):
-        self.assertIn("python.exe (another TagPup process)", lock_owners.describe([self.holder("python.exe")]))
-        self.assertIn("(this TagPup process)", lock_owners.describe([self.holder("python.exe", os.getpid())]))
+        self.assertEqual("held open by python.exe (another TagPup process, pid 4242)",
+                         lock_owners.describe([self.holder("python.exe")]))
+        self.assertEqual("held open by python.exe (this TagPup process, pid %d)" % os.getpid(),
+                         lock_owners.describe([self.holder("python.exe", os.getpid())]))
 
-    def test_an_unknown_program_is_named_and_nobody_is_not_a_sentence(self):
-        self.assertEqual("held open by Sketchy.exe", lock_owners.describe([self.holder("Sketchy.exe")]))
-        self.assertEqual("held open by an unknown process", lock_owners.describe([self.holder("an unknown process")]))
+    def test_an_unknown_program_is_named_with_its_pid_and_nobody_is_not_a_sentence(self):
+        self.assertEqual("held open by Sketchy.exe (pid 4242)", lock_owners.describe([self.holder("Sketchy.exe")]))
+        self.assertEqual("held open by an unknown process (pid 9)",
+                         lock_owners.describe([self.holder("an unknown process", 9)]))
         self.assertEqual("", lock_owners.describe([]))
 
-    def test_two_holders_are_both_named_once(self):
+    def test_each_program_is_named_once_with_every_pid_that_holds_it(self):
         said = lock_owners.describe([self.holder("MsMpEng.exe"), self.holder("SearchIndexer.exe", 7),
-                                     self.holder("MsMpEng.exe", 8)])
-        self.assertEqual(1, said.count("MsMpEng.exe"))
-        self.assertIn("SearchIndexer.exe", said)
+                                     self.holder("MsMpEng.exe", 8), self.holder("MsMpEng.exe", 8)])
+        self.assertEqual("held open by MsMpEng.exe (Windows Security / Microsoft Defender real-time scanning, pids 4242, 8),"
+                         " SearchIndexer.exe (Windows Search, pid 7)", said)
+        self.assertEqual("held open by Sketchy.exe (pids 7, 8)",
+                         lock_owners.describe([self.holder("Sketchy.exe", 7), self.holder("Sketchy.exe", 8)]))
 
 
-class ExplainAFailure(unittest.TestCase):
-    def test_a_held_file_error_gains_the_holder(self):
+def holding(found):
+    """lock_owners.holders stood in for: `found` for any path; what it was asked, in `asked`."""
+    asked = []
+
+    def holders(path, timeout=lock_owners.TIMEOUT):
+        asked.append(path)
+        return found
+    return mock.patch.object(lock_owners, "holders", holders), asked
+
+
+class ExplainAFailure(Base):
+    def test_access_denied_gains_the_holder_only_of_a_file_there_and_writable(self):
         error = PermissionError(13, "Permission denied")
-        with mock.patch.object(lock_owners, "holders", lambda path, timeout=2.0: [
-                {"name": "MsMpEng.exe", "pid": 9, "kind": "service", "service": "WinDefend"}]):
-            said = lock_owners.explain(error, "x.jpg")
-        self.assertIn("It is held open by MsMpEng.exe (Windows Security", said)
-        self.assertNotIn("x.jpg", said, "the sentence adds no path")
+        stand_in, asked = holding([{"name": "MsMpEng.exe", "pid": 9, "kind": "service", "service": "WinDefend"}])
+        with stand_in:
+            said = lock_owners.explain(error, self.path, writable=True)
+            self.assertIs(error, lock_owners.explain(error, self.path), "not known writable: no holder is asked")
+        self.assertEqual("[Errno 13] Permission denied. It is held open by MsMpEng.exe (Windows Security / Microsoft"
+                         " Defender real-time scanning, pid 9).", said)
+        self.assertEqual([self.path], asked)
+        self.assertNotIn("IMG_0001", said, "the sentence adds no path")
 
-    def test_no_holder_leaves_the_error_itself(self):
-        error = PermissionError(13, "Permission denied")
-        with mock.patch.object(lock_owners, "holders", lambda path, timeout=2.0: []):
-            self.assertIs(error, lock_owners.explain(error, "x.jpg"))
-
-    def test_an_error_of_another_kind_asks_nobody(self):
-        asked = []
-        with mock.patch.object(lock_owners, "holders", lambda *a, **k: asked.append(a) or []):
-            error = FileNotFoundError(2, "No such file or directory")
-            self.assertIs(error, lock_owners.explain(error, "x.jpg"))
-            self.assertEqual("the disk is full", lock_owners.explain("the disk is full", "x.jpg"))
+    def test_a_read_only_files_access_denied_is_unchanged_and_asks_nobody(self):
+        denied = OSError(None, "Access is denied", self.path, 5)
+        stand_in, asked = holding([{"name": "MsMpEng.exe", "pid": 9, "kind": "service", "service": None}])
+        with stand_in:
+            self.assertIs(denied, lock_owners.explain(denied, self.path))
+            self.assertEqual("it could not be renamed", lock_owners.explain(denied, self.path, "it could not be renamed"))
         self.assertEqual([], asked)
 
-    def test_exiftools_words_for_a_held_file_count(self):
-        with mock.patch.object(lock_owners, "holders", lambda path, timeout=2.0: [
-                {"name": "OneDrive.exe", "pid": 9, "kind": "application", "service": None}]):
-            said = lock_owners.explain("Error renaming temporary file to IMG_0001.jpg", "x.jpg")
-        self.assertTrue(said.endswith("It is held open by OneDrive.exe (OneDrive sync)."), said)
+    def test_no_holder_on_this_pcs_disk_leaves_the_error_itself(self):
+        error = OSError(None, "The process cannot access the file", self.path, 32)
+        stand_in, asked = holding([])
+        with stand_in:
+            self.assertIs(error, lock_owners.explain(error, self.path))
+            self.assertEqual("it is open elsewhere", lock_owners.explain(error, self.path, "it is open elsewhere"))
+        self.assertEqual([self.path, self.path], asked)
+
+    def test_a_file_on_a_share_no_program_on_this_pc_holds_says_so(self):
+        on_the_server = "\\\\fileserver\\Pictures\\Harbour\\IMG_0001.jpg"
+        violation = OSError(None, "The process cannot access the file", on_the_server, 32)
+        stand_in, _asked = holding([])
+        with stand_in:
+            said = lock_owners.explain(violation, on_the_server, "it is open in another program")
+        self.assertEqual("it is open in another program. " + lock_owners.NOT_ON_THIS_PC, said)
+
+    def test_a_lookup_that_does_not_answer_keeps_the_error(self):
+        let_go = threading.Event()
+        self.addCleanup(lookups_ended)
+        self.addCleanup(let_go.set)
+        error = OSError(None, "The process cannot access the file", self.path, 32)
+        with mock.patch.object(lock_owners, "available", return_value=True), \
+                mock.patch.object(lock_owners, "_holders", side_effect=lambda path: let_go.wait(30) and []):
+            self.assertIs(error, lock_owners.explain(error, self.path, timeout=0.05))
+
+    def test_an_error_of_another_kind_asks_nobody(self):
+        stand_in, asked = holding([])
+        with stand_in:
+            error = FileNotFoundError(2, "No such file or directory")
+            self.assertIs(error, lock_owners.explain(error, self.path, writable=True))
+            self.assertEqual("the disk is full", lock_owners.explain("the disk is full", self.path))
+        self.assertEqual([], asked)
+
+    def test_exiftools_words_count_as_its_numbers_do(self):
+        stand_in, asked = holding([{"name": "OneDrive.exe", "pid": 9, "kind": "application", "service": None}])
+        with stand_in:
+            said = lock_owners.explain("Error renaming temporary file to IMG_0001.jpg", self.path, writable=True)
+            held = lock_owners.explain("The file is used by another process", self.path)
+            unknown = lock_owners.explain("Error renaming temporary file to IMG_0001.jpg", self.path)
+        self.assertTrue(said.endswith("It is held open by OneDrive.exe (OneDrive sync, pid 9)."), said)
+        self.assertTrue(held.endswith("It is held open by OneDrive.exe (OneDrive sync, pid 9)."), held)
+        self.assertEqual("Error renaming temporary file to IMG_0001.jpg", unknown, "access denied's words need writable")
+        self.assertEqual(2, len(asked))
 
     def test_a_lookup_that_raises_leaves_the_error(self):
         def raises(*_a, **_k):
@@ -220,7 +279,7 @@ class ExplainAFailure(unittest.TestCase):
 
         error = OSError(32, "used by another process")
         with mock.patch.object(lock_owners, "holders", raises):
-            self.assertIs(error, lock_owners.explain(error, "x.jpg"))
+            self.assertIs(error, lock_owners.explain(error, self.path))
 
 
 MSMPENG = [{"name": "MsMpEng.exe", "pid": 9, "kind": "service", "service": "WinDefend"}]
@@ -257,18 +316,26 @@ class ARenameOfAHeldFile(unittest.TestCase):
             self.assertTrue(os.path.exists(new))
 
 
-class AFailedWrite(unittest.TestCase):
+class AFailedWrite(Base):
     def only(self, error):
         result = mock.Mock(details={"conflicts": []})
         with mock.patch.object(field_values, "write", side_effect=error), \
                 mock.patch.object(field_values, "read_one", return_value=FIELDS_BEFORE):
-            return file_only._write_one(object(), "D:\\Photos\\IMG_0001.jpg", FIELDS_BEFORE, FIELDS_AFTER, True, result)
+            return file_only._write_one(object(), self.path, FIELDS_BEFORE, FIELDS_AFTER, True, result)
 
     def test_a_file_only_write_names_the_holder(self):
         with mock.patch.object(lock_owners, "holders", return_value=MSMPENG):
             said = self.only(PermissionError(13, "Permission denied"))
-        self.assertIn("It is held open by MsMpEng.exe (Windows Security / Microsoft Defender", str(said))
-        self.assertNotIn("Photos", str(said).split("It is held open")[1], "the sentence adds no path")
+        self.assertIn("It is held open by MsMpEng.exe (Windows Security / Microsoft Defender real-time scanning, pid 9).",
+                      str(said))
+        self.assertNotIn("IMG_0001", str(said).split("It is held open")[1], "the sentence adds no path")
+
+    def test_a_read_only_files_access_denied_asks_nobody(self):
+        os.chmod(self.path, stat.S_IREAD)
+        self.addCleanup(os.chmod, self.path, stat.S_IREAD | stat.S_IWRITE)
+        with mock.patch.object(lock_owners, "holders", side_effect=AssertionError("asked")):
+            said = self.only(PermissionError(13, "Permission denied"))
+        self.assertEqual("[Errno 13] Permission denied", str(said))
 
     def test_a_failure_of_another_kind_asks_nobody(self):
         with mock.patch.object(lock_owners, "holders", side_effect=AssertionError("asked")):
@@ -277,7 +344,7 @@ class AFailedWrite(unittest.TestCase):
 
     def test_a_journaled_write_names_the_holder(self):
         library = mock.Mock(path="library.db")
-        row = mock.Mock(path="D:\\Photos\\IMG_0001.jpg", id=3, stamp=None, patched=False, stale=())
+        row = mock.Mock(path=self.path, id=3, stamp=None, patched=False, stale=())
         error = RuntimeError("Error renaming temporary file to IMG_0001.jpg")
         with mock.patch.object(field_values, "read_one", return_value=FIELDS_BEFORE), \
                 mock.patch.object(file_changes.file_journal, "withdraw") as withdraw, \
@@ -290,13 +357,39 @@ class AFailedWrite(unittest.TestCase):
 
     def test_a_write_that_turns_out_to_have_worked_asks_nobody(self):
         library = mock.Mock(path="library.db")
-        row = mock.Mock(path="D:\\Photos\\IMG_0001.jpg", id=3, stamp=None, patched=False, stale=())
+        row = mock.Mock(path=self.path, id=3, stamp=None, patched=False, stale=())
         with mock.patch.object(field_values, "read_one", return_value=FIELDS_AFTER), \
                 mock.patch.object(file_changes, "_record_held"), \
                 mock.patch.object(lock_owners, "holders", side_effect=AssertionError("asked")):
             outcome, why = file_changes._after_failure(object(), library, row, FIELDS_BEFORE, FIELDS_AFTER,
                                                        "done", "withdraw", PermissionError(13, "Permission denied"))
         self.assertEqual(("done", None), (outcome, why))
+
+
+@unittest.skipUnless(ON_WINDOWS, "a held file is Windows'")
+class OneHolderOneSentence(Base):
+    """The owner's scenario: a viewer holds a file; Smart Rename fails on it, and a Date Taken save of a clip fails on it.
+    Both say who holds it in the same words, from the one explanation (owner, 2026-11-13)."""
+
+    def test_a_rename_and_a_clips_patch_refused_by_one_holder_say_the_same_who(self):
+        clip = os.path.join(os.path.dirname(self.path), "jetty.mp4")
+        with open(clip, "wb") as handle:
+            handle.write(b"x" * 100)
+        renamed_to = os.path.join(os.path.dirname(self.path), "Regatta - 1.jpg")
+        handles = [hold_exclusively(self.path), hold_exclusively(clip)]
+        try:
+            with self.assertRaises(names.RenameFailed) as rename:
+                names.rename_all({self.path: renamed_to})
+            with self.assertRaises(Refused) as patch:
+                in_place._opened_to_patch(clip)
+        finally:
+            for handle in handles:
+                release(handle)
+        said = [rename.exception.message(), str(patch.exception)]
+        who = [re.findall(r"It is held open by [^()]*\([^()]*\)\.", each) for each in said]
+        self.assertEqual([["It is held open by %s (this TagPup process, pid %d)." % (who[0][0].split()[5], os.getpid())]] * 2,
+                         who, said)
+        self.assertTrue(said[1].startswith(in_place.OPEN_ELSEWHERE), said[1])
 
 
 if __name__ == "__main__":

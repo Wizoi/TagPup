@@ -163,14 +163,15 @@ def _write_one(et, path, before, after, just_read, result):
     try:
         field_values.written_once_more(et, path, after, again)
     except Exception as error:
-        # Settled by what the file holds after it, as the journaled write settles it.
+        # Settled by what the file holds after it, as the journaled write settles it; after a failure only, who holds the
+        # file, if it is held (access denied is a holder's only of a file there and not read-only: lock_owners.looks_held).
         try:
             now = field_values.read_one(et, path, list(after))
         except field_values.Unreadable:
-            return lock_owners.explain(error, path)
+            return lock_owners.explain(error, path, writable=file_changes.writable(path))
         if fields.reads_same(now, after):
             return None
-        error = lock_owners.explain(error, path)   # after a failure only: who holds the file, if it is held
+        error = lock_owners.explain(error, path, writable=file_changes.writable(path))
         if fields.reads_same(now, before):
             return error
         result.details["conflicts"].append(path)
