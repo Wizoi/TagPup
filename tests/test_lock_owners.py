@@ -262,16 +262,19 @@ class ExplainAFailure(Base):
             self.assertEqual("the disk is full", lock_owners.explain("the disk is full", self.path))
         self.assertEqual([], asked)
 
-    def test_exiftools_words_count_as_its_numbers_do(self):
+    def test_words_of_a_held_file_name_the_holder_and_exiftools_refusals_ask_nobody(self):
+        """A numberless error in a held file's words names the holder. ExifTool's refusals of a write are never a held
+        file's, even of a file known writable: its words when the new file beside the photo cannot be made, and the
+        rename over a photo no write of TagPup's asks of it (every write is `-o`; the move is os.replace's)."""
         stand_in, asked = holding([{"name": "OneDrive.exe", "pid": 9, "kind": "application", "service": None}])
+        refusals = ("ExifTool: Error: Error creating file: <file> - <file> (exit status 1)",
+                    "ExifTool: Error renaming temporary file to <file> (exit status 1)")
         with stand_in:
-            said = lock_owners.explain("Error renaming temporary file to IMG_0001.jpg", self.path, writable=True)
             held = lock_owners.explain("The file is used by another process", self.path)
-            unknown = lock_owners.explain("Error renaming temporary file to IMG_0001.jpg", self.path)
-        self.assertTrue(said.endswith("It is held open by OneDrive.exe (OneDrive sync, pid 9)."), said)
+            refused = [lock_owners.explain(RuntimeError(said), self.path, writable=True) for said in refusals]
         self.assertTrue(held.endswith("It is held open by OneDrive.exe (OneDrive sync, pid 9)."), held)
-        self.assertEqual("Error renaming temporary file to IMG_0001.jpg", unknown, "access denied's words need writable")
-        self.assertEqual(2, len(asked))
+        self.assertEqual(list(refusals), [str(said) for said in refused], "ExifTool's refusal was taken for a holder's")
+        self.assertEqual(1, len(asked))
 
     def test_a_lookup_that_raises_leaves_the_error(self):
         def raises(*_a, **_k):
@@ -345,7 +348,7 @@ class AFailedWrite(Base):
     def test_a_journaled_write_names_the_holder(self):
         library = mock.Mock(path="library.db")
         row = mock.Mock(path=self.path, id=3, stamp=None, patched=False, stale=())
-        error = RuntimeError("Error renaming temporary file to IMG_0001.jpg")
+        error = PermissionError(13, "Permission denied")   # the picture check's open of a held photo
         with mock.patch.object(field_values, "read_one", return_value=FIELDS_BEFORE), \
                 mock.patch.object(file_changes.file_journal, "withdraw") as withdraw, \
                 mock.patch.object(lock_owners, "holders", return_value=MSMPENG):
