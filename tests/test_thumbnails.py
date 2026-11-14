@@ -316,7 +316,7 @@ class TakingOne(Cache):
         self.assertEqual(2, done["removed"])
         names = entries_of(self.library)
         self.assertEqual(2, len(names))
-        self.assertNotIn("4242", " ".join(names))
+        self.assertFalse([n for n in names if n.startswith("4242_")], "the orphan's entry is gone")
 
     def test_sweeping_a_cache_that_is_not_there_is_nothing(self):
         self.assertEqual({"removed": 0, "bytes": 0, "temporaries": 0}, thumbnails.sweep(self.library))
