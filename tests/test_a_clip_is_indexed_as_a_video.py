@@ -25,10 +25,7 @@ other.
 And how it fails: an index stopped while a clip is shown CLIP (Ctrl+C, the window closed) writes nothing of the clips
 of its chunk, and the next index makes them; a clip another index holds is passed over, said, and made by the next; a
 clip ffmpeg cannot read now (a share away) is recorded with no vector, not listed, and made by the next index; a clip
-changed while its frames were read is owed again. ffmpeg removed while the index runs (after its start check) stops it
-at once, exit 1, saying 'Stopped:' and what to install, as embed-photos says it (DECISIONS 2026-11-13): the photos and
-the clips made before it are kept, no clip is counted failed or recorded unread, no lock is left held, and the next
-index makes the clips not made.
+changed while its frames were read is owed again.
 
 The clips of the first two classes are made here by the machine's ffmpeg (tagpup.config.locate_ffmpeg), as
 tests/test_frames_of_a_video.py makes them, in a home of the test's own, and their frames read by it; the failures are
@@ -62,7 +59,6 @@ from tagpup.files import field_values, images, video_frames  # noqa: E402
 from tagpup.ml import clip as clip_model  # noqa: E402
 from tagpup.services import bake_after_index, baking  # noqa: E402
 from tagpup.services import faces as face_records  # noqa: E402
-from tagpup.services import indexing as indexing_service  # noqa: E402
 from tagpup.services import libraries as library_actions  # noqa: E402
 from tagpup.services import photos as photo_service  # noqa: E402
 from tagpup.services import settings as library_settings  # noqa: E402
@@ -490,69 +486,6 @@ class AClipsVectorWhenItFails(unittest.TestCase):
         self.assertEqual(["harbour.mp4"], self.read)
         self.assertEqual({}, self.owed(self.folder))
         self.assertEqual(os.path.getsize(path), ids(self.library)["harbour.mp4"][2])
-
-    def ffmpeg_removed_after(self, made):
-        """ffmpeg is there for the index's start check and its first `made` clips, then gone (config.ffmpeg_problem,
-        asked as the index starts and at each clip) until `removed_after` is None again; the clips read one at a time,
-        in order, so the clips made before it goes are the first `made`."""
-        self.removed_after, looks = made, []
-
-        def ffmpeg_problem():
-            looks.append(1)
-            gone = self.removed_after is not None and len(looks) > 1 + self.removed_after
-            return config.FFMPEG_MISSING if gone else None
-        for patcher in (mock.patch.object(config, "ffmpeg_problem", ffmpeg_problem),
-                        mock.patch.object(tagpup_cli, "READ_THREADS", 1)):
-            patcher.start()
-            self.addCleanup(patcher.stop)
-
-    def assert_stopped_for_ffmpeg(self, output):
-        self.assertIn("Stopped: %s" % " ".join(config.FFMPEG_MISSING.split()), output)
-        self.assertNotIn(indexing_service.FAILED, output, "the clips ffmpeg's going left were counted failed")
-        self.assertNotIn("Indexing successfully completed", output)
-        self.assertEqual([], os.listdir(Library(self.library).locks), "a clip's lock was left held")
-
-    def test_ffmpeg_removed_with_three_clips_left_stops_the_index_keeping_the_two_made_and_the_next_one_makes_the_rest(
-            self):
-        for n in range(5):
-            self.clip_file("slipway %d.mp4" % n)
-        self.ffmpeg_removed_after(2)
-
-        self.assert_stopped_for_ffmpeg(self.index(code=1))
-
-        made = sorted(self.read)
-        self.assertEqual(2, len(made))
-        self.assert_made(*made)
-        # The three left are neither failed nor recorded unread: no row, new to the library as before the index (a
-        # sync queues their folder again), and nothing owed of the two made.
-        self.assertEqual(made, sorted(rows(self.library)))
-        self.assertEqual({}, self.owed(self.folder))
-
-        self.read.clear()
-        self.removed_after = None   # ffmpeg is installed again
-        output = self.index()
-        self.assertIn(" ".join((tagpup_cli.CLIPS_LINE % (0, 3, 0, 0)).split()), output)
-        self.assertEqual(3, len(self.read))
-        self.assertFalse(set(made) & set(self.read), "a clip made before ffmpeg went was made again")
-        self.assert_made(*("slipway %d.mp4" % n for n in range(5)))
-        self.assertEqual({}, self.owed(self.folder))
-
-    def test_ffmpeg_removed_before_the_first_clip_of_an_index_of_photos_and_clips_keeps_the_photos_indexed(self):
-        for n in range(2):
-            photo(os.path.join(self.folder, "sail %d.jpg" % n), (30 + 60 * n, 30, 200))
-        self.clip_file("harbour.mp4")
-        self.clip_file("jetty.mp4")
-        self.ffmpeg_removed_after(0)
-
-        self.assert_stopped_for_ffmpeg(self.index(code=1))
-
-        self.assertEqual({"sail 0.jpg": ("photo", True), "sail 1.jpg": ("photo", True)},
-                         {name: (kind, held) for name, (kind, _taken, held) in rows(self.library).items()})
-        self.assertEqual([], self.read)
-        self.removed_after = None   # ffmpeg is installed again
-        self.index()
-        self.assert_made("harbour.mp4", "jetty.mp4")
-        self.assertEqual({}, self.owed(self.folder))
 
     def test_a_folder_with_no_clip_is_indexed_as_before(self):
         for n in range(3):

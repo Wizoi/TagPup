@@ -280,10 +280,7 @@ def _needs_ffmpeg(when=lambda kwargs: True):
     """A command that indexes, or makes posters, refused before it opens anything when ffmpeg is not found or does not
     run (tagpup.config.ffmpeg_problem; owner, 2026-11-06: a prerequisite, checked early): the sentence says what to
     install, exit 1, nothing written. `when` says from the command's options whether this run needs it (a sync's
-    dry run does not). Gone part-way (search.FfmpegGone, raised as a clip's frames are asked: the index, embed-photos),
-    the command stops at once (DECISIONS 2026-11-13), what it made kept and its locks, its turn of the graphics card and
-    its library let go as any stop lets them go; it says 'Stopped:' and the same sentence, exit 1, and the next run goes
-    on from what was kept."""
+    dry run does not)."""
     def wrap(command):
         @functools.wraps(command)
         def run(ctx, *args, **kwargs):
@@ -292,13 +289,7 @@ def _needs_ffmpeg(when=lambda kwargs: True):
                 if problem:
                     console.print("Not run: %s" % problem, markup=False, soft_wrap=True)
                     raise SystemExit(1)
-            try:
-                return command(ctx, *args, **kwargs)
-            except search_service.FfmpegGone as gone:
-                console.print("Stopped: %s" % gone, markup=False, soft_wrap=True)
-                console.print("What was kept is kept: run it again to go on once ffmpeg runs.", markup=False,
-                              soft_wrap=True)
-                raise SystemExit(1) from None
+            return command(ctx, *args, **kwargs)
         return run
     return wrap
 
@@ -994,9 +985,7 @@ def _index_clips(clips, embeddings, locker, photo_index, force_reembed, locked_o
     recorded with the vector it holds. One whose file is not as its record was read (its stamp as ffmpeg ran is not the
     record's) is recorded with no vector, and is owed still. One ffmpeg gives no frame of is recorded with no vector:
     the file's as it is (NoFrames.lasting) is listed, and every index of its folder tries it again (its vector owed
-    still); the moment's (a share away, too slow) is left for the next run. ffmpeg gone (search.FfmpegGone) is no
-    clip's: the clips made before it are recorded and it is raised, the index stopping (_needs_ffmpeg says it), the
-    clip and those after it unrecorded and owed still, none counted. One that fails otherwise joins `failed`,
+    still); the moment's (a share away, too slow) is left for the next run. One that fails otherwise joins `failed`,
     unrecorded. `step()` after each clip, the run's progress. Returns (Counter of "stamp", "made", "later" and
     "unread": the clips recorded, by what became of their vector; [(path, problem)] of the clips ffmpeg cannot read)."""
     counts, waiting, unread, vectors, metas = Counter(), Counter(), [], [], []
@@ -1050,9 +1039,6 @@ def _index_clips(clips, embeddings, locker, photo_index, force_reembed, locked_o
                 continue
             try:
                 vector, why, problem = vector_of(meta, begun, result)
-            except search_service.FfmpegGone:
-                record()   # what it made is kept; its locks, the index's ending lets go (locker.release_all)
-                raise
             except Exception as e:
                 logger.error(f"Error indexing {meta['path']}: {e}")
                 failed.append(meta["path"])
@@ -1741,6 +1727,10 @@ def embed_photos(ctx, model, apply_):
             _embedded_lines(stopped.counts)
             console.print("What was kept is kept: run it again to go on once the photos can be read.", markup=False,
                           soft_wrap=True)
+            raise SystemExit(1) from None
+        except search_service.FfmpegGone as gone:   # ffmpeg went while the run went on: the start check's sentence
+            console.print("Stopped: %s" % gone, markup=False, soft_wrap=True)
+            console.print("What was kept is kept: run it again to go on once ffmpeg runs.", markup=False, soft_wrap=True)
             raise SystemExit(1) from None
     _embedded_lines(counts)
     now = photo_reembed.plan(library, runtime, wanted)
