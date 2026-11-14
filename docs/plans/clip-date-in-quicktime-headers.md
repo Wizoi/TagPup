@@ -89,3 +89,13 @@ matching by membership: it can record an undo as done without writing).
 - dates.py 37-49 'Never written' comment changes; lift tests/test_a_clip_dated_through_the_journal.py (lines 7, 123-149).
 - Cut 2: a date with a fraction or time zone (`segment_edits._READ_DATE` allows them) fails the strict conversion
   loudly; Convert's carry hands the date over without them.
+
+## Notes from cut 1's reviews (2026-11-13), for cuts 2 and 3
+- A Convert run between cut 1 and cut 2 makes a copy with an XMP date and ALL-ZERO headers (ffmpeg's creation_time is
+  cleared, the carry's header fields filtered): each is a new member of the 681. Cut 3's brief says to expect new rows
+  and the one-off runs after cut 2.
+- Cut 2 deletes `convert._carrier`'s filter of `fields.CLIP_HEADER_DATES` together with `DATED_TYPES` / `UNDATED`
+  (clip_convert.py ~89-91, 182-185), extends `plan_one`'s skip to the headers, and strips a carried date's fraction and
+  zone before planning (`seconds_of` refuses them loudly).
+- Reading headers is one bounded open per clip, serially, at plan, verify and undo: the one-off's 779-clip change undoes
+  with 779 opens on the share before it writes anything; its brief does not promise an instant undo.
