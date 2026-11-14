@@ -13,7 +13,7 @@ save cut short is settled at the next start by its bytes, as a tag's is (tests/t
 of the settle is a date's own.
 
 A clip something else holds open (Explorer's preview, a scanner, another computer on the share) is refused, nothing
-written, and the sentence says who holds it when this PC can tell (in_place.held_open, #2969): the owner's save of a
+written, and the sentence says who holds it when this PC can tell (lock_owners.explain, #2969): the owner's save of a
 418.5 MB clip was refused again and again with nothing to go on. Restart Manager sees this PC's handles alone: for a
 clip on the server it names none, and the sentence says no program on this PC holds it; when it
 fails the save is refused all the same. A Convert of the clip goes through the same rule: only a sharing violation is
@@ -225,7 +225,7 @@ class AClipDatedThroughTheJournal(tagged.ALibraryHoldingAClip):
         self.assertNotEqual(200, reply.status_code)
         error = reply.get_json()["error"]
         self.assertIn(in_place.OPEN_ELSEWHERE, error)
-        self.assertRegex(error, r"It is held open by python\w*\.exe \(this TagPup process\)\.",
+        self.assertRegex(error, r"It is held open by python\w*\.exe \(this TagPup process, pid \d+\)\.",
                          "the refusal names the holder on this PC")
         self.assertEqual(before, self.read_bytes(self.clip_path), "nothing was written")
 
@@ -250,8 +250,8 @@ class AClipDatedThroughTheJournal(tagged.ALibraryHoldingAClip):
         on_the_server = "\\\\fileserver\\Pictures\\Harbour\\jetty.mp4"
         violation = OSError(None, "The process cannot access the file", on_the_server, 32)
         with mock.patch.object(lock_owners, "_ask", return_value=[]):
-            said = in_place.held_open(violation, on_the_server, in_place.OPEN_ELSEWHERE)
-        self.assertEqual("%s. %s" % (in_place.OPEN_ELSEWHERE, in_place.NOT_ON_THIS_PC), said)
+            said = lock_owners.explain(violation, on_the_server, in_place.OPEN_ELSEWHERE)
+        self.assertEqual("%s. %s" % (in_place.OPEN_ELSEWHERE, lock_owners.NOT_ON_THIS_PC), said)
 
     @unittest.skipUnless(os.name == "nt", "a clip held open is refused by Windows' sharing")
     def test_a_convert_of_a_clip_another_handle_holds_is_refused_and_names_who_holds_it(self):
@@ -261,7 +261,7 @@ class AClipDatedThroughTheJournal(tagged.ALibraryHoldingAClip):
             held = convert.convert_clip(self.vl.library, EXIFTOOL, TOOLS, self.clip_path, reason=convert.SMALLER)
         self.assertEqual(0, held.changed)
         self.assertTrue(held.refused.startswith(convert.HELD_OPEN), held.refused)
-        self.assertIn("(this TagPup process).", held.refused)
+        self.assertRegex(held.refused, r"\(this TagPup process, pid \d+\)\.")
         self.assertEqual(before, self.read_bytes(self.clip_path))
 
     def test_a_convert_of_a_clip_whose_open_fails_otherwise_keeps_its_own_sentence(self):

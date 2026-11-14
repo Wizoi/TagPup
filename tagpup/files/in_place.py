@@ -51,7 +51,7 @@ clip_patch.FREED_MOST each. No other byte is read, nor any hash taken, of a clip
 writer cannot make, or a clip clip_patch will not place (a tail, no moov, fragments): such a clip is not written until
 the whole-file rewrite (owner, 2026-11-05, Q2). It is opened once, alone, as a photo is; one another program holds open
 (a player, an editor) is refused at once with a sentence (tagpup.core.result.Refused, OPEN_ELSEWHERE; owner,
-2026-11-05, Q7), never waited for, the sentence naming who holds it when this PC can tell (held_open, #2969). A crash after its record is saved, part-way or after the last byte is settled by its bytes like a photo's
+2026-11-05, Q7), never waited for, the sentence naming who holds it when this PC can tell (lock_owners.explain, #2969). A crash after its record is saved, part-way or after the last byte is settled by its bytes like a photo's
 (held: OLD, TORN, NEW); a torn grown file is put back to its old bytes and size (put_back).
 
 **A clip's packet read** (`packet_held`): the packet a patch would read, read alone and bounded, for a conversion that
@@ -89,9 +89,6 @@ class Away(OSError):
 #: Why a clip open in another program when it is saved is refused at once, never waited for (owner, 2026-11-05).
 OPEN_ELSEWHERE = ("it is open in another program (a player, an editor): close it there and save again; nothing was "
                   "written")
-#: What follows the refusal of a file held open on a share when no program on this PC holds it: Restart Manager sees
-#: this PC's handles alone, and names none for another computer's or the server's own (lock_owners.holders answers []).
-NOT_ON_THIS_PC = "No program on this PC was found holding it: another computer, or the server itself, may have it open."
 
 #: What a file holds against its record (held).
 NEW, OLD, TORN, NEITHER = "new", "old", "torn", "neither"
@@ -458,37 +455,17 @@ def _opened(path):
 
 
 def _opened_to_patch(path):
-    """_opened, but a file another program holds open is Refused(OPEN_ELSEWHERE, who holds it: held_open) at once, never
+    """_opened, but a file another program holds open (lock_owners.looks_held: a sharing or lock violation; an open's
+    access denied never is, #2970) is Refused(OPEN_ELSEWHERE and who holds it: lock_owners.explain) at once, never
     retried. Raises Away, or any other OSError the open raised."""
     try:
         return _opened(path)
     except Away:
         raise
     except OSError as error:
-        said = held_open(error, path, OPEN_ELSEWHERE)
-        if said is None:
+        if not lock_owners.looks_held(error):
             raise
-        raise Refused(said) from None
-
-
-def held_open(error, path, sentence):
-    """`sentence`, a refusal of the file at `path` because another program holds it open, followed by who holds it, when
-    `error`, the OSError of an open that shares nothing (_alone, a conversion's look), is a sharing or lock violation
-    (lock_owners.SHARING): the one rule that an open's failure means the file is held. None for any other error (not
-    found, access denied, a share gone), which keeps its own sentence. Who: 'It is held open by <program>.' when
-    Restart Manager names a holder on this PC (lock_owners.describe); NOT_ON_THIS_PC when it names none and the file is
-    on a share; nothing more when it names none on this PC's own disk. Logged as a warning, without the path. Called
-    after the failure only; lock_owners.holders is bounded (lock_owners.TIMEOUT) and never raises (#2969)."""
-    if getattr(error, "winerror", None) not in lock_owners.SHARING:
-        return None
-    who = lock_owners.describe(lock_owners.holders(path))
-    if who:
-        said = "It is %s." % who
-    else:
-        said = NOT_ON_THIS_PC if shares.on_a_network_drive(path) else ""
-    logger.warning("A file another program holds open was refused (winerror %s): %s", error.winerror,
-                   said or "no program on this PC was found holding it")
-    return "%s. %s" % (sentence, said) if said else sentence
+        raise Refused(lock_owners.explain(error, path, OPEN_ELSEWHERE)) from None
 
 
 def _written(lent, path, changes, stale, saving, grow=False, size=None):
