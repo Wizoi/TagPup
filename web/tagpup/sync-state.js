@@ -61,7 +61,7 @@ export function syncSentence(info, now = Date.now(), { notHeld = false } = {}) {
 export function renderSyncInfo() {
     const info = state.syncInfo;
     const banner = state.moves.banner;
-    const text = syncSentence(info, Date.now(), { notHeld: Boolean(banner && banner.kind === 'offer') });
+    const text = syncSentence(info, Date.now(), { notHeld: Boolean(banner) });
     libraryStripSync.textContent = text;
     libraryStripSync.title = info.lastInStep || '';
     libraryStripSync.classList.toggle('hidden', !text);

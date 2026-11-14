@@ -31,7 +31,7 @@ export const AUTO_CHECK_BELOW = 1000;
 function showOffer(found) {
     const count = found.photos_not_held;
     const name = libraryName() || 'the library';
-    state.moves.banner = { kind: 'offer', folder: found.folder, count, found };
+    state.moves.banner = { folder: found.folder, count, found };
     movesBannerText.textContent = `${count.toLocaleString()} ${count === 1 ? 'photo' : 'photos'} in this folder `
         + `${count === 1 ? 'is' : 'are'} not in ${name}.`;
     movesBanner.classList.remove('hidden');
@@ -108,7 +108,7 @@ export function checkNotHeld(lib, { refreshed = false } = {}) {
 function addThem() {
     const lib = state.library;
     const banner = state.moves.banner;
-    if (!lib || !banner || banner.kind !== 'offer') return;
+    if (!lib || !banner) return;
     state.moves.addFor = banner.folder;
     askToAdd({ ...banner.found, folder: banner.folder });
 }
