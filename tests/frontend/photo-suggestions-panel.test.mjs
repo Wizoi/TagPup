@@ -129,6 +129,21 @@ describe("it offers only what is outstanding", () => {
     assert.match(chips(ctx, "suggested-tags-container")[0], /87%/);
   });
 
+  test("a person a clip's frames showed says in how many of them; a photo's person says nothing of frames", async (t) => {
+    const ctx = await openPhoto(t, {
+      tags: [],
+      suggestions: {
+        people: [{ name: "Anh Tran", score: 0.8, frames: { seen: 1, of: 5 } },
+                 { name: "Hazel Brookmire", score: 0.9 }],
+        tags: [],
+      },
+    });
+    const shown = [...ctx.document.querySelectorAll("#suggested-people-container .suggestion-chip")];
+    const titleOf = (name) => shown.find((c) => c.textContent.startsWith(name))?.title;
+    assert.match(titleOf("Anh Tran"), /^Seen in 1 of 5 frames\. Click to add Anh Tran/);
+    assert.match(titleOf("Hazel Brookmire"), /^Click to add Hazel Brookmire/);
+  });
+
   test("taking a suggestion removes it from the box", async (t) => {
     const ctx = await openPhoto(t, {
       tags: [],
