@@ -503,6 +503,19 @@ def singled_out(votes):
     return max(votes, key=votes.get)
 
 
+def across_frames(offers):
+    """{person: (best likeness, in how many pictures)} of the people `offers` ([{person: likeness}], one a picture: a
+    clip's frames, or a photo's one picture) offer: every person offered in any picture, at the best likeness, with the
+    number of pictures that offered them, first offered first. No second threshold: a person offered from one frame
+    stands, at the cut each frame was offered at (owner, 2026-11-13, "PEOPLE ON CLIPS ARE TRANSIENT")."""
+    found = {}
+    for offered in offers:
+        for person, likeness in offered.items():
+            best, seen = found.get(person, (likeness, 0))
+            found[person] = (max(best, likeness), seen + 1)
+    return found
+
+
 # ---- Faces in the background ---------------------------------------------------------
 
 #: The share of the picture's shorter side under which an unnamed face is background, not shown on TagPup's photo (owner,

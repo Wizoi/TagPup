@@ -24,6 +24,7 @@ from tagpup.core.library import Library
 from tagpup.files import images
 from tagpup.ml import photo_models
 from tagpup.services import identify
+from tagpup.services.search import NoFrames
 from tagpup.services import faces as face_records
 from tagpup.store import db, person_ids
 from tagpup.store import faces as store_faces
@@ -321,10 +322,13 @@ class TagSuggester:
         embedding: List[float],
         k: int = 15,
         min_sim: float = suggesting.NEIGHBOUR_CUT,
-        target_metadata: Optional[Dict[str, Any]] = None
+        target_metadata: Optional[Dict[str, Any]] = None,
+        frames=None
     ) -> Dict[str, Any]:
-        """Query index for nearest neighbors, expand hierarchical tags, aggregate and score tags."""
-        known_people, known_faces, labels, tags_by_id = self._known_people()
+        """Query index for nearest neighbors, expand hierarchical tags, aggregate and score tags. `frames`, called, gives a
+        clip's frames (PhotoEmbeddings.frames_of: upright pictures, or NoFrames), whose faces offer its people; a clip
+        given none (a measurement of tags alone, scripts/measure_pipeline_holdouts.py) is offered tags alone."""
+        known_people, known_faces, _labels, tags_by_id = self._known_people()
 
         # 1. Search index for neighbors
         neighbors = self.index.search(embedding, k=k)
@@ -460,11 +464,29 @@ class TagSuggester:
                         self.index.conn, photo_path, face_records.detector_of(self.faces))
             return has_rows, detected
 
-        # A kind the index does not look at for faces (a clip, store.photos.FACE_KINDS, by its name as the index gave its
-        # row its kind) has none on file and is never shown the face model: it takes no turn on the graphics card and is
-        # offered tags alone, no one.
-        detected_faces = []
-        if images.kind_of(photo_path) in store_photos.FACE_KINDS:
+        def offers_in(faces, size):
+            """{person id: likeness} of the people the faces of ONE picture offer, the one rule of a photo and of each
+            frame of a clip: a face not in the background (clustering.is_background, on `size`, the (width, height) its
+            boxes are in) offers the person it is most like, by their closest face of the years around the photo, never
+            one of its own (known_faces.likeness: an undated clip's face_year None compares every year), as far ahead
+            of the next person as a name is offered at, by the cuts of the run's face model, whose vectors these are
+            (clustering.Cuts.is_offered); two faces offering one person offer them at the better likeness. It was a
+            mean face with no years, a distance cut of 0.90, and a score made up between 0.5 and 1."""
+            offers = {}
+            for face in faces:
+                if face.get("embedding") is None or clustering.is_background(face["box"], size):
+                    continue
+                best_key, likeness, margin = clustering.best(known_faces.likeness(
+                    clustering.unit(face["embedding"])[None, :], [face_year], [photo_id])[0], known_faces.columns)
+                if best_key and clustering.cuts_of(self.faces.key).is_offered(likeness, margin):
+                    offers[best_key] = max(likeness, offers.get(best_key, likeness))
+            return offers
+
+        # The pictures whose faces may offer a person: [(faces, the (width, height) their boxes are in)].
+        pictures = []
+        is_clip = images.kind_of(photo_path) not in store_photos.FACE_KINDS
+        faces_unread = None
+        if not is_clip:
             # Check database cache first
             has_face_rows, detected_faces = on_file()
 
@@ -492,60 +514,59 @@ class TagSuggester:
                                                          detector=face_records.detector_of(self.faces))
                     if saved:
                         logger.info(f"Recorded {saved} newly detected face(s) for {photo_path}")
+            if detected_faces:
+                # A face too small for its picture is in the background, on the photo's stored size, as cluster-faces
+                # and the photo's strip ask it; a photo the library has no row for, a look, has no stored size and so
+                # no face in the background.
+                pictures.append((detected_faces, store_photos.picture_size(self.index.conn, photo_path)
+                                 if self.index.conn else None))
+        elif frames is not None and known_faces[2] is not None:
+            # A clip (a kind the index does not look at for faces, store.photos.FACE_KINDS, by its name as the index
+            # gave its row its kind): the people its frames show, each frame looked at as a photo is, the 40 px floor of
+            # a new face on the frame's own pixels (new_faces) and the background on its size. Nothing of a face is
+            # kept: a clip has no face on file, and the library refuses one (store.faces.insert; owner, 2026-11-13,
+            # "PEOPLE ON CLIPS ARE TRANSIENT"). With no one named in the library there is no one to offer, and no
+            # frame is read for it. Frames ffmpeg does not give leave the clip its tags: the sentence is said beside
+            # them (`faces_unread`), not as an error, which the run would try again and again.
+            try:
+                shown = frames()
+            except NoFrames as error:
+                shown, faces_unread = [], error.problem
+            if shown:
+                self.faces.ready()
+            for number, frame in enumerate(shown, 1):
+                picture = self.faces.picture_of_frame(frame, "%s, frame %d" % (photo_path, number))
+                pictures.append((self.faces.new_faces(self.faces.detect_and_embed(picture), picture), frame.size))
 
-        if detected_faces:
-            # A face too small for its picture is in the background: no name is offered for it (clustering.is_background,
-            # on the photo's stored size, as cluster-faces and the photo's strip ask it; a photo the library has no row
-            # for, a look, has no stored size and so no face in the background).
-            size = store_photos.picture_size(self.index.conn, photo_path) if self.index.conn else None
-            valid_detected_faces = [f for f in detected_faces
-                                    if not clustering.is_background(f["box"], size) and f.get("embedding") is not None]
+        if pictures and known_faces[2] is not None:
+            # A person any picture offers stands: no second threshold across a clip's frames (clustering.across_frames).
+            for person, (likeness, seen) in clustering.across_frames(
+                    [offers_in(faces, size) for faces, size in pictures]).items():
+                # Resolve leaf name to full taxonomy path if possible.
+                # This looked under a hardcoded "family"/"friends"/
+                # "pets" only, so anyone filed under People came back
+                # as a bare leaf and was suggested -- and written --
+                # in the one form the keywords must not hold.
+                # A name filed twice is not resolved to either
+                # path, and not offered at all: a guess names the
+                # wrong person (docs/findings.md, #27).
+                # A person is the tag of their node: another person called alike is another tag. A face
+                # whose person the tree no longer files (or never did: a name from before ids) suggests nobody.
+                resolved_path = tags_by_id.get(person)
+                if resolved_path is None:
+                    continue
+                score = round(likeness, 2)
 
-            if valid_detected_faces:
-                if known_faces[2] is not None:
-                    for face in valid_detected_faces:
-                        # The person the face is most like, by their closest face of the
-                        # years around the photo, never one of its own; offered from the
-                        # value every screen offers a name from, scored by that likeness
-                        # (tagpup.core.clustering). It was a mean face with no years, a
-                        # distance cut of 0.90, and a score made up between 0.5 and 1.
-                        # Offered only as far ahead of the next person as a name is offered at, by the cuts of the
-                        # run's face model, whose vectors these are (clustering.Cuts.is_offered).
-                        best_key, likeness, margin = clustering.best(known_faces.likeness(
-                            clustering.unit(face["embedding"])[None, :], [face_year], [photo_id])[0], known_faces.columns)
-                        if best_key and clustering.cuts_of(self.faces.key).is_offered(likeness, margin):
-                            label = labels.get(best_key)
-                            best_name = label.name if label else str(best_key)
-                            score = round(likeness, 2)
-
-                            # Resolve leaf name to full taxonomy path if possible.
-                            # This looked under a hardcoded "family"/"friends"/
-                            # "pets" only, so anyone filed under People came back
-                            # as a bare leaf and was suggested -- and written --
-                            # in the one form the keywords must not hold.
-                            # A name filed twice is not resolved to either
-                            # path, and not offered at all: a guess names the
-                            # wrong person (docs/findings.md, #27).
-                            # A person is the tag of their node: another person called alike is another tag. A face
-                            # whose person the tree no longer files (or never did: a name from before ids) suggests nobody.
-                            resolved_path = tags_by_id.get(best_key)
-                            if resolved_path is None:
-                                continue
-
-                            # Boost or insert tag
-                            found = False
-                            for t in suggested_tags:
-                                if _ends_with(t["tag"], resolved_path):
-                                    t["score"] = max(t["score"], score)
-                                    found = True
-                                    break
-                            if not found:
-                                suggested_tags.append({
-                                    "tag": resolved_path,
-                                    "score": score,
-                                    "source_count": 1,
-                                    "has_face_match": True
-                                })
+                # Boost or insert tag
+                item = next((t for t in suggested_tags if _ends_with(t["tag"], resolved_path)), None)
+                if item is not None:
+                    item["score"] = max(item["score"], score)
+                else:
+                    item = {"tag": resolved_path, "score": score, "source_count": 1, "has_face_match": True}
+                    suggested_tags.append(item)
+                if is_clip:
+                    # In how many of the frames looked at (SuggestionModel.offered: the chip says it).
+                    item["frames"] = {"seen": seen, "of": len(pictures)}
 
         # 5. Zero-shot candidate suggestions (new potential tags)
         active_candidates = self._get_candidate_embeddings_for_year(target_year)
@@ -639,7 +660,7 @@ class TagSuggester:
         # the people roots specifically, and that path already works.
         suggested_tags = self._with_taxonomy_paths(suggested_tags)
 
-        return {
+        found = {
             "path": photo_path,
             "suggested_tags": suggested_tags,
             "suggested_caption": suggested_caption,
@@ -647,6 +668,9 @@ class TagSuggester:
             "path_hints": path_hints,
             "nearest_neighbors": neighbors_output
         }
+        if faces_unread:
+            found["faces_unread"] = faces_unread
+        return found
 
     def _with_taxonomy_paths(self, items):
         """Rewrite each suggested tag as the taxonomy path it belongs to.
@@ -752,8 +776,13 @@ class SuggestionModel:
         return self.embeddings.model_key
 
     def suggest(self, photo, meta):
+        """The suggestion for one photo. A clip's frames are read once: those its vector was made from, when it was
+        made now; else read for its people (TagSuggester.suggest_for_photo's `frames`), only when it is a clip."""
+        decoded = []
+        vector = self.embeddings.of(photo, decoded=decoded)
         return self.suggester.suggest_for_photo(
-            photo, self.embeddings.of(photo), k=15, min_sim=suggesting.NEIGHBOUR_CUT, target_metadata=meta)
+            photo, vector, k=15, min_sim=suggesting.NEIGHBOUR_CUT, target_metadata=meta,
+            frames=lambda: decoded or self.embeddings.frames_of(photo))
 
     def offered(self, suggestion):
         """What the panel shows for one suggestion: tags, people, title -- what Apply All and the writers take too.
@@ -766,7 +795,9 @@ class SuggestionModel:
         for item in suggestion.get("suggested_tags", []):
             score = item.get("score", 0.0)
             if item.get("has_face_match"):
-                people.append({"name": item["tag"], "score": score})
+                # A clip's: in how many of its frames looked at (the chip's title, web/tagpup/suggestions.js).
+                people.append(dict({"name": item["tag"], "score": score},
+                                   **({"frames": item["frames"]} if "frames" in item else {})))
             elif score >= suggesting.OFFER_A_TAG:
                 tags.append({"tag": item["tag"], "score": score})
         return tags, people, suggesting.caption_from_tags(

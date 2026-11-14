@@ -78,6 +78,8 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 #: Today's dating of the photos, which a library before migration 37 is not dated by (Migrated.date).
 DATE_PHOTOS = store_photos.date_photos
+#: Today's refusal of a clip's face, which a library before migration 37 has no kind to ask (Migrated.refuse_faces_on).
+REFUSE_FACES_ON = store_photos.refuse_faces_on
 
 
 def backups(db_path):
@@ -101,9 +103,18 @@ class Migrated(JournalLibrary):
     """A library at the latest schema with rows like the owner's, and synthetic migrations after."""
 
     def setUp(self):
+        self.enterContext(unittest.mock.patch.object(store_photos, "refuse_faces_on", self.refuse_faces_on))
         super().setUp()
         self.steps = contextlib.ExitStack()
         self.addCleanup(self.steps.close)
+
+    @staticmethod
+    def refuse_faces_on(conn, photo_id):
+        """Refuse a clip's face (store.photos.refuse_faces_on) as the library the test seeds can: one made before
+        migration 37 has no photos.kind, every row of it a photo, so a face is never refused there; at 37 and after, as
+        today's app refuses one."""
+        if "kind" in {row[1] for row in conn.execute("PRAGMA table_info(photos)")}:
+            REFUSE_FACES_ON(conn, photo_id)
 
     def date(self, conn, photo_ids=None):
         """Date the photos `photo_ids` (every one, without) as the app the library was made by did

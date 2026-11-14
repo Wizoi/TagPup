@@ -59,6 +59,12 @@ class Faces:
         """What the processor's half holds, as the read-ahead asks it: nothing decoded here."""
         return 0
 
+    @staticmethod
+    def picture_of_frame(frame, label):
+        """A clip's frame as the model makes it ready (ScrfdAdaFace.picture_of_frame), no squares: what the test's
+        detect_and_embed is handed for a frame."""
+        return scrfd_adaface.ScrfdPicture(frame, {}, label)
+
     def detect_and_embed(self, picture):
         return self.detect_and_embed_faces(picture)
 

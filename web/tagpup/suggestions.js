@@ -437,7 +437,9 @@ export function renderSuggestionsPanel(photoPath) {
             chip.className = 'suggestion-chip';
             chip.style.cursor = 'pointer';
             chip.textContent = pct ? `${shown} · ${pct}%` : shown;
-            chip.title = `Click to add ${shown} to this photo.`;
+            // A person a clip's frames showed says in how many of those looked at (the suggester's `frames`).
+            const seenIn = isPerson && item.frames ? `Seen in ${item.frames.seen} of ${item.frames.of} frames. ` : '';
+            chip.title = `${seenIn}Click to add ${shown} to this photo.`;
             if (isPerson) {
                 chip.tabIndex = 0;      // focusable, so the keyboard sees their faces as well
                 attachPersonFaces(chip, item.person);

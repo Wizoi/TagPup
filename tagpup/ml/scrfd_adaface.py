@@ -304,6 +304,12 @@ class ScrfdAdaFace:
             logger.error("Error processing faces in %s: %s", img_path, e)
             return NotDetected()
 
+    def picture_of_frame(self, frame, label):
+        """A clip's frame made ready for the detector, as `picture` makes a photo's: `frame`, decoded already
+        (images.from_jpeg, upright, no turn: its faces' boxes are in the frame's own pixels), fitted into each square;
+        `label` names it in the log. Suggest looks at a clip's frames for its people and keeps nothing of them."""
+        return ScrfdPicture(frame, squares(frame), label)
+
     def missing(self):
         """The sentence naming the weight files not in this model's folder (missing_weights), or None: what a run asks
         before it begins, so that it stops before it has done anything."""

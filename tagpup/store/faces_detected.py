@@ -42,10 +42,12 @@ def detector(settings):
 def record(conn, photo_path, name, stamp, found, now=None):
     """Record that detector `name` ran on the photo at `photo_path`, its file at `stamp`
     ((mtime, size) or None), and found `found` faces. 1 when the photo has a row to record
-    it on, else 0. The caller commits."""
+    it on, else 0. ValueError for a clip, whose faces are not kept (photos.refuse_faces_on). The caller commits."""
+    from tagpup.store import photos   # photos imports faces, which imports this module
     photo_id = next(iter(store_roots.photo_ids_at(conn, [photo_path])), None)
     if photo_id is None:
         return 0
+    photos.refuse_faces_on(conn, photo_id)
     mtime, size = stamp if stamp else (None, None)
     conn.execute("INSERT OR REPLACE INTO faces_detected (photo_id, detector, mtime, size, found, at) "
                  "VALUES (?, ?, ?, ?, ?, ?)", (photo_id, name, mtime, size, int(found), now or dates.recorded()))

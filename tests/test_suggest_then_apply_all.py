@@ -1,6 +1,7 @@
 """V3 and V9: Suggest in a folder the library holds, then Apply All -- and what becomes of the suggestions and the photos'
 CLIP vectors when the photos are renamed, deleted or their folder removed. A folder's clips are Suggest's subjects too
-(DECISIONS 2026-11-13): tags only, the face model never shown one, Apply All patching each clip's XMP in place.
+(DECISIONS 2026-11-13): its tags, and the people its frames show (nothing of a face kept), Apply All patching each
+clip's XMP in place.
 
 A person adds a folder, asks for suggestions, closes the tab or restarts the server, comes back and finds them, files
 them with Apply All (tags written to the files as the panel listed them), renames some photos, undoes that, deletes one,
@@ -26,7 +27,8 @@ Mutation, each made in a scratch copy of the code and failing the test named:
   photos only; the model asked for before the folder is known to hold a photo: the second-run, the restart and the
   empty-folder tests.
 Clips (AHeldFolderOfPhotosAndClips), on clips the machine's ffmpeg makes and its frames read, skipped without it: each
-fails on the code before it (the route's photos-only filter: no clip is a subject).
+fails on the code before it (the route's photos-only filter: no clip is a subject). Who a clip's frames show, scenario by
+scenario: tests/test_a_clips_people_are_the_people_its_frames_show.py.
 Not kept: Apply All's `threshold`, deleted (the page always sent 0.0: no one narrowed); and the pipeline test that a score is not boosted twice, which cannot happen
 now that a run reads its raw list from the library's rows each time.
 """
@@ -243,12 +245,20 @@ class FramesClip(base.FakeClip):
         return [base.vector_of("frame_%02d" % n) for n in range(len(pictures))]
 
 
+class FramesFaces(base.FakeFaces):
+    """The stand-in face model shown a clip's frames as the real one is (ScrfdAdaFace.picture_of_frame): each frame a
+    picture labelled "<clip>, frame N", showing the face the clip's name gives it, as a photo's name gives its own."""
+
+    def detect_and_embed(self, picture):
+        return self.detect_and_embed_faces(picture.path.split(",")[0])
+
+
 @unittest.skipIf(TOOLS.problem, "ffmpeg is not installed on this machine")
 class AHeldFolderOfPhotosAndClips(Base):
     """Pictures/Dock is the library's: a photo and two clips the index has read, one clip with its vector and frames kept
     as the index keeps them, the other's not made yet (its frames are read when Suggest asks). Suggest offers each clip
-    tags and no people, the face model never shown one; Apply All patches each clip's XMP in place, journaled, beside the
-    photo's write, and Undo takes it off again."""
+    its tags and the people its frames show (dock_02's show Rowan, dock_03's Wren, whom no one has named); Apply All
+    patches each clip's XMP in place, journaled, beside the photo's write, and Undo takes it off again."""
 
     @classmethod
     def setUpClass(cls):
@@ -261,6 +271,7 @@ class AHeldFolderOfPhotosAndClips(Base):
     def app_home(self):
         super().app_home()
         self.clip = FramesClip(self.clip.settings)
+        self.faces = FramesFaces()
 
     def setUp(self):
         super().setUp()
@@ -307,14 +318,16 @@ class AHeldFolderOfPhotosAndClips(Base):
         self.assertEqual(["dock_01.jpg", "dock_02.mp4", "dock_03.mp4"], sorted(offered), "the clips are subjects")
         for name in ("dock_02.mp4", "dock_03.mp4"):
             self.assertNotIn("error", offered[name], offered[name])
-            self.assertEqual([], offered[name]["people"], "a clip is offered no one")
             self.assertIn("Trips/Regatta", [t["tag"] for t in offered[name]["tags"]], "its neighbours' tags")
             self.assertTrue(offered[name]["title"], "the title wand stays offered")
+        self.assertEqual([("People/Rowan Thackeray", {"seen": 5, "of": 5})],
+                         [(p["name"], p["frames"]) for p in offered["dock_02.mp4"]["people"]], "who its frames show")
+        self.assertEqual([], offered["dock_03.mp4"]["people"], "Wren, whom no one has named, is offered as no one")
         self.assertTrue(offered["dock_01.jpg"]["people"], "the photo beside them is offered its face's person")
-        self.assertEqual(["dock_01.jpg"], [os.path.basename(path) for path in self.faces.detected],
-                         "the face model was shown a clip")
-        self.assertEqual([("[]", None)] * 2, self.rows(
-            "SELECT people, error FROM suggestions WHERE photo_id IN (?, ?) ORDER BY photo_id", self.clip_ids),
+        self.assertEqual(["dock_01.jpg"] + ["dock_02.mp4"] * 5 + ["dock_03.mp4"] * 5,
+                         [os.path.basename(path) for path in self.faces.detected], "the face model sees each frame")
+        self.assertEqual([None] * 2, [error for (error,) in self.rows(
+            "SELECT error FROM suggestions WHERE photo_id IN (?, ?) ORDER BY photo_id", self.clip_ids)],
             "the clips' rows, by id")
         self.assertEqual((0, 0), (
             self.rows("SELECT COUNT(*) FROM faces WHERE photo_id IN (?, ?)", self.clip_ids)[0][0],
@@ -328,7 +341,10 @@ class AHeldFolderOfPhotosAndClips(Base):
         reply = self.post("/folder/auto-apply", {"folder_path": self.dock})
         self.assertEqual(200, reply.status_code, reply.data)
         for path in self.clips:
-            self.assertEqual([t["tag"] for t in offered[os.path.basename(path)]["tags"]], base.tags_in(path))
+            entry = offered[os.path.basename(path)]
+            self.assertEqual(sorted([t["tag"] for t in entry["tags"]] + [p["name"] for p in entry["people"]]),
+                             sorted(base.tags_in(path)))
+        self.assertIn("People/Rowan Thackeray", base.tags_in(self.clips[0]), "the person its frames show, written")
         self.assertIn("People/Rowan Thackeray", base.tags_in(self.photo))
         change = self.client.get("/library/api/history").get_json()["changes"][0]["id"]
         self.assertEqual([(clip, "done") for clip in self.clip_ids], self.change_files(change), "journaled")
@@ -373,9 +389,9 @@ class AHeldFolderOfPhotosAndClips(Base):
         self.assertEqual({"success": True, "status": "running", "in_memory": True}, self.start(self.cup))
         entry = self.suggested(self.cup)["cup_09.mp4"]
         self.assertNotIn("error", entry, entry)
-        self.assertEqual([], entry["people"])
+        self.assertEqual([], entry["people"], "its frames show no one")
         self.assertIn("Trips/Regatta", [t["tag"] for t in entry["tags"]])
-        self.assertNotIn(looked, self.faces.detected)
+        self.assertEqual(5, self.faces.detected.count(looked), "each of its frames was looked at")
         self.assert_library_unchanged()          # no vector, no row, no suggestion kept for it
 
         self.only_patched()
