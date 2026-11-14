@@ -164,7 +164,6 @@ export const libraryStripSync = document.getElementById('library-strip-sync');
 export const movesBanner = document.getElementById('moves-banner');
 export const movesBannerText = document.getElementById('moves-banner-text');
 export const btnMovesAdd = document.getElementById('btn-moves-add');
-export const btnMovesCheck = document.getElementById('btn-moves-check');
 export const btnMovesDismiss = document.getElementById('btn-moves-dismiss');
 
 // A photo whose file is gone is shown and not editable (stale.js)

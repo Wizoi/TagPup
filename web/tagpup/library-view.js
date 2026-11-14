@@ -391,7 +391,7 @@ export function refreshLibraryView() {
         libraryChanged();
         upper.updateSelectedThumbnailsCount();          // a selection of the whole source is the new total less what was left out
         upper.navigatorCountsChanged({ now: true });   // the counts are read at each call: ask again
-        upper.libraryViewPainted(lib, { refreshed: true });   // what the disk held is asked again, by the rule for its size
+        upper.libraryViewPainted(lib, { refreshed: true });   // what the disk holds is asked again, whatever the view's size
         return true;
     });
 }
