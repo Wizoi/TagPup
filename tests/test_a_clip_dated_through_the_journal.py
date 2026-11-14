@@ -335,6 +335,15 @@ class AClipDatedThroughTheJournal(tagged.ALibraryHoldingAClip):
         self.assertEqual(1, held.call_count, "one read waits one deadline: the clips after it are not read")
         self.assertTrue(all(isinstance(one, field_values.NotAnswered) for one in found.values()), found)
 
+    def test_a_date_on_the_minute_as_the_date_input_sends_it_without_seconds_is_written_to_the_second(self):
+        # A datetime-local input (step 1) answers the shortest form: "2024-08-15T09:30" for a time on the minute.
+        clip, = self.index(self.clip_path)
+        reply = self.save_date_from_the_panel(clip, "2024-08-15T09:30")
+        self.assertEqual(200, reply.status_code, reply.get_json())
+        self.assertEqual("2024:08:15 09:30:00", self.read(self.clip_path, XMP_DATES)["XMP:DateTimeOriginal"])
+        written = self.read_bytes(self.clip_path)
+        self.assertEqual(saved_times(written, "2024:08:15 09:30:00"), creation_times(written))
+
     def test_a_date_no_quicktime_header_holds_is_refused_with_a_sentence_and_nothing_is_written(self):
         clip, = self.index(self.clip_path)
         before, changes = self.read_bytes(self.clip_path), self.vl.rows("SELECT id FROM changes")
