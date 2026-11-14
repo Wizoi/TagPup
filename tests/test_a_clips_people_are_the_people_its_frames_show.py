@@ -4,13 +4,16 @@ A person adds a folder of clips and asks for suggestions. Each clip's frames (fi
 vector was kept or is made now) are looked at as a photo is, and a named person any frame shows is offered once, the chip
 saying in how many of the frames looked at; Apply All files them as a click on the chip does and the clip's people row
 follows its keywords. Nothing of a face is kept of a clip, and the library refuses one at the source. Frames that cannot
-be read -- a file ffmpeg cannot decode, or no ffmpeg -- leave the clip its tags and say why beside them; a cancel part-way
-through a clip keeps nothing of it.
+be read as the file is -- one ffmpeg cannot decode -- leave the clip its tags and say why, in the run's closing line;
+frames not read for the moment -- no ffmpeg, ffmpeg past its deadline -- keep nothing of the clip, and the next run
+suggests for it again; a cancel part-way through a clip keeps nothing of it.
 
 The clips are made here by the machine's ffmpeg (skipped without it): five one-second colour segments joined, so each of
 the five frames read (at (2i+1)/10 of the clip) is one segment's colour. The stand-in face model reads the colour at the
-frame's centre: red shows Rowan, green no one, blue a crowd (Rowan, Ines, Wren, Rowan again), yellow Ines. Rowan is
-named on a photo of the library, Ines on a photo of 1995, Wren nowhere. CLIP is V3's FramesClip. The app, the routes,
+frame's centre: red shows Rowan, green no one, blue a crowd (Rowan, Ines, Wren, Rowan again), yellow Ines, magenta Rowan
+too small to be a face (30 px), each face where a detector would put it on the 64x48 frame; the faces it may keep are the
+real model's (scrfd_adaface.new_faces: the 40 px floor on the frame's own pixels, each face's crop cut from the frame).
+Rowan is named on a photo of the library, Ines on a photo of 1995, Wren nowhere. CLIP is V3's FramesClip. The app, the routes,
 ffmpeg, ExifTool, the journal and the library are real. Names are fictional.
 
 Every test fails on the code before people on clips (the face model was never shown a frame; nothing refused a clip's
@@ -38,8 +41,10 @@ from test_suggest_then_apply_all import TOOLS, FramesClip  # noqa: E402
 
 from tagpup import config  # noqa: E402
 from tagpup.core import processes  # noqa: E402
-from tagpup.files import shares, video_frames  # noqa: E402
+from tagpup.files import images, shares, video_frames  # noqa: E402
 from tagpup.jobs import suggestions as suggestion_jobs  # noqa: E402
+from tagpup.ml import scrfd_adaface  # noqa: E402
+from tagpup.services import faces as face_records  # noqa: E402
 from tagpup.services import libraries as library_actions  # noqa: E402
 from tagpup.store import db  # noqa: E402
 from tagpup.store import embeddings as store_embeddings  # noqa: E402
@@ -51,8 +56,15 @@ ROWAN, WREN = base.ROWAN, base.WREN
 INES = np.array([0.8, -0.6, 0.0, 0.0], dtype=np.float32)    # at right angles to Rowan and to Wren
 ROWAN_TAG, INES_TAG = "People/Rowan Thackeray", "People/Ines Halloran"
 
-PALETTE = {"red": (255, 0, 0), "green": (0, 128, 0), "blue": (0, 0, 255), "yellow": (255, 255, 0)}
-SHOWN = {"red": [ROWAN], "green": [], "blue": [ROWAN, INES, WREN, ROWAN], "yellow": [INES]}
+PALETTE = {"red": (255, 0, 0), "green": (0, 128, 0), "blue": (0, 0, 255), "yellow": (255, 255, 0),
+           "magenta": (255, 0, 255)}
+#: Four places on the 64x48 frame a face of 40 px -- the floor of a new face (images.is_big_enough) -- may be found at.
+AT = ([0, 0, 40, 40], [24, 0, 64, 40], [0, 8, 40, 48], [24, 8, 64, 48])
+#: A frame's faces, by its colour: [(box, vector)].
+SHOWN = {"red": [(AT[0], ROWAN)], "green": [],
+         "blue": [(AT[0], ROWAN), (AT[1], INES), (AT[2], WREN), (AT[3], ROWAN)],   # Rowan twice in one frame
+         "yellow": [(AT[0], INES)],
+         "magenta": [([0, 0, 30, 30], ROWAN)]}                                    # under the floor
 #: Each clip, by the colours of its five segments.
 CLIPS = {
     "reel_01.mp4": ("red", "green", "green", "green", "green"),     # Rowan in one frame
@@ -60,6 +72,7 @@ CLIPS = {
     "reel_03.mp4": ("blue", "green", "green", "green", "green"),    # a crowd in one frame
     "reel_04.mp4": ("green",) * 5,                                  # no one
     "reel_05.mp4": ("yellow",) * 5,                                 # Ines, the clip undated
+    "reel_07.mp4": ("magenta",) * 5,                                # Rowan, too small in every frame
 }
 
 
@@ -75,23 +88,29 @@ def make_clip(path, colours):
 
 class FrameFaces(base.FakeFaces):
     """The face model: a frame's faces by the colour at its centre (SHOWN); `looked`, the clips whose frames it was
-    shown, a frame each; `on_frame`, called with each frame's label before it is looked at."""
+    shown, a frame each; `on_frame`, called with each frame's label before it is looked at; `failing`, {clip: frame
+    numbers} whose detection fails (NotDetected, as the real model answers a CUDA error). The faces it keeps are the
+    real model's (as NewFaces has them): the 40 px floor, and a crop cut from the frame."""
+    new_faces = scrfd_adaface.ScrfdAdaFace.new_faces
 
     def __init__(self):
         super().__init__()
         self.looked = []
         self.on_frame = None
+        self.failing = {}
 
     def detect_and_embed(self, picture):
         clip = picture.path.split(",")[0]
         self.looked.append(os.path.basename(clip))
         if self.on_frame:
             self.on_frame(picture.path)
+        clip, frame = picture.path.rsplit(", frame ", 1)
+        if int(frame) in self.failing.get(os.path.basename(clip), ()):
+            return scrfd_adaface.NotDetected()
         upright = picture.upright
         centre = upright.getpixel((upright.width // 2, upright.height // 2))
         colour = min(PALETTE, key=lambda name: sum((a - b) ** 2 for a, b in zip(PALETTE[name], centre)))
-        return [{"box": [8 * n, 8, 16, 16], "embedding": vector.tolist(), "prob": 0.99}
-                for n, vector in enumerate(SHOWN[colour])]
+        return [{"box": list(box), "embedding": vector.tolist(), "prob": 0.99} for box, vector in SHOWN[colour]]
 
 
 @unittest.skipIf(TOOLS.problem, "ffmpeg is not installed on this machine")
@@ -129,10 +148,14 @@ class AClipsPeopleAreThePeopleItsFramesShow(base.Base):
         super().setUp()
         self.reel = os.path.join(self.home.root, "Pictures", "Reel")
         self.passes = Counter()
+        #: Set, ffmpeg's answer for the moment instead of the frames: (problem, whose).
+        self.slow = None
         real = video_frames.frames
 
         def counted(tools, path, count, *args, **kwargs):
             self.passes[os.path.basename(path)] += 1
+            if self.slow:
+                return video_frames.Frames((), *self.slow)
             return real(tools, path, count, *args, **kwargs)
         patcher = mock.patch.object(video_frames, "frames", counted)
         patcher.start()
@@ -192,10 +215,27 @@ class AClipsPeopleAreThePeopleItsFramesShow(base.Base):
         self.assertEqual([], self.people(offered["reel_04.mp4"]), "frames with no face offer no one")
         self.assertEqual([(INES_TAG, {"seen": 5, "of": 5})], self.people(offered["reel_05.mp4"]),
                          "an undated clip is compared with every year of Ines's faces")
+        self.assertEqual([], self.people(offered["reel_07.mp4"]), "a face under 40 px of the frame offers no one")
         self.assertEqual({name: 5 for name in CLIPS}, dict(Counter(self.faces.looked)), "every frame looked at")
         self.assertEqual({name: 1 for name in CLIPS}, dict(self.passes), "one ffmpeg pass a clip, kept vector or not")
         self.assertEqual([0, 0], self.face_rows_of_clips(), "no face and no detection of a clip")
         self.assertEqual(faces_before, self.rows("SELECT COUNT(*) FROM faces")[0][0])
+
+    def test_a_frame_the_face_model_failed_on_is_not_a_frame_with_no_one_and_a_clip_of_only_those_is_tried_again(self):
+        self.hold(["reel_02.mp4", "reel_05.mp4"])
+        self.faces.failing = {"reel_02.mp4": {1}, "reel_05.mp4": {1, 2, 3, 4, 5}}
+        self.start(self.reel)
+        offered = self.suggested(self.reel)
+        self.assertEqual([(ROWAN_TAG, {"seen": 3, "of": 4})], self.people(offered["reel_02.mp4"]),
+                         "counted of the frames the model read")
+        self.assertIn("error", offered["reel_05.mp4"], "no frame read: not kept as done")
+        self.assertIn("could not be analysed", " ".join(self.status(self.reel)["notes"]))
+        self.assertEqual([0, 0], self.face_rows_of_clips())
+        self.faces.failing = {}
+        self.start(self.reel)
+        offered = self.suggested(self.reel)
+        self.assertEqual([(INES_TAG, {"seen": 5, "of": 5})], self.people(offered["reel_05.mp4"]), "the next run reads it")
+        self.assertEqual([(ROWAN_TAG, {"seen": 3, "of": 4})], self.people(offered["reel_02.mp4"]), "kept as it was")
 
     def test_apply_all_files_the_person_a_clip_shows_and_its_people_row_follows(self):
         self.hold(["reel_02.mp4"])
@@ -220,20 +260,39 @@ class AClipsPeopleAreThePeopleItsFramesShow(base.Base):
         raw, error = self.raw_of("reel_06.mp4")
         self.assertIsNone(error)
         self.assertTrue(raw.get("faces_unread"), "why its people were not read, beside its tags")
+        said = " ".join(self.status(self.reel)["notes"])
+        self.assertIn("1 clip(s)", said, "the run's closing line says it")
+        self.assertIn(raw["faces_unread"], said)
         self.assertEqual([0, 0], self.face_rows_of_clips())
 
-    def test_with_no_ffmpeg_a_clip_whose_vector_is_kept_is_offered_its_tags_and_says_why(self):
+    def frames_not_read_for_the_moment_then_read(self, unread, problem):
+        """Suggest in Pictures/Reel (reel_02, its vector kept) while `unread` (a context) keeps ffmpeg from giving its
+        frames for the moment, then again without: the first run keeps nothing of the clip and says why; the second
+        offers the people its frames show."""
         self.hold(["reel_02.mp4"], kept=["reel_02.mp4"])
-        with mock.patch.object(config, "locate_ffmpeg", return_value=config.Ffmpeg(None, None, config.FFMPEG_MISSING)):
+        with unread:
             self.start(self.reel)
+        entry = self.suggested(self.reel)["reel_02.mp4"]
+        self.assertIn(problem, entry.get("error", ""), "not kept as done: the next run suggests for it again")
+        self.assertEqual([], self.faces.looked)
+        self.assertIn(problem, " ".join(self.status(self.reel)["notes"]), "the run's closing line says why")
+        self.start(self.reel)
         entry = self.suggested(self.reel)["reel_02.mp4"]
         self.assertNotIn("error", entry, entry)
         self.assertIn("Trips/Regatta", [t["tag"] for t in entry["tags"]])
-        self.assertEqual([], entry["people"])
-        raw, error = self.raw_of("reel_02.mp4")
-        self.assertIsNone(error)
-        self.assertIn("ffmpeg", raw.get("faces_unread", ""))
-        self.assertEqual([], self.faces.looked)
+        self.assertEqual([(ROWAN_TAG, {"seen": 4, "of": 5})], self.people(entry), "its people, once its frames are read")
+        self.assertIsNone(self.raw_of("reel_02.mp4")[0].get("faces_unread"))
+        self.assertEqual([0, 0], self.face_rows_of_clips())
+
+    def test_with_no_ffmpeg_for_a_run_a_clip_is_kept_for_the_next_which_offers_its_people(self):
+        self.frames_not_read_for_the_moment_then_read(
+            mock.patch.object(config, "locate_ffmpeg", return_value=config.Ffmpeg(None, None, config.FFMPEG_MISSING)),
+            config.FFMPEG_MISSING)
+
+    def test_ffmpeg_past_its_deadline_for_a_run_keeps_the_clip_for_the_next_which_offers_its_people(self):
+        problem = video_frames.TOO_LONG % 30
+        self.frames_not_read_for_the_moment_then_read(
+            mock.patch.object(self, "slow", (problem, video_frames.TOO_SLOW)), problem)
 
     def test_a_run_cancelled_part_way_through_a_clips_frames_keeps_nothing_of_it(self):
         self.hold(["reel_02.mp4"], kept=["reel_02.mp4"])
@@ -246,19 +305,28 @@ class AClipsPeopleAreThePeopleItsFramesShow(base.Base):
         for table in set(self.before) - {"tag_embeddings"}:
             self.assertEqual(self.before[table], after[table], "the cancelled run kept something in %s" % table)
 
-    def test_the_library_refuses_a_face_or_a_detection_on_a_clip_and_writes_nothing(self):
-        self.hold(["reel_01.mp4"])
+    def test_the_library_refuses_a_face_or_a_detection_on_a_clip_it_has_no_row_for_and_writes_nothing(self):
+        # The folder is the library's and the clip not read yet: no row, so no kind of a row to ask. The refusal is by
+        # what the file is (its name, images.kind_of), before a row is made -- one made first was of kind 'photo', and
+        # the face went through.
+        os.makedirs(self.reel)
         clip = os.path.join(self.reel, "reel_01.mp4")
+        shutil.copyfile(os.path.join(self.made, "reel_01.mp4"), clip)
+        library_actions.record_added(self.library, [self.reel])
+        self.before = base.library_dump.dump(self.library.path)
+        face = {"box": [0, 0, 40, 40], "embedding": ROWAN.tolist(), "prob": 0.99}
+        self.assertEqual(0, face_records.record_detected(self.library.path, clip, [face], model=FACE_MODEL),
+                         "Suggest's and the index's door refuses it")
         conn = db.connect(self.library.path)
         try:
             with self.assertRaises(ValueError):
-                store_faces.insert(conn, clip, [0, 0, 16, 16], ROWAN.tobytes(), model=FACE_MODEL, prob=0.99)
+                store_faces.insert(conn, clip, [0, 0, 40, 40], ROWAN.tobytes(), model=FACE_MODEL, prob=0.99,
+                                   kind=images.kind_of(clip))
             with self.assertRaises(ValueError):
-                faces_detected.record(conn, clip, "scrfd", shares.read_stamp(clip), 1)
+                faces_detected.record(conn, clip, "scrfd", shares.read_stamp(clip), 1, kind=images.kind_of(clip))
             conn.commit()
         finally:
             conn.close()
-        self.assertEqual([0, 0], self.face_rows_of_clips())
         self.assert_library_unchanged()
 
 

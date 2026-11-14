@@ -405,12 +405,14 @@ FACE_KINDS = ("photo",)
 BAKED_KINDS = ("photo",)
 
 
-def refuse_faces_on(conn, photo_id):
-    """Raise ValueError, with its sentence, when the row `photo_id` is of a kind the library keeps no face of (not in
-    FACE_KINDS: a clip). The one refusal at the source of a face's row and a detection's (faces.insert,
-    faces_detected.record): a clip's people are read from its frames by Suggest and nothing of a face is stored (owner,
-    2026-11-13), so a writer that reached a clip would make a face nothing reads, kept by nothing."""
-    if conn.execute("SELECT kind FROM photos WHERE id = ?", (photo_id,)).fetchone()[0] not in FACE_KINDS:
+def refuse_faces_on(kind):
+    """Raise ValueError, with its sentence, when a file of `kind` (what its name says it is, files.images.kind_of, named
+    by the writer's caller) is a kind the library keeps no face of (not in FACE_KINDS: a clip). The one refusal at the
+    source of a face's row and a detection's (faces.insert, faces_detected.record), asked before any row is read or made:
+    a clip's people are read from its frames by Suggest and nothing of a face is stored (owner, 2026-11-13), so a writer
+    that reached a clip would make a face nothing reads, kept by nothing. Not the row's kind: a clip of a held folder not
+    read yet has no row, and the row a face made for it was of the default kind, 'photo'."""
+    if kind not in FACE_KINDS:
         raise ValueError("The library keeps no face of a clip: its people are read from its frames when it is "
                          "suggested for, and nothing of them is stored.")
 

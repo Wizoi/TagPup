@@ -20,7 +20,8 @@ of the 2026-10-15 table are not recounted and are left out. All three libraries 
   from its node's leaf: 0 / 0 / 0. A `photo_people` row with no id or a dangling one: 0 / 0 / 0.
 - A face or a detection (`faces_detected`) on a clip (`photos.kind = 'video'`): 0 / 0 / 0, of 2,910 / 5 / 0 clips (counted
   read-only 2026-11-13). The index looks for faces in photos only (`store.photos.FACE_KINDS`), the library refuses a clip's
-  face or detection at the source (`store.photos.refuse_faces_on`), and no bake writes faces into a clip (`BAKED_KINDS`):
+  face or detection at the source, by what the file's name says it is, before any row is made
+  (`store.photos.refuse_faces_on`), and no bake writes faces into a clip (`BAKED_KINDS`):
   people on clips are transient (DECISIONS 2026-11-13). A clip's `photo_people` rows are its keywords': 3,764 rows on
   2,066 clips of photo_index, every one `source='keyword'`; 0 / 0 in the other two.
 - People sharing a leaf: one pair in photo_index, none in the other two (known since 2026-10-15, recounted). Two cousins
@@ -106,14 +107,15 @@ a tree edit; two cousins called alike; ignore, assign, restore and undo) are in 
   2026-11-02) and forgotten when one of the photo's faces is named, unnamed or left out; a chip the faces alone offer does
   not promise that Apply All writes it (#2364). The test is `tests/frontend/selection-suggests-who-the-faces-look-like.test.mjs`,
   mapped to Views (#2740); the answer is People's, from the one shared matrix.
-- **Clips.** A clip has no face and no detection, and the library refuses one (`store.photos.refuse_faces_on`); its
+- **Clips.** A clip has no face and no detection, and the library refuses one by its name (`store.photos.refuse_faces_on`); its
   `photo_people` rows follow its keywords (`source='keyword'`), and its tags written by a save or a tree rename are the
   Files domain's (`tests/test_a_tag_tree_edit_of_a_tag_a_clip_holds.py`). Suggest offers a clip the people its frames
   show: the five frames it reads (one ffmpeg pass a clip, `search.PhotoEmbeddings.frames_of`) are each looked at as a
   photo is (`ScrfdAdaFace.picture_of_frame`, the 40 px floor on the frame's own pixels), a named person any frame offers
   is offered once with in how many frames (`clustering.across_frames`), nothing of a face is kept, and no frame is read
-  for faces when no face of the library is named. Frames ffmpeg does not give leave the clip its tags and say why
-  (`faces_unread`). P13, `tests/test_a_clips_people_are_the_people_its_frames_show.py` (DECISIONS 2026-11-13, "PEOPLE ON
+  for faces when no face of the library is named. Frames the file does not give as it is leave the clip its tags and say
+  why (`faces_unread`, counted in the run's closing `notes`); frames not given for the moment (no ffmpeg, its deadline, a
+  share away) fail the clip, which the next run suggests for again. P13, `tests/test_a_clips_people_are_the_people_its_frames_show.py` (DECISIONS 2026-11-13, "PEOPLE ON
   CLIPS ARE TRANSIENT"; docs/plans/suggest-for-clips.md, merge 2).
 
 ## By design (each row closed `decided:`)
