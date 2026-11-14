@@ -640,6 +640,7 @@ class TwoLibrariesHoldingTheFolder(AnOldClipInTheLibrary):
                 self.held_there(source)
                 first, second = self.asked_there_meanwhile(source, moment)
                 self.assertEqual((0, convert.TEMP_TAKEN), (second.changed, second.message()))
+                self.assertIsNone(second.details["change"], "its change wrote nothing and is erased (#2974): none to name")
                 self.assertEqual(1, first.changed, first.message())
                 self.assert_converted(source, photo_id, TITLE)
 

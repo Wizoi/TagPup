@@ -245,7 +245,7 @@ def _settle_stopped(library, change_id, et=None, result=None):
                 elif settled[0] == "writing":
                     left += 1
         if not left:
-            _finish_forward(library, change_id, result)
+            finish_forward(library, change_id, result)
     except Exception as problem:
         logger.warning("Could not finish change %s after it was stopped: %s", change_id, problem)
     return left
@@ -644,7 +644,7 @@ def _write_fields(et, library, operation, exiftool_path, photo_paths, read, plan
         if stopped and stopped.get("share"):
             _share_stopped(library, operation in file_journal.INTERNAL, change_id, result, stopped, stalled)
         else:
-            if _finish_forward(library, change_id, result) is None:
+            if finish_forward(library, change_id, result) is None:
                 # A patched file that could not be read after its write stays `writing` with its record (_by_bytes):
                 # the change is let go, for the next settle to finish.
                 file_journal.release(library.path, change_id)
@@ -683,12 +683,12 @@ def _write_fields(et, library, operation, exiftool_path, photo_paths, read, plan
     return result
 
 
-def _finish_forward(library, change_id, result=None):
+def finish_forward(library, change_id, result=None):
     """file_journal.finish of the forward change `change_id` of a write, its faces' records tidied: its counts, or None when
-    files are left. One every file was taken out of again wrote nothing, and finish erases it ({}: tidy leaves no row of a
-    change with no file done): `result`'s `change` says None, as the Result of a write that planned nothing does."""
+    files are left. One that wrote nothing is erased by finish (file_journal.ERASED): `result`'s `change` says None, as the
+    Result of a write that planned nothing does, so that no write names a change that is gone."""
     finished = file_journal.finish(library.path, change_id, also=face_batch.tidy)
-    if finished == {} and result is not None:
+    if finished is file_journal.ERASED and result is not None:
         result.details["change"] = None
     return finished
 
