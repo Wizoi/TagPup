@@ -26,6 +26,10 @@ test("a brief across two domains, or naming the integration owner, crosses; one 
   assert.equal(crossesDomains("Read .claude/agents/tagpup-owner-integration.md first."), false);
   assert.equal(crossesDomains("Domain: Files and Media."), true);
   assert.equal(crossesDomains("Domain: Files, Media (load the charters)."), true);
+  assert.equal(crossesDomains("Domain: Files / Media."), true);
+  assert.equal(crossesDomains("Domain: Files & Media."), true);
+  assert.equal(crossesDomains("Domain: Files/Media."), true);
+  assert.equal(crossesDomains("Domain: Files & Files."), false);
   assert.equal(crossesDomains("Domain: Files.\nDomain: Files (again)."), false);
   assert.equal(crossesDomains(ONE), false);
   assert.equal(crossesDomains("Rename a test file."), false);
