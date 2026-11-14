@@ -35,4 +35,3 @@ Findings fixed before 2026-09-23 are in the git log (`git log --grep="^fix"`). T
 
 | # | Found | Finding | Status |
 |---|---|---|---|
-| 2960 | 2026-11-13 | low: `dates.record_year` falls back to `photo_year(raw_metadata, path, media)` for a record with no "year", but both record builders (`services.photos.page_record`, `services.search._record`) always set "year", so the fallback has no live instance: only `tests/test_metadata_extraction.TestParseYearFromMetadata` and `tests/test_one_photo_whatever_its_spelling` reach it, with records nothing real makes (and `search._record` carries no "media" for its kind). Remove it, and point those tests at `photo_year` with a kind. | open |
