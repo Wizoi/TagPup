@@ -49,6 +49,13 @@ class NoFrames(Exception):
         return self.whose == video_frames.THE_FILE
 
 
+class FfmpegGone(Exception):
+    """ffmpeg, a prerequisite of the tool (DECISIONS 2026-11-06), is missing or does not run while a run needs it for a
+    clip's frames: `str()` is the sentence that says what the owner does (config.FFMPEG_MISSING or FFMPEG_BROKEN). Not a
+    NoFrames: not the clip's, not a moment's, so no caller marks a clip, keeps a note or tries it again for it; the run
+    stops with this sentence, brought up to the owner as an error (DECISIONS 2026-11-13)."""
+
+
 class PhotoEmbeddings:
     """The photos' vectors under one CLIP model: the library's when the file is as it
     was when its vector was made, else made by `clip` and kept.
@@ -57,13 +64,15 @@ class PhotoEmbeddings:
     written on a connection of its own. Without one, nothing is kept.
     """
 
-    def __init__(self, clip, photo_index=None, remember=True, model_key=None, ffmpeg=None):
+    def __init__(self, clip, photo_index=None, remember=True, model_key=None, ffmpeg=None, ffmpeg_problem=None):
         #: None when only the vectors kept are read (`model_key` given): the CLI's index asks what it keeps of each
         #: photo before it builds a model, and an index where every photo is kept builds none (tagpup_cli.py).
         self.clip = clip
-        #: What tagpup.config.locate_ffmpeg answered: a clip's frames are read with it (prepared). Handed in by the
-        #: runtime (Runtime.embeddings, the one maker of one that makes vectors); a run not given it refuses a clip.
-        self.ffmpeg = ffmpeg
+        #: tagpup.config.locate_ffmpeg and ffmpeg_problem themselves, asked at each clip (it may go while the run goes
+        #: on): a clip's frames are read with what the first answers once the second says None (frames_of). Handed in
+        #: by the runtime (Runtime.embeddings, the one maker of one that makes vectors); a run not given them reads no
+        #: clip (the index of a library whose clips all hold their vectors, the CLI's read of the vectors kept).
+        self.ffmpeg, self.ffmpeg_problem = ffmpeg, ffmpeg_problem
         self.photo_index = photo_index
         #: False: the library's vectors are read, and none is ever written (a Just look run,
         #: tagpup.jobs.suggestions: a vector is a row of the library).
@@ -217,12 +226,12 @@ class PhotoEmbeddings:
 
     def frames_of(self, file_path):
         """The CLIP_PICTURES frames of the clip at `file_path`, upright RGB pictures, fewer for a clip cut short after
-        its index (video_frames.frames), on the processor; NoFrames when ffmpeg gives none."""
-        if self.ffmpeg is None or not self.ffmpeg.ffmpeg:
-            # Not given at all (a run that reads no video), or given as config.locate_ffmpeg answers when it finds none.
-            raise NoFrames((self.ffmpeg and self.ffmpeg.problem)
-                           or "This run was not given ffmpeg, which reads a video's frames.", video_frames.THE_MOMENT)
-        found = video_frames.frames(self.ffmpeg, file_path, CLIP_PICTURES)
+        its index (video_frames.frames), on the processor; NoFrames when ffmpeg gives none; FfmpegGone when ffmpeg is
+        missing or does not run (config.ffmpeg_problem, asked at each clip: it may go while the run goes on)."""
+        gone = self.ffmpeg_problem()
+        if gone:
+            raise FfmpegGone(gone)
+        found = video_frames.frames(self.ffmpeg(), file_path, CLIP_PICTURES)
         if found.problem:
             raise NoFrames(found.problem, found.whose)
         return [images.from_jpeg(picture) for picture in found.pictures]

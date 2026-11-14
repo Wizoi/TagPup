@@ -1062,4 +1062,5 @@ class Runtime:
         of every process that makes one: config.ffmpeg_problem, checked where it starts). Not `remember`: nothing made
         is kept (a Just look run)."""
         return search.PhotoEmbeddings(self.clip(library) if clip is None else clip, photo_index, remember=remember,
-                                      ffmpeg=tagpup_config.locate_ffmpeg())
+                                      ffmpeg=tagpup_config.locate_ffmpeg,
+                                      ffmpeg_problem=tagpup_config.ffmpeg_problem)
