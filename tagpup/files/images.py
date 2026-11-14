@@ -457,11 +457,14 @@ def opened(photo_path, upright):
 
 def from_jpeg(data):
     """The RGB picture of JPEG bytes in memory: a clip's frame (tagpup.files.video_frames), upright already (ffmpeg
-    applies a video's rotation). Raises Unreadable when the bytes do not decode."""
+    applies a video's rotation), so its `info[BOXES_TURN_INFO]` is 1, no turn: a face found on it is in the frame as
+    stored (the face model's picture of a frame, scrfd_adaface.ScrfdAdaFace.picture_of_frame). Raises Unreadable when
+    the bytes do not decode."""
     try:
         with Image.open(io.BytesIO(data)) as img:
             picture = img.convert("RGB")
             picture.load()
+            picture.info[BOXES_TURN_INFO] = 1
             return picture
     except Exception as error:
         if not _decoder_failed(error):
