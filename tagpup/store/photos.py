@@ -664,6 +664,16 @@ def raw_rows(conn):
         yield paths.from_row(path, roots), json.loads(raw_json)
 
 
+def clip_raw_rows(conn):
+    """(id, path as the row holds it, path native, raw_metadata as read) of every clip (a row of kind 'video') holding
+    raw_metadata, by id: what the one-off writing of clips' Date Taken into their QuickTime headers lists
+    (scripts/date_clip_headers.py, through its service). One walk of idx_photos_clips (photo_index: 2,909 clips, 2026-11-13)."""
+    roots = store_roots.roots_for(conn)
+    for photo_id, row, raw_json in conn.execute("SELECT id, path, raw_metadata FROM photos WHERE kind = ? AND"
+                                                " raw_metadata IS NOT NULL AND raw_metadata != '' ORDER BY id", ("video",)):
+        yield photo_id, row, paths.from_row(row, roots), json.loads(raw_json)
+
+
 def row_paths(conn):
     """{photo id: path as the row holds it} of every photo: what sweeping the cache compares its entries
     with. 68,000 short strings; one scan of the table, once per sweep."""

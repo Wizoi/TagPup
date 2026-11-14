@@ -78,11 +78,13 @@ def plan(library, guesses=False, folder=None):
     return result
 
 
-def apply(library, planned, exiftool_path):
+def apply(library, planned, exiftool_path, on_planned=None):
     """Write what `plan` counted, as one change of photo files (face_people.write_tags): a Result as add_people's -- `changed`
     the photo files written, `errors` the photos that could not be (counted by the caller, never named), details `changes`
-    the journal's ids. Its progress is the batch's, on the Activity page (batches.listing reads another process's change)."""
+    the journal's ids. Its progress is the batch's, on the Activity page (batches.listing reads another process's change).
+    `on_planned(change id)`: as file_changes.write_fields' (what a stop left: file_changes.what_a_stop_left)."""
     writer = face_people.Writer(exiftool_path)
-    result = face_people.add_people(library, planned.details["work"], writer, operation=OPERATION, stop_at_first_error=False)
+    result = face_people.add_people(library, planned.details["work"], writer, operation=OPERATION, stop_at_first_error=False,
+                                     on_planned=on_planned)
     result.details["dry_run"] = False
     return result

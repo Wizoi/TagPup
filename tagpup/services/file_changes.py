@@ -693,16 +693,46 @@ def finish_forward(library, change_id, result=None):
     return finished
 
 
-def change_is_kept(library, change_id):
-    """Whether change `change_id` is still in the journal: what a stop that carries no `change` (the Ctrl+C came after the
-    write returned, with its change applied) asks, since a change that is gone is not one to undo (#2997)."""
-    return file_journal.change(library.path, change_id) is not None
-
-
 def files_done(library, change_id):
     """How many files of change `change_id` the journal holds done: what a write that is being stopped says it has written
     (a count, no path). The one under way may be written and not yet counted."""
     return sum(1 for row in file_journal.files_of(library.path, change_id) if row.state == "done")
+
+
+def what_a_stop_left(library, stopped, planned=None, noun="file", who=None):
+    """The sentence a write a person ran (a one-off script, a CLI command) says when Ctrl+C (`stopped`, the
+    KeyboardInterrupt) ended it: what it wrote and whether History holds a change to undo; the one place it is said
+    (#2997, #3020). `planned`: the id of the change the run's write_fields planned (its `on_planned`), None before the
+    plan. `noun`: what is written ("clip", "photo file"). `who`: the library's name the line starts with; without it, the
+    line starts "Stopped".
+
+    The stop's `change` is set by _write_fields' own handler: None, nothing was written and the change is erased (#2974);
+    an id, the files written (`written`, files_done) applied, `left` of them still to settle at the next open. A stop with
+    no `change` came before the write loop, after write_fields returned, or is a second press during the first one's read
+    back: the journal answers for the change planned: gone (it wrote nothing), applied, or still planned (the next open
+    settles the file under way). With none planned, the run planned and wrote nothing (writing first finishes a change an
+    earlier run left half done: settle)."""
+    said = None
+    if hasattr(stopped, "change"):
+        change, written, left = stopped.change, stopped.written, getattr(stopped, "left", 0)
+    elif planned is None:
+        said = ("stopped before this run planned or wrote anything; a change an earlier run left half done, which a run "
+                "finishes first, is finished by the next run.")
+    else:
+        found = file_journal.change(library.path, planned)
+        change, written, left = (None, 0, 0) if found is None else (planned, files_done(library, planned), 0)
+        if found is not None and found.status == "planned":
+            said = ("stopped: at least %d %s(s) written (the one under way may be too), recorded as change %d in History; "
+                    "the next open of the library finishes settling them. Run it again to continue."
+                    % (written, noun, planned))
+    if said is None and change is None:
+        said = "stopped: no %s written, no change recorded, nothing to undo. Run it again to continue." % noun
+    elif said is None:
+        kept = ("; %d more is settled the next time the library is opened, and then the change can be undone" % left
+                if left else ", which can be undone")
+        said = ("stopped: %s %s(s) written, recorded as change %d in History%s. Run it again to continue."
+                % ("some" if written is None else written, noun, change, kept))
+    return "%s: %s" % (who, said) if who else said[0].upper() + said[1:]
 
 
 def _kept_as(internal, change_id, left=0):

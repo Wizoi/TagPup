@@ -104,6 +104,9 @@ UNDO_CHECKS = {
     "rename tag": None,
     "remove tag": None,
     tagging.CLEAR_DUPLICATES: None,
+    # The one-off scripts/date_clip_headers.py's change (its service is a module that script alone names, the
+    # change kind spelled here so that this one names it not: merge-budget.mjs), undone as a save is.
+    "date clip headers": None,
     "rename after caption": None,
     "smart rename": None,
     "smart rename: original names": None,

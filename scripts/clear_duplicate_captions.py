@@ -106,34 +106,7 @@ def run(db_path, apply, out=say):
         result = tagging.clear_duplicate_captions(library, exiftool, apply=apply, on_planned=progress.planned,
                                                   on_chunk=progress.chunk)
     except KeyboardInterrupt as stopped:
-        change = getattr(stopped, "change", None)
-        if change is None and progress.change is None:
-            # Opening the library first finishes a change an earlier run left half done (settle_once), which writes files.
-            out("%s: stopped before this run planned or wrote anything. It first finishes a change an earlier run left "
-                "half done, if there is one: one it was finishing as it stopped is finished by the next run." % name)
-        elif change is None and progress.presses < 2 and not hasattr(stopped, "change"):
-            # The first Ctrl+C came after the write returned (no `change` set: its handler never ran): the change is
-            # applied unless the journal no longer holds it (#2997).
-            if file_changes.change_is_kept(library, progress.change):
-                out("%s: stopped: every file was written, recorded as change %d in History, which can be undone. "
-                    "Run this again to continue." % (name, progress.change))
-            else:
-                out("%s: stopped: change %d is no longer in History. Run this again to continue." % (name, progress.change))
-        elif change is None and progress.presses < 2:
-            # The first Ctrl+C, and the change it planned wrote nothing: it is erased (#2974), nothing to undo or settle.
-            out("%s: stopped: no file written, no change recorded, nothing to undo. Run this again to continue." % name)
-        elif change is None:
-            # A second Ctrl+C, in the read back: how far it had been written is the journal's, not claimed away.
-            written = progress.written()
-            out("%s: stopped again: at least %s file(s) written (the one under way may be too), recorded as change %d in "
-                "History; the next open of the library finishes settling them. Run this again to continue."
-                % (name, "some" if written is None else written, progress.change))
-        else:
-            written = getattr(stopped, "written", None)
-            out("%s: stopped: %s file(s) written, recorded as change %d in History, which can be undone; "
-                "run this again to continue." % (name, "some" if written is None else written, change))
-            if getattr(stopped, "left", 0):
-                out("%d file could not be read as it stopped: the next start of TagPup settles it." % stopped.left)
+        out(file_changes.what_a_stop_left(library, stopped, progress.change, who=name))
         return 130
     finally:
         if before is not None:
