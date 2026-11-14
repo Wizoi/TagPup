@@ -9,7 +9,10 @@ start, or its share falling asleep as its copy is put in place; a clip open in a
 disk, ffmpeg failing; two libraries holding the folder, the second asked to convert the clip meanwhile, or finding it at
 its MP4 by the name it kept (TwoLibrariesHoldingTheFolder); a clip tagged long ago in Windows, its Windows Tags carried
 into its copy's tags, one the tree lacks refused through the panel (AClipHoldingWindowsTags); a clip holding XMP
-other programs wrote, its packet carried whole into its copy, or refused when no patch reads it (AClipHoldingXmpOfOtherPrograms).
+other programs wrote, its packet carried whole into its copy, or refused when no patch reads it (AClipHoldingXmpOfOtherPrograms);
+a dated clip (a camera's .mov, an iPhone's dated with its zone, an .mp4 or a .wmv dated in its XMP) its Date Taken in
+its copy's XMP and every QuickTime header, ffmpeg carrying none, through a cut-short run and two libraries alike; one
+no header holds, in its XMP alone (assert_dated).
 The panel's
 Convert and Make smaller (MP4) by id: answered at once with a ticket, a second click refused, Cancel on the ticket, a bulk
 edit waiting behind, a shrink no smaller left as it is, a button that is not the clip's plan refused (ThePanelButtons).
@@ -23,9 +26,11 @@ import contextlib
 import json
 import os
 import re
+import struct
 import sys
 import threading
 import unittest
+import uuid
 from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -38,8 +43,8 @@ from view_library import ViewLibrary  # noqa: E402
 
 from tagpup.core import fields, paths, processes  # noqa: E402
 from tagpup.core.result import Result  # noqa: E402
-from tagpup.files import (clip_convert, containers, field_values, metadata, recycle_bin, shares,  # noqa: E402
-                          video_frames)
+from tagpup.files import (clip_convert, containers, field_values, in_place, metadata, recycle_bin,  # noqa: E402
+                          shares, video_frames)
 from tagpup.services import batches, convert, file_changes, sync, tagging  # noqa: E402
 from tagpup.services import photos as photo_actions  # noqa: E402
 from tagpup.store import file_journal, photos  # noqa: E402
@@ -58,11 +63,17 @@ CREATED = "2019-05-04T17:00:00Z"
 #: A Date Taken in a clip's XMP, with its zone, as Adobe's tools wrote the 105 XMP-dated .mp4 of photo_index (counted
 #: 2026-11-12): the date the library reads first (tagpup.core.dates.CLIP_XMP_DATE_FIELDS).
 XMP_TAKEN = "2018:03:02 09:15:00-07:00"
+#: A Date Taken in a .wmv's XMP (wmv_dated); and what a QuickTime header holds when it holds none.
+WMV_TAKEN = "2011:08:20 14:05:00"
+ZERO = "0000:00:00 00:00:00"
+#: The top-level ASF object holding a .wmv's XMP, where Adobe's XMP specification (part 3) puts it.
+ASF_XMP = uuid.UUID("BE7ACFCB-97A9-42E8-9C71-999491E3AFAC").bytes_le
 
 
-def make_clip(path, title=None, created=None):
+def make_clip(path, title=None, created=None, taken=None):
     """A one-second clip at `path` in the old format its extension names (FORMATS), with sound, titled `title`; `created`,
-    its container's creation time (a .wmv's ASF one is when its file was made: never its Date Taken)."""
+    its container's creation time (a .wmv's ASF one is when its file was made: never its Date Taken); a .wmv `taken`,
+    dated so in its XMP (wmv_dated)."""
     video, audio, container = FORMATS[os.path.splitext(path)[1]]
     titled = ["-metadata", "title=" + title] if title else []
     titled += ["-metadata", "creation_time=" + created] if created else []
@@ -70,6 +81,19 @@ def make_clip(path, title=None, created=None):
                           "-f", "lavfi", "-i", "sine=frequency=440:sample_rate=22050", "-t", "1", "-c:v", video,
                           "-c:a", audio] + titled + ["-f", container, path], capture_output=True)
     assert made.returncode == 0, made.stderr
+    return wmv_dated(path, taken) if taken else path
+
+
+def wmv_dated(path, taken):
+    """The .wmv at `path` given an XMP packet dated `taken` ("YYYY:MM:DD HH:MM:SS") in a top-level ASF object of its own
+    (ASF_XMP), which ExifTool reads as XMP:DateTimeOriginal and ffmpeg passes over."""
+    packet = (b'<?xpacket begin="\xef\xbb\xbf" id="W5M0MpCehiHzreSzNTczkc9d"?><x:xmpmeta xmlns:x="adobe:ns:meta/">'
+              b'<rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#"><rdf:Description rdf:about="" '
+              b'xmlns:exif="http://ns.adobe.com/exif/1.0/"><exif:DateTimeOriginal>%s</exif:DateTimeOriginal>'
+              b'</rdf:Description></rdf:RDF></x:xmpmeta><?xpacket end="w"?>'
+              % (taken[:10].replace(":", "-") + "T" + taken[11:]).encode())
+    with open(path, "ab") as handle:
+        handle.write(ASF_XMP + struct.pack("<Q", 24 + len(packet)) + packet)
     return path
 
 
@@ -84,9 +108,10 @@ class AnOldClipInTheLibrary(ALibraryHoldingAClip):
             patcher.start()
             self.addCleanup(patcher.stop)
 
-    def clip(self, name, title=TITLE):
-        """A clip `name` in the folder, made and recorded as the indexer reads it: (its path, its id)."""
-        path = make_clip(os.path.join(self.folder, name), title)
+    def clip(self, name, title=TITLE, taken=None):
+        """A clip `name` in the folder (a .wmv `taken`: dated so in its XMP), made and recorded as the indexer reads it:
+        (its path, its id)."""
+        path = make_clip(os.path.join(self.folder, name), title, taken=taken)
         return path, self.index(path)[0]
 
     def convert(self, path, **kwargs):
@@ -95,6 +120,12 @@ class AnOldClipInTheLibrary(ALibraryHoldingAClip):
     def held(self, path, *wanted):
         with field_values.session(EXIFTOOL) as et:
             return field_values.read_one(et, path, list(wanted))
+
+    def assert_dated(self, path, taken, headers):
+        """The clip at `path` dated by the carry as a save dates it: `taken` in its XMP, `headers` in every QuickTime
+        header box, read box by box (in_place.headers_held)."""
+        self.assertEqual([taken], fields.field_values(self.held(path, "XMP:DateTimeOriginal").get("XMP:DateTimeOriginal")))
+        self.assertEqual({field: [headers] for field in fields.CLIP_HEADER_DATES}, in_place.headers_held(path))
 
     def row_of(self, photo_id):
         (path, tags, raw), = self.vl.rows("SELECT path, tags, raw_metadata FROM photos WHERE id = ?", photo_id)
@@ -224,12 +255,12 @@ class CutShort(AnOldClipInTheLibrary):
     def test_killed_at_each_step_after_its_copy_was_recorded_it_is_finished_by_the_settle(self):
         for n, step in enumerate(("renamed", "rows followed", "carried", "original deleted")):
             with self.subTest(step):
-                source, photo_id = self.clip("slipway%d.wmv" % n)
+                source, photo_id = self.clip("slipway%d.wmv" % n, taken=WMV_TAKEN)
                 self.killed_at(step, source)
                 self.settled()
                 self.assertEqual(["done"], self.converted_states(photo_id), "the conversion done, never a conflict")
                 self.assertFalse(os.path.exists(source), "the original deleted")
-                self.assert_converted(source, photo_id, TITLE)
+                self.assert_dated(self.assert_converted(source, photo_id, TITLE), WMV_TAKEN, WMV_TAKEN)
 
     def test_its_copy_is_on_its_disk_before_it_is_recorded_so_a_power_cut_after_the_record_finds_it_whole(self):
         # ffmpeg does not flush: cut after the record and before the disk's cache was written, the copy's name, file id
@@ -636,13 +667,13 @@ class TwoLibrariesHoldingTheFolder(AnOldClipInTheLibrary):
         # The second's ffmpeg, refused by the first's temp there, removed it (#2858): the claim refuses it first.
         for n, moment in enumerate(("convert", "verified")):
             with self.subTest(moment):
-                source, photo_id = self.clip("quay%d.wmv" % n)
+                source, photo_id = self.clip("quay%d.wmv" % n, taken=WMV_TAKEN)
                 self.held_there(source)
                 first, second = self.asked_there_meanwhile(source, moment)
                 self.assertEqual((0, convert.TEMP_TAKEN), (second.changed, second.message()))
                 self.assertIsNone(second.details["change"], "its change wrote nothing and is erased (#2974): none to name")
                 self.assertEqual(1, first.changed, first.message())
-                self.assert_converted(source, photo_id, TITLE)
+                self.assert_dated(self.assert_converted(source, photo_id, TITLE), WMV_TAKEN, WMV_TAKEN)
 
     def test_the_second_finds_the_clip_at_its_mp4_by_the_name_it_kept(self):
         source, photo_id = self.clip("quay.wmv")
@@ -836,15 +867,17 @@ class AClipHoldingXmpOfOtherPrograms(AnOldClipInTheLibrary):
         self.assertEqual([], self.converted_states(photo_id), "taken out of the change")
 
 
-def make_mov(path, crf, created=CREATED):
+def make_mov(path, crf, created=CREATED, apple=None):
     """A one-second H.264 and AAC clip that plays at `path`, a .mov (or an .mp4, by its extension), at x264's quality
     `crf`: 0 (lossless, far larger than the conversion's MP4) or 51 (smaller than it); dated as a camera dates it, by its
-    container's creation time `created` (CREATED)."""
+    container's creation time `created` (CREATED), and `apple` an iPhone's local time with its zone
+    ("2018-03-02T09:15:00-0700", its Apple CreationDate, read before the creation time)."""
     container = "mp4" if path.endswith(".mp4") else "mov"
+    phone = ["-metadata", "com.apple.quicktime.creationdate=" + apple, "-movflags", "use_metadata_tags"] if apple else []
     made = processes.run([TOOLS.ffmpeg, "-y", "-loglevel", "error", "-f", "lavfi", "-i", "testsrc=size=320x240:rate=25",
                           "-f", "lavfi", "-i", "sine=frequency=440:sample_rate=22050", "-t", "1", "-c:v", "libx264",
                           "-preset", "ultrafast", "-crf", str(crf), "-pix_fmt", "yuv420p", "-c:a", "aac",
-                          "-metadata", "creation_time=" + created, "-f", container, path], capture_output=True)
+                          "-metadata", "creation_time=" + created] + phone + ["-f", container, path], capture_output=True)
     assert made.returncode == 0, made.stderr
     return path
 
@@ -853,8 +886,8 @@ class ThePanelButtons(AnOldClipInTheLibrary):
     """The clip panel's Convert and Make smaller (MP4), by id (POST /api/clip/convert): a batch of one on a thread of the
     server, the request answered at once with its ticket, how it ended read by the ticket (/api/clip/converted)."""
 
-    def mov(self, name, crf):
-        path = make_mov(os.path.join(self.folder, name), crf)
+    def mov(self, name, crf, apple=None):
+        path = make_mov(os.path.join(self.folder, name), crf, apple=apple)
         return path, self.index(path)[0]
 
     def held_up(self):
@@ -894,7 +927,7 @@ class ThePanelButtons(AnOldClipInTheLibrary):
         (taken,), = self.vl.rows("SELECT taken FROM photos WHERE id = ?", photo_id)
         return taken
 
-    def test_a_dated_mov_made_smaller_keeps_its_date_taken_in_the_row_and_in_the_mp4(self):
+    def test_a_dated_mov_made_smaller_keeps_its_date_taken_in_the_row_its_xmp_and_every_header(self):
         source, photo_id = self.mov("harbour.mov", 0)
         taken = self.taken(photo_id)
         self.assertTrue(taken, "the .mov is dated by its QuickTime:CreateDate")
@@ -902,12 +935,19 @@ class ThePanelButtons(AnOldClipInTheLibrary):
         self.assertTrue(said["success"], said)
         self.assertFalse(os.path.exists(source), "the .mov deleted for good")
         self.assertEqual(taken, self.taken(photo_id), "the row's Date Taken is the .mov's")
-        target = clip_convert.target_of(source)
-        self.assertEqual(["2019:05:04 17:00:00"], fields.field_values(
-            self.held(target, "QuickTime:CreateDate").get("QuickTime:CreateDate")),
-            "the MP4 keeps the creation time other programs read ('Media created')")
+        # Its UTC creation time read as local, written as if UTC (DECISIONS 2026-11-13): ffmpeg's copy of it is cleared.
+        self.assert_dated(clip_convert.target_of(source), taken, taken)
 
-    def test_an_mp4_dated_in_its_xmp_made_smaller_keeps_that_date(self):
+    def test_an_iphone_mov_dated_with_its_zone_keeps_the_zone_in_its_xmp_and_its_digits_in_every_header(self):
+        source, photo_id = self.mov("harbour.mov", 0, apple="2018-03-02T09:15:00-0700")
+        self.assertEqual(XMP_TAKEN, self.taken(photo_id), "dated by its Apple CreationDate")
+        said = self.ended(self.ask(photo_id, "shrink", source))
+        self.assertTrue(said["success"], said)
+        self.assertEqual(XMP_TAKEN, self.taken(photo_id), "the row's Date Taken is the .mov's")
+        self.assert_dated(clip_convert.target_of(source), XMP_TAKEN, "2018:03:02 09:15:00")
+
+    def test_an_mp4_dated_in_its_xmp_made_smaller_keeps_that_date_and_its_headers_take_it(self):
+        # Its packet, carried whole, holds the date while ffmpeg left every header zero: the carry writes them.
         source, photo_id = self.mov("dock.mp4", 0)
         dated = file_changes.write_fields(self.vl.library, "save", EXIFTOOL, [source], ["XMP:DateTimeOriginal"],
                                           lambda _path, _held: file_changes.Plan(after={"XMP:DateTimeOriginal": XMP_TAKEN}))
@@ -916,20 +956,32 @@ class ThePanelButtons(AnOldClipInTheLibrary):
         said = self.ended(self.ask(photo_id, "shrink", source))
         self.assertTrue(said["success"], said)
         self.assertEqual(XMP_TAKEN, self.taken(photo_id), "the row's Date Taken is the one its XMP held")
-        self.assertEqual([XMP_TAKEN], fields.field_values(
-            self.held(source, "XMP:DateTimeOriginal").get("XMP:DateTimeOriginal")), "the MP4 holds it")
+        self.assert_dated(source, XMP_TAKEN, "2018:03:02 09:15:00")
 
-    def test_a_wmv_holding_a_creation_time_is_converted_undated(self):
-        # A .wmv's ASF creation time is when its file was made, not its Date Taken (DECISIONS 2026-11-09, item 6).
-        source = make_clip(os.path.join(self.folder, "quay.wmv"), TITLE, created=CREATED)
-        photo_id = self.index(source)[0]
-        self.assertIsNone(self.taken(photo_id))
-        said = self.ended(self.ask(photo_id, "convert", source))
+    def test_an_mp4_dated_in_its_xmp_before_any_header_date_is_made_smaller_dated_by_its_xmp_alone(self):
+        # Dated so by another program (TagPup's save refuses it: field_values.clip_date_refused); Convert goes on.
+        source, photo_id = self.mov("dock.mp4", 0)
+        old = "1899:12:31 10:00:00"
+        dated = file_changes.write_fields(self.vl.library, "save", EXIFTOOL, [source], ["XMP:DateTimeOriginal"],
+                                          lambda _path, _held: file_changes.Plan(after={"XMP:DateTimeOriginal": old}))
+        self.assertEqual(1, dated.changed, dated.message())
+        said = self.ended(self.ask(photo_id, "shrink", source))
         self.assertTrue(said["success"], said)
-        self.assertIsNone(self.taken(photo_id), "an undated old clip stays undated")
-        self.assertEqual([], [value for value in fields.field_values(self.held(
-            clip_convert.target_of(source), "QuickTime:CreateDate").get("QuickTime:CreateDate"))
-            if not str(value).startswith("0000")], "the MP4 holds no creation time")
+        self.assertEqual(old, self.taken(photo_id))
+        self.assert_dated(source, old, ZERO)
+
+    def test_an_old_wmv_is_dated_by_its_xmp_alone_never_by_its_creation_time(self):
+        # A .wmv's ASF creation time is when its file was made, not its Date Taken (DECISIONS 2026-11-09, item 6).
+        for name, taken in (("quay.wmv", None), ("slipway.wmv", WMV_TAKEN)):
+            with self.subTest(name):
+                source = make_clip(os.path.join(self.folder, name), TITLE, created=CREATED, taken=taken)
+                photo_id = self.index(source)[0]
+                self.assertEqual(taken, self.taken(photo_id))
+                said = self.ended(self.ask(photo_id, "convert", source))
+                self.assertTrue(said["success"], said)
+                self.assertEqual(taken, self.taken(photo_id), "an undated old clip stays undated")
+                self.assertEqual({field: [taken or ZERO] for field in fields.CLIP_HEADER_DATES},
+                                 in_place.headers_held(clip_convert.target_of(source)), "its headers")
 
     def test_a_mov_whose_mp4_is_no_smaller_is_left_as_it_is(self):
         source, photo_id = self.mov("harbour.mov", 51)
