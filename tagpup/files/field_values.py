@@ -40,7 +40,11 @@ read back, before the file is done (tagpup.services.file_changes._verified), and
 **A clip** (DECISIONS 2026-11-05, M7). A clip's file is never ExifTool's to write: a journaled save of its tags, title,
 name or Date Taken (fields.CLIP_FIELDS) patches its XMP alone (tagpup.files.in_place.patch_clip, its packet segment_edits.new_packet's),
 on since the owner's trial on 20 copies (DECISIONS 2026-11-07, item 4); every other write of a clip is refused before a byte (a Refused, its sentence
-the owner's), and so is one the patch cannot place (images.CLIP_NOT_PATCHED).
+the owner's), and so is one the patch cannot place (images.CLIP_NOT_PATCHED). Its Date Taken is written into its QuickTime
+headers too, in the same patch (fields.CLIP_HEADER_DATES; DECISIONS 2026-11-13), never without its XMP date beside it
+(clip_refused): the library reads a clip's XMP date first, so it never reads a header TagPup wrote. Those three fields are
+read by TagPup's own walk of the clip, every box of each kind (_read_headers): ExifTool answers one box of each, and a
+write's before, its verify and its undo are of every box (#3004).
 """
 import logging
 import os
@@ -48,7 +52,7 @@ import tempfile
 
 from exiftool.exceptions import ExifToolNotRunning
 
-from tagpup.core import fields, paths
+from tagpup.core import dates, fields, paths
 from tagpup.core.result import Refused
 from tagpup.files import bake, containers, exiftool_session, identity, images, in_place, segment_edits, shares
 
@@ -191,7 +195,7 @@ def read(et, photo_paths, wanted, also=(), records=None, stop=None, params=()):
         logger.warning("%s; %d photo(s) were not read: %s", said, len(left), error)
         for one in left:
             found[paths.key(one)] = NotAnswered(said)
-        return found
+        return _read_headers(found, photo_paths, wanted)
 
     for start in range(0, len(photo_paths), READ_BATCH):
         if stop is not None and stop.is_set():
@@ -226,6 +230,40 @@ def read(et, photo_paths, wanted, also=(), records=None, stop=None, params=()):
                 return stalled(error, missed + photo_paths[start + READ_BATCH:])
             except Exception as e:
                 found[paths.key(one)] = e if isinstance(e, Unreadable) else Unreadable(str(e))
+    return _read_headers(found, photo_paths, wanted)
+
+
+def _read_headers(found, photo_paths, wanted):
+    """`found`, read's answer, each clip's QuickTime header dates of `wanted` (fields.CLIP_HEADER_DATES) put in place of
+    ExifTool's: TagPup's own walk's, the texts of every box of each kind in file order (in_place.headers_held; DECISIONS
+    2026-11-13, #3004), since ExifTool answers one box of each and a write sets, verifies and gives back every box. The
+    indexer, asking them only `also`, keeps ExifTool's record. A clip the walk does not read (an old format: a .wmv or an
+    .avi, whose date save the patch refuses) keeps ExifTool's values; a clip whose share does not answer is NotAnswered,
+    and so is every clip after it, unread (one read waits one deadline); one whose headers could not be read, Unreadable."""
+    asked = [field for field in fields.CLIP_HEADER_DATES if field in wanted]
+    if not asked:
+        return found
+    away = None
+    for one in photo_paths:
+        key = paths.key(one)
+        held = found.get(key)
+        if not isinstance(held, dict) or not images.is_clip(one):
+            continue
+        if away is not None:
+            found[key] = NotAnswered(away)
+            continue
+        try:
+            headers = in_place.headers_held(one)
+        except in_place.Away:
+            away = "its folder did not answer the read of its QuickTime headers in %d s" % in_place.SECONDS
+            found[key] = NotAnswered(away)
+            continue
+        except (OSError, ValueError) as error:
+            found[key] = Unreadable("its QuickTime headers could not be read: %s"
+                                    % (getattr(error, "strerror", None) or error))
+            continue
+        if headers is not None:
+            held.update({field: headers[field] for field in asked})
     return found
 
 
@@ -339,9 +377,13 @@ def clip_refused(path, values):
     """images.CLIP_NOT_EDITED when a write of `values` to the clip at `path` is refused before the clip is looked at --
     a field outside those writes(path) names (fields.fields_of) -- else None: the
     one rule, asked by _clip_written and, before anything is written, by an undo's rehearsal
-    (tagpup.services.file_changes._undoable), so the change it refuses stays applied."""
+    (tagpup.services.file_changes._undoable), so the change it refuses stays applied -- or one naming a QuickTime header
+    date (fields.CLIP_HEADER_DATES) without the XMP date the library reads first (DECISIONS 2026-11-13): a header TagPup
+    writes always has it beside it; an undo giving back a clip with no XMP date names it, cleared."""
     named = fields.fields_of(writes(path))
     if not set(values) <= named:
+        return images.CLIP_NOT_EDITED
+    if any(field in values for field in fields.CLIP_HEADER_DATES) and dates.CLIP_XMP_DATE_FIELDS[0] not in values:
         return images.CLIP_NOT_EDITED
     return None
 
@@ -372,9 +414,12 @@ def _clip_written(photo_path, values, saving):
     category = None
     if fields.CLIP_CATEGORY in values:
         category = tuple(fields.as_written(fields.CLIP_CATEGORY, values[fields.CLIP_CATEGORY]))
+    # A clip's QuickTime header dates, set beside its XMP date or given back box by box by its undo (clip_patch;
+    # DECISIONS 2026-11-13).
+    headers = {field: fields.as_written(field, values[field]) for field in fields.CLIP_HEADER_DATES if field in values}
     try:
         stale = in_place.patch_clip(photo_path, lambda old: segment_edits.new_packet(old, values), saved_first,
-                                    title=title, category=category)
+                                    title=title, category=category, dates=headers)
     except in_place.Away:
         raise NotAnswered("its folder did not answer the patch of its fields in %d s; it is settled by its bytes "
                           "the next time" % in_place.SECONDS) from None
