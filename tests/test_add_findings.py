@@ -283,6 +283,24 @@ class Files(unittest.TestCase):
         self.assertIn("fixed: abc; wrote 60 of 60 on a copy |", self.read(self.findings))
         run(self.base + ["--status", "2", "decided: by design"])
 
+    def test_a_data_or_wrong_row_is_not_closed_fixed_without_a_commit(self):
+        rows = ("| 6 | 2026-11-13 | data: a write loses a tag. | open |\n"
+                "| 7 | 2026-11-13 | wrong: a count is off. | open |\n"
+                "| 8 | 2026-11-13 | low: a label. | open |\n")
+        with open(self.findings, "a", encoding="utf-8", newline="") as handle:
+            handle.write(rows)
+        before = self.read(self.findings)
+        for key in ("6", "7"):
+            with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
+                run(self.base + ["--status", key, "fixed: the loop is closed"])
+        self.assertEqual(before, self.read(self.findings))
+        run(self.base + ["--status", "6", "fixed: 0123abcd"])
+        run(self.base + ["--status", "7", "decided: by design"])
+        run(self.base + ["--status", "8", "fixed: no commit needed"])
+        text = self.read(self.findings)
+        self.assertIn("fixed: 0123abcd |", text)
+        self.assertIn("fixed: no commit needed |", text)
+
     def test_a_row_that_is_nowhere_is_an_error_and_nothing_is_written(self):
         before = self.read(self.findings)
         with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
