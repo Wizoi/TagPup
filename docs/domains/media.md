@@ -35,8 +35,16 @@ answer for a count.
 
 - **A clip's Date Taken** (DECISIONS 2026-11-08, A5 (D) REVISED) is written into its exif:DateTimeOriginal, and
   into its xmp:CreateDate only where it holds one (`fields.held_dates`, decided when the write is planned: 41
-  photo_index clips held one, counted 2026-11-08); its QuickTime dates are never written. The index dates a clip by its XMP dates
-  first (`dates.CLIP_XMP_DATE_FIELDS`), then its QuickTime ones. The rows dated before that rule (photo_index 80
+  photo_index clips held one, counted 2026-11-08). The same save sets the creation time of every QuickTime header (the
+  movie's, each track's, each media's; `fields.CLIP_HEADER_DATES`) in the one patch, each at its box's width (version 0
+  or 1) and as the local date's digits (a header TagPup wrote is local-as-UTC; a camera's stays UTC, DECISIONS
+  2026-11-02 item 8): a box holding the date already is skipped, a clip whose XMP holds the date and whose headers hold
+  zeros has them written (#3002), and a header is never written without its XMP date beside it (`field_values.clip_refused`).
+  A date before 1904, after early 2040, or not to the second is refused before anything is written
+  (`field_values.clip_date_refused`); the page's minute-only value is given its seconds (`fields.date_taken_value`).
+  Reads of the three header fields are TagPup's own walk (`in_place.headers_held`), per box, since ExifTool answers one
+  value per kind. The index dates a clip by its XMP dates first (`dates.CLIP_XMP_DATE_FIELDS`), then its QuickTime ones
+  (the reader prefers XMP). Convert's carry writes a clip's XMP dates alone until cut 2. The rows dated before that rule (photo_index 80
   of its 2,179 clips then, none by its year; kr-track and renton_parkrun none) were dated again from their own raw_metadata
   by a one-off, applied on photo_index as the journal's "rederive clip dates" (undone from History as any change of
   rows: `journal.RETIRED`) and deleted once no clip was apart (#2734). C5:
