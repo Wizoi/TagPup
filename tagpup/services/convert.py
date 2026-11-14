@@ -208,7 +208,7 @@ def convert_clip(library, exiftool_path, tools, source, reason=OLD_FORMAT, stop=
             claim = clip_convert.claimed(temp)
             if claim is not True:
                 file_journal.withdraw(library.path, [row.id])
-                file_journal.finish(library.path, change_id)
+                file_changes.finish_forward(library, change_id, result)
                 result.refuse(TEMP_TAKEN if claim is False else claim)
                 return result
         except BaseException:
@@ -232,7 +232,7 @@ def convert_clip(library, exiftool_path, tools, source, reason=OLD_FORMAT, stop=
                                      label="change %d: its copy made" % change_id)
         with file_changes.exclusively():
             if _onward(library, exiftool_path, row, True, result, problem):
-                file_journal.finish(library.path, change_id)
+                file_changes.finish_forward(library, change_id, result)
             else:
                 file_journal.release(library.path, change_id)
             if result.changed:

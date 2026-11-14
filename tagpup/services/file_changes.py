@@ -220,7 +220,7 @@ def _exclusive(function):
 _running = threading.local()
 
 
-def _settle_stopped(library, change_id, et=None):
+def _settle_stopped(library, change_id, et=None, result=None):
     """A change a stop cut short is finished now, not at the next settle: the files never written are taken
     out of it and it is applied for the files that were, so that what was written can be undone at once.
     The pin has been let go by now (the roots changed), so these writes see the roots as they are.
@@ -229,7 +229,8 @@ def _settle_stopped(library, change_id, et=None):
     after the write it was given, if any -- and settled by what it holds, never written: done if it holds what it
     was to hold, as a crash settle records it (_held_or_conflict); taken out if it holds what it held (#1507). A Ctrl+C
     in the CLI often ends ExifTool too (one console): a file that cannot be read now stays `writing` and the change
-    unfinished, for the next open to settle as a crash leaves it (#1508). Returns how many files are left so."""
+    unfinished, for the next open to settle as a crash leaves it (#1508). Returns how many files are left so. A change that
+    wrote nothing is erased by finishing it (file_journal.finish): `result`'s `change` then says None."""
     if not change_id:
         return 0
     left = 0
@@ -244,7 +245,7 @@ def _settle_stopped(library, change_id, et=None):
                 elif settled[0] == "writing":
                     left += 1
         if not left:
-            file_journal.finish(library.path, change_id, also=face_batch.tidy)
+            finish_forward(library, change_id, result)
     except Exception as problem:
         logger.warning("Could not finish change %s after it was stopped: %s", change_id, problem)
     return left
@@ -269,13 +270,14 @@ def _pinned(function):
             result = getattr(_running, "result", None) or Result()
             _running.result = None
             said = roots_service.stopped(stop)
+            # Settled first: a change that wrote nothing is erased, and the sentence names no change.
+            _settle_stopped(library, result.details.get("change"), result=result)
             if result.changed or result.details.get("change"):
                 said += " Before it stopped %d file(s) were written%s." % (
                     result.changed, _kept_as(getattr(_running, "internal", False), result.details.get("change")))
             result.refuse(said)
             if isinstance(stop, roots_service.RootsChanged):
                 result.details["roots_stopped"] = True     # a run of many writes ends here (bake_after_index)
-            _settle_stopped(library, result.details.get("change"))
             return _nothing_more(result)
     return held
 
@@ -394,7 +396,7 @@ def write_fields(library, operation, exiftool_path, photo_paths, read, plan_one,
     more. It writes nothing; one that raises ends the write as a crash does (the rest settled forward at the next open).
 
     A Result: `changed` the files written, errors the photos that failed and the
-    conflicts. details: `change` (its id, or None when nothing was written), `written`
+    conflicts. details: `change` (its id, or None when the change is gone: nothing was written, or an internal one's files are done and it is erased), `written`
     {path: detail} of each photo written or already holding it, `conflicts` the photos,
     named by id, found changed outside since they were read; `read_only`, when one failed so, the paths of the photos
     whose write failed and whose file is marked read-only: a failure no retry changes, where every other (a file held
@@ -642,14 +644,14 @@ def _write_fields(et, library, operation, exiftool_path, photo_paths, read, plan
         if stopped and stopped.get("share"):
             _share_stopped(library, operation in file_journal.INTERNAL, change_id, result, stopped, stalled)
         else:
-            if file_journal.finish(library.path, change_id, also=face_batch.tidy) is None:
+            if finish_forward(library, change_id, result) is None:
                 # A patched file that could not be read after its write stays `writing` with its record (_by_bytes):
                 # the change is let go, for the next settle to finish.
                 file_journal.release(library.path, change_id)
             if stopped:
                 result.refuse("Stopped as asked after %d of %d photos: %d file(s) were written%s; the rest were not written."
                               % (stopped["after"], stopped["of"], result.changed,
-                                 _kept_as(operation in file_journal.INTERNAL, change_id)))
+                                 _kept_as(operation in file_journal.INTERNAL, change_id) if result.details["change"] else ""))
     except BaseException as stopped:
         if isinstance(stopped, KeyboardInterrupt):
             # First, in one transaction, the files not reached are taken out (_settle_stopped takes out what is left): a
@@ -665,13 +667,13 @@ def _write_fields(et, library, operation, exiftool_path, photo_paths, read, plan
         if isinstance(stopped, KeyboardInterrupt):
             # Stopped by the person (Ctrl+C, Ctrl+Break in the CLI): what is written stays, applied and undoable; the files
             # not reached are taken out, not written by whatever opens the library next (#1493). A crash is settled forward.
-            stopped.left = _settle_stopped(library, change_id, et)
+            stopped.left = _settle_stopped(library, change_id, et, result)
             # What the journal holds done, not what this loop had counted: the file under way may be done already.
             try:
                 stopped.written = files_done(library, change_id)
             except Exception:
                 stopped.written = None
-            stopped.change = change_id
+            stopped.change = result.details["change"]      # None: it wrote nothing, and is erased
         file_journal.release(library.path, change_id)
         raise
     finally:
@@ -679,6 +681,22 @@ def _write_fields(et, library, operation, exiftool_path, photo_paths, read, plan
             unpooled.release()
     logger.info("%s: change %d, %s, wrote %d file(s)", library.path, change_id, operation, result.changed)
     return result
+
+
+def finish_forward(library, change_id, result=None):
+    """file_journal.finish of the forward change `change_id` of a write, its faces' records tidied: its counts, or None when
+    files are left. One that wrote nothing is erased by finish (file_journal.ERASED): `result`'s `change` says None, as the
+    Result of a write that planned nothing does, so that no write names a change that is gone."""
+    finished = file_journal.finish(library.path, change_id, also=face_batch.tidy)
+    if finished is file_journal.ERASED and result is not None:
+        result.details["change"] = None
+    return finished
+
+
+def change_is_kept(library, change_id):
+    """Whether change `change_id` is still in the journal: what a stop that carries no `change` (the Ctrl+C came after the
+    write returned, with its change applied) asks, since a change that is gone is not one to undo (#2997)."""
+    return file_journal.change(library.path, change_id) is not None
 
 
 def files_done(library, change_id):
@@ -706,7 +724,7 @@ def _share_stopped(library, internal, change_id, result, stopped, stalled):
     unfinished, for the next settle to decide by what it holds (as a crash leaves it); it is not read again: the write's
     session is dead (StaysDead) and would only say so. What stopped answering is ExifTool: a share
     gone away, a drive that stopped, or ExifTool itself exiting (exiftool_session); the sentences say no more than that."""
-    _settle_stopped(library, change_id)
+    _settle_stopped(library, change_id, result=result)
     left = sum(1 for row in file_journal.files_of(library.path, change_id) if row.state == "writing")
     if left:
         file_journal.release(library.path, change_id)

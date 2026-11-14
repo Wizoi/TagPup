@@ -189,6 +189,21 @@ class TheApply(Mending):
     def test_ctrl_c_before_a_file_is_written_takes_it_out(self):
         self.stopped_by_ctrl_c_at("file writing", on_disk=2)
 
+    def test_ctrl_c_before_the_first_file_is_written_says_no_change_was_recorded(self):
+        """#2974: a change that wrote nothing is erased, so the CLI names no change and no undo, not `change none`."""
+        photos = [self.drifted("drift_%d.jpg" % n) for n in range(batches.CHUNK + 1)]
+
+        def reached(at):
+            if at == "file writing":
+                raise KeyboardInterrupt
+        with mock.patch.object(file_changes, "_reached", side_effect=reached):
+            said = self.run_cli("--apply")
+        self.assertEqual(1, said.exit_code, said.output)
+        self.assertIn("Stopped: no photo file written, no change recorded, nothing to undo", said.output)
+        self.assertNotIn("none", said.output)
+        self.assertEqual([], self.operations())
+        self.assertEqual([], [photo for photo in photos if self.files.tags_of(photo)])
+
     def test_ctrl_c_after_a_file_is_written_before_it_is_recorded_keeps_it(self):
         self.stopped_by_ctrl_c_at("file written", on_disk=3)
 

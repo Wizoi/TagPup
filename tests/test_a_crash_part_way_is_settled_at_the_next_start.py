@@ -121,15 +121,16 @@ class ACrashAndTheNextStart(FilesCase):
         self.assertEqual(1, self.settle(), "an earlier process with a running one's id")
         self.assertEqual("applied", self.status(change))
 
-    def test_a_change_every_file_was_withdrawn_from_is_finished_as_failed(self):
+    def test_a_change_every_file_was_withdrawn_from_leaves_no_row_once_settled(self):
         # Its one file could not be written and was taken out; then the process stopped, leaving it planned with no files.
+        # It wrote nothing: the settle erases it, as the change that is not stopped is erased (file_journal.finish).
         change, planned = file_journal.plan(self.library.path, "add to all selected", [
             {"photo_id": None, "path": self.a, "before": {"XMP:Subject": []}, "after": {"XMP:Subject": ["Harbour"]}}])
         file_journal.withdraw(self.library.path, [row.id for row in planned])
         self.owned_by(GONE, change)
         self.assertEqual([change], [c.id for c in file_journal.unfinished(self.library.path)])
         self.assertEqual(1, self.settle())
-        self.assertEqual("failed", self.status(change))
+        self.assertEqual([], self.rows("SELECT id FROM changes WHERE id = ?", (change,)), "no row of a change that wrote nothing")
         self.assertEqual([], file_journal.unfinished(self.library.path))
 
 
@@ -278,14 +279,13 @@ class APictureAWriteDamagesTwice(FilesCase):
         return self.rows("SELECT state, note FROM change_files WHERE change_id = ?", (change,))
 
     def test_forward_it_is_taken_out_of_its_change_and_its_error_says_why(self):
-        row = self.row()
+        row, last = self.row(), self.last_change()
         with self.damaging():
             result = self.add([self.a])
-        change = result.details["change"]
         self.assertEqual((0, 2, 1), (result.changed, self.writes, result.details.get("pictures_refused")))
         self.assertIn(file_journal.PICTURE_CHANGED, " ".join(why for _path, why in result.errors))
-        self.assertEqual(("failed", [], ["Beach"], row), (self.status(change), self.states(change), keywords_of(self.a),
-                                                          self.row()))
+        self.assertEqual((None, last, ["Beach"], row), (result.details["change"], self.last_change(), keywords_of(self.a),
+                                                        self.row()), "its change, which wrote nothing, leaves no row")
         self.assertEqual(0, self.counted(), "a file taken out of its change is no conflict")
 
     def test_a_bake_settled_at_the_next_start_keeps_its_change_and_the_conflict_the_doctor_counts(self):

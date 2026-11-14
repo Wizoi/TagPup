@@ -134,7 +134,7 @@ class ATextHoldingALineBreakReachesTheFileWhole(kept.BakeCase):
         for caption, changed in (("Fare $4 @ the pier", 1), ("Fare $4" + LF + "return", 0)):
             with self.subTest(caption=caption):
                 after = {field: [caption] for field in fields.caption_fields(caption)}
-                before, written = self.held(a, list(after)), os.stat(a).st_mtime_ns
+                before, written, last = self.held(a, list(after)), os.stat(a).st_mtime_ns, self.last_change()
                 result = file_changes.write_fields(self.library, "caption", EXIFTOOL, [a], list(after),
                                                    lambda path, held: file_changes.Plan(after=after))
                 self.assertEqual(changed, result.changed, result.errors)
@@ -142,8 +142,7 @@ class ATextHoldingALineBreakReachesTheFileWhole(kept.BakeCase):
                     self.assertEqual(after, self.held(a, list(after)))
                 else:
                     self.assertIn("cannot be given to ExifTool", str(result.errors))
-                    change = result.details["change"]
-                    self.assertEqual(("failed", []), (self.status(change), self.states(change)))
+                    self.assertEqual((None, last), (result.details["change"], self.last_change()))
                     self.assertEqual((before, written), (self.held(a, list(after)), os.stat(a).st_mtime_ns))
 
     def test_a_bake_over_a_region_named_over_two_lines_is_undone_equal(self):

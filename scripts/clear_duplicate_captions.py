@@ -111,6 +111,17 @@ def run(db_path, apply, out=say):
             # Opening the library first finishes a change an earlier run left half done (settle_once), which writes files.
             out("%s: stopped before this run planned or wrote anything. It first finishes a change an earlier run left "
                 "half done, if there is one: one it was finishing as it stopped is finished by the next run." % name)
+        elif change is None and progress.presses < 2 and not hasattr(stopped, "change"):
+            # The first Ctrl+C came after the write returned (no `change` set: its handler never ran): the change is
+            # applied unless the journal no longer holds it (#2997).
+            if file_changes.change_is_kept(library, progress.change):
+                out("%s: stopped: every file was written, recorded as change %d in History, which can be undone. "
+                    "Run this again to continue." % (name, progress.change))
+            else:
+                out("%s: stopped: change %d is no longer in History. Run this again to continue." % (name, progress.change))
+        elif change is None and progress.presses < 2:
+            # The first Ctrl+C, and the change it planned wrote nothing: it is erased (#2974), nothing to undo or settle.
+            out("%s: stopped: no file written, no change recorded, nothing to undo. Run this again to continue." % name)
         elif change is None:
             # A second Ctrl+C, in the read back: how far it had been written is the journal's, not claimed away.
             written = progress.written()

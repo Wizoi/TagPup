@@ -64,6 +64,7 @@ CHUNK = 500
 INDEX_BAKE = "index bake"
 #: The operations whose changes are internal: listed by no history, met by no undo's check of newer changes.
 INTERNAL = (INDEX_BAKE,)
+ERASED = "erased"      # what `finish` returns for a change that wrote nothing and is gone, as None says files are left
 #: The operations that rename photo files (tagpup.services.file_changes.rename refuses another): the changes whose files a
 #: rename left under a new name, known there by their fingerprint (follow_renamed). By the operation, the change_files of a
 #: library are sought by their change (its index), not scanned: 51,451 rows in photo_index, 85 ms warm and 6 s cold, of
@@ -464,7 +465,7 @@ def unfinished(db_path):
     first (Change). Only a change of photo files is ever `planned` (a change of rows is
     recorded applied), and one whose every file was taken out again is listed too: a
     process stopped before finishing it left it planned with no files (docs/findings.md,
-    #274), and finishing it marks it failed."""
+    #274), and finishing it erases it, as finish does any change that wrote nothing."""
     conn = db.connect(db.readonly_uri(db_path), uri=True)
     try:
         found = conn.execute(
@@ -551,9 +552,9 @@ def counts(conn, change_ids):
 
 def finish(db_path, change_id, also=None):
     """Mark change `change_id` applied -- or undone, when it was being undone -- now that
-    every file is done, undone or a conflict; its summary takes the files' counts. A change
-    every file was taken out of again wrote nothing, and is `failed`. Returns the counts,
-    or None when files are left to write. `also(conn, change id)` runs in the same
+    every file is done, undone or a conflict; its summary takes the files' counts. Returns the counts,
+    or None when files are left to write, or ERASED when the change is gone, whatever it wrote (an internal change's files
+    all gone, as after a bake that wrote files, or a forward change with no file done and no row left). `also(conn, change id)` runs in the same
     transaction when a forward change finishes (the records of faces whose photo was never written go:
     tagpup.store.face_batches.tidy); an undo keeps everything the change recorded.
 
@@ -563,7 +564,12 @@ def finish(db_path, change_id, also=None):
     record of a file the bake found damaged (a picture its write changed twice, PICTURE_CHANGED), which the doctor counts
     (noted); its other files go, and no history lists it. Any other conflict -- one that may pass (a scratch file of a
     write that may be under way, a file held by another program, one changed outside) -- goes with the change, as a done
-    file does: the next index reads the file and bakes it again, and nothing would count or list it if it were kept."""
+    file does: the next index reads the file and bakes it again, and nothing would count or list it if it were kept.
+
+    A forward change every file was taken out of again, with no row of it left once `also` has run (tidy takes the records
+    of faces whose photo has no file done), wrote nothing: it is erased too, and ERASED is returned. History
+    lists no change that wrote nothing, and a settle of one a stopped process left planned with no files ends the same
+    (#274, #2974). The `failed` of the status CHECK stays for the rows an earlier version left so."""
     def work(conn):
         states = counts(conn, [change_id]).get(change_id, {})
         undoing = conn.execute("SELECT undone FROM changes WHERE id = ?", (change_id,)).fetchone()[0] is not None
@@ -582,12 +588,13 @@ def finish(db_path, change_id, also=None):
                          " OR note NOT IN (%s))" % notes, (change_id,) + NOTES)
             if not conn.execute("SELECT 1 FROM change_files WHERE change_id = ? LIMIT 1", (change_id,)).fetchone():
                 conn.execute("DELETE FROM changes WHERE id = ?", (change_id,))
-                return states
-        if not states:
-            # Every file was taken out again: nothing was written.
-            conn.execute("UPDATE changes SET status = 'failed', owner = NULL, summary = ? WHERE id = ?",
-                         (json.dumps(summary, sort_keys=True), change_id))
-        elif undoing:
+                return ERASED
+        if not states and not undoing and not conn.execute(
+                "SELECT 1 FROM change_rows WHERE change_id = ? LIMIT 1", (change_id,)).fetchone():
+            # Every file was taken out again and no row of it is left: nothing was written.
+            conn.execute("DELETE FROM changes WHERE id = ?", (change_id,))
+            return ERASED
+        if undoing:
             conn.execute("UPDATE changes SET status = 'undone', owner = NULL, summary = ? WHERE id = ?",
                          (json.dumps(summary, sort_keys=True), change_id))
         else:
