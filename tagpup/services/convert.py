@@ -688,7 +688,11 @@ def _carrier(library, after):
         if carry["name"] and names.preserved_name(held) != carry["name"]:
             wanted[fields.PRESERVED_NAME] = carry["name"]
         if carry["date"] and dates.date_taken(held, None, dates.VIDEO) != carry["date"]:
-            wanted.update(fields.held_dates(fields.date_taken_fields(carry["date"], clip=True), held))
+            # Its XMP dates alone for now: a carried date may be a camera's, with a zone or a fraction, which a QuickTime
+            # header does not spell (clip_patch.seconds_of); plan clip-date-in-quicktime-headers, cut 2, carries them.
+            wanted.update({field: value for field, value in
+                           fields.held_dates(fields.date_taken_fields(carry["date"], clip=True), held).items()
+                           if field not in fields.CLIP_HEADER_DATES})
         if not wanted:
             return file_changes.skip("its converted copy holds what it carries already")
         return file_changes.Plan(after=wanted, detail=sorted(wanted))

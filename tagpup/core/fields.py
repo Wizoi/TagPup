@@ -144,8 +144,13 @@ CLIP_TITLE = "QuickTime:Title"
 #: one-time move of those Tags into XMP (a clip's tags write, _CLIP_WRITE_FIELDS; tagpup.files.clip_patch; DECISIONS
 #: 2026-11-09). ExifTool reads it under its group 1 name, Microsoft, and answers it under group 0's (read_key).
 CLIP_CATEGORY = "Microsoft:Category"
+#: A clip's QuickTime dates a save of its Date Taken writes beside its XMP date, in one patch (DECISIONS 2026-11-13, A
+#: CLIP'S DATE TAKEN IS WRITTEN INTO ITS QUICKTIME HEADERS): the creation time of its movie header, of each track's and
+#: of each media's (tagpup.files.clip_patch). A write reads them by TagPup's own walk of the clip, each the texts of its
+#: boxes in file order, one when they agree (tagpup.files.field_values.read); ExifTool answers one box of each.
+CLIP_HEADER_DATES = ("QuickTime:CreateDate", "QuickTime:TrackCreateDate", "QuickTime:MediaCreateDate")
 #: The fields of a clip's write that clip_patch writes outside its XMP packet, which the packet's editor leaves out.
-CLIP_OUTSIDE_XMP = frozenset({CLIP_TITLE, CLIP_CATEGORY})
+CLIP_OUTSIDE_XMP = frozenset({CLIP_TITLE, CLIP_CATEGORY, *CLIP_HEADER_DATES})
 
 
 def expand_tag_fields(tags):
@@ -366,17 +371,19 @@ PHOTO_WRITES = ("tags", "title", "date", "rotate", "name")
 #: What a journaled write may change of a clip (DECISIONS 2026-11-05, M7; on since DECISIONS 2026-11-07): its tags, its
 #: title, its name (DECISIONS 2026-11-08, A5: a rename moves no byte, and the name it had before its first is kept in
 #: its XMP, PRESERVED_NAME, patched as its tags are) and its Date Taken, in its XMP (DECISIONS 2026-11-08, A5 (D)
-#: REVISED: the date the library reads first, tagpup.core.dates.CLIP_XMP_DATE_FIELDS). A page writes no caption of it
+#: REVISED: the date the library reads first, tagpup.core.dates.CLIP_XMP_DATE_FIELDS) and its QuickTime headers
+#: (CLIP_HEADER_DATES, DECISIONS 2026-11-13). A page writes no caption of it
 #: (DECISIONS 2026-11-06); a turn of a clip is ExifTool's rewrite of the whole file, refused before it is planned.
 CLIP_WRITES = ("tags", "title", "name", "date")
 
 #: The fields each of CLIP_WRITES names: a clip's tags are its keyword fields and its Windows Tags (CLIP_CATEGORY); its
 #: title is its title fields and its QuickTime Title (CLIP_TITLE), which
 #: a photo's write never names (title_fields is what ExifTool writes into a JPEG); its name, the one it had before; its
-#: date, its XMP dates (date_taken_fields of a clip), never its QuickTime ones.
+#: date, its XMP dates and its QuickTime headers' (date_taken_fields of a clip).
 _CLIP_WRITE_FIELDS = {"tags": frozenset(keyword_fields([], [])) | {CLIP_CATEGORY},
                       "title": frozenset(title_fields("")) | {CLIP_TITLE},
-                      "name": frozenset({PRESERVED_NAME}), "date": frozenset(dates.CLIP_XMP_DATE_FIELDS)}
+                      "name": frozenset({PRESERVED_NAME}),
+                      "date": frozenset(dates.CLIP_XMP_DATE_FIELDS + CLIP_HEADER_DATES)}
 
 
 def fields_of(writes):
@@ -385,8 +392,8 @@ def fields_of(writes):
 
 
 #: The fields a journaled write of a clip may name: those of CLIP_WRITES. Only the XMP field of each group is written,
-#: into the clip's XMP packet (tagpup.files.segment_edits.new_packet), and the QuickTime Title freed or given back
-#: (CLIP_TITLE); every other copy is left as it was, whatever the XMP value (segment_edits.clip_stale_of): a clip's
+#: into the clip's XMP packet (tagpup.files.segment_edits.new_packet), the QuickTime Title freed or given back
+#: (CLIP_TITLE) and its headers' dates set (CLIP_HEADER_DATES); every other copy is left as it was, whatever the XMP value (segment_edits.clip_stale_of): a clip's
 #: EXIF and IPTC, if any, are not TagPup's to write.
 CLIP_FIELDS = fields_of(CLIP_WRITES)
 
@@ -448,19 +455,22 @@ def record_keyword_fields(raw_meta, flat, hierarchical):
 def date_taken_value(date_taken):
     """How a Date Taken is written: one set on the page, "2019-06-15T10:30:00", as "2019:06:15 10:30:00", the way EXIF
     spells a date; one spelled so already (a clip's, carried into its converted copy: tagpup.services.convert) as it is,
-    its fraction and its zone kept ("2018:03:02 09:15:00-07:00": only the date's dashes are colons)."""
+    its fraction and its zone kept ("2018:03:02 09:15:00-07:00": only the date's dashes are colons). A time on the
+    minute, as a datetime-local input answers it ("2019-06-15T10:30"), is given its seconds: "2019:06:15 10:30:00"."""
     text = str(date_taken).strip().replace("T", " ", 1)
-    return text[:10].replace("-", ":") + text[10:]
+    text = text[:10].replace("-", ":") + text[10:]
+    return text + ":00" if len(text) == 16 else text
 
 
 def date_taken_fields(date_taken, clip=False):
     """Every field a Date Taken write may set. A Date Taken is to the second: the page's picker sets no fraction, and no
     row's `taken` holds one (0 in the three libraries, counted 2026-11-05), so no SubSecTime is written; nor a zone. A
     clip's are its XMP dates (dates.CLIP_XMP_DATE_FIELDS), patched into its XMP (tagpup.files.segment_edits.new_packet),
-    of which held_dates keeps XMP:CreateDate only where the clip holds one; its QuickTime dates are never written."""
+    of which held_dates keeps XMP:CreateDate only where the clip holds one, and its QuickTime headers' (CLIP_HEADER_DATES),
+    set in the same patch (tagpup.files.clip_patch)."""
     value = date_taken_value(date_taken)
     if clip:
-        return {field: value for field in dates.CLIP_XMP_DATE_FIELDS}
+        return {field: value for field in dates.CLIP_XMP_DATE_FIELDS + CLIP_HEADER_DATES}
     return {"EXIF:DateTimeOriginal": value, "XMP:DateTimeOriginal": value, "EXIF:CreateDate": value}
 
 

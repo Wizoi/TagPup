@@ -27,7 +27,7 @@ answer for a count.
 | Rule | Where | Scenario |
 |---|---|---|
 | A clip's frames and its streams' codecs are read only through ffmpeg in `files/video_frames` (never raising into the caller, no child left running) | `tagpup/files/video_frames.py` | C1, `tests/test_frames_of_a_video.py` |
-| A clip's tags, title and Date Taken are patched in place into its XMP (`clip_patch` says where; `in_place.patch_clip` writes), never by ExifTool's rewrite; one the patch cannot place is refused before anything is written | `tagpup/files/clip_patch.py`, Files' `in_place.py` | C2, C5, C6 |
+| A clip's tags, title and Date Taken are patched in place into its XMP (`clip_patch` says where; `in_place.patch_clip` writes; Files uses `clip_patch` twice besides: `field_values.clip_date_refused` asks `clip_patch.holds_date`, and `in_place.headers_held` reads `clip_patch.header_dates`), never by ExifTool's rewrite; one the patch cannot place is refused before anything is written | `tagpup/files/clip_patch.py`, Files' `in_place.py` | C2, C5, C6 |
 | A video is played by `/api/video-file`: a range at a time, at most `VIDEO_SPAN` (4 MiB), 206 / 416 / 404 / 503 / 409 as the route's docstring says, to this PC only; a stream that cannot go on ends short; a share not answering is one bounded look (`services.photos.video_bytes`) | Files' `services/photos.py`, `files/shares.read_span` | C8 (`tests/test_playing_a_video.py`) |
 | A clip the browser does not play (an error, or its sound with no picture: `videoWidth` 0 once its first data is loaded) is asked of `/api/clip/convert-plan`, and the photo panel says the server's sentence while that clip is still the one shown (`web/tagpup/media.js`); the plan is `files/convertible.plan_for` of the codecs one bounded ffprobe run finds (`services.photos.clip_plan`, `video_frames.streams`): NOTHING or REENCODE, an older format always REENCODE; it writes nothing (DECISIONS 2026-11-09) | `tagpup/files/convertible.py`, `web/tagpup/media.js` | C8 (`tests/test_what_a_clip_needs_to_play.py`, `tests/frontend/video-viewer.test.mjs`) |
 | A clip's picture in the grid is its poster, the middle frame ffmpeg takes (`files/video_frames.poster`), kept as a photo's thumbnail is; ffmpeg is a prerequisite checked at start (DECISIONS 2026-11-06) | Files' `files/thumbs.py` (`poster`), Views' `services/thumbnails.py` | C9 (`tests/test_a_clip_shows_its_poster.py`) |
@@ -35,8 +35,16 @@ answer for a count.
 
 - **A clip's Date Taken** (DECISIONS 2026-11-08, A5 (D) REVISED) is written into its exif:DateTimeOriginal, and
   into its xmp:CreateDate only where it holds one (`fields.held_dates`, decided when the write is planned: 41
-  photo_index clips held one, counted 2026-11-08); its QuickTime dates are never written. The index dates a clip by its XMP dates
-  first (`dates.CLIP_XMP_DATE_FIELDS`), then its QuickTime ones. The rows dated before that rule (photo_index 80
+  photo_index clips held one, counted 2026-11-08). The same save sets the creation time of every QuickTime header (the
+  movie's, each track's, each media's; `fields.CLIP_HEADER_DATES`) in the one patch, each at its box's width (version 0
+  or 1) and as the local date's digits (a header TagPup wrote is local-as-UTC; a camera's stays UTC, DECISIONS
+  2026-11-02 item 8): a box holding the date already is skipped, a clip whose XMP holds the date and whose headers hold
+  zeros has them written (#3002), and a header is never written without its XMP date beside it (`field_values.clip_refused`).
+  A date before 1904, after early 2040, or not to the second is refused before anything is written
+  (`field_values.clip_date_refused`); the page's minute-only value is given its seconds (`fields.date_taken_value`).
+  Reads of the three header fields are TagPup's own walk (`in_place.headers_held`), per box, since ExifTool answers one
+  value per kind. The index dates a clip by its XMP dates first (`dates.CLIP_XMP_DATE_FIELDS`), then its QuickTime ones
+  (the reader prefers XMP). Convert's carry writes a clip's XMP dates alone until cut 2. The rows dated before that rule (photo_index 80
   of its 2,179 clips then, none by its year; kr-track and renton_parkrun none) were dated again from their own raw_metadata
   by a one-off, applied on photo_index as the journal's "rederive clip dates" (undone from History as any change of
   rows: `journal.RETIRED`) and deleted once no clip was apart (#2734). C5:

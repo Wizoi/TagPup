@@ -269,6 +269,12 @@ def save_photo(library, photo_path, title, tags, date_taken, exiftool_path, rena
     if not file_changes.leave_out_clips(Result(), [photo_path], read=clip_read):
         result.refuse(images.CLIP_NOT_EDITED)
         return result
+    # A clip's Date Taken goes into its QuickTime headers too, which hold no date before 1904 or after early 2040.
+    problem = date_taken and images.is_clip(photo_path) and field_values.clip_date_refused(
+        fields.date_taken_value(date_taken))
+    if problem:
+        result.refuse(problem)
+        return result
     if stamp is not None and photo_actions.changed_on_disk(photo_path, stamp):
         result.refuse(CHANGED_ON_DISK_SENTENCE, CHANGED_ON_DISK)
         return result

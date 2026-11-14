@@ -13,6 +13,7 @@ as tests/test_file_journal makes one. These are guards of B3's wiring, which the
 Fictional names.
 """
 import contextlib
+import io
 import os
 import shutil
 import sys
@@ -25,7 +26,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import test_a_clip_tagged_through_the_journal as tagged  # noqa: E402
 from test_file_journal import Crash, Torn, crash_at, cut_patch  # noqa: E402
 
-from tagpup.files import in_place, segment_edits  # noqa: E402
+from tagpup.files import clip_patch, containers, in_place, segment_edits  # noqa: E402
 from tagpup.services import file_changes, tagging  # noqa: E402
 from tagpup.store import file_journal  # noqa: E402
 
@@ -109,6 +110,25 @@ class AClipPatchCutShort(tagged.ALibraryHoldingAClip):
         change, file_id = self.killed(cut_half_way())
         self.assertEqual(in_place.TORN, self.against_its_record(file_id))
         self.assert_written_again(change)
+
+    def test_a_date_save_killed_half_way_through_its_first_header_range_is_torn_and_settled_by_its_bytes_at_the_next_start(self):
+        saved = "2024:08:15 09:30:00"
+        with cut_half_way() as cut:
+            with self.assertRaises(Crash):
+                tagging.save_photo(self.vl.library, self.clip_path, "", [], saved, EXIFTOOL, "")
+        mvhd = next(box for box in containers.read(io.BytesIO(self.original)).headers if box.type == "mvhd")
+        self.assertEqual(mvhd.payload + 4, cut[0][0][0], "the first range is the movie header's creation field")
+        self.assertEqual(["writing"], self.change_states(self.clip))
+        (file_id,), = self.vl.rows("SELECT id FROM change_files WHERE photo_id = ?", self.clip)
+        self.assertEqual(in_place.TORN, self.against_its_record(file_id))
+        self.assertNotEqual(self.original, self.read_bytes(self.clip_path), "its first header half written")
+        self.assertEqual(1, self.start_again())
+        self.assertEqual(["done"], self.change_states(self.clip))
+        now = self.read_bytes(self.clip_path)
+        seconds = clip_patch.seconds_of(saved)
+        for box in containers.read(io.BytesIO(now)).headers:
+            width = box.width
+            self.assertEqual(seconds.to_bytes(width, "big"), now[box.payload + 4:box.payload + 4 + width], box.type)
 
     def test_killed_after_its_last_byte_it_is_recorded_and_not_written_again(self):
         change, file_id = self.killed(cut_patch())
