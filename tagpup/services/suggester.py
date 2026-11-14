@@ -95,7 +95,8 @@ def saved_in(db_path, folder):
 
 def keep(db_path, photo, found, model_key=None):
     """Keep `found` as what was suggested for `photo`, through the write lock."""
-    db.write_with_connection(db_path, lambda conn: store_suggestions.put(conn, photo, found, model_key),
+    db.write_with_connection(db_path, lambda conn: store_suggestions.put(conn, photo, found, model_key,
+                                                                         kind=images.kind_of(photo)),
                              label="suggestions for %s" % os.path.basename(photo))
 
 

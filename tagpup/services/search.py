@@ -140,7 +140,8 @@ class PhotoEmbeddings:
             beside = _frame_bytes(frames)
 
             def store(conn):
-                store_embeddings.put(conn, file_path, self.model_key, stamp[0], stamp[1], vector, None, frames=beside)
+                store_embeddings.put(conn, file_path, self.model_key, stamp[0], stamp[1], vector, None, frames=beside,
+                                     kind=images.kind_of(file_path))
                 return True
 
             # On a connection of its own. Every worker in the suggestion pool writes its

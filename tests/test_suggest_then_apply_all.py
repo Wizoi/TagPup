@@ -338,6 +338,20 @@ class AHeldFolderOfPhotosAndClips(Base):
         self.assertEqual([[], [], []], [base.tags_in(path) for path in [self.photo] + self.clips])
         self.assertEqual([(clip, "undone") for clip in self.clip_ids], self.change_files(change))
 
+    def test_a_clip_copied_in_before_the_index_read_it_is_given_a_clips_row(self):
+        """A clip the index has not read yet (copied in since, or the folder added and not indexed) gets its row from
+        Suggest's vector: a clip's row, so its thumbnail is its poster frame and the face pass does not owe it a look
+        before the index reads it."""
+        copied = os.path.join(self.dock, "dock_04.mp4")
+        shutil.copyfile(self.made, copied)
+        self.start(self.dock)
+        entry = self.suggested(self.dock)["dock_04.mp4"]
+        self.assertNotIn("error", entry, entry)
+        self.assertIn("Trips/Regatta", [t["tag"] for t in entry["tags"]])
+        kinds = [kind for path, kind in self.rows("SELECT path, kind FROM photos")
+                 if os.path.basename(path) == "dock_04.mp4"]
+        self.assertEqual(["video"], kinds, "the row Suggest made for the clip")
+
     def test_a_clip_whose_frames_cannot_be_read_carries_why_and_the_next_run_tries_it_again(self):
         with mock.patch.object(config, "locate_ffmpeg", return_value=None):
             self.start(self.dock)
