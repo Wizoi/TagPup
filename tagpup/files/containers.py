@@ -246,6 +246,13 @@ class Video:
         moov = self.moov
         return tuple(_headers_in(moov.children if moov else ()))
 
+    @property
+    def headers_whole(self):
+        """False when a track or its media box holds children that do not fit (`broken`): a header in it is missing from
+        `headers`, and a write of every header would leave that one as it was."""
+        return not any(track.broken or any(media.broken for media in track.children if media.type == "mdia")
+                       for track in (self.moov.children if self.moov else ()) if track.type == "trak")
+
     def slack_beside(self, box):
         """(free boxes just before `box`, free boxes just after it): the runs of free/skip/wide boxes that touch it among
         its siblings (the top level, or the container that holds it)."""

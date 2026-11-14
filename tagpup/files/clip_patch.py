@@ -337,12 +337,12 @@ def packet_of(layout, raw):
 
 
 def _understood(layout):
-    """Is `layout` a clip this module may patch: walked whole to its end, one moov with its children whole, no
-    fragments?"""
+    """Is `layout` a clip this module may patch: walked whole to its end, one moov with its children whole, every
+    track's media box whole (Video.headers_whole), no fragments?"""
     if not isinstance(layout, containers.Video) or layout.fragmented or layout.tail is not None:
         return False
     return len(layout.of_type("moov")) == 1 and not layout.moov.broken and not any(
-        child.broken for child in layout.moov.children)
+        child.broken for child in layout.moov.children) and layout.headers_whole
 
 
 def _box(box, packet):

@@ -285,6 +285,22 @@ class AClipDatedThroughTheJournal(tagged.ALibraryHoldingAClip):
         self.assertEqual(before, self.read_bytes(bad))
         self.assertEqual(changes, self.vl.rows("SELECT id FROM changes"))
 
+    def test_a_clip_whose_media_box_does_not_hold_its_children_is_refused_whole_and_none_of_its_headers_is_written(self):
+        """#3006: the media box's header cannot be found, so the headers the walk does find would be dated and one
+        would keep its old date; the save says CLIP_NOT_PATCHED and writes no byte."""
+        path = self.add_clip(ZERO_HEADERS, "short.mp4")
+        data = bytearray(self.read_bytes(path))
+        media = data.find(b"mdia")
+        data[media + 4:media + 8] = struct.pack(">I", 0x00FFFFFF)
+        with open(path, "wb") as handle:
+            handle.write(bytes(data))
+        clip, = self.index(path)
+        before, changes = self.read_bytes(path), self.vl.rows("SELECT id FROM changes")
+        reply = self.save_date_from_the_panel(clip)
+        self.assertNotEqual(200, reply.status_code, reply.data)
+        self.assertIn(images.CLIP_NOT_PATCHED, reply.get_json()["error"])
+        self.assertEqual((before, changes), (self.read_bytes(path), self.vl.rows("SELECT id FROM changes")))
+
     def test_a_clip_whose_xmp_holds_the_date_already_has_its_zero_headers_written(self):
         """#3002: a clip saved before the headers were written (its XMP dated, its headers 0), saved again with the same
         date, has its headers written; nothing else changes."""
