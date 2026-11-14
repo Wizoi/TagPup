@@ -9,8 +9,10 @@ through a clip keeps nothing of it.
 
 The clips are made here by the machine's ffmpeg (skipped without it): five one-second colour segments joined, so each of
 the five frames read (at (2i+1)/10 of the clip) is one segment's colour. The stand-in face model reads the colour at the
-frame's centre: red shows Rowan, green no one, blue a crowd (Rowan, Ines, Wren, Rowan again), yellow Ines. Rowan is
-named on a photo of the library, Ines on a photo of 1995, Wren nowhere. CLIP is V3's FramesClip. The app, the routes,
+frame's centre: red shows Rowan, green no one, blue a crowd (Rowan, Ines, Wren, Rowan again), yellow Ines, magenta Rowan
+too small to be a face (30 px), each face where a detector would put it on the 64x48 frame; the faces it may keep are the
+real model's (scrfd_adaface.new_faces: the 40 px floor on the frame's own pixels, each face's crop cut from the frame).
+Rowan is named on a photo of the library, Ines on a photo of 1995, Wren nowhere. CLIP is V3's FramesClip. The app, the routes,
 ffmpeg, ExifTool, the journal and the library are real. Names are fictional.
 
 Every test fails on the code before people on clips (the face model was never shown a frame; nothing refused a clip's
@@ -40,6 +42,7 @@ from tagpup import config  # noqa: E402
 from tagpup.core import processes  # noqa: E402
 from tagpup.files import images, shares, video_frames  # noqa: E402
 from tagpup.jobs import suggestions as suggestion_jobs  # noqa: E402
+from tagpup.ml import scrfd_adaface  # noqa: E402
 from tagpup.services import faces as face_records  # noqa: E402
 from tagpup.services import libraries as library_actions  # noqa: E402
 from tagpup.store import db  # noqa: E402
@@ -52,8 +55,15 @@ ROWAN, WREN = base.ROWAN, base.WREN
 INES = np.array([0.8, -0.6, 0.0, 0.0], dtype=np.float32)    # at right angles to Rowan and to Wren
 ROWAN_TAG, INES_TAG = "People/Rowan Thackeray", "People/Ines Halloran"
 
-PALETTE = {"red": (255, 0, 0), "green": (0, 128, 0), "blue": (0, 0, 255), "yellow": (255, 255, 0)}
-SHOWN = {"red": [ROWAN], "green": [], "blue": [ROWAN, INES, WREN, ROWAN], "yellow": [INES]}
+PALETTE = {"red": (255, 0, 0), "green": (0, 128, 0), "blue": (0, 0, 255), "yellow": (255, 255, 0),
+           "magenta": (255, 0, 255)}
+#: Four places on the 64x48 frame a face of 40 px -- the floor of a new face (images.is_big_enough) -- may be found at.
+AT = ([0, 0, 40, 40], [24, 0, 64, 40], [0, 8, 40, 48], [24, 8, 64, 48])
+#: A frame's faces, by its colour: [(box, vector)].
+SHOWN = {"red": [(AT[0], ROWAN)], "green": [],
+         "blue": [(AT[0], ROWAN), (AT[1], INES), (AT[2], WREN), (AT[3], ROWAN)],   # Rowan twice in one frame
+         "yellow": [(AT[0], INES)],
+         "magenta": [([0, 0, 30, 30], ROWAN)]}                                    # under the floor
 #: Each clip, by the colours of its five segments.
 CLIPS = {
     "reel_01.mp4": ("red", "green", "green", "green", "green"),     # Rowan in one frame
@@ -61,6 +71,7 @@ CLIPS = {
     "reel_03.mp4": ("blue", "green", "green", "green", "green"),    # a crowd in one frame
     "reel_04.mp4": ("green",) * 5,                                  # no one
     "reel_05.mp4": ("yellow",) * 5,                                 # Ines, the clip undated
+    "reel_07.mp4": ("magenta",) * 5,                                # Rowan, too small in every frame
 }
 
 
@@ -76,7 +87,9 @@ def make_clip(path, colours):
 
 class FrameFaces(base.FakeFaces):
     """The face model: a frame's faces by the colour at its centre (SHOWN); `looked`, the clips whose frames it was
-    shown, a frame each; `on_frame`, called with each frame's label before it is looked at."""
+    shown, a frame each; `on_frame`, called with each frame's label before it is looked at. The faces it keeps are the
+    real model's (as NewFaces has them): the 40 px floor, and a crop cut from the frame."""
+    new_faces = scrfd_adaface.ScrfdAdaFace.new_faces
 
     def __init__(self):
         super().__init__()
@@ -91,8 +104,7 @@ class FrameFaces(base.FakeFaces):
         upright = picture.upright
         centre = upright.getpixel((upright.width // 2, upright.height // 2))
         colour = min(PALETTE, key=lambda name: sum((a - b) ** 2 for a, b in zip(PALETTE[name], centre)))
-        return [{"box": [8 * n, 8, 16, 16], "embedding": vector.tolist(), "prob": 0.99}
-                for n, vector in enumerate(SHOWN[colour])]
+        return [{"box": list(box), "embedding": vector.tolist(), "prob": 0.99} for box, vector in SHOWN[colour]]
 
 
 @unittest.skipIf(TOOLS.problem, "ffmpeg is not installed on this machine")
@@ -193,6 +205,7 @@ class AClipsPeopleAreThePeopleItsFramesShow(base.Base):
         self.assertEqual([], self.people(offered["reel_04.mp4"]), "frames with no face offer no one")
         self.assertEqual([(INES_TAG, {"seen": 5, "of": 5})], self.people(offered["reel_05.mp4"]),
                          "an undated clip is compared with every year of Ines's faces")
+        self.assertEqual([], self.people(offered["reel_07.mp4"]), "a face under 40 px of the frame offers no one")
         self.assertEqual({name: 5 for name in CLIPS}, dict(Counter(self.faces.looked)), "every frame looked at")
         self.assertEqual({name: 1 for name in CLIPS}, dict(self.passes), "one ffmpeg pass a clip, kept vector or not")
         self.assertEqual([0, 0], self.face_rows_of_clips(), "no face and no detection of a clip")
