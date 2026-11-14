@@ -119,6 +119,21 @@ describe("one chip for one source (the page's key against the server's reading)"
     assert.equal(sectionOf({ kind: "no_such_kind", value: "2024-01" }), null);
   });
 
+  test("a union is headed by its members' leaves; viewLabel keeps the whole text", async (t) => {
+    const ctx = await loadViewPage(t, { search: `?view=year&value=${YEAR - 1}` });
+    const { memberLabel, viewLabel, viewHeading } = pageExports(ctx.window, "web/tagpup/library-source.js");
+    const keyword = { kind: "keyword", value: "Family/Immediate/Rowan" };
+    const only = { kind: "keyword_only", value: "Family/Immediate/Rowan" };
+    const folder = { kind: "folder", value: "D:\\Library\\2003", recursive: true };
+    const union = { kind: "any_of", value: [keyword, only, folder] };
+    assert.equal(memberLabel(folder), "2003");
+    assert.equal(memberLabel(keyword, true), "Rowan");
+    assert.equal(memberLabel(only, true), "Rowan alone");
+    assert.equal(viewHeading(union), "Rowan, Rowan alone and 2003");
+    assert.equal(viewLabel(union), "Family/Immediate/Rowan, Family/Immediate/Rowan alone and 2003", "the strip has room");
+    assert.equal(viewHeading({ kind: "year", value: "2003" }), viewLabel({ kind: "year", value: "2003" }));
+  });
+
   test("what the page refuses before it asks is what the server refuses: tests/fixtures/view_rules.json", async (t) => {
     const ctx = await loadViewPage(t, { search: `?view=year&value=${YEAR - 1}` });
     const source = pageExports(ctx.window, "web/tagpup/library-source.js");

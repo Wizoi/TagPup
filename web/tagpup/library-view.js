@@ -35,7 +35,7 @@ import { lockBulkControls } from './bulk-run.js';
 import { forgetBanner } from './library-banner.js';
 import { clearSyncInfo, loadSyncInfo } from './sync-state.js';
 import {
-    destroyLibrary, forgetCards, loadLibraryIds, newLibrary, sameView, viewLabel, viewSearch, viewSpecFromSearch
+    destroyLibrary, forgetCards, loadLibraryIds, newLibrary, sameView, viewHeading, viewLabel, viewSearch, viewSpecFromSearch
 } from './library-source.js';
 
 const SEARCH_OFF = 'A library view has no file list to filter: search the library from the Library pane’s search box.';
@@ -114,6 +114,7 @@ function hideChrome() {
     forgetBanner();
     clearSyncInfo();
     folderViewTitle.textContent = 'Folder View';
+    folderViewTitle.title = '';
     updateCurrentFolderLabel();
 }
 
@@ -151,7 +152,8 @@ export function libraryChanged() {
     libraryStripStatus.title = status || '';
     btnLibraryRefresh.disabled = lib.invalid || lib.loading;
     headerMenusFollow();
-    folderViewTitle.textContent = lib.invalid ? 'Library view' : label;
+    folderViewTitle.textContent = lib.invalid ? 'Library view' : viewHeading(lib);
+    folderViewTitle.title = lib.invalid ? '' : label;
     folderViewStats.textContent = viewCountSaid(lib);
     folderViewHeader.textContent = '';
     folderViewHeader.append(`\u{1F4C2} Library view${lib.invalid ? '' : ` — ${label}`}`);

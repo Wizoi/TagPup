@@ -336,11 +336,14 @@ export function sameView(a, b) {
 const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September',
     'October', 'November', 'December'];
 
-/** What one source of a union or a search's list is called, short. */
-export function memberLabel(spec) {
+/**
+ * What one source of a union or a search's list is called, short. `leaf` (the folder view's title, which its badge crops)
+ * names a keyword by its leaf too; the strip and the chips have room for the whole path.
+ */
+export function memberLabel(spec, leaf = false) {
     if (spec.kind === 'any_of') {
         const members = Array.isArray(spec.value) ? spec.value : [];
-        const named = members.slice(0, 2).map(memberLabel);
+        const named = members.slice(0, 2).map(member => memberLabel(member, leaf));
         return members.length <= 2 ? named.join(' or ') : `${named.join(', ')} or ${(members.length - 2).toLocaleString()} more`;
     }
     if (spec.kind === 'month') {
@@ -349,7 +352,8 @@ export function memberLabel(spec) {
     }
     if (spec.kind === 'year') return String(spec.value);
     if (spec.kind === 'year_other') return `${spec.value} with no month`;
-    if (spec.kind === 'keyword_only') return `${spec.value} alone`;
+    if (spec.kind === 'keyword_only') return `${leaf ? leafOf(String(spec.value)) : spec.value} alone`;
+    if (spec.kind === 'keyword' && leaf) return leafOf(String(spec.value));
     if (spec.kind === 'folder') return `${baseName(spec.value) || spec.value}${spec.recursive ? '' : ' alone'}`;
     if (spec.kind === 'all') return 'everything';
     if (spec.kind === 'untagged') return UNTAGGED.member;
@@ -381,7 +385,7 @@ export function viewLabel(spec) {
     if (spec.kind === 'search') return searchLabel(spec.value || {});
     if (spec.kind === 'any_of') {
         const members = Array.isArray(spec.value) ? spec.value : [];
-        const named = members.slice(0, 3).map(memberLabel);
+        const named = members.slice(0, 3).map(member => memberLabel(member));
         if (members.length <= 3) return `${named.slice(0, -1).join(', ')}${members.length > 1 ? ' and ' : ''}${named.at(-1) || ''}`;
         return `${named.join(', ')} and ${(members.length - 3).toLocaleString()} more`;
     }
@@ -395,6 +399,23 @@ export function viewLabel(spec) {
     if (spec.kind === 'keyword') return `Keyword ${spec.value}, and everything under it`;
     if (spec.kind === 'person') return `Photos of ${spec.value}`;
     return `Folder ${spec.value}${spec.recursive ? ', and its subfolders' : ''}`;
+}
+
+/**
+ * What a view is called where the room is short (the folder view's title, which its stats badge crops): a folder or a
+ * keyword by its leaf, the rest as viewLabel says it. viewLabel is the whole text, for the tooltip.
+ */
+export function viewHeading(spec) {
+    if (spec.kind === 'keyword_only') return `Keyword ${leafOf(String(spec.value))}, without the keywords under it`;
+    if (spec.kind === 'keyword') return `Keyword ${leafOf(String(spec.value))}, and everything under it`;
+    if (spec.kind === 'folder') return `${baseName(spec.value) || spec.value}${spec.recursive ? ', and its subfolders' : ''}`;
+    if (spec.kind === 'any_of') {
+        const members = Array.isArray(spec.value) ? spec.value : [];
+        const named = members.slice(0, 3).map(member => memberLabel(member, true));
+        if (members.length <= 3) return `${named.slice(0, -1).join(', ')}${members.length > 1 ? ' and ' : ''}${named.at(-1) || ''}`;
+        return `${named.join(', ')} and ${(members.length - 3).toLocaleString()} more`;
+    }
+    return viewLabel(spec);
 }
 
 /**
