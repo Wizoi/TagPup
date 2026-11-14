@@ -676,6 +676,28 @@ describe("the way there and back", () => {
     assert.ok(ctx.cards().length >= 2, "its photos are drawn");
   });
 
+  test("the header's title leads with the leaf of a folder or keyword; the whole text is its tooltip and the strip's", async (t) => {
+    const ctx = await load(t, { search: "", ids: [], total: 0 });
+    const { openLibraryView } = pageExports(ctx.window, "web/tagpup/library-view.js");
+    const title = ctx.document.getElementById("folder-view-title");
+    const cases = [
+      [{ kind: "folder", value: "\\\\fileserver\\Pictures\\Pictures\\2003", recursive: true }, "2003, and its subfolders",
+        "Folder \\\\fileserver\\Pictures\\Pictures\\2003, and its subfolders"],
+      [{ kind: "folder", value: "D:\\Library\\2003", recursive: false }, "2003", "Folder D:\\Library\\2003"],
+      [{ kind: "keyword", value: "Family/Immediate/Rowan" }, "Keyword Rowan, and everything under it",
+        "Keyword Family/Immediate/Rowan, and everything under it"],
+      [{ kind: "keyword_only", value: "Family/Immediate/Rowan" }, "Keyword Rowan, without the keywords under it",
+        "Keyword Family/Immediate/Rowan, without the keywords under it"],
+    ];
+    for (const [spec, heading, whole] of cases) {
+      openLibraryView(spec);
+      await ctx.settle();
+      assert.equal(title.textContent, heading);
+      assert.equal(title.title, whole);
+      assert.equal(ctx.document.getElementById("library-strip-source").textContent, whole, "the strip has room: whole text");
+    }
+  });
+
   test("'Library view of this folder' opens the folder and its subfolders; the item is off with no folder", async (t) => {
     const ctx = await load(t, { search: "", ids: [], total: 0 });
     ctx.document.getElementById("btn-gear").click();
