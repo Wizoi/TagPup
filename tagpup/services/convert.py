@@ -38,9 +38,9 @@ How one conversion goes, the original kept until its copy is in place and holds 
 4. Onward (_onward, the forward run's and the settle's alike), under the lock: the temp renamed into place (a same-name
    conversion deletes the original first, its name being the copy's); the row moved to the new name and made to say
    what the copy holds, in one transaction; the carry written into the copy (CARRIED, file_changes.write_fields: only
-   what differs; the Date Taken into its XMP, as a clip's date is saved, fields.date_taken_fields, the date the library
-   reads first: an XMP date, or a .mov's Apple CreationDate, is not carried by ffmpeg, which carries a QuickTime
-   CreateDate only, clip_convert); the copy read back holding all it carries and no Windows Tags (_short_of); the
+   what differs; the Date Taken into its XMP and its QuickTime headers in one patch, as a clip's date is saved,
+   fields.date_taken_fields: ffmpeg carries no date, clip_convert; no clip holds one no header can, before 1904 or
+   after early 2040: the save refuses it, 3017); the copy read back holding all it carries and no Windows Tags (_short_of); the
    original deleted LAST; marked done, the change finished. The row's Date Taken is so the original's before the
    original is deleted.
 
@@ -86,10 +86,13 @@ logger = logging.getLogger(__name__)
 OPERATION = file_journal.CONVERT
 #: The change that writes what a conversion carries into its copy (file_changes.write_fields).
 CARRIED = "convert: tags carried"
-#: What the carry reads of the copy, and the conversion of the original: every keyword field, the title, the kept name,
+#: What the conversion reads of the original, and the carry of the copy: every keyword field, the title, the kept name,
 #: the XMP dates (a clip's write names no other: fields.CLIP_FIELDS).
 READ = (tagging.KEYWORD_READ + tuple(fields.title_fields("")) + (fields.CLIP_TITLE, fields.PRESERVED_NAME)
         + dates.CLIP_XMP_DATE_FIELDS)
+#: What the carry reads of the copy: READ and its QuickTime header dates, box by box, by TagPup's walk of the copy's box
+#: headers (field_values.read: no byte of its picture or sound; the original's are never read).
+CARRY_READ = READ + fields.CLIP_HEADER_DATES
 #: The reason of the one-time convert of the old formats (convert_clip's `reason`).
 OLD_FORMAT = "old format"
 #: The reason of a clip that plays made smaller, an MP4 (the panel's Make smaller (MP4): a .mov over SmugMug's limit; owner
@@ -513,7 +516,7 @@ def _onward(library, exiftool_path, row, forward, result, problem=None):
         result.refuse(ROW_THERE)
         return True
     _reached("rows followed")
-    carried = file_changes.write_fields(library, CARRIED, exiftool_path, [target], list(READ), _carrier(library, row.after),
+    carried = file_changes.write_fields(library, CARRIED, exiftool_path, [target], list(CARRY_READ), _carrier(library, row.after),
                                         summary={"photos": 1, "change": row.change_id})
     short = carried.message() if not carried.ok else _short_of(library, exiftool_path, target, row.after)
     if short:
@@ -554,7 +557,7 @@ def _short_of(library, exiftool_path, target, after):
     tags. Read after the carry and before the original, the one other holder of what it carries, is deleted for good."""
     try:
         with field_values.session(exiftool_path) as et:
-            held = field_values.read_one(et, target, list(READ) + [fields.CLIP_CATEGORY])
+            held = field_values.read_one(et, target, list(CARRY_READ) + [fields.CLIP_CATEGORY])
     except (OSError, field_values.Unreadable) as e:
         return "it could not be read back: %s" % e
     if fields.field_values(held.get(fields.CLIP_CATEGORY)):
@@ -672,8 +675,8 @@ def _followed(library, exiftool_path, row, target):
 def _carrier(library, after):
     """The `plan_one` of the carry into a converted copy: of what the conversion carries (`after`'s `carry`), only what
     the copy does not hold already -- its tags (tagging.keywords_planner: the copy's kept, the carried added after), its
-    title, the name it had, its Date Taken (in the XMP dates a clip's date is saved in, fields.date_taken_fields) -- else
-    skipped."""
+    title, the name it had, its Date Taken (in the XMP dates and QuickTime headers a clip's date is saved in,
+    fields.date_taken_fields) -- else skipped."""
     carry = after["carry"]
     tags_planner = tagging.keywords_planner(library, lambda _path, held_tags: (
         [tag for tag in carry["tags"] if tag not in held_tags], ()))
@@ -687,12 +690,14 @@ def _carrier(library, after):
             wanted.update(fields.title_fields(carry["title"]))
         if carry["name"] and names.preserved_name(held) != carry["name"]:
             wanted[fields.PRESERVED_NAME] = carry["name"]
-        if carry["date"] and dates.date_taken(held, None, dates.VIDEO) != carry["date"]:
-            # Its XMP dates alone for now: a carried date may be a camera's, with a zone or a fraction, which a QuickTime
-            # header does not spell (clip_patch.seconds_of); plan clip-date-in-quicktime-headers, cut 2, carries them.
-            wanted.update({field: value for field, value in
-                           fields.held_dates(fields.date_taken_fields(carry["date"], clip=True), held).items()
-                           if field not in fields.CLIP_HEADER_DATES})
+        if carry["date"]:
+            dated = fields.held_dates(fields.date_taken_fields(carry["date"], clip=True), held)
+            # Every box compared: a copy whose XMP holds the date (its packet carried whole) while ffmpeg left its
+            # headers zero is written, the XMP date beside them in the patch (field_values.clip_refused).
+            if dates.date_taken(held, None, dates.VIDEO) != carry["date"] or any(
+                    fields.field_values(held.get(field)) != [dated[field]]
+                    for field in fields.CLIP_HEADER_DATES if field in dated):
+                wanted.update(dated)
         if not wanted:
             return file_changes.skip("its converted copy holds what it carries already")
         return file_changes.Plan(after=wanted, detail=sorted(wanted))

@@ -467,10 +467,15 @@ def date_taken_fields(date_taken, clip=False):
     row's `taken` holds one (0 in the three libraries, counted 2026-11-05), so no SubSecTime is written; nor a zone. A
     clip's are its XMP dates (dates.CLIP_XMP_DATE_FIELDS), patched into its XMP (tagpup.files.segment_edits.new_packet),
     of which held_dates keeps XMP:CreateDate only where the clip holds one, and its QuickTime headers' (CLIP_HEADER_DATES),
-    set in the same patch (tagpup.files.clip_patch)."""
+    set in the same patch (tagpup.files.clip_patch) to the same local digits as if UTC, its fraction and zone left out
+    (a header holds seconds: DECISIONS 2026-11-13, A CLIP'S DATE TAKEN IS WRITTEN INTO ITS QUICKTIME HEADERS, "local
+    as-is"). The one place a date's header digits are decided: a save's date has neither; a date Convert carries may
+    have a zone (122 photo_index clips are dated with one, an iPhone .mov's Apple CreationDate or Adobe's XMP; none
+    with a fraction; counted 2026-11-13), kept in its XMP as the original held it."""
     value = date_taken_value(date_taken)
     if clip:
-        return {field: value for field in dates.CLIP_XMP_DATE_FIELDS + CLIP_HEADER_DATES}
+        digits = value[:len("YYYY:MM:DD HH:MM:SS")]
+        return {**{field: value for field in dates.CLIP_XMP_DATE_FIELDS}, **{field: digits for field in CLIP_HEADER_DATES}}
     return {"EXIF:DateTimeOriginal": value, "XMP:DateTimeOriginal": value, "EXIF:CreateDate": value}
 
 
