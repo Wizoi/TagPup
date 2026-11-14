@@ -20,7 +20,7 @@ import os
 import numpy as np
 
 from tagpup.core import clustering, orientation, paths, validation
-from tagpup.files import shares
+from tagpup.files import images, shares
 from tagpup.core.result import Conflict, NotFound, Refused, Result
 from tagpup.services import identify
 from tagpup.services import people as people_service
@@ -705,9 +705,10 @@ def vector_bytes(embedding):
 
 def _insert_detected(conn, photo_path, face, model):
     """A face as the face model found it: unnamed (a detection names nobody; its photo's tag may name it after: face_tags),
-    its vector filed under `model`, the key of the face model that found it (its `key`)."""
+    its vector filed under `model`, the key of the face model that found it (its `key`). Refused for a clip, by its name
+    (store.photos.refuse_faces_on)."""
     faces.insert(conn, photo_path, face.get("box", []), vector_bytes(face["embedding"]), model=model,
-                 crop=face.get("crop_image"), prob=face.get("prob"))
+                 crop=face.get("crop_image"), prob=face.get("prob"), kind=images.kind_of(photo_path))
 
 
 def detector_of(model):
@@ -733,7 +734,8 @@ def _record_detection(conn, photo_path, detector, detected):
     caller commits."""
     if detector is None or not ran(detected):
         return 0
-    return faces_detected.record(conn, photo_path, detector, shares.read_stamp(photo_path), len(detected))
+    return faces_detected.record(conn, photo_path, detector, shares.read_stamp(photo_path), len(detected),
+                                 kind=images.kind_of(photo_path))
 
 
 def record_detected(db_path, photo_path, detected, *, model, detector=None):

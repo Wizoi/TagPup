@@ -38,8 +38,9 @@ from test_suggest_then_apply_all import TOOLS, FramesClip  # noqa: E402
 
 from tagpup import config  # noqa: E402
 from tagpup.core import processes  # noqa: E402
-from tagpup.files import shares, video_frames  # noqa: E402
+from tagpup.files import images, shares, video_frames  # noqa: E402
 from tagpup.jobs import suggestions as suggestion_jobs  # noqa: E402
+from tagpup.services import faces as face_records  # noqa: E402
 from tagpup.services import libraries as library_actions  # noqa: E402
 from tagpup.store import db  # noqa: E402
 from tagpup.store import embeddings as store_embeddings  # noqa: E402
@@ -246,19 +247,28 @@ class AClipsPeopleAreThePeopleItsFramesShow(base.Base):
         for table in set(self.before) - {"tag_embeddings"}:
             self.assertEqual(self.before[table], after[table], "the cancelled run kept something in %s" % table)
 
-    def test_the_library_refuses_a_face_or_a_detection_on_a_clip_and_writes_nothing(self):
-        self.hold(["reel_01.mp4"])
+    def test_the_library_refuses_a_face_or_a_detection_on_a_clip_it_has_no_row_for_and_writes_nothing(self):
+        # The folder is the library's and the clip not read yet: no row, so no kind of a row to ask. The refusal is by
+        # what the file is (its name, images.kind_of), before a row is made -- one made first was of kind 'photo', and
+        # the face went through.
+        os.makedirs(self.reel)
         clip = os.path.join(self.reel, "reel_01.mp4")
+        shutil.copyfile(os.path.join(self.made, "reel_01.mp4"), clip)
+        library_actions.record_added(self.library, [self.reel])
+        self.before = base.library_dump.dump(self.library.path)
+        face = {"box": [0, 0, 40, 40], "embedding": ROWAN.tolist(), "prob": 0.99}
+        self.assertEqual(0, face_records.record_detected(self.library.path, clip, [face], model=FACE_MODEL),
+                         "Suggest's and the index's door refuses it")
         conn = db.connect(self.library.path)
         try:
             with self.assertRaises(ValueError):
-                store_faces.insert(conn, clip, [0, 0, 16, 16], ROWAN.tobytes(), model=FACE_MODEL, prob=0.99)
+                store_faces.insert(conn, clip, [0, 0, 40, 40], ROWAN.tobytes(), model=FACE_MODEL, prob=0.99,
+                                   kind=images.kind_of(clip))
             with self.assertRaises(ValueError):
-                faces_detected.record(conn, clip, "scrfd", shares.read_stamp(clip), 1)
+                faces_detected.record(conn, clip, "scrfd", shares.read_stamp(clip), 1, kind=images.kind_of(clip))
             conn.commit()
         finally:
             conn.close()
-        self.assertEqual([0, 0], self.face_rows_of_clips())
         self.assert_library_unchanged()
 
 
