@@ -247,7 +247,7 @@ class AClipIsIndexedAsAVideo(unittest.TestCase):
 
     def test_a_folder_opened_lists_its_clip_beside_its_photo(self):
         # The folder view lists a folder's clips (video, merge B2), and so does Smart Rename's answer, the same scan
-        # (#2564), by the real reader. Suggest and a time shift take the photos only
+        # (#2564), by the real reader. Suggest takes its clips too, a time shift the photos only
         # (tests/test_folder_scan_follows_the_library.py).
         folder = os.path.join(self.home.root, "Moorings")
         clip(folder, "harbour.mp4")

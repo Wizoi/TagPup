@@ -105,7 +105,7 @@ a tree edit; two cousins called alike; ignore, assign, restore and undo) are in 
   not promise that Apply All writes it (#2364). The test is `tests/frontend/selection-suggests-who-the-faces-look-like.test.mjs`,
   mapped to Views (#2740); the answer is People's, from the one shared matrix.
 - **Clips.** A clip has no face and no `photo_people` row (0 on all three libraries); its tags written by a save or a tree
-  rename are the Files domain's (`tests/test_a_tag_tree_edit_of_a_tag_a_clip_holds.py`). Suggest looks at photos only (DECISIONS 2026-11-08, "SUGGEST LOOKS AT PHOTOS ONLY").
+  rename are the Files domain's (`tests/test_a_tag_tree_edit_of_a_tag_a_clip_holds.py`). Suggest offers a clip tags only, no one: the suggester's face step skips a kind not in `store.photos.FACE_KINDS`, until people on clips are built (DECISIONS 2026-11-13; docs/plans/suggest-for-clips.md, merge 2).
 
 ## By design (each row closed `decided:`)
 
