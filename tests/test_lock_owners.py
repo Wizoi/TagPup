@@ -289,25 +289,73 @@ MSMPENG = [{"name": "MsMpEng.exe", "pid": 9, "kind": "service", "service": "WinD
 FIELDS_BEFORE, FIELDS_AFTER = {"XMP-dc:Subject": ["a"]}, {"XMP-dc:Subject": ["b"]}
 
 
+def logged_names(test, records, folder):
+    """Fail `test` if a log line names `folder` (a person's name, as the owner's folders are) or a file in it."""
+    for record in records:
+        line = record.getMessage()
+        test.assertNotIn("Rowan Thackeray", line, "a log line names the folder")
+        for name in ("Rowan at the regatta", "Regatta - ", "tmp_rename_", folder):
+            test.assertNotIn(name, line, "a log line names a path")
+
+
 @unittest.skipUnless(sys.platform == "win32", "a held file is Windows'")
 class ARenameOfAHeldFile(unittest.TestCase):
+    """Smart Rename in a folder named for a person: the page is told which file, the log never names one (#2973)."""
+
+    def setUp(self):
+        top = tempfile.TemporaryDirectory(prefix="held_rename_")
+        self.addCleanup(top.cleanup)
+        self.folder = os.path.join(top.name, "Rowan Thackeray")
+        os.makedirs(self.folder)
+
     def test_names_the_process_that_holds_it(self):
-        with tempfile.TemporaryDirectory(prefix="held_rename_") as folder:
-            old, new = os.path.join(folder, "IMG_0001.jpg"), os.path.join(folder, "Regatta - 1.jpg")
-            with open(old, "wb") as handle:
+        old, new = os.path.join(self.folder, "Rowan at the regatta.jpg"), os.path.join(self.folder, "Regatta - 1.jpg")
+        with open(old, "wb") as handle:
+            handle.write(b"x")
+        handle = hold_exclusively(old)
+        try:
+            with self.assertLogs("tagpup.files", "INFO") as logged, self.assertRaises(names.RenameFailed) as raised:
+                names.rename_all({old: new})
+        finally:
+            release(handle)
+        said = raised.exception.message()
+        self.assertIn("It is held open by", said)
+        self.assertIn("this TagPup process", said)
+        self.assertIn("Every photo was put back under its old name.", said)
+        self.assertNotIn("..", said)
+        self.assertTrue(os.path.exists(old))
+        self.assertIn("Smart Rename failed and was undone: The process cannot access the file because it is being used "
+                      "by another process (32)", logged.output[-1])
+        logged_names(self, logged.records, self.folder)
+
+    def test_a_photo_that_cannot_be_put_back_is_named_to_the_page_and_never_in_the_log(self):
+        """Two photos renamed; the second is held, and the first, already moved to its temporary name, cannot be put back
+        (its share went away part-way): the page lists the file left stranded, the log names no path."""
+        first, second = (os.path.join(self.folder, "Rowan at the regatta %d.jpg" % n) for n in (1, 2))
+        for path in (first, second):
+            with open(path, "wb") as handle:
                 handle.write(b"x")
-            handle = hold_exclusively(old)
-            try:
-                with self.assertRaises(names.RenameFailed) as raised:
-                    names.rename_all({old: new})
-            finally:
-                release(handle)
-            said = raised.exception.message()
-            self.assertIn("It is held open by", said)
-            self.assertIn("this TagPup process", said)
-            self.assertIn("Every photo was put back under its old name.", said)
-            self.assertNotIn("..", said)
-            self.assertTrue(os.path.exists(old))
+        real = os.rename
+
+        def rename(source, target):
+            if source == second:
+                raise OSError(None, "The process cannot access the file because it is being used by another process",
+                              source, 32, target)
+            if target == first:
+                raise OSError(None, "The specified network name is no longer available", source, 64, target)
+            return real(source, target)
+
+        renames = {first: os.path.join(self.folder, "Regatta - 1.jpg"), second: os.path.join(self.folder, "Regatta - 2.jpg")}
+        with mock.patch.object(names.os, "rename", rename), mock.patch.object(lock_owners, "holders", return_value=MSMPENG), \
+                self.assertLogs("tagpup.files", "INFO") as logged, self.assertRaises(names.RenameFailed) as raised:
+            names.rename_all(renames)
+        stranded = raised.exception.stranded
+        self.assertEqual(1, len(stranded))
+        self.assertIn("These could not be put back: %s" % stranded[0], raised.exception.message())
+        self.assertIn("It is held open by MsMpEng.exe", raised.exception.message())
+        self.assertIn("Smart Rename could not put a photo back under its old name: The specified network name is no "
+                      "longer available (64)", "\n".join(logged.output))
+        logged_names(self, logged.records, self.folder)
 
     def test_a_rename_that_works_asks_nobody(self):
         with tempfile.TemporaryDirectory(prefix="held_rename_") as folder:
