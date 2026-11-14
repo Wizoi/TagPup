@@ -70,6 +70,7 @@ LEFT = {
     retire_photo_vectors.VECTORS_OPERATION: ("its own check (retire_photo_vectors.vectors_check): "
                                              "tests/test_retiring_the_old_photo_models_vectors.py"),
     convert.CARRIED: AS_SAVE,
+    tagging.DATE_HEADERS: AS_SAVE,
     convert.OPERATION: ("a clip's conversion, planned by file_journal.plan and never undone (its sentence: the original "
                         "is deleted)"),
 }
