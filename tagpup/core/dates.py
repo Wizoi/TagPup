@@ -40,8 +40,9 @@ SHIFTED_FIELDS = tuple(field for field in DATE_TAKEN_FIELDS if ":" in field)
 #: CreateDate is the QuickTime copy, in UTC, and none of the 58 zero-date photo_index clips holds an EXIF or XMP date
 #: (counted 2026-11-08). A date of zeros ("0000:00:00 00:00:00", a camera
 #: that wrote none) is no date: a clip holding no other is dated by its file name (name_date). A camera's header is
-#: never rewritten; a header TagPup wrote (a Date Taken save) holds the local date's digits as UTC, which is why the
-#: reader prefers the XMP dates (DECISIONS 2026-11-02 item 8 stands for a camera's).
+#: never rewritten by the reader or the indexer, and stays UTC until a Date Taken save sets it (a save sets every mvhd,
+#: tkhd and mdhd whatever it held: DECISIONS 2026-11-13); a header TagPup wrote holds the local date's digits as UTC,
+#: which is why the reader prefers the XMP dates (DECISIONS 2026-11-02 item 8 stands for a camera's).
 CLIP_DATE_FIELDS = ("QuickTime:CreationDate", "QuickTime:CreateDate")
 
 #: A clip's XMP dates, read before its QuickTime ones: the Date Taken a save writes into its XMP
