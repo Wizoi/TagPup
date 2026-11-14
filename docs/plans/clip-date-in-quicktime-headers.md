@@ -42,12 +42,10 @@ Steady-state writer: every Date Taken a clip is given, from the panel or by Conv
 headers in one patch, no command run. A clip added with zero headers and a date in its name is dated in the library by
 `dates.name_date` and its file is not touched (2026-11-13, never automatic): its header is written when the owner saves
 its Date Taken.
-One-offs: `scripts/date_clip_headers.py`: lists the rows of kind `video` holding an XMP date and a zero or absent
-`QuickTime:CreateDate` (and the 98 named in the owner's reviewed CSV, `--csv`: file_name, folder relative to the root,
-difference_hours; the 11 of 8 to 10 hours left out; each matched as the clip's path under its root's place on this
-machine by `paths.key`), and saves each clip's own Date Taken through the same journaled clip save (never its own
-byte writer; `tagpup/services/clip_headers.py`, a module only the script names); dry run by default, `--apply`, `--limit`, TagPup stopped, one undoable change, "wrote N" from the files
-changed. Deleted when its dry run says 0 left (the merge saying so in a line `date_clip_headers: dry run 0 left`).
+One-offs: `scripts/date_clip_headers.py` ran on photo_index 2026-11-14 (changes 8891 and 8892, wrote 778 clips: 680
+whose `QuickTime:CreateDate` was zero or absent, 98 named in the owner's reviewed CSV; the 11 of 8 to 10 hours left out;
+a second dry run said 0 left) and was deleted with `tagpup/services/clip_headers.py`, `photos.clip_raw_rows` and its
+tests; the change stays undoable from History. It saved each clip's own Date Taken through the same journaled clip save.
 Cuts:
 1. Media, with `containers.py` reviewed beside Files (about 700 lines): `containers` walks trak/mdia, `Video.headers`;
    `clip_patch._header_ranges` and the seconds conversion; `fields` puts the three QuickTime date fields in the clip's

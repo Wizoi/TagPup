@@ -3,7 +3,7 @@
 The tables alone, so the guard reads them in the fast tier (tests/test_every_change_kind_has_an_undo_check.py: a kind the
 code makes that neither names fails it, #2748) and the matrix asserts each row's change is of its kind.
 """
-from tagpup.services import baking, bulk_edit, clip_headers, convert, face_batch, face_people, retire_photo_vectors, sync, tagging
+from tagpup.services import baking, bulk_edit, convert, face_batch, face_people, retire_photo_vectors, sync, tagging
 from tagpup.services import journal as journal_service
 from tagpup.services import settings as library_settings
 from tagpup.services import tags_from_faces
@@ -70,7 +70,6 @@ LEFT = {
     retire_photo_vectors.VECTORS_OPERATION: ("its own check (retire_photo_vectors.vectors_check): "
                                              "tests/test_retiring_the_old_photo_models_vectors.py"),
     convert.CARRIED: AS_SAVE,
-    clip_headers.DATE_HEADERS: AS_SAVE,
     convert.OPERATION: ("a clip's conversion, planned by file_journal.plan and never undone (its sentence: the original "
                         "is deleted)"),
 }

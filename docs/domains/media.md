@@ -47,8 +47,13 @@ answer for a count.
   (the reader prefers XMP). Convert's carry writes the QuickTime headers with the XMP date, as a save does (DECISIONS 2026-11-13). The rows dated before that rule (photo_index 80
   of its 2,179 clips then, none by its year; kr-track and renton_parkrun none) were dated again from their own raw_metadata
   by a one-off, applied on photo_index as the journal's "rederive clip dates" (undone from History as any change of
-  rows: `journal.RETIRED`) and deleted once no clip was apart (#2734). C5:
-  `tests/test_a_clip_dated_through_the_journal.py`.
+  rows: `journal.RETIRED`) and deleted once no clip was apart (#2734). The one-off `scripts/date_clip_headers.py` wrote
+  each clip's own Date Taken into its headers through this same save (photo_index, 2026-11-14, after the backup
+  `data/backups/photo_index.before-date-clip-headers-20261114_083139.db`: change 8891 wrote 1 clip, change 8892 wrote
+  777, 0 failed: 778 in all, 680 whose headers were zero or absent and 98 from the owner's reviewed list; the 11 clips
+  about 9 hours off were left out and keep their camera's header, true UTC; a second dry run said 0 left); it was
+  deleted with `tagpup/services/clip_headers.py`, and the change is undone from History as a save is (`journal.RETIRED`;
+  undoing 8892 opens every clip once on the share). C5: `tests/test_a_clip_dated_through_the_journal.py`.
 - **A clip whose file holds no date** (its QuickTime dates zeros, no XMP date) is dated by the whole date in its file
   name at midnight (`dates.name_date`: `YYYY-MM-DD`, `YYYY_MM_DD`, `YYYY.MM.DD`, `YYYYMMDD`), never by its folder's
   name (DECISIONS 2026-11-13). Its year is the year of its Date Taken alone (`dates.photo_year`): a clip with no Date
