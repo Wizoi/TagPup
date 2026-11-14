@@ -112,9 +112,9 @@ describe("the words", () => {
 
   test("what changed in the open folder is said from the counts before and after", () => {
     assert.equal(folderText({ before: { named: 68, unnamed: 2407 }, after: { named: 90, unnamed: 2385 } }),
-      "In the open folder: 22 more named; 90 named and 2,385 still unnamed.");
+      "In that folder: 22 more named; 90 named and 2,385 still unnamed.");
     assert.equal(folderText({ before: { named: 5, unnamed: 1 }, after: { named: 5, unnamed: 1 } }),
-      "In the open folder: no face named or unnamed; 5 named and 1 still unnamed.");
+      "In that folder: no face named or unnamed; 5 named and 1 still unnamed.");
     assert.equal(folderText(null), "");
     assert.equal(folderText({ before: null, after: null }), "", "a folder the page could not count says nothing");
   });
@@ -346,7 +346,7 @@ for (const appName of ["tagpup", "tagtuner"]) {
       await ctx.waitFor(".name-faces-question", /^In the folder .* and its subfolders: name 1 face/);
       assert.deepEqual(ctx.posts("/api/name-faces/start"), [{ folder: ctx.real.folder, only_folder: true }]);
       await ctx.press("Yes");
-      await ctx.waitFor(".name-faces-folder", /^In the open folder: 1 more named; 2 named and 1 still unnamed\.$/);
+      await ctx.waitFor(".name-faces-folder", /^In that folder: 1 more named; 2 named and 1 still unnamed\.$/);
       assert.deepEqual(await ctx.nameOf(), ["Wren Halloway"]);
     });
   });

@@ -101,7 +101,7 @@ export function folderText(inFolder) {
     if (!inFolder || !inFolder.before || !inFolder.after) return '';
     const more = inFolder.after.named - inFolder.before.named;
     const change = more > 0 ? nfNumber(more) + ' more named' : more < 0 ? nfNumber(-more) + ' fewer named' : 'no face named or unnamed';
-    return 'In the open folder: ' + change + '; ' + nfNumber(inFolder.after.named) + ' named and '
+    return 'In that folder: ' + change + '; ' + nfNumber(inFolder.after.named) + ' named and '
         + nfNumber(inFolder.after.unnamed) + ' still unnamed.';
 }
 
