@@ -298,7 +298,7 @@ class AShareThatStopsAnsweringMidWrite(T.Bulk):
         self.assertEqual((0, self.PHOTOS, 0), (done["changed"], done["error_count"], self.files.writes))
         self.assertIn("ExifTool stopped answering before anything was written", done["errors"][0]["why"])
         self.assertEqual([], self.change_files())
-        self.assertEqual(["failed"], [status for _id, _op, status in self.changes("bulk tags%")])
+        self.assertEqual([], self.changes("bulk tags%"))
         self.assertEqual(0, self.coast())
 
 
