@@ -13,7 +13,8 @@ cut short, a box that claims more than the file holds, or bytes that are no box 
             the end leaves it; or `XMP_` inside moov's udta, as ExifTool writes into a .mov), the free/skip/wide boxes
             beside a box (room a write may take), moov before or after mdat, moof (a fragmented file), the clip's
             QuickTime title item (moov/udta/meta/ilst/\xa9nam, `title_item`) and its Microsoft Xtra box
-            (moov/udta/Xtra, `xtra`), where Windows keeps the clip's Tags.
+            (moov/udta/Xtra, `xtra`), where Windows keeps the clip's Tags; and the creation time each of its
+            movie, track and media headers holds (mvhd, moov/trak/tkhd, moov/trak/mdia/mdhd: `headers`).
     Jpeg    the segments up to the first scan, each APP1 EXIF, APP1 XMP and APP13 Photoshop (IPTC) segment with its
             slack: the bytes a rewrite of the segment at its old length may use, as the in-place study defined them
             (DECISIONS 2026-11-02, "THE JPEG PATCH IS BUILT WITH THE VIDEOS"): XMP's whitespace between </x:xmpmeta>
@@ -30,9 +31,14 @@ XMP_UUID = bytes.fromhex("BE7ACFCB97A942E89C71999491E3AFAC")
 FREE_TYPES = frozenset({"free", "skip", "wide"})
 #: Boxes whose children are walked, and which of those children are walked in turn: where ExifTool puts a .mov's XMP
 #: (moov/udta/XMP_), and where a clip's QuickTime title is (moov/udta/meta/ilst/\xa9nam: every one of the 2,018
-#: photo_index clips holding one, counted 2026-11-08). No deeper: a box of garbage nested in itself is not followed down.
-CONTAINERS = {"moov": frozenset({"udta"}), "udta": frozenset({"meta"}), "meta": frozenset({"ilst"}),
-              "ilst": frozenset()}
+#: photo_index clips holding one, counted 2026-11-08), and where a clip's track and media headers are (moov/trak/tkhd,
+#: moov/trak/mdia/mdhd). No deeper: a box of garbage nested in itself is not followed down.
+CONTAINERS = {"moov": frozenset({"udta", "trak"}), "udta": frozenset({"meta"}), "meta": frozenset({"ilst"}),
+              "ilst": frozenset(), "trak": frozenset({"mdia"}), "mdia": frozenset()}
+#: The boxes holding a clip's creation time (the movie's header, each track's and each media's): a full box, its one
+#: version byte and three flag bytes, then its creation time in seconds since 1904-01-01, 4 bytes in version 0 and 8 in
+#: version 1 (ISO/IEC 14496-12).
+HEADER_TYPES = ("mvhd", "tkhd", "mdhd")
 #: The box of a clip's QuickTime title (ExifTool's QuickTime:Title), an item of an ilst; QuickTime's older user data
 #: keeps one directly in udta.
 TITLE_ITEM = "\xa9nam"
@@ -124,7 +130,9 @@ class Box:
     """One ISO-BMFF box: `size` is the whole box, its header included; `header` is 8, 16 for a 64-bit size, and 16 more
     for a `uuid` box's usertype. `to_end` is a box stored with size 0 (it runs to the end of the file). `children` are
     walked only as CONTAINERS says; `broken` is a container whose children do not fit in it. `handler`, a meta box's
-    handler type (ITEM_HANDLER), None for another box or a meta with no one hdlr."""
+    handler type (ITEM_HANDLER), None for another box or a meta with no one hdlr. `version` and `created`, a header's
+    (HEADER_TYPES) version byte and the creation time it stores, read under moov; None for another box, and `created`
+    None for a header of another version or too short to hold one."""
     type: str
     offset: int
     size: int
@@ -134,6 +142,8 @@ class Box:
     children: tuple = ()
     broken: bool = False
     handler: str = None
+    version: int = None
+    created: int = None
 
     @property
     def end(self):
@@ -229,6 +239,12 @@ class Video:
         """The clip's one Microsoft Xtra box (XTRA), directly in moov/udta; None for none, or for two."""
         found = self.in_udta(XTRA)
         return found[0] if len(found) == 1 else None
+
+    @property
+    def headers(self):
+        """Every header box (HEADER_TYPES) under the first moov, its tracks' and their media's, in file order."""
+        moov = self.moov
+        return tuple(_headers_in(moov.children if moov else ()))
 
     def slack_beside(self, box):
         """(free boxes just before `box`, free boxes just after it): the runs of free/skip/wide boxes that touch it among
@@ -409,9 +425,24 @@ def _children(handle, start, end, walked):
         children, broken, handler = (), False, None
         if kind in walked:
             children, broken, handler = _walked(handle, kind, offset + length, offset + size)
-        found.append(Box(kind, offset, size, length, uuid, to_end, children, broken, handler))
+        version, created = _created(handle, kind, offset + length, offset + size)
+        found.append(Box(kind, offset, size, length, uuid, to_end, children, broken, handler, version, created))
         offset += size
     return tuple(found), False
+
+
+def _created(handle, kind, start, end):
+    """(the version byte, the creation time) of a header box (HEADER_TYPES) whose content runs from `start` to `end`;
+    (None, None) for another box, the time None for a version other than 0 or 1 or a box too short to hold it."""
+    if kind not in HEADER_TYPES:
+        return None, None
+    raw = _read_at(handle, start, min(12, end - start))
+    if not raw:
+        return None, None
+    width = {0: 4, 1: 8}.get(raw[0])
+    if width is None or len(raw) < 4 + width:
+        return raw[0], None
+    return raw[0], int.from_bytes(raw[4:4 + width], "big")
 
 
 def _walked(handle, kind, start, end):
@@ -426,6 +457,13 @@ def _walked(handle, kind, start, end):
     if len(hdlr) == 1 and hdlr[0].end - hdlr[0].payload >= 12:
         handler = _box_type(_read_at(handle, hdlr[0].payload + 8, 4))
     return children, broken, handler
+
+
+def _headers_in(boxes):
+    for box in boxes:
+        if box.type in HEADER_TYPES:
+            yield box
+        yield from _headers_in(box.children)
 
 
 def _xmp_boxes(boxes, path):
