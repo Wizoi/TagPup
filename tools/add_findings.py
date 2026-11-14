@@ -121,6 +121,18 @@ def unproven_bulk(text, key, status):
                 and not WROTE.search(status))
 
 
+COMMIT = re.compile(r"\b[0-9a-f]{7,40}\b")
+SEVERE = re.compile(r"^\|[^|]*\|[^|]*\|\s*(data|wrong):", re.I)
+
+
+def unproven_commit(text, key, status):
+    """True when row `key` of `text` is `data:` or `wrong:` and `status` closes it `fixed` naming no commit hash, so
+    the chain check cannot read the fix's files (#2963)."""
+    match = re.search(r"^\| %s \|[^\n]*$" % re.escape(str(key)), text, re.M)
+    return bool(match and SEVERE.match(match.group(0)) and re.match(r"fixed\b", status.strip(), re.I)
+                and not COMMIT.search(status))
+
+
 def set_status(text, key, status):
     """`text` with the row `key` (a number or `B-n`) given `status`, or None if it has no such row."""
     match = re.search(r"^\| %s \|[^\n]*$" % re.escape(str(key)), text, re.M)
@@ -426,6 +438,8 @@ def main(argv=None):
             _check_rows(parser, rows, _read(args.findings), args.archive_dir, _watching_text(args.watching_file), args.repo)
             text, given = add_branch(text, rows)
         for key, status in args.status:
+            if unproven_commit(text, key, status):
+                parser.error("%s is data or wrong: close it `fixed: <commit hash> ...` so the chain check can read its files" % key)
             if unproven_bulk(text, key, status):
                 parser.error("%s names a bulk write: close it `fixed: <commit>; wrote N ...` with what the fix wrote" % key)
             updated = set_status(text, key, status)
@@ -445,6 +459,8 @@ def main(argv=None):
     floor = highest(*archives.values(), watching)
     given, mapping, changed, moved = [], {}, {}, 0
     for key, status in args.status:
+        if unproven_commit(text, key, status) or unproven_commit("\n".join(archives.values()), key, status):
+            parser.error("#%s is data or wrong: close it `fixed: <commit hash> ...` so the chain check can read its files" % key)
         if unproven_bulk(text, key, status) or unproven_bulk("\n".join(archives.values()), key, status):
             parser.error("#%s names a bulk write: close it `fixed: <commit>; wrote N ...` with what the fix wrote" % key)
         if set_status(text, key, status) is not None:
