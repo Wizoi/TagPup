@@ -43,8 +43,10 @@ headers in one patch, no command run. A clip added with zero headers and a date 
 `dates.name_date` and its file is not touched (2026-11-13, never automatic): its header is written when the owner saves
 its Date Taken.
 One-offs: `scripts/date_clip_headers.py`: lists the rows of kind `video` holding an XMP date and a zero or absent
-`QuickTime:CreateDate` (and the 98 named from the CSV: a `--paths` list, the 11 left out), and saves each clip's own
-Date Taken through the same journaled clip save (never its own byte writer); dry run by default, `--apply`, `--limit`, TagPup stopped, one undoable change, "wrote N" from the files
+`QuickTime:CreateDate` (and the 98 named in the owner's reviewed CSV, `--csv`: file_name, folder relative to the root,
+difference_hours; the 11 of 8 to 10 hours left out; each matched as the clip's path under its root's place on this
+machine by `paths.key`), and saves each clip's own Date Taken through the same journaled clip save (never its own
+byte writer; `tagpup/services/clip_headers.py`, a module only the script names); dry run by default, `--apply`, `--limit`, TagPup stopped, one undoable change, "wrote N" from the files
 changed. Deleted when its dry run says 0 left (the merge saying so in a line `date_clip_headers: dry run 0 left`).
 Cuts:
 1. Media, with `containers.py` reviewed beside Files (about 700 lines): `containers` walks trak/mdia, `Video.headers`;
