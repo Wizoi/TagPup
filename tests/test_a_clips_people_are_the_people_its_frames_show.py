@@ -39,7 +39,6 @@ import test_analyse_only_suggest as base  # noqa: E402
 from face_rows import FACE_MODEL  # noqa: E402
 from test_suggest_then_apply_all import TOOLS, FramesClip  # noqa: E402
 
-from tagpup import config  # noqa: E402
 from tagpup.core import processes  # noqa: E402
 from tagpup.files import images, shares, video_frames  # noqa: E402
 from tagpup.jobs import suggestions as suggestion_jobs  # noqa: E402
@@ -283,11 +282,6 @@ class AClipsPeopleAreThePeopleItsFramesShow(base.Base):
         self.assertEqual([(ROWAN_TAG, {"seen": 4, "of": 5})], self.people(entry), "its people, once its frames are read")
         self.assertIsNone(self.raw_of("reel_02.mp4")[0].get("faces_unread"))
         self.assertEqual([0, 0], self.face_rows_of_clips())
-
-    def test_with_no_ffmpeg_for_a_run_a_clip_is_kept_for_the_next_which_offers_its_people(self):
-        self.frames_not_read_for_the_moment_then_read(
-            mock.patch.object(config, "locate_ffmpeg", return_value=config.Ffmpeg(None, None, config.FFMPEG_MISSING)),
-            config.FFMPEG_MISSING)
 
     def test_ffmpeg_past_its_deadline_for_a_run_keeps_the_clip_for_the_next_which_offers_its_people(self):
         problem = video_frames.TOO_LONG % 30

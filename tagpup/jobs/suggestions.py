@@ -47,6 +47,7 @@ import numpy as np
 from tagpup.core import paths
 from tagpup.core.gpu_turns import Cancelled, OtherModelsInUse
 from tagpup.services import libraries, suggester
+from tagpup.services.search import FfmpegGone
 
 logger = logging.getLogger(__name__)
 
@@ -754,6 +755,8 @@ class SuggestionRuns:
             tags, people, title = model.offered(suggestion)
             found = {"tags": tags, "people": people, "title": title,
                      "raw_suggestions": suggestion, "raw_before_consensus": True}
+        except FfmpegGone:
+            raise   # not this photo's: the run stops and says so (DECISIONS 2026-11-13)
         except Exception as e:
             if self._cancelled(key):
                 return None
@@ -805,6 +808,8 @@ class SuggestionRuns:
             # whole folder when more photos arrive.
             found = {"tags": tags, "people": people, "title": title,
                      "raw_suggestions": suggestion, "raw_before_consensus": True}
+        except FfmpegGone:
+            raise   # not this photo's: the run stops and says so, and nothing is marked of it (DECISIONS 2026-11-13)
         except Exception as e:
             if self._cancelled(key):
                 return None

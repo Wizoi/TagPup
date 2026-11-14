@@ -368,15 +368,14 @@ class AHeldFolderOfPhotosAndClips(Base):
                  if os.path.basename(path) == "dock_04.mp4"]
         self.assertEqual(["video"], kinds, "the row Suggest made for the clip")
 
-    def test_a_clip_whose_frames_cannot_be_read_carries_why_and_the_next_run_tries_it_again(self):
+    def test_a_clip_with_no_vector_and_ffmpeg_gone_stops_the_run_with_the_install_sentence_and_the_next_run_goes_on(self):
         with mock.patch.object(config, "locate_ffmpeg", return_value=config.Ffmpeg(None, None, config.FFMPEG_MISSING)):
             self.start(self.dock)
-        offered = self.suggested(self.dock)
-        self.assertIn("ffmpeg", offered["dock_03.mp4"].get("error", ""), "the clip with no vector says why")
-        # Its frames are read for its people (a face of the library is named): not read for the moment, it is not kept
-        # as done either (P13, tests/test_a_clips_people_are_the_people_its_frames_show.py).
-        self.assertIn("ffmpeg", offered["dock_02.mp4"].get("error", ""), "the clip whose vector is kept says why too")
-        self.assertNotIn("error", offered["dock_01.jpg"])
+        found = self.status(self.dock)
+        self.assertEqual("error", found["status"])
+        self.assertIn(config.FFMPEG_MISSING, found["message"])
+        self.assertEqual(0, self.rows("SELECT COUNT(*) FROM suggestions WHERE photo_id = ?", (self.clip_ids[1],))[0][0],
+                         "the clip with no vector is not marked, unread or done")
         self.assertEqual(0, self.rows("SELECT COUNT(*) FROM embeddings WHERE photo_id = ?", (self.clip_ids[1],))[0][0])
         suggestion_jobs.forget(self.library)
         self.start(self.dock)
@@ -404,6 +403,62 @@ class AHeldFolderOfPhotosAndClips(Base):
         with open(looked, "rb") as handle:
             self.assertEqual(before, handle.read(), "the clip a write of files alone cannot journal is left as it was")
         self.assert_library_unchanged()
+
+
+class AFolderOfClipsWithFfmpegGone(Base):
+    """ffmpeg is a prerequisite checked at the start; when it is gone while the server runs, Suggest on a folder of clips
+    is a major error told to the owner with the install sentence (DECISIONS 2026-11-13), never a clip marked unread, a
+    note, or tags changed: the run stops, no clip has a suggestion row, nothing is kept, in the library or only looked at."""
+
+    def app_home(self):
+        super().app_home()
+        self.clip = FramesClip(self.clip.settings)
+
+    def setUp(self):
+        super().setUp()
+        self.wharf = os.path.join(self.home.root, "Pictures", "Wharf")
+        self.clips = [os.path.join(self.wharf, name) for name in ("wharf_01.mp4", "wharf_02.mp4")]
+        os.makedirs(self.wharf)
+        for path in self.clips:
+            with open(path, "wb") as handle:
+                handle.write(b"not read: ffmpeg is gone before any frame is asked of it")
+        library_actions.record_added(self.library, [self.wharf])
+        conn = db.connect(self.library.path)
+        try:
+            for path in self.clips:
+                photo_rows.add_read(conn, path, {})
+            conn.commit()
+        finally:
+            conn.close()
+        self.before = base.library_dump.dump(self.library.path)
+        gone = mock.patch.object(config, "locate_ffmpeg", return_value=config.Ffmpeg(None, None, config.FFMPEG_MISSING))
+        gone.start()
+        self.addCleanup(gone.stop)
+
+    def assert_only_the_words_changed(self):
+        """The run's own candidate words were embedded and kept (a run does); no other table of the library moved."""
+        after = base.library_dump.dump(self.library.path)
+        for table in self.before:
+            if table != "tag_embeddings":
+                self.assertEqual(self.before[table], after[table], "the library's %s changed" % table)
+
+    def test_suggest_answers_the_install_sentence_and_changes_no_clip(self):
+        self.assertEqual({"success": True, "status": "running", "in_memory": False}, self.start(self.wharf))
+        found = self.status(self.wharf)
+        self.assertEqual("error", found["status"])
+        self.assertIn(config.FFMPEG_MISSING, found["message"])
+        self.assertEqual([], [n for n in found.get("notes", []) if "ffmpeg" in n.lower()], "not a quiet note")
+        self.assert_only_the_words_changed()   # no suggestion row, no vector, no tag: no clip marked done or unread
+
+    def test_a_clip_only_looked_at_answers_it_too_and_keeps_nothing(self):
+        looked = os.path.join(self.cup, "cup_09.mp4")
+        with open(looked, "wb") as handle:
+            handle.write(b"not read")
+        self.assertEqual({"success": True, "status": "running", "in_memory": True}, self.start(self.cup))
+        found = self.status(self.cup)
+        self.assertEqual("error", found["status"])
+        self.assertIn(config.FFMPEG_MISSING, found["message"])
+        self.assert_only_the_words_changed()
 
 
 if __name__ == "__main__":
