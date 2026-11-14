@@ -958,18 +958,6 @@ class ThePanelButtons(AnOldClipInTheLibrary):
         self.assertEqual(XMP_TAKEN, self.taken(photo_id), "the row's Date Taken is the one its XMP held")
         self.assert_dated(source, XMP_TAKEN, "2018:03:02 09:15:00")
 
-    def test_an_mp4_dated_in_its_xmp_before_any_header_date_is_made_smaller_dated_by_its_xmp_alone(self):
-        # Dated so by another program (TagPup's save refuses it: field_values.clip_date_refused); Convert goes on.
-        source, photo_id = self.mov("dock.mp4", 0)
-        old = "1899:12:31 10:00:00"
-        dated = file_changes.write_fields(self.vl.library, "save", EXIFTOOL, [source], ["XMP:DateTimeOriginal"],
-                                          lambda _path, _held: file_changes.Plan(after={"XMP:DateTimeOriginal": old}))
-        self.assertEqual(1, dated.changed, dated.message())
-        said = self.ended(self.ask(photo_id, "shrink", source))
-        self.assertTrue(said["success"], said)
-        self.assertEqual(old, self.taken(photo_id))
-        self.assert_dated(source, old, ZERO)
-
     def test_an_old_wmv_is_dated_by_its_xmp_alone_never_by_its_creation_time(self):
         # A .wmv's ASF creation time is when its file was made, not its Date Taken (DECISIONS 2026-11-09, item 6).
         for name, taken in (("quay.wmv", None), ("slipway.wmv", WMV_TAKEN)):

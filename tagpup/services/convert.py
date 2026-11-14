@@ -39,9 +39,8 @@ How one conversion goes, the original kept until its copy is in place and holds 
    conversion deletes the original first, its name being the copy's); the row moved to the new name and made to say
    what the copy holds, in one transaction; the carry written into the copy (CARRIED, file_changes.write_fields: only
    what differs; the Date Taken into its XMP and its QuickTime headers in one patch, as a clip's date is saved,
-   fields.date_taken_fields: ffmpeg carries no date, clip_convert; one no header holds, before 1904 or after early
-   2040, into its XMP alone, the copy then dated by its XMP and its headers left zero, the conversion going on as any
-   other); the copy read back holding all it carries and no Windows Tags (_short_of); the
+   fields.date_taken_fields: ffmpeg carries no date, clip_convert; no clip holds one no header can, before 1904 or
+   after early 2040: the save refuses it, 3017); the copy read back holding all it carries and no Windows Tags (_short_of); the
    original deleted LAST; marked done, the change finished. The row's Date Taken is so the original's before the
    original is deleted.
 
@@ -693,9 +692,6 @@ def _carrier(library, after):
             wanted[fields.PRESERVED_NAME] = carry["name"]
         if carry["date"]:
             dated = fields.held_dates(fields.date_taken_fields(carry["date"], clip=True), held)
-            if field_values.clip_date_refused(dated[fields.CLIP_HEADER_DATES[0]]):
-                # No header holds it (before 1904, after early 2040): dated by its XMP alone (the module).
-                dated = {field: value for field, value in dated.items() if field not in fields.CLIP_HEADER_DATES}
             # Every box compared: a copy whose XMP holds the date (its packet carried whole) while ffmpeg left its
             # headers zero is written, the XMP date beside them in the patch (field_values.clip_refused).
             if dates.date_taken(held, None, dates.VIDEO) != carry["date"] or any(
