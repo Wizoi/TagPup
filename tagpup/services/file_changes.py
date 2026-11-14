@@ -681,6 +681,12 @@ def _write_fields(et, library, operation, exiftool_path, photo_paths, read, plan
     return result
 
 
+def empty_failed_changes(library, erase=False):
+    """{operation: count} of the failed changes holding no file and no row (#2996): counted, or with `erase` deleted
+    (each re-checked as it goes) and the count deleted given. The one-off scripts/delete_empty_failed_changes.py."""
+    return (file_journal.erase_empty_failed if erase else file_journal.empty_failed)(library.path)
+
+
 def files_done(library, change_id):
     """How many files of change `change_id` the journal holds done: what a write that is being stopped says it has written
     (a count, no path). The one under way may be written and not yet counted."""

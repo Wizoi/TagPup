@@ -596,3 +596,32 @@ def finish(db_path, change_id, also=None):
         return states
 
     return db.write_with_connection(db_path, work, label="finish change %d" % change_id)
+
+
+#: A change that failed and holds nothing: no file, no row. What a write that wrote nothing left before finish erased it
+#: (#2996); the rule of what it is, spelt once for the count and the delete.
+_EMPTY_FAILED = (" status = 'failed' AND NOT EXISTS (SELECT 1 FROM change_files f WHERE f.change_id = changes.id)"
+                 " AND NOT EXISTS (SELECT 1 FROM change_rows r WHERE r.change_id = changes.id)")
+
+
+def empty_failed(db_path):
+    """{operation: count} of the failed changes that hold no file and no row, read only."""
+    conn = db.connect(db.readonly_uri(db_path), uri=True)
+    try:
+        return dict(conn.execute("SELECT operation, COUNT(*) FROM changes WHERE" + _EMPTY_FAILED
+                                 + " GROUP BY operation ORDER BY operation"))
+    finally:
+        conn.close()
+
+
+def erase_empty_failed(db_path):
+    """Delete the failed changes that hold no file and no row (#2996), each re-checked as it is deleted in the one
+    transaction. Returns {operation: count actually deleted}."""
+    def work(conn):
+        deleted = {}
+        for change_id, operation in conn.execute("SELECT id, operation FROM changes WHERE" + _EMPTY_FAILED).fetchall():
+            if conn.execute("DELETE FROM changes WHERE id = ? AND" + _EMPTY_FAILED, (change_id,)).rowcount:
+                deleted[operation] = deleted.get(operation, 0) + 1
+        return dict(sorted(deleted.items()))
+
+    return db.write_with_connection(db_path, work, label="erase empty failed changes")
