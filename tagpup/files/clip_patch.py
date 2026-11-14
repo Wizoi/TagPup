@@ -33,7 +33,7 @@ counted read-only 2026-11-05):
      and what ExifTool 13.59 and ffmpeg read back from an MP4 with moov first or last and from a .mov
      (tests/test_a_clip_patched_in_place.py).
 
-None, the rewrite's, for: no moov, two moov, a moov or udta whose children do not fit in it, a fragmented clip (moof),
+None, the rewrite's, for: no moov, two moov, a moov, udta, track or media box whose children do not fit in it (`Video.headers_whole`), a fragmented clip (moof),
 two XMP boxes (which one a reader takes is not this module's to guess), any XMP box whose run would leave a free box of
 4 GB or more (a 32-bit size cannot say it; 0 of the 2,184 clips: 3 are over 4 GB, none holds XMP), a packet that needs an append where the last box has size 0 ("to the end of the file": it would
 take the appended box into itself; none live), and a clip whose walk stops before its end (`Video.tail`): a box that
@@ -76,8 +76,8 @@ UTC (`seconds_of`), at the box's own width (4 bytes in version 0, 8 in version 1
 both, counted 2026-11-13), modification times untouched. One text sets every box of its kind (a save cannot know how
 many there are when it plans); n texts set each box in turn, the undo of a clip whose tracks disagreed (31 photo_index
 clips, counted 2026-11-13), each box given back its own seconds. A box holding its date already is not written. None,
-the rewrite's, for texts that are not one nor one a box, and a header of a version other than 0 or 1 or too short to
-hold its time (none live).
+the rewrite's, for texts that are not one nor one a box. A header of a version other than 0 or 1, or too short to hold its
+time (none live), is refused before this: `header_dates` raises, and the read answers Unreadable.
 
 A `Patch`'s last range may start at the file's end (an append) or run past it (a box that grows there): `size` is the
 file's size once written. Its ranges are in file order and do not overlap.
