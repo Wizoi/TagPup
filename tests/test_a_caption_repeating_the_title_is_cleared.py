@@ -341,6 +341,25 @@ class StoppedPartWay(CaptionSweep):
         for path in self.photos:
             self.assertEqual((TITLE, TITLE, TITLE), self.captions_of(path), "a file was written")
 
+    def test_a_first_ctrl_c_after_the_change_was_applied_does_not_say_nothing_was_recorded(self):
+        # #2997: the press comes once the write has returned (ExifTool closing), so the stop carries no `change`: the files
+        # are written and the change is applied in History, which the line must not deny.
+        real = file_changes._said_removed
+
+        def late(result, since):
+            signal.raise_signal(signal.SIGINT)
+            return real(result, since)
+
+        with mock.patch.object(file_changes, "_said_removed", side_effect=late):
+            code, said = self.sweep("--apply")
+        self.assertEqual(130, code, said)
+        self.assertEqual(["applied"], [status for _id, _op, status in self.changes()])
+        self.assertNotIn("no change recorded", said)
+        self.assertNotIn("nothing to undo", said)
+        self.assertIn("recorded as change", said)
+        for path in self.photos:
+            self.assert_cleared(path)
+
     def test_a_ctrl_c_says_it_is_reading_back_and_a_second_says_how_many_were_written(self):
         # More than a few files written when it stops: a stop is a read back of every one of them.
         more = [self.repeated("more %d.jpg" % n) for n in range(7)]

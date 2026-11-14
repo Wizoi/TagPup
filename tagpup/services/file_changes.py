@@ -693,6 +693,12 @@ def finish_forward(library, change_id, result=None):
     return finished
 
 
+def change_is_kept(library, change_id):
+    """Whether change `change_id` is still in the journal: what a stop that carries no `change` (the Ctrl+C came after the
+    write returned, with its change applied) asks, since a change that is gone is not one to undo (#2997)."""
+    return file_journal.change(library.path, change_id) is not None
+
+
 def files_done(library, change_id):
     """How many files of change `change_id` the journal holds done: what a write that is being stopped says it has written
     (a count, no path). The one under way may be written and not yet counted."""
