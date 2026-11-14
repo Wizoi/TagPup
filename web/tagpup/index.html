@@ -333,7 +333,7 @@
                                     <span id="library-strip-sync" class="library-strip-sync"></span>
                                 </div>
                                 <span class="library-strip-actions">
-                                    <button id="btn-library-refresh" type="button" class="btn btn-secondary btn-sm btn-icon" aria-label="Refresh view" title="Refresh view: ask the library for this view's photos again; the place in the view is kept"><span aria-hidden="true">&#x21BB;</span></button>
+                                    <button id="btn-library-refresh" type="button" class="btn btn-secondary btn-sm btn-icon" aria-label="Refresh view" title="Refresh view: ask the library for this view's photos again; the place in the view is kept. In a folder's view, also look on disk for photos the library does not hold yet"><span aria-hidden="true">&#x21BB;</span></button>
                                     <!-- Show: the view's photos and videos, its photos alone or its videos alone (web/tagpup/filter-menu.js; a radio menu, radio-menu.js). -->
                                     <span class="radio-menu-anchor">
                                         <button id="btn-filter-media" type="button" class="btn btn-secondary btn-sm" aria-haspopup="menu" aria-expanded="false" aria-controls="filter-menu" data-own-keys>Show: <span id="filter-media-current" class="radio-menu-current"></span> <span aria-hidden="true">&#x25BE;</span></button>
@@ -400,12 +400,11 @@
                             </div>
                         </div>
 
-                        <!-- The disk holds photos of this folder the library does not (web/tagpup/library-moves.js). -->
+                        <!-- The disk holds photos of this folder the library does not (web/tagpup/library-banner.js). -->
                         <div id="moves-banner" class="moves-banner hidden" role="status">
                             <span id="moves-banner-text"></span>
                             <button id="btn-moves-add" class="btn btn-primary btn-sm">Add them</button>
                             <button id="btn-moves-dismiss" class="btn btn-secondary btn-sm">Dismiss</button>
-                            <button id="btn-moves-check" type="button" class="moves-check hidden">Check this folder on disk for new photos</button>
                         </div>
 
                         <!-- Smart Rename Panel -->

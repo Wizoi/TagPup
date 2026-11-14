@@ -7,33 +7,34 @@
 //  * the answer is kept per folder for the life of the page, and forgotten by Refresh view, an Add, and a change in when
 //    the library was last in step (sync-state.js) -- the moments the disk and the library may have moved apart;
 //  * it is asked by itself only for a view of THIS FOLDER ONLY and for one with its subfolders that holds under
-//    AUTO_CHECK_BELOW photos; a larger view shows a quiet link, "Check this folder on disk for new photos", that asks when clicked;
+//    AUTO_CHECK_BELOW photos; a larger view is asked by Refresh view (the owner, 2026-11-13: the quiet link that asked it,
+//    "Check this folder on disk for new photos", was one button too many beside Refresh view);
 //  * the question has a deadline, and any failure -- a share away ("could not check"), a folder gone from the disk, a library
-//    that cannot say -- shows nothing, not an error: the view is the library's and the banner is only an offer.
+//    that cannot say -- shows nothing, not an error: the view is the library's and the banner is only an offer;
+//  * one question is listened to at a time: a Refresh, another view or a closed one drops the answer still on its way (the
+//    server walks a folder once however often it is asked, tagpup.services.libraries.membership_checked).
 import { api } from './common/api.js';
 import { pathKey } from './common/paths.js';
 import { upper } from './hooks.js';
 import { state } from './state.js';
-import { btnMovesAdd, btnMovesCheck, btnMovesDismiss, movesBanner, movesBannerText } from './elements.js';
+import { btnMovesAdd, btnMovesDismiss, movesBanner, movesBannerText } from './elements.js';
 import { libraryName } from './looking.js';
 import { askToAdd } from './membership.js';
 
 /** How long the question about the disk may take: an answer after this is not wanted (the server gives up at 12 s). */
 export const MEMBERSHIP_WAIT_MS = 15000;
 
-/** A recursive view of fewer photos than this asks by itself; a larger one waits to be asked. */
+/** A recursive view of fewer photos than this asks by itself; a larger one is asked by Refresh view. */
 export const AUTO_CHECK_BELOW = 1000;
 
-/** What the banner shows: 'offer' (text, Add them, Dismiss), 'check' (the quiet link) or 'note' (text only). */
-function paint(mode, text) {
+/** The offer: "N photos in this folder are not in <library>.", Add them, Dismiss. */
+function showOffer(found) {
+    const count = found.photos_not_held;
+    const name = libraryName() || 'the library';
+    state.moves.banner = { kind: 'offer', folder: found.folder, count, found };
+    movesBannerText.textContent = `${count.toLocaleString()} ${count === 1 ? 'photo' : 'photos'} in this folder `
+        + `${count === 1 ? 'is' : 'are'} not in ${name}.`;
     movesBanner.classList.remove('hidden');
-    movesBanner.classList.toggle('moves-banner-quiet', mode !== 'offer');
-    movesBannerText.textContent = text;
-    movesBannerText.classList.toggle('hidden', !text);
-    btnMovesAdd.classList.toggle('hidden', mode !== 'offer');
-    btnMovesDismiss.classList.toggle('hidden', mode !== 'offer');
-    btnMovesCheck.classList.toggle('hidden', mode !== 'check');
-    btnMovesCheck.disabled = false;
     upper.renderSyncInfo();     // photos the library does not hold: when it was last in step is worth saying (#670)
 }
 
@@ -58,36 +59,15 @@ export function forgetWhatTheDiskHeld(folder = null) {
     else state.moves.cache.clear();
 }
 
-function showOffer(found) {
-    const count = found.photos_not_held;
-    const name = libraryName() || 'the library';
-    state.moves.banner = { kind: 'offer', folder: found.folder, count, found };
-    paint('offer', `${count.toLocaleString()} ${count === 1 ? 'photo' : 'photos'} in this folder `
-        + `${count === 1 ? 'is' : 'are'} not in ${name}.`);
-}
-
-function showCheckLink(lib) {
-    state.moves.banner = { kind: 'check', folder: lib.value };
-    paint('check', '');
-}
-
-/** What an answer from the disk makes the banner: the offer, or (when the person asked) a sentence, or nothing. */
-function present(lib, found, asked) {
-    if (!found || typeof found !== 'object') return asked ? paint('note', 'Could not check this folder on disk just now.') : undefined;
-    if (found.could_not_check) {
-        if (asked) paint('note', 'Could not check this folder on disk just now (' + (found.why || 'it did not answer') + ').');
-        return undefined;
-    }
-    if (found.photos_not_held > 0) {
+/** What an answer from the disk makes the banner: the offer, or nothing. */
+function present(lib, found) {
+    if (found && typeof found === 'object' && !found.could_not_check && found.photos_not_held > 0) {
         showOffer({ ...found, folder: found.folder || lib.value });
-        return undefined;
     }
-    if (asked) paint('note', 'Every photo on disk in this folder is in the library.');
-    return undefined;
 }
 
-/** Ask the disk about a library view's folder now (the answer is kept for the page). `asked`: the person clicked the link. */
-function ask(lib, asked) {
+/** Ask the disk about a library view's folder now (the answer is kept for the page). */
+function ask(lib) {
     const moves = state.moves;
     const token = moves.asked;
     const controller = new AbortController();
@@ -99,18 +79,15 @@ function ask(lib, asked) {
             if (token !== moves.asked || lib !== state.library) return;
             // Only an answer is kept: not a failure, not a "could not check".
             if (found && typeof found === 'object' && !found.could_not_check) moves.cache.set(pathKey(lib.value), found);
-            present(lib, found, asked);
+            present(lib, found);
         })
-        .catch(() => {
-            // A share away, a folder gone, a library that cannot say: the banner is an offer, nothing is shown (unless asked).
-            if (token === moves.asked && lib === state.library && asked) present(lib, null, true);
-        })
+        .catch(() => {})    // a share away, a folder gone, a library that cannot say: the banner is an offer, nothing is shown
         .then(() => window.clearTimeout(timer));
 }
 
 /**
- * A library view of a folder has painted: say what the disk holds of it, from what the page already knows, by asking, or --
- * for a large view with subfolders -- by offering to ask. `refreshed`: Refresh view, which forgets what was known.
+ * A library view of a folder has painted: say what the disk holds of it, from what the page already knows or by asking -- a
+ * large view with subfolders only when `refreshed`: Refresh view, which forgets what was known and asks whatever the size.
  */
 export function checkNotHeld(lib, { refreshed = false } = {}) {
     forgetBanner();
@@ -120,25 +97,11 @@ export function checkNotHeld(lib, { refreshed = false } = {}) {
     if (state.moves.dismissed.has(key)) return;
     const known = state.moves.cache.get(key);
     if (known) {
-        present(lib, known, false);
+        present(lib, known);
         return;
     }
-    if (lib.recursive && lib.of >= AUTO_CHECK_BELOW) {   // the folder's size, whatever Show shows
-        showCheckLink(lib);
-        return;
-    }
-    ask(lib, false);
-}
-
-/** The quiet link was clicked: ask. */
-function checkNow() {
-    const lib = state.library;
-    if (!lib || lib.invalid || lib.kind !== 'folder') return;
-    btnMovesCheck.disabled = true;
-    movesBannerText.textContent = 'Checking the folder on disk...';
-    movesBannerText.classList.remove('hidden');
-    state.moves.asked += 1;
-    ask(lib, true);
+    if (!refreshed && lib.recursive && lib.of >= AUTO_CHECK_BELOW) return;   // the folder's size, whatever Show shows
+    ask(lib);
 }
 
 /** Add them: the add-folder question for the view's folder, as a folder opened would ask it. */
@@ -171,5 +134,4 @@ export function addedFromView(folder) {
 export function wireBanner() {
     btnMovesAdd.addEventListener('click', addThem);
     btnMovesDismiss.addEventListener('click', dismiss);
-    btnMovesCheck.addEventListener('click', checkNow);
 }

@@ -197,14 +197,14 @@ describe("Show: a view of photos alone, or videos alone", () => {
     assert.deepEqual(ctx.state.library.ids, CLIPS);
   });
 
-  test("a folder of 1,500 under Videos is still a large folder: the quiet link, no walk of the disk for its 10 clips", async (t) => {
+  test("a folder of 1,500 under Videos is still a large folder: no walk of the disk for its 10 clips until Refresh view", async (t) => {
     const folder = "D:\\Library\\2020\\Event 01";
     const all = range(1500, 1000);
     const ctx = await view(t, `?view=folder&value=${encodeURIComponent(folder)}&recursive=1`, { all, clips: all.slice(0, 10) });
     await show(ctx, "Videos");
     assert.equal(total(ctx), "10 videos (of 1,500)");
     assert.equal(ctx.membershipAsked.length, 0, "the folder's size, whatever Show shows");
-    assert.ok(!el(ctx, "btn-moves-check").classList.contains("hidden"), "the link that asks when clicked");
+    assert.ok(el(ctx, "moves-banner").classList.contains("hidden"), "nothing said until it is asked");
   });
 
   test("the keys: ArrowDown opens on the choice, arrows wrap, Enter and Space choose, Escape and Tab close, the photo is not stepped", async (t) => {
