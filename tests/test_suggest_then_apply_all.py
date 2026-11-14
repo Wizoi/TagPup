@@ -353,7 +353,7 @@ class AHeldFolderOfPhotosAndClips(Base):
         self.assertEqual(["video"], kinds, "the row Suggest made for the clip")
 
     def test_a_clip_whose_frames_cannot_be_read_carries_why_and_the_next_run_tries_it_again(self):
-        with mock.patch.object(config, "locate_ffmpeg", return_value=None):
+        with mock.patch.object(config, "locate_ffmpeg", return_value=config.Ffmpeg(None, None, config.FFMPEG_MISSING)):
             self.start(self.dock)
         offered = self.suggested(self.dock)
         self.assertIn("ffmpeg", offered["dock_03.mp4"].get("error", ""), "the clip with no vector says why")

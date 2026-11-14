@@ -218,8 +218,10 @@ class PhotoEmbeddings:
     def frames_of(self, file_path):
         """The CLIP_PICTURES frames of the clip at `file_path`, upright RGB pictures, fewer for a clip cut short after
         its index (video_frames.frames), on the processor; NoFrames when ffmpeg gives none."""
-        if self.ffmpeg is None:
-            raise NoFrames("This run was not given ffmpeg, which reads a video's frames.", video_frames.THE_MOMENT)
+        if self.ffmpeg is None or not self.ffmpeg.ffmpeg:
+            # Not given at all (a run that reads no video), or given as config.locate_ffmpeg answers when it finds none.
+            raise NoFrames((self.ffmpeg and self.ffmpeg.problem)
+                           or "This run was not given ffmpeg, which reads a video's frames.", video_frames.THE_MOMENT)
         found = video_frames.frames(self.ffmpeg, file_path, CLIP_PICTURES)
         if found.problem:
             raise NoFrames(found.problem, found.whose)
