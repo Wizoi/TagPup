@@ -12,6 +12,13 @@ refused with images.CLIP_NOT_EDITED and nothing is journaled, while the same sav
 save cut short is settled at the next start by its bytes, as a tag's is (tests/test_a_clip_patch_cut_short.py): no arm
 of the settle is a date's own.
 
+A clip something else holds open (Explorer's preview, a scanner, another computer on the share) is refused, nothing
+written, and the sentence says who holds it when this PC can tell (in_place.held_open, #2969): the owner's save of a
+418.5 MB clip was refused again and again with nothing to go on. Restart Manager sees this PC's handles alone: for a
+clip on the server it names none, and the sentence says no program on this PC holds it; when it
+fails the save is refused all the same. A Convert of the clip goes through the same rule: only a sharing violation is
+"open in another program"; access denied or a share gone keeps its own sentence (#2970).
+
 Real ffmpeg clips and the real ExifTool (tests/test_a_clip_tagged_through_the_journal.ALibraryHoldingAClip); ExifTool
 writes the photo's EXIF date and, beforehand, the xmp:CreateDate an Adobe tool would have left. Each of these failed on
 the code before the revision, which refused a clip's Date Taken whole. Fictional names only.
@@ -30,9 +37,9 @@ from test_a_clip_patch_cut_short import cut_half_way  # noqa: E402
 from test_file_journal import Crash, crash_at  # noqa: E402
 
 from tagpup.core import processes  # noqa: E402
-from tagpup.files import images  # noqa: E402
+from tagpup.files import images, in_place, lock_owners  # noqa: E402
 from tagpup.files.exiftool_session import ExifToolSession  # noqa: E402
-from tagpup.services import file_changes, journal, tagging  # noqa: E402
+from tagpup.services import convert, file_changes, journal, tagging  # noqa: E402
 from tagpup.services import photos as photo_actions  # noqa: E402
 from tagpup.store import file_journal  # noqa: E402
 
@@ -208,6 +215,69 @@ class AClipDatedThroughTheJournal(tagged.ALibraryHoldingAClip):
         self.assertEqual(200, reply.status_code, reply.get_json())
         self.assertEqual(SAVED, self.read(self.clip_path, XMP_DATES)["XMP:DateTimeOriginal"])
         self.assertEqual(SAVED, self.taken(clip))
+
+    @unittest.skipUnless(os.name == "nt", "a clip held open is refused by Windows' sharing")
+    def test_a_date_save_of_a_clip_another_handle_holds_is_refused_and_names_who_holds_it(self):
+        clip, = self.index(self.clip_path)
+        before = self.read_bytes(self.clip_path)
+        with open(self.clip_path, "rb"):
+            reply = self.save_date_from_the_panel(clip)
+        self.assertNotEqual(200, reply.status_code)
+        error = reply.get_json()["error"]
+        self.assertIn(in_place.OPEN_ELSEWHERE, error)
+        self.assertRegex(error, r"It is held open by python\w*\.exe \(this TagPup process\)\.",
+                         "the refusal names the holder on this PC")
+        self.assertEqual(before, self.read_bytes(self.clip_path), "nothing was written")
+
+        reply = self.save_date_from_the_panel(clip)
+        self.assertEqual(200, reply.status_code, reply.get_json())
+        self.assertEqual(SAVED, self.taken(clip), "closed, the same save is written")
+
+    @unittest.skipUnless(os.name == "nt", "a clip held open is refused by Windows' sharing")
+    def test_a_clip_held_where_restart_manager_names_no_one_is_refused_and_on_a_share_says_so(self):
+        clip, = self.index(self.clip_path)
+        before = self.read_bytes(self.clip_path)
+        with mock.patch.object(lock_owners, "_ask", side_effect=OSError("Restart Manager could not be asked")):
+            with open(self.clip_path, "rb"):
+                reply = self.save_date_from_the_panel(clip)
+        error = reply.get_json()["error"]
+        self.assertIn(in_place.OPEN_ELSEWHERE, error, "Restart Manager failing is no holder named, never a crash")
+        self.assertNotIn("held open by", error)
+        self.assertEqual(before, self.read_bytes(self.clip_path))
+
+        # On the server, Restart Manager answers no holder (the server's own handles, or another PC's, are not this
+        # PC's): a fictional share's spelling, nothing opened on it.
+        on_the_server = "\\\\fileserver\\Pictures\\Harbour\\jetty.mp4"
+        violation = OSError(None, "The process cannot access the file", on_the_server, 32)
+        with mock.patch.object(lock_owners, "_ask", return_value=[]):
+            said = in_place.held_open(violation, on_the_server, in_place.OPEN_ELSEWHERE)
+        self.assertEqual("%s. %s" % (in_place.OPEN_ELSEWHERE, in_place.NOT_ON_THIS_PC), said)
+
+    @unittest.skipUnless(os.name == "nt", "a clip held open is refused by Windows' sharing")
+    def test_a_convert_of_a_clip_another_handle_holds_is_refused_and_names_who_holds_it(self):
+        self.index(self.clip_path)
+        before = self.read_bytes(self.clip_path)
+        with open(self.clip_path, "rb"):
+            held = convert.convert_clip(self.vl.library, EXIFTOOL, TOOLS, self.clip_path, reason=convert.SMALLER)
+        self.assertEqual(0, held.changed)
+        self.assertTrue(held.refused.startswith(convert.HELD_OPEN), held.refused)
+        self.assertIn("(this TagPup process).", held.refused)
+        self.assertEqual(before, self.read_bytes(self.clip_path))
+
+    def test_a_convert_of_a_clip_whose_open_fails_otherwise_keeps_its_own_sentence(self):
+        """Access denied, or the share gone, is not "open in another program" (#2970)."""
+        self.index(self.clip_path)
+        opened = lock_owners.opened
+        for winerror, said in ((5, "Access is denied"), (64, "The specified network name is no longer available")):
+            def failing(path, sharing, write=False):
+                if sharing == lock_owners.NO_SHARING:
+                    raise OSError(None, said, path, winerror)
+                return opened(path, sharing, write)
+            with self.subTest(winerror=winerror), mock.patch.object(lock_owners, "opened", side_effect=failing):
+                result = convert.convert_clip(self.vl.library, EXIFTOOL, TOOLS, self.clip_path, reason=convert.SMALLER)
+                self.assertEqual(0, result.changed)
+                self.assertNotIn("open in another program", result.refused)
+                self.assertEqual(convert.UNREADABLE % said, result.refused)
 
     def save_cut_short(self, cutting):
         """A Date Taken save of the clip killed part-way (the process gone: a Crash), then the next start's settle."""
