@@ -200,7 +200,8 @@ def _write_plain(library, plan, outcome):
 def run(library, plan, exiftool_path, told=None):
     """Carry out `plan` and wait for the end: the Outcome. The photos are one batch of `file_changes.write_fields` (claimed, queued,
     capped, stopped by Cancel or a hand-over, listed in the strip); `told(result)` is heard with what it wrote, for the pages' records.
-    Refused (the cap) or Conflict (the queue is full), nothing written. Raises what the write raises;
+    Refused (the cap), or Conflict (the queue is full, or the write was refused and its change is gone: planned and
+    erased, a share stalling at the first read; a 409 for a bulk face write, owner 2026-11-13), nothing written. Raises what the write raises;
     the change then holds what was done, whole file by file."""
     outcome, work = Outcome(), plan.work
     photos = work.photos()
