@@ -95,7 +95,7 @@ class SuggestRespectsFaceDecisions(unittest.TestCase):
         self.add_face(r"D:\Pictures\twins.jpg", None, None, 0, box="[200, 0, 300, 100]")
         self.index.conn.execute("UPDATE faces SET excluded = 1 WHERE name = ?", ("Rowan Thackeray",))
         self.index.conn.commit()
-        record = {"path": r"D:\Pictures\twins.jpg", "raw_metadata": {}, "tags": ["People/Oda Castellane"]}
+        record = {"path": r"D:\Pictures\twins.jpg", "raw_metadata": {}, "year": None, "tags": ["People/Oda Castellane"]}
         self.assertNotIn("People/Oda Castellane", self.suggested(r"D:\Pictures\twins.jpg", record))
 
     def test_a_photo_whose_faces_are_all_decided_is_not_detected_again(self):

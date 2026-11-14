@@ -37,7 +37,7 @@ from handler_harness import Library  # noqa: E402
 from test_face_clustering_rules import FaceClusteringTestBase, identity_vector  # noqa: E402
 
 from tagpup.core import fields, paths  # noqa: E402
-from tagpup.core.dates import record_year  # noqa: E402
+from tagpup.core.dates import photo_year  # noqa: E402
 from tagpup.files.images import photos_under  # noqa: E402
 from tagpup.jobs import suggestions as suggestion_jobs  # noqa: E402
 from tagpup.services import photos as photo_actions  # noqa: E402
@@ -164,8 +164,8 @@ class TheFaces(FaceClusteringTestBase):
         record = page_record(typed.replace(os.sep, "/"), {})
         self.assertEqual((paths.stored(typed), "boats.jpg"), (record["path"], record["filename"]))
         for sep in {"/", os.sep}:
-            self.assertEqual(2011, record_year({"path": sep.join(["", "Library", "Trips 2011", "Coast", "boats.jpg"])}))
-            self.assertEqual(2013, record_year({"path": sep.join(["", "Library", "Trips 2011", "boats 2013.jpg"])}),
+            self.assertEqual(2011, photo_year({}, sep.join(["", "Library", "Trips 2011", "Coast", "boats.jpg"]), "photo"))
+            self.assertEqual(2013, photo_year({}, sep.join(["", "Library", "Trips 2011", "boats 2013.jpg"]), "photo"),
                              "the filename year wins over the folder")
 
 

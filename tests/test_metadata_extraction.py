@@ -24,7 +24,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import photo_rows  # noqa: E402
 
-from tagpup.core.dates import record_year
+from tagpup.core.dates import photo_year
 from tagpup.core.suggesting import caption_from_tags as _derive_caption
 from tagpup.core.fields import extract_captions
 from tagpup.core.vocabulary import extract_people, extract_tags
@@ -262,51 +262,44 @@ class TestExtractPeopleWithATaxonomy(unittest.TestCase):
 
 
 class TestParseYearFromMetadata(unittest.TestCase):
+    """dates.photo_year of a photo: its Date Taken, else a year in its names."""
+
+    def year(self, raw=None, path=None):
+        return photo_year(raw, path, "photo")
+
     def test_prefers_the_exif_capture_date(self):
-        meta = {"raw_metadata": {"EXIF:DateTimeOriginal": "2014:07:04 10:00:00"}}
-        self.assertEqual(record_year(meta), 2014)
+        self.assertEqual(self.year({"EXIF:DateTimeOriginal": "2014:07:04 10:00:00"}), 2014)
 
     def test_falls_back_through_the_documented_key_order(self):
-        meta = {"raw_metadata": {"EXIF:CreateDate": "2011:01:01 00:00:00"}}
-        self.assertEqual(record_year(meta), 2011)
+        self.assertEqual(self.year({"EXIF:CreateDate": "2011:01:01 00:00:00"}), 2011)
 
     def test_rejects_implausible_years(self):
-        meta = {"raw_metadata": {"EXIF:DateTimeOriginal": "0000:00:00 00:00:00"}}
-        self.assertIsNone(record_year(meta))
+        self.assertIsNone(self.year({"EXIF:DateTimeOriginal": "0000:00:00 00:00:00"}))
 
     def test_falls_back_to_a_year_in_the_filename(self):
-        meta = {"path": r"D:\Library\misc\1998 birthday.jpg"}
-        self.assertEqual(record_year(meta), 1998)
+        self.assertEqual(self.year(path=r"D:\Library\misc\1998 birthday.jpg"), 1998)
 
     def test_falls_back_to_a_year_in_a_folder_name(self):
-        meta = {"path": r"D:\Library\1998\Christmas\IMG_0001.jpg"}
-        self.assertEqual(record_year(meta), 1998)
+        self.assertEqual(self.year(path=r"D:\Library\1998\Christmas\IMG_0001.jpg"), 1998)
 
     def test_the_filename_wins_over_a_folder(self):
-        meta = {"path": r"D:\Library\1998\2001 party.jpg"}
-        self.assertEqual(record_year(meta), 2001)
+        self.assertEqual(self.year(path=r"D:\Library\1998\2001 party.jpg"), 2001)
 
     def test_the_nearest_folder_wins_over_a_distant_one(self):
-        meta = {"path": r"D:\1990\2005 Trip\IMG_0001.jpg"}
-        self.assertEqual(record_year(meta), 2005)
+        self.assertEqual(self.year(path=r"D:\1990\2005 Trip\IMG_0001.jpg"), 2005)
 
     def test_exif_wins_over_the_path(self):
-        meta = {
-            "path": r"D:\Library\1998\IMG_0001.jpg",
-            "raw_metadata": {"EXIF:DateTimeOriginal": "2014:07:04 10:00:00"},
-        }
-        self.assertEqual(record_year(meta), 2014)
+        self.assertEqual(self.year({"EXIF:DateTimeOriginal": "2014:07:04 10:00:00"},
+                                   r"D:\Library\1998\IMG_0001.jpg"), 2014)
 
     def test_returns_none_when_nothing_is_datable(self):
-        self.assertIsNone(record_year({"path": r"D:\Library\IMG_0001.jpg"}))
+        self.assertIsNone(self.year(path=r"D:\Library\IMG_0001.jpg"))
 
     def test_tolerates_a_list_valued_date_tag(self):
-        meta = {"raw_metadata": {"EXIF:DateTimeOriginal": ["2014:07:04 10:00:00"]}}
-        self.assertEqual(record_year(meta), 2014)
+        self.assertEqual(self.year({"EXIF:DateTimeOriginal": ["2014:07:04 10:00:00"]}), 2014)
 
     def test_a_four_digit_number_that_is_not_a_year_is_skipped(self):
-        meta = {"path": r"D:\Library\IMG_9999.jpg"}
-        self.assertIsNone(record_year(meta))
+        self.assertIsNone(self.year(path=r"D:\Library\IMG_9999.jpg"))
 
 
 class TestBuildPhotoUIRecord(unittest.TestCase):

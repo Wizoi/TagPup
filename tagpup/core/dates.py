@@ -237,20 +237,18 @@ def photo_year(raw_metadata, path, kind):
 
 def record_year(meta):
     """The year a photo was taken, from a record of it: the record's "year", as the
-    library records it (photos.year) and the reader gives it; else, for a record without
-    one, photo_year of its raw_metadata (every record carries one), path and kind (the page's record's "media"). What the
-    suggester's time decay and clustering's years go by.
+    library records it (photos.year) and the reader gives it. Both builders of a record (services.photos.page_record,
+    services.search._record) always set it, so a record without one is not read. What the suggester's time decay and
+    clustering's years go by.
 
     A number or None, whatever the record's shape: the library gives its year as a
     number, the page's record of a photo as text ("2020", or "Unknown"), and Suggest
     compares the two -- given text, it failed on every photo of a folder."""
-    if "year" in meta:
-        year = meta["year"]
-        if isinstance(year, int):
-            return year
-        text = str(year).strip() if year is not None else ""
-        return int(text) if text.isdigit() else None
-    return photo_year(meta.get("raw_metadata"), meta.get("path"), meta.get("media"))
+    year = meta["year"]
+    if isinstance(year, int):
+        return year
+    text = str(year).strip() if year is not None else ""
+    return int(text) if text.isdigit() else None
 
 
 #: How every time TagPup records is spelled: local time, "YYYY-MM-DD HH:MM:SS".
