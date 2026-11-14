@@ -1249,22 +1249,18 @@ def _after_failure(et, library, row, origin, target, finished, on_failure, error
     in_place.Away: a patch's look after its write) stops there, raising _Stalled, as one ExifTool stops answering for
     (_read_now): before its record was saved, no byte was written; after, the file is left `writing` when its bytes
     cannot be read now (_by_bytes), for the next settle. Read through ExifTool instead, it, and the next photo on that
-    share, would each wait ExifTool's whole deadline (#2400). Nor is it looked at before it stops: an os.stat on a share
-    gone waits with no deadline (#3032). Whether it is read-only is then not known: `row.read_only` stays the row's False,
-    which nothing reads of a write that stops (the run breaks at _Stalled; _share_stopped says the share stopped answering,
-    and no file of it is counted read-only)."""
-    away = stall_stops and isinstance(error, (field_values.NotAnswered, in_place.Away))
-    if away and not row.patched:
-        raise _Stalled(str(error))
-    # A patch's bytes are read within in_place's bound; the file is looked at only once they answered, or when its share
-    # was not what failed. A range put back changes neither its mark nor whether it is there: `seen` says the same after.
-    settled = _by_bytes(library, row) if row.patched else None
-    if away and settled is not None and settled[0] == "writing":
-        raise _Stalled(settled[1])
+    share, would each wait ExifTool's whole deadline (#2400)."""
     seen = _stat(row.path)
     row.read_only = _read_only(seen)
-    if settled is not None:
-        return settled
+    away = stall_stops and isinstance(error, (field_values.NotAnswered, in_place.Away))
+    if row.patched:
+        settled = _by_bytes(library, row)
+        if away and settled is not None and settled[0] == "writing":
+            raise _Stalled(settled[1])
+        if settled is not None:
+            return settled
+    elif away:
+        raise _Stalled(str(error))
     try:
         now = _read_now(et, row, target, stall_stops)
     except field_values.Unreadable:

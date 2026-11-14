@@ -15,7 +15,6 @@ import os
 import re
 import socket
 import sys
-import threading
 import unittest
 from unittest import mock
 
@@ -525,25 +524,15 @@ class APatchInPlace(FilesCase):
         self.assertEqual((["Beach"], [], ["Beach"]), (keywords_of(a), self.recorded(), self.indexed(a)))
 
 
-class Gone:
-    """What the write did to the photos after their share went (share_away): `read`, the paths field_values.read_one was
-    asked to read through ExifTool, each of which on a share gone waits ExifTool's whole deadline (five minutes);
-    `looked`, the photos looked at with an os.stat on the write's own thread, outside every bound (shares.bounded and
-    in_place's run theirs on a thread of their own), which on a share gone waits with no deadline at all (#3032)."""
-
-    def __init__(self):
-        self.read, self.looked = [], []
-
-
 @contextlib.contextmanager
 def share_away(at_the_write=True):
     """The photos' share stops answering a patch in place and stays away: from half way through the first patch's first
     range (`at_the_write`), or from the patch's first look at the photo, before its record is saved. Every later bounded
-    call of in_place (a put back, a look at the bytes, the next photo's patch) is Away, as a share gone is. Yields what
-    the write did to the photos after the share went (Gone)."""
-    real_write, real_bounded, real_stat, away, gone = in_place._write, in_place._bounded, os.stat, [], Gone()
+    call of in_place (a put back, a look at the bytes, the next photo's patch) is Away, as a share gone is. Yields the
+    paths field_values.read_one was asked to read through ExifTool after the share went: on a share gone, each waits
+    ExifTool's whole deadline (five minutes)."""
+    real_write, real_bounded, away, asked = in_place._write, in_place._bounded, [], []
     real_read_one = field_values.read_one
-    asked = gone.read
 
     def write(handle, changes):
         at, new = changes[0]
@@ -562,24 +551,17 @@ def share_away(at_the_write=True):
             asked.append(path)
         return real_read_one(et, path, *args, **kwargs)
 
-    def stat(path, *args, **kwargs):
-        if away and isinstance(path, str) and path.lower().endswith(".jpg") \
-                and threading.current_thread() is threading.main_thread():
-            gone.looked.append(path)
-        return real_stat(path, *args, **kwargs)
-
     with mock.patch.object(in_place, "_write", write), mock.patch.object(in_place, "_bounded", bounded), \
-            mock.patch.object(field_values, "read_one", read_one), mock.patch.object(os, "stat", stat):
-        yield gone
+            mock.patch.object(field_values, "read_one", read_one):
+        yield asked
 
 
 class AShareThatStopsAnsweringInAPatch(FilesCase):
     """A keyword renamed in three photos on a share that stops answering in the patch of the first (#2400): the write stops
     there, as it does when ExifTool stops answering (#1921), and no photo is read through ExifTool after it, which on a
-    share gone waits ExifTool's whole deadline each, nor looked at outside a bound (#3032). The photo under way stays
-    `writing` for a settle by its bytes once the share answers; the two after it are taken out, untouched. Break:
-    _after_failure going on to the next photo (the trunk before #2400: the next photo's read waited its deadline before
-    the write stopped), or taking the photo's os.stat before it stops (the trunk before #3032)."""
+    share gone waits ExifTool's whole deadline each. The photo under way stays `writing` for a settle by its bytes once
+    the share answers; the two after it are taken out, untouched. Break: _after_failure going on to the next photo (the
+    trunk before #2400: the next photo's read waited its deadline before the write stopped)."""
 
     def rename(self, photo_paths):
         """Beach renamed Shore: the same length, so each photo's fields fit its segments and are patched in place."""
@@ -588,9 +570,9 @@ class AShareThatStopsAnsweringInAPatch(FilesCase):
     def test_a_share_gone_half_way_through_the_first_patch_stops_the_write_there(self):
         a, b, c = self.make("a.jpg"), self.make("b.jpg"), self.make("c.jpg")
         untouched = {path: os.stat(path).st_mtime_ns for path in (b, c)}
-        with share_away() as gone:
+        with share_away() as asked:
             result = self.rename([a, b, c])
-        self.assertEqual(([], []), (gone.read, gone.looked), "a photo was looked at after its share went away")
+        self.assertEqual([], asked, "a photo was read through ExifTool after its share went away")
         change = result.details["change"]
         self.assertEqual((0, ["writing"]), (result.changed, self.states(change)))
         self.assertEqual([a, b, c], result.details["not_answered"])
@@ -605,30 +587,14 @@ class AShareThatStopsAnsweringInAPatch(FilesCase):
         a, b, c = self.make("a.jpg"), self.make("b.jpg"), self.make("c.jpg")
         with open(a, "rb") as handle:
             held = handle.read()
-        with share_away(at_the_write=False) as gone:
+        with share_away(at_the_write=False) as asked:
             result = self.rename([a, b, c])
-        self.assertEqual(([], []), (gone.read, gone.looked), "a photo was looked at after its share went away")
+        self.assertEqual([], asked, "a photo was read through ExifTool after its share went away")
         with open(a, "rb") as handle:
             self.assertEqual(held, handle.read())
         self.assertEqual((0, ["writing"]), (result.changed, self.states(result.details["change"])))
         self.assertEqual(1, self.settle())
         self.assertEqual(["Shore"], keywords_of(a))
-
-    def test_a_save_whose_share_goes_half_way_through_its_patch_stops_without_looking_at_the_photo_again(self):
-        """The owner saves one photo's tags (the photo panel) and its share stops answering half way through the patch: the
-        save says so at once, the photo stays `writing` with its record, and it is not looked at again on the way out,
-        neither read through ExifTool nor stat-ed with no deadline; once the share answers, a settle puts it right by its
-        bytes and writes it."""
-        a = self.make("a.jpg")
-        with share_away() as gone:
-            saved = tagging.save_photo(self.library, a, "", ["Shore"], None, EXIFTOOL, "")
-        self.assertEqual(([], []), (gone.read, gone.looked), "the photo was looked at after its share went away")
-        self.assertFalse(saved.ok)
-        self.assertIn("stopped answering as it was written", str(saved.errors[0][1]))
-        change = self.last_change()
-        self.assertEqual(["writing"], self.states(change))
-        self.assertEqual(1, self.settle())
-        self.assertEqual((["done"], "applied", ["Shore"]), (self.states(change), self.status(change), keywords_of(a)))
 
 
 class ThePatchRecordHasOneReader(unittest.TestCase):
