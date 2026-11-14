@@ -59,3 +59,33 @@ Cuts:
    .wmv with an XMP date come out with the headers set from the carry.
 3. Media (about 250 lines): the one-off and its dry-run test, its row in `tests/owners.py`; run by the main session
    after a backup, TagPup stopped, `--limit 1` first.
+
+## Cut 1's design (main session, 2026-11-13, after the first worker's probe; #3004)
+ExifTool (`-G -n`, with or without `-a`) answers ONE value per kind of header (the first tkhd, the last mdhd), so a
+per-box `row.before` could not be verified or compared through it. Decision A: `field_values.read` answers a clip's three
+header fields (QuickTime:CreateDate = every mvhd, TrackCreateDate = every tkhd, MediaCreateDate = every mdhd, each a list
+in box order) from TagPup's own walk when they are in `wanted`: a new `in_place.headers_held(path)`, bounded as
+`packet_held` is, calling `containers.read` and a pure `clip_patch` function from seconds to date text. When they are only
+in `also` (the indexer's `wanted=[]`, `metadata.py:114`) `raw_metadata` stays ExifTool's. So the before, the conflict
+check, the verify and the read-back compare the same per-box lists exactly. Not B (patching `row.before` after the fact,
+matching by membership: it can record an undo as done without writing).
+- containers.py: `CONTAINERS` moov also walks trak; add `"trak": {"mdia"}`, `"mdia": frozenset()`; `Box` gains version and
+  the stored creation seconds for mvhd/tkhd/mdhd only (one version byte, three flag bytes, then 4 bytes (v0) or 8 (v1));
+  `Video.headers` in file order.
+- clip_patch.py: `patch()` takes the dates; `_header_ranges` writes the creation field at payload+4. Strict conversion
+  `YYYY:MM:DD HH:MM:SS`; `0000:00:00 00:00:00` is 0 (the 681 clips). A list of one date sets every box of that kind (a
+  save cannot know the box count when it plans); a list of n sets each box in turn and must equal the box count, else
+  None -> CLIP_NOT_PATCHED.
+- in_place.patch_clip ~384 (#3002): the nothing-to-write condition also checks the header dates; boxes already holding the
+  date are skipped.
+- field_values: `_clip_written` (349-388) passes the dates; `clip_refused` (338) holds the invariant: a write naming a
+  header field without XMP:DateTimeOriginal is refused (an undo naming XMP:DateTimeOriginal cleared passes).
+- fields.py: the three fields join `_CLIP_WRITE_FIELDS["date"]` (377-379) and `CLIP_OUTSIDE_XMP` (148);
+  `date_taken_fields(clip=True)` (456-464) returns them, so `tagging.save_photo` sends them with no change of its own;
+  fix the 'never written' wording (34-37). `save_photo`'s `dates_written` then includes them: `record_dates` writes
+  QuickTime:CreateDate into the page record, which is what ExifTool reads back.
+- Refusal of a date before 1904 or after 2040 (v0): at the date input's validation (find where the panel's Date Taken
+  is checked; `core/validation.py` has none).
+- dates.py 37-49 'Never written' comment changes; lift tests/test_a_clip_dated_through_the_journal.py (lines 7, 123-149).
+- Cut 2: a date with a fraction or time zone (`segment_edits._READ_DATE` allows them) fails the strict conversion
+  loudly; Convert's carry hands the date over without them.
