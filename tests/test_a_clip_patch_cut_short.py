@@ -127,7 +127,7 @@ class AClipPatchCutShort(tagged.ALibraryHoldingAClip):
         now = self.read_bytes(self.clip_path)
         seconds = clip_patch.seconds_of(saved)
         for box in containers.read(io.BytesIO(now)).headers:
-            width = 8 if box.version == 1 else 4
+            width = box.width
             self.assertEqual(seconds.to_bytes(width, "big"), now[box.payload + 4:box.payload + 4 + width], box.type)
 
     def test_killed_after_its_last_byte_it_is_recorded_and_not_written_again(self):

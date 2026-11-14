@@ -190,17 +190,17 @@ def date_of(seconds):
 
 def _header_ranges(layout, dates):
     """The ranges that set each header's creation time to `dates` (patch), a box holding it already left out; None,
-    the rewrite's, for a field whose texts are neither one nor one a box, or whose boxes hold a time this does not read
-    (the module)."""
+    the rewrite's, for a field whose texts are neither one nor one a box. A header whose time is not read never gets
+    here: every writer reads the headers first (header_dates) and is refused."""
     ranges = []
     for field, texts in dates.items():
         boxes = [box for box in layout.headers if box.type == _BOX_OF[field]]
-        if not boxes or len(texts) not in (1, len(boxes)) or any(box.created is None for box in boxes):
+        if not boxes or len(texts) not in (1, len(boxes)):
             return None
         for box, text in zip(boxes, texts * len(boxes) if len(texts) == 1 else texts):
             seconds = seconds_of(text)
             if seconds != box.created:
-                ranges.append((box.payload + 4, seconds.to_bytes(8 if box.version == 1 else 4, "big")))
+                ranges.append((box.payload + 4, seconds.to_bytes(box.width, "big")))
     return tuple(ranges)
 
 

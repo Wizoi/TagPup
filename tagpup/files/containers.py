@@ -39,6 +39,8 @@ CONTAINERS = {"moov": frozenset({"udta", "trak"}), "udta": frozenset({"meta"}), 
 #: version byte and three flag bytes, then its creation time in seconds since 1904-01-01, 4 bytes in version 0 and 8 in
 #: version 1 (ISO/IEC 14496-12).
 HEADER_TYPES = ("mvhd", "tkhd", "mdhd")
+#: The bytes of a header's creation time by its version byte: the one place the rule is spelled (Box.width).
+HEADER_WIDTH = {0: 4, 1: 8}
 #: The box of a clip's QuickTime title (ExifTool's QuickTime:Title), an item of an ilst; QuickTime's older user data
 #: keeps one directly in udta.
 TITLE_ITEM = "\xa9nam"
@@ -148,6 +150,12 @@ class Box:
     @property
     def end(self):
         return self.offset + self.size
+
+    @property
+    def width(self):
+        """The bytes of a header's creation time (HEADER_WIDTH); None for a box that is no header or of a version other
+        than 0 and 1."""
+        return HEADER_WIDTH.get(self.version)
 
     @property
     def payload(self):
@@ -446,7 +454,7 @@ def _created(handle, kind, start, end):
     raw = _read_at(handle, start, min(12, end - start))
     if not raw:
         return None, None
-    width = {0: 4, 1: 8}.get(raw[0])
+    width = HEADER_WIDTH.get(raw[0])
     if width is None or len(raw) < 4 + width:
         return raw[0], None
     return raw[0], int.from_bytes(raw[4:4 + width], "big")

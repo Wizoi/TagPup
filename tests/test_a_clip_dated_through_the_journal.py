@@ -106,7 +106,7 @@ def clip_of(shape, moov_after_mdat=False):
 
 def creation_times(data):
     """The bytes of every header's creation time in `data`, in file order, each at its box's width."""
-    return [data[box.payload + 4:box.payload + 4 + (8 if box.version == 1 else 4)]
+    return [data[box.payload + 4:box.payload + 4 + box.width]
             for box in containers.read(io.BytesIO(data)).headers]
 
 
@@ -114,15 +114,14 @@ def without_creation_times(data):
     """`data`, every header's creation time zeroed: what a date save leaves of each byte it does not date."""
     zeroed = bytearray(data)
     for box in containers.read(io.BytesIO(data)).headers:
-        width = 8 if box.version == 1 else 4
-        zeroed[box.payload + 4:box.payload + 4 + width] = bytes(width)
+        zeroed[box.payload + 4:box.payload + 4 + box.width] = bytes(box.width)
     return bytes(zeroed)
 
 
 def saved_times(data, date=None):
     """Every header's creation time of `data` holding `date` (SAVED), at its box's width."""
     seconds = clip_patch.seconds_of(date or SAVED)
-    return [seconds.to_bytes(8 if box.version == 1 else 4, "big") for box in containers.read(io.BytesIO(data)).headers]
+    return [seconds.to_bytes(box.width, "big") for box in containers.read(io.BytesIO(data)).headers]
 
 
 def quicktime_date_boxes(data):
