@@ -160,7 +160,7 @@ class AThirdFixForOnePlace(unittest.TestCase):
         self.assertIn("| 46 | 2026-11-13 | wrong: Files: a save into the clip is still refused", self.read(self.findings))
 
     def test_a_low_row_or_a_place_fixed_once_is_added(self):
-        code, said = self.add("| ? | 2026-11-13 | low: `clip_patch.packet_of` has no docstring. | open |")
+        code, said = self.add("| ? | 2026-11-13 | low: `clip_patch.packet_of` has no docstring (live: 1). | open |")
         self.assertEqual((0, ""), (code, said))
         code, said = self.add("| ? | 2026-11-13 | wrong: `field_values.parse` reads a date as a title. | open |")
         self.assertEqual((0, ""), (code, said))
@@ -380,6 +380,51 @@ class Files(unittest.TestCase):
         run(self.base + [rows, "--branch-file", branch])
         run(self.base + ["--take", branch])
         self.assertIn("| 252 | 2026-10-09 | New. | open |", self.read(self.findings))
+
+
+class ALowNeedsALiveCount(unittest.TestCase):
+    """Seven lows a sweep or a review spawned were built, then reverted for 0 live instances (2026-11-14, retro
+    2026-11-14): a new `low` row says how many live rows it touches, or the user action that makes it."""
+
+    def setUp(self):
+        self.folder = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.folder, True)
+        self.findings = os.path.join(self.folder, "findings.md")
+        with open(self.findings, "w", encoding="utf-8", newline="") as handle:
+            handle.write(TABLE)
+        self.base = ["--findings", self.findings, "--archive-dir", os.path.join(self.folder, "history"),
+                     "--watching-file", os.path.join(self.folder, "watching.md")]
+
+    def submit(self, row):
+        path = os.path.join(self.folder, "rows.md")
+        with open(path, "w", encoding="utf-8") as handle:
+            handle.write(row + "\n")
+        return run(self.base + [path])
+
+    def written(self):
+        with open(self.findings, encoding="utf-8", newline="") as handle:
+            return handle.read()
+
+    def test_a_low_with_no_count_is_refused_and_nothing_is_written(self):
+        with self.assertRaises(SystemExit), contextlib.redirect_stderr(io.StringIO()):
+            self.submit("| ? | 2026-11-14 | low: Files: a stalled share is looked at twice. | open |")
+        self.assertEqual(TABLE, self.written())
+
+    def test_a_low_with_a_live_count_above_zero_is_numbered_open(self):
+        self.submit("| ? | 2026-11-14 | low: Files: a note names a path (live: 12). | open |")
+        self.assertIn("| 3 | 2026-11-14 | low: Files: a note names a path (live: 12). | open |", self.written())
+
+    def test_a_low_with_a_user_action_is_numbered_open(self):
+        self.submit("| ? | 2026-11-14 | low: Files: a rename fails (user action: Smart Rename on a held file). | open |")
+        self.assertIn("(user action: Smart Rename on a held file). | open |", self.written())
+
+    def test_a_low_with_live_zero_is_closed_decided_by_the_same_call(self):
+        self.submit("| ? | 2026-11-14 | low: Media: ffmpeg gone in the CLI index (live: 0). | open |")
+        self.assertIn("(live: 0). | decided: no live instance, not built |", self.written())
+
+    def test_a_wrong_row_needs_no_count(self):
+        self.submit("| ? | 2026-11-14 | wrong: Views: a count is off by one. | open |")
+        self.assertIn("| 3 | 2026-11-14 | wrong:", self.written())
 
 
 if __name__ == "__main__":

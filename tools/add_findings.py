@@ -20,6 +20,8 @@ A row naming a sweep, backfill, `--apply` or bulk write is not closed `fixed` un
 fix wrote, 0 included; owner, 2026-11-08).
 A `data` or `wrong` row naming a module that the commits of two earlier `data`/`wrong` rows closed `fixed: <commit>` changed
 is a third fix for one place, and is refused unless it says "second fix of #n: the single place is <place>" (#2924).
+A new `low` row says `live: N` (rows it touches, counted read-only) or `user action: ...`; `live: 0` closes it
+`decided: no live instance, not built` in the same call (retro 2026-11-14).
 Nothing is written unless every row parses and every numbered row exists.
 
 A worker on a branch does NOT number into findings.md: two branches that both number
@@ -69,6 +71,26 @@ BRANCH_TITLE = ("# Findings of a branch\n\nProvisional numbers `B-n`: `tools/add
 def rows_in(text):
     """The `| ? |` rows of a report, in order."""
     return [line.rstrip() for line in text.splitlines() if line.startswith("| ? |")]
+
+
+#: A new `low` row names how many live rows it touches (counted read-only) or the user action that makes it; live 0
+#: is closed at birth. Seven lows a sweep or review spawned were built and reverted for 0 live (retro 2026-11-14).
+LIVE_COUNT = re.compile(r"\blive[: ]+(\d+)|\buser action:", re.I)
+
+
+def vet_lows(rows):
+    """(the rows with a `live: 0` low closed `decided`, the names of the lows that give no count nor user action)."""
+    vetted, bare = [], []
+    for row in rows:
+        cells = row.split("|")
+        if len(cells) > 3 and re.match(r"\s*low:", cells[3], re.I):
+            found = LIVE_COUNT.search(row)
+            if not found:
+                bare.append(row.split("|")[2].strip() or "?")
+            elif found.group(1) == "0" and not is_closed(row):
+                row = row.rstrip().rstrip("|").rsplit("|", 1)[0] + "| decided: no live instance, not built |"
+        vetted.append(row)
+    return vetted, bare
 
 
 def row_status(line):
@@ -423,6 +445,11 @@ def main(argv=None):
         rows = rows_in(_read(args.rows))
         if not rows:
             parser.error("no `| ? |` row in %s" % args.rows)
+        rows, bare = vet_lows(rows)
+        if bare:
+            parser.error("a new `low` row says how many live rows it touches (`live: N`, counted read-only) or the user action "
+                         "that makes it (`user action: ...`); with `live: 0` it is closed `decided` and not built "
+                         "(CLAUDE.md, 'a special case needs a real instance'): row(s) dated %s" % ", ".join(bare))
 
     if args.open:
         found = open_rows(_read(args.findings).replace("\r\n", "\n"))
