@@ -49,6 +49,18 @@ export function updateURLParams() {
 
 // The people with a tag, by id: everyone, hidden from autocomplete or not -- who a typed name is and the label of each
 // (identity by id) -- and, read apart, those not hidden: what is offered while typing.
+// ------------------------------------------------------------ the sidebar's groups --
+// A year or folder of Folder Matches, opened or closed: its list shown, the chevron, and
+// what its toggle button tells the keyboard (aria-expanded). Every place that opens a
+// group comes here: the header's click, the search, and the photo the page selects.
+export function showGroup(header, content, open) {
+    content.style.display = open ? 'block' : 'none';
+    const chevron = header.querySelector('.chevron-icon');
+    if (chevron) chevron.textContent = open ? '\u25BC' : '\u25B6';
+    const toggle = header.querySelector('.tree-toggle');
+    if (toggle) toggle.setAttribute('aria-expanded', String(open));
+}
+
 export function fetchKnownPeople() {
     const read = (url) => api.fetch(url).then(res => (res.ok ? res.json() : []));
     read('/api/people?include_hidden=1')

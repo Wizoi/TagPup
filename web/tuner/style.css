@@ -909,6 +909,30 @@ body {
     font-weight: normal;
 }
 
+/* A year's or folder's toggle (web/tuner/sidebar.js, groupHeader): a button for the keyboard,
+   looking as the header's chevron and title did before it held them. */
+.tree-toggle {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin: 0;
+    padding: 0;
+    border: none;
+    background: none;
+    font: inherit;
+    color: inherit;
+    letter-spacing: inherit;
+    text-align: left;
+    cursor: pointer;
+}
+
+.tree-toggle:focus-visible {
+    outline: 2px solid var(--text-primary);
+    outline-offset: 2px;
+}
+
 /* Indent photos inside folder groups */
 .folder-photo-item {
     padding-left: 36px;

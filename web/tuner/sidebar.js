@@ -8,7 +8,7 @@ import {
     photoSearch, showMatchedToggle,
 } from './elements.js';
 import { UNKNOWN_YEAR } from './rules.js';
-import { updateURLParams } from './shared.js';
+import { showGroup, updateURLParams } from './shared.js';
 import { loadTags, renderTagList } from './tags.js';
 import { fetchPeopleWithCounts, selectPerson, showPeopleViewChoice } from './people.js';
 import { selectPhoto } from './faces-strip.js';
@@ -19,6 +19,22 @@ const tagViewContent = document.getElementById('tag-view-content');
 const sidebar = document.querySelector('.sidebar');
 const sidebarResizer = document.getElementById('sidebar-resizer');
 const showMatchedContainer = document.getElementById('show-matched-container');
+
+/**
+ * A year's or a folder's header: a button holding its chevron and title (`parts`), so Tab
+ * reaches it and Enter or Space opens it; the header's own click opens it too, from its
+ * padding. Re-examine is a sibling of the button, never inside it.
+ */
+function groupHeader(className, parts) {
+    const header = document.createElement('div');
+    header.className = className;
+    const toggle = document.createElement('button');
+    toggle.type = 'button';
+    toggle.className = 'tree-toggle';
+    parts.forEach(part => toggle.appendChild(part));
+    header.appendChild(toggle);
+    return header;
+}
 
 export function updateMatchedToggleVisibility() {
     const mode = modeSelect.value;
@@ -166,36 +182,23 @@ function renderPhotoList() {
         yearLi.className = 'year-group';
         
         // Year Header
-        const yearHeader = document.createElement('div');
-        yearHeader.className = 'year-header';
-        
         const yearChevron = document.createElement('span');
         yearChevron.className = 'chevron-icon';
-        // Default expand the first entry (first year)
-        const isYearExpanded = (yearIdx === 0);
-        yearChevron.textContent = isYearExpanded ? '▼' : '▶';
-        yearHeader.appendChild(yearChevron);
-        
         const yearTitle = document.createElement('span');
         yearTitle.className = 'year-title';
         yearTitle.textContent = `📅 ${yearGroup.name}`;
-        yearHeader.appendChild(yearTitle);
-        
+        const yearHeader = groupHeader('year-header', [yearChevron, yearTitle]);
         yearLi.appendChild(yearHeader);
-        
-        // Year Content (Folders list)
+
+        // Year Content (Folders list); the first year opens of itself
         const yearContent = document.createElement('ul');
         yearContent.className = 'year-content';
         yearContent.style.listStyle = 'none';
-        if (!isYearExpanded) {
-            yearContent.style.display = 'none';
-        }
-        
+        showGroup(yearHeader, yearContent, yearIdx === 0);
+
         // Toggle logic for Year
         yearHeader.addEventListener('click', () => {
-            const collapsed = (yearContent.style.display === 'none');
-            yearContent.style.display = collapsed ? 'block' : 'none';
-            yearChevron.textContent = collapsed ? '▼' : '▶';
+            showGroup(yearHeader, yearContent, yearContent.style.display === 'none');
         });
         
         // Sort folders in this year descending
@@ -207,33 +210,24 @@ function renderPhotoList() {
             folderLi.className = 'folder-group';
             
             // Folder Header
-            const folderHeader = document.createElement('div');
-            folderHeader.className = 'folder-header';
-            
             const folderChevron = document.createElement('span');
             folderChevron.className = 'chevron-icon';
-            // Default expand the first entry: first folder of the first year (disabled)
-            const isFolderExpanded = false;
-            folderChevron.textContent = isFolderExpanded ? '▼' : '▶';
-            folderHeader.appendChild(folderChevron);
-            
+
             const folderIcon = document.createElement('span');
             folderIcon.className = 'folder-icon';
             folderIcon.textContent = '📁';
-            folderHeader.appendChild(folderIcon);
-            
+
             const folderTitle = document.createElement('span');
             folderTitle.className = 'folder-title';
             folderTitle.textContent = baseName(folderGroup.name) || folderGroup.name;
             folderTitle.title = folderGroup.name;
-            folderHeader.appendChild(folderTitle);
-            
+
             const totalUnmatched = folderGroup.photos.reduce((sum, p) => sum + p.unmatched_count, 0);
             const folderCount = document.createElement('span');
             folderCount.className = 'folder-count';
             folderCount.textContent = ` (${totalUnmatched})`;
-            folderHeader.appendChild(folderCount);
             folderGroup.countEl = folderCount;
+            const folderHeader = groupHeader('folder-header', [folderChevron, folderIcon, folderTitle, folderCount]);
 
             if (totalUnmatched > 0) {
                 const btnFolderAutomatch = document.createElement('button');
@@ -250,19 +244,15 @@ function renderPhotoList() {
             
             folderLi.appendChild(folderHeader);
             
-            // Folder Content (Photos list)
+            // Folder Content (Photos list), closed until opened
             const folderContent = document.createElement('ul');
             folderContent.className = 'folder-content';
             folderContent.style.listStyle = 'none';
-            if (!isFolderExpanded) {
-                folderContent.style.display = 'none';
-            }
-            
+            showGroup(folderHeader, folderContent, false);
+
             // Toggle logic for Folder
             folderHeader.addEventListener('click', () => {
-                const collapsed = (folderContent.style.display === 'none');
-                folderContent.style.display = collapsed ? 'block' : 'none';
-                folderChevron.textContent = collapsed ? '▼' : '▶';
+                showGroup(folderHeader, folderContent, folderContent.style.display === 'none');
             });
             
             // Render photos inside folder
@@ -279,10 +269,8 @@ function renderPhotoList() {
                 if (samePath(photo.path, state.activePhotoPath)) {
                     li.classList.add('active');
                     // Ensure parent folders / years are expanded if photo is active
-                    yearContent.style.display = 'block';
-                    yearChevron.textContent = '▼';
-                    folderContent.style.display = 'block';
-                    folderChevron.textContent = '▼';
+                    showGroup(yearHeader, yearContent, true);
+                    showGroup(folderHeader, folderContent, true);
                 }
 
                 const title = document.createElement('div');
@@ -387,11 +375,8 @@ function filterPhotos() {
             folderGroup.style.display = folderHasVisiblePhotos ? 'block' : 'none';
             
             // If query is not empty, automatically expand folder content to show matching photos
-            const folderContent = folderGroup.querySelector('.folder-content');
-            const folderChevron = folderGroup.querySelector('.folder-header .chevron-icon');
             if (query.length > 0 && folderHasVisiblePhotos) {
-                if (folderContent) folderContent.style.display = 'block';
-                if (folderChevron) folderChevron.textContent = '▼';
+                showGroup(folderGroup.querySelector('.folder-header'), folderGroup.querySelector('.folder-content'), true);
             }
 
             if (folderHasVisiblePhotos) {
@@ -403,11 +388,8 @@ function filterPhotos() {
         yearGroup.style.display = yearHasVisiblePhotos ? 'block' : 'none';
 
         // If query is not empty, automatically expand year content to show matching folders
-        const yearContent = yearGroup.querySelector('.year-content');
-        const yearChevron = yearGroup.querySelector('.year-header .chevron-icon');
         if (query.length > 0 && yearHasVisiblePhotos) {
-            if (yearContent) yearContent.style.display = 'block';
-            if (yearChevron) yearChevron.textContent = '▼';
+            showGroup(yearGroup.querySelector('.year-header'), yearGroup.querySelector('.year-content'), true);
         }
     });
 }
