@@ -385,6 +385,7 @@ describe("the picker: the library's tags and people", () => {
     await type(ctx, "all_of", "coa");
     assert.deepEqual(optionLabels(ctx, "all_of"), ["Trips/Coast"]);
     ctx.key(pick(ctx, "all_of"), "Enter");
+    ctx.window.dispatchEvent(new ctx.window.KeyboardEvent("keyup", { key: "Enter" }));   // the key goes up, as it does
     await ctx.settle();
     assert.deepEqual(chipTexts(ctx, "all_of"), ["Trips/Coast"]);
     await type(ctx, "all_of", "s");

@@ -1,5 +1,6 @@
 // The New Person dialog.
 import { api } from './common/api.js';
+import { holdFocus, releaseFocus } from './common/dialog.js';
 import { nameProblem, personFields, rootOf } from './common/vocabulary.js';
 import { state } from './state.js';
 import { btnNewPerson } from './elements.js';
@@ -71,6 +72,8 @@ export function openNewPersonModal(seedFaceId) {
     }
     if (newPersonModal) {
         newPersonModal.classList.remove('hidden');
+        // Escape is Cancel: no person is made. The name field has the focus.
+        holdFocus(newPersonModal, { cancel: hideNewPersonModal, focus: newPersonName });
     }
     state.modalSelectedFaceIds = [];
     if (modalMatchesLoading) {
@@ -218,11 +221,13 @@ function validateNewPersonName() {
     return true;
 }
 
-const hideNewPersonModal = () => {
+/** The dialog's one close: Cancel, its cross, Escape and a save that went through. */
+function hideNewPersonModal() {
     if (newPersonModal) {
         newPersonModal.classList.add('hidden');
+        releaseFocus(newPersonModal);
     }
-};
+}
 
 // Its listeners, which main.js adds once the page has loaded.
 export function wireNewPerson() {
@@ -325,10 +330,8 @@ export function wireNewPerson() {
             .then(data => {
                 if (data.success) {
                     if (data.warning) alert(data.warning);
-                    if (newPersonModal) {
-                        newPersonModal.classList.add('hidden');
-                    }
-                    
+                    hideNewPersonModal();
+
                     state.selectedFaceIds = [];
                     updateMatchingSelectionUI();
                     clearFaceDetails();

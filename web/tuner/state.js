@@ -79,12 +79,12 @@ export const state = {
 
     // Folders to review (review.js): those /api/sync/review lists, whether an Include or
     // Ignore is on its way, and the dialog's parts, built the first time it opens.
-    review: { folders: [], busy: false, modal: null, body: null, status: null, opener: null },
+    review: { folders: [], busy: false, modal: null, body: null, status: null },
 
     // Roots (roots.js): the dialog's parts, built the first time it opens; whether it is open and
     // which opening (`token`, so an answer that comes after it closed is let go); a move being made
     // (`busy`, so a second press of Move does nothing).
-    roots: { modal: null, body: null, status: null, opener: null, open: false, token: 0, busy: false },
+    roots: { modal: null, body: null, status: null, open: false, token: 0, busy: false },
 
     // Remove Folder: the library's folders (/api/folder/indexed), and the one chosen.
     removeFolders: [],

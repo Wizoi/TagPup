@@ -7,6 +7,7 @@
 // confirmed; a poor result needs the person to say they mean it. The page's state is
 // state.js's; requests go through api.js; paths are the server's, shown as they come.
 import { api } from './common/api.js';
+import { holdFocus, releaseFocus } from './common/dialog.js';
 import { buildElement, replaceContent } from './common/dom.js';
 import { samePath } from './common/paths.js';
 import { state } from './state.js';
@@ -320,24 +321,18 @@ function buildRootsDialog() {
     document.body.append(modal);
     close.addEventListener('click', closeRoots);
     done.addEventListener('click', closeRoots);
-    document.addEventListener('keydown', (e) => {
-        if (e.key !== 'Escape' || modal.classList.contains('hidden')) return;
-        e.preventDefault();
-        e.stopPropagation();
-        closeRoots();
-    });
     state.roots.modal = modal;
 }
 
 /** Open the dialog, the roots read now. */
 export function openRoots() {
     if (!state.roots.modal) buildRootsDialog();
-    state.roots.opener = document.activeElement;
     state.roots.open = true;
     state.roots.token += 1;
     state.roots.modal.classList.remove('hidden');
     show(state.roots.body, [buildElement('p', { className: 'roots-loading', text: 'Reading the roots...' })]);
     say('');
+    holdFocus(state.roots.modal, { cancel: closeRoots });
     return loadRoots();
 }
 
@@ -346,6 +341,5 @@ export function closeRoots() {
     state.roots.modal.classList.add('hidden');
     state.roots.open = false;
     state.roots.token += 1;
-    const opener = state.roots.opener;
-    if (opener && typeof opener.focus === 'function') opener.focus();
+    releaseFocus(state.roots.modal);
 }

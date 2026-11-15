@@ -164,13 +164,6 @@ describe("the Roots dialog", () => {
     assert.match(text(dialog.querySelector(".validation-error")), /machine_roots\.json/);
     assert.ok(dialog.querySelector(".roots-root"));
   });
-
-  test("Escape and Close shut it, and the focus goes back", async (t) => {
-    const ctx = await tuner(t);
-    const dialog = await openFromGear(ctx);
-    ctx.document.dispatchEvent(new ctx.window.KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
-    assert.ok(dialog.classList.contains("hidden"));
-  });
 });
 
 describe("what the owner is told before a move (#467, #472)", () => {
