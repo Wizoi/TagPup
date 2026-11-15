@@ -54,6 +54,7 @@ LEFT = {
     "rename tag": AS_SAVE,
     "remove tag": AS_SAVE,
     "time shift": AS_SAVE,
+    "date undated photos by their folders": AS_SAVE,
     **{operation: AS_SAVE for operation in bulk_edit.OPERATIONS.values()},
     face_people.ADDED: AS_SAVE,
     face_people.REMOVED: AS_SAVE,
