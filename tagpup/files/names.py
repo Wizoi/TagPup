@@ -159,6 +159,7 @@ def rename_all(renames, aside=None):
                              aside, original, back_err)
         # Only now, with everything put back: who holds the file, when the error is the kind a held file makes.
         why = lock_owners.explain(rename_err, getattr(rename_err, "filename", None))
-        logger.error("Smart Rename failed and was undone: %s", why)
+        logger.error("Smart Rename failed and was undone: %s (%s)", rename_err.strerror or type(rename_err).__name__,
+                     getattr(rename_err, "winerror", None) or rename_err.errno)    # not the paths: they can name a person
         raise RenameFailed(why, stranded) from rename_err
     return done, moved_aside

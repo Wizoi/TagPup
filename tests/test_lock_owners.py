@@ -295,11 +295,12 @@ class ARenameOfAHeldFile(unittest.TestCase):
                 handle.write(b"x")
             handle = hold_exclusively(old)
             try:
-                with self.assertRaises(names.RenameFailed) as raised:
+                with self.assertRaises(names.RenameFailed) as raised, self.assertLogs(names.logger, "ERROR") as logged:
                     names.rename_all({old: new})
             finally:
                 release(handle)
             said = raised.exception.message()
+            self.assertNotIn("IMG_0001", " ".join(logged.output), "a file name can name a person (#2973)")
             self.assertIn("It is held open by", said)
             self.assertIn("this TagPup process", said)
             self.assertIn("Every photo was put back under its old name.", said)
