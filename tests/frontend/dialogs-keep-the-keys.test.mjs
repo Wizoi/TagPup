@@ -515,61 +515,81 @@ describe("TagPup: every dialog keeps the keyboard -- Escape cancels, Tab goes ro
   });
 });
 
+/** TagTuner's views, opened as the owner opens them: the sidebar's first item active in each. */
+const TUNER_PHOTOS = ["a.jpg", "b.jpg"].map((filename) => ({
+  path: `D:/Library/2020/${filename}`, filename, folder: "D:/Library/2020", year: "2020", unmatched_count: 1,
+}));
+
+function tunerServer() {
+  return new FakeServer()
+    .on("/api/apps", { this: "tuner", apps: {} })
+    .on("/api/taxonomy/tree", TREE)
+    .on("/api/folder/index-active", { active: [], queued: [], busy: false, remaining: 0 })
+    .on("/api/folder/indexed", { folders: [{ path: "D:/Library/2020", photos: 2, own_photos: 2, on_disk: true }] })
+    .on("/api/databases", { databases: ["photo_index"] })
+    .on("/api/people-with-counts", [])
+    .on("/api/people", [])
+    .on("/api/photos", TUNER_PHOTOS)
+    .on("/api/photo-details", (url) => ({
+      path: decodeURIComponent(url.split("path=")[1]), filename: "a.jpg", year: "2020", caption: "",
+      tags: [], people: [],
+      faces: [{ id: 41, box: [10, 10, 40, 40], name: null, excluded: false, max_similarity: 0 }],
+    }))
+    .on("/api/face-matches", { matches: [] })
+    .on("/api/unmatched-faces/people", [{ name: "Unknown Faces", count: 3, unit: "face" },
+                                        { name: "Ungrouped", count: 2, unit: "face" }])
+    .on("/api/unmatched-faces/person-matches", {
+      faces: [1, 2, 3].map((id) => ({
+        id, photo_path: `D:\\meets\\m${id}.jpg`, filename: `m${id}.jpg`, box: [10, 10, 40, 40], prob: 0.99,
+        mtime: 0, year: 2025, similarity: 0.9, person_similarity: 0.9, cluster_id: 5, cluster_name: "Cluster 5",
+        other_names: [], suggested_name: null, suggested_similarity: 0, suggestion_strength: null,
+      })),
+      total_count: 3, unclustered_total: 0, unclustered_shown: 0, has_more: false,
+    })
+    .on("/api/roots", { library: "photo_index", map: "C:/TagPup/machine_roots.json", problem: null, busy: [], roots: [] })
+    .on("/api/sync/review", { library: "photo_index", count: 1, photos: 3,
+                              folders: [{ path: "D:/Library/2021", photos: 3 }] })
+    .on("/api/sync", { library: "photo_index", last_in_step: null, last_run: null });
+}
+
+/** The folder view, its first photo shown (the sidebar's first item active). */
+async function folderView(t) {
+  const server = tunerServer();
+  const ctx = await loadApp("tagtuner", { t, server });
+  ctx.server = server;
+  ctx.window.alert = () => {};
+  ctx.window.confirm = () => true;
+  await flush(ctx.window, 6);
+  click(ctx.window, ctx.document.querySelector("#photo-list .folder-header"));
+  click(ctx.window, ctx.document.querySelector("#photo-list .photo-item"));
+  await flush(ctx.window, 6);
+  return ctx;
+}
+
+/** Identify Faces on its first person (the sidebar's first item active). */
+async function identifyView(t) {
+  const server = tunerServer();
+  const ctx = await loadApp("tagtuner", {
+    t, server,
+    url: `http://localhost:8080/photo_index/?mode=unmatched-faces&person=${encodeURIComponent("Unknown Faces")}`,
+  });
+  ctx.server = server;
+  ctx.window.confirm = () => true;
+  ctx.window.alert = () => {};
+  await new Promise((r) => ctx.window.setTimeout(r, 150));
+  return ctx;
+}
+
+const active = (ctx) => ctx.document.querySelector("#photo-list .photo-item.active")?.textContent || null;
+
+/** The Identify Faces cluster's own button, by its words. */
+const clusterButton = (ctx, words) => [...ctx.document.querySelectorAll("#matching-faces-grid .matching-group-section button")]
+  .find((b) => b.textContent.includes(words));
+
+/** The POSTs sent to a route. */
+const posted = (ctx, route) => ctx.server.calls.filter((c) => c.method === "POST" && c.url.includes(route));
+
 describe("TagTuner: the sidebar does not move behind a dialog", () => {
-  const PHOTOS = ["a.jpg", "b.jpg"].map((filename) => ({
-    path: `D:/Library/2020/${filename}`, filename, folder: "D:/Library/2020", year: "2020", unmatched_count: 1,
-  }));
-
-  function server() {
-    return new FakeServer()
-      .on("/api/apps", { this: "tuner", apps: {} })
-      .on("/api/taxonomy/tree", TREE)
-      .on("/api/folder/index-active", { active: [], queued: [], busy: false, remaining: 0 })
-      .on("/api/databases", { databases: ["photo_index"] })
-      .on("/api/people-with-counts", [])
-      .on("/api/people", [])
-      .on("/api/photos", PHOTOS)
-      .on("/api/photo-details", (url) => ({
-        path: decodeURIComponent(url.split("path=")[1]), filename: "a.jpg", year: "2020", caption: "",
-        tags: [], people: [],
-        faces: [{ id: 41, box: [10, 10, 40, 40], name: null, excluded: false, max_similarity: 0 }],
-      }))
-      .on("/api/face-matches", { matches: [] })
-      .on("/api/unmatched-faces/people", [{ name: "Unknown Faces", count: 3, unit: "face" },
-                                          { name: "Ungrouped", count: 2, unit: "face" }])
-      .on("/api/unmatched-faces/person-matches", {
-        faces: [1, 2, 3].map((id) => ({
-          id, photo_path: `D:\\meets\\m${id}.jpg`, filename: `m${id}.jpg`, box: [10, 10, 40, 40], prob: 0.99,
-          mtime: 0, year: 2025, similarity: 0.9, person_similarity: 0.9, cluster_id: 5, cluster_name: "Cluster 5",
-          other_names: [], suggested_name: null, suggested_similarity: 0, suggestion_strength: null,
-        })),
-        total_count: 3, unclustered_total: 0, unclustered_shown: 0, has_more: false,
-      });
-  }
-
-  /** The folder view, its first photo shown (the sidebar's first item active). */
-  async function folderView(t) {
-    const ctx = await loadApp("tagtuner", { t, server: server() });
-    await flush(ctx.window, 6);
-    click(ctx.window, ctx.document.querySelector("#photo-list .folder-header"));
-    click(ctx.window, ctx.document.querySelector("#photo-list .photo-item"));
-    await flush(ctx.window, 6);
-    return ctx;
-  }
-
-  /** Identify Faces on its first person (the sidebar's first item active). */
-  async function identifyView(t) {
-    const ctx = await loadApp("tagtuner", {
-      t, server: server(),
-      url: `http://localhost:8080/photo_index/?mode=unmatched-faces&person=${encodeURIComponent("Unknown Faces")}`,
-    });
-    ctx.window.confirm = () => true;
-    ctx.window.alert = () => {};
-    await new Promise((r) => ctx.window.setTimeout(r, 150));
-    return ctx;
-  }
-
-  const active = (ctx) => ctx.document.querySelector("#photo-list .photo-item.active")?.textContent || null;
 
   // Each opened the way the page opens it -- its own button -- and closed by its own Cancel.
   const DIALOGS = {
@@ -607,8 +627,7 @@ describe("TagTuner: the sidebar does not move behind a dialog", () => {
     "ignore-confirm-modal": {
       view: identifyView,
       open: (ctx) => {
-        const ignore = [...ctx.document.querySelectorAll("#matching-faces-grid .matching-group-section button")]
-          .find((b) => b.textContent.includes("Ignore Cluster"));
+        const ignore = clusterButton(ctx, "Ignore Cluster");
         assert.ok(ignore, "the cluster has no Ignore Cluster button");
         click(ctx.window, ignore);
       },
@@ -640,4 +659,187 @@ describe("TagTuner: the sidebar does not move behind a dialog", () => {
       assert.notEqual(active(ctx), before, "the sidebar stayed still once it closed");
     });
   }
+
+  test("the Assign Cluster question", async (t) => {
+    const ctx = await identifyView(t);
+    const before = active(ctx);
+    assert.ok(before, "nothing in the sidebar is active to move from");
+    click(ctx.window, clusterButton(ctx, "Assign Cluster"));
+    await flush(ctx.window, 4);
+    const asked = ctx.document.querySelector(".assign-cluster-modal");
+    assert.ok(asked && openDialogs(ctx.document).includes(asked), "the question is not one of the page's dialogs");
+    for (const target of [ctx.document.body, asked.querySelector("input"), asked.querySelector("button")]) {
+      for (const key of ["ArrowDown", "ArrowUp", "ArrowDown"]) press(ctx.window, target, key);
+    }
+    await flush(ctx.window, 4);
+    assert.equal(active(ctx), before, "the sidebar moved behind it");
+  });
+});
+
+/** Each TagTuner dialog opened from the control the owner would be on; `cancelled` checks Escape wrote nothing. */
+const viaTunerGear = (action, id) => ({
+  view: folderView,
+  opener: (ctx) => ctx.document.getElementById("btn-gear"),
+  open: (ctx) => {
+    click(ctx.window, ctx.document.getElementById("btn-gear"));
+    click(ctx.window, ctx.document.querySelector(`#gear-menu [data-action="${action}"]`));
+  },
+  dialog: (ctx) => ctx.document.getElementById(id),
+});
+
+/** Face 1 of the cluster ticked, as the owner ticks it before Exclude. */
+async function tickFirstFace(ctx) {
+  click(ctx.window, ctx.document.querySelector('#matching-faces-grid [data-face-id="1"]'));
+  await flush(ctx.window, 4);
+}
+
+const TUNER_DIALOGS = {
+  "Roots": viaTunerGear("library-roots", "roots-modal"),
+  "Folders to review": {
+    ...viaTunerGear("folders-review", "review-modal"),
+    cancelled: (ctx) => assert.deepEqual(posted(ctx, "/api/sync/review/"), [], "Escape included or ignored a folder"),
+  },
+  "Add folders": {
+    view: folderView,
+    opener: (ctx) => ctx.document.getElementById("btn-add-folder"),
+    open: (ctx) => click(ctx.window, ctx.document.getElementById("btn-add-folder")),
+    dialog: (ctx) => ctx.document.getElementById("folder-picker-modal"),
+    focused: (ctx) => ctx.document.getElementById("btn-folder-picker-browse"),
+    cancelled: (ctx) => assert.deepEqual(posted(ctx, "/api/folder/index-start"), [], "Escape queued a folder"),
+  },
+  // A folder chosen, and Escape: the folder is not removed.
+  "Remove folder": {
+    view: folderView,
+    opener: (ctx) => ctx.document.getElementById("btn-remove-folder"),
+    open: async (ctx) => {
+      click(ctx.window, ctx.document.getElementById("btn-remove-folder"));
+      await flush(ctx.window, 4);
+      click(ctx.window, ctx.document.querySelector('#remove-folder-list input[type="radio"]'));
+    },
+    dialog: (ctx) => ctx.document.getElementById("remove-folder-modal"),
+    focused: (ctx) => ctx.document.getElementById("remove-folder-filter"),
+    cancelled: (ctx) => {
+      assert.equal(ctx.document.getElementById("btn-remove-folder-confirm").disabled, false, "no folder was chosen");
+      assert.deepEqual(posted(ctx, "/api/folder/remove"), [], "Escape removed the folder");
+    },
+  },
+  // A name typed, and Escape: no person is made, no face named.
+  "New person": {
+    view: folderView,
+    before: async (ctx) => {
+      click(ctx.window, ctx.document.querySelector(".face-card"));
+      await flush(ctx.window, 4);
+    },
+    opener: (ctx) => [...ctx.document.querySelectorAll(".face-card button")].find((b) => b.title === "Create new person profile"),
+    open: async (ctx) => {
+      click(ctx.window, ctx.document.activeElement);
+      await flush(ctx.window, 4);
+      const name = ctx.document.getElementById("new-person-name");
+      name.value = "Wren Halloway";
+      name.dispatchEvent(new ctx.window.Event("input", { bubbles: true }));
+    },
+    dialog: (ctx) => ctx.document.getElementById("new-person-modal"),
+    focused: (ctx) => ctx.document.getElementById("new-person-name"),
+    cancelled: (ctx) => {
+      assert.deepEqual(posted(ctx, "/api/faces/match-bulk"), [], "Escape named the faces");
+      assert.deepEqual(posted(ctx, "/api/taxonomy/create"), [], "Escape made a person");
+    },
+  },
+  "Exclude: why?": {
+    view: identifyView,
+    opener: (ctx) => ctx.document.getElementById("btn-exclude-selected"),
+    open: (ctx) => click(ctx.window, ctx.document.getElementById("btn-exclude-selected")),
+    before: tickFirstFace,
+    dialog: (ctx) => ctx.document.getElementById("exclude-reason-modal"),
+    focused: (ctx) => ctx.document.querySelector("#exclude-reason-choices button"),
+    cancelled: (ctx) => assert.deepEqual(posted(ctx, "/api/faces/exclude"), [], "Escape excluded the face"),
+  },
+  "Ignore Cluster?": {
+    view: identifyView,
+    opener: (ctx) => clusterButton(ctx, "Ignore Cluster"),
+    open: (ctx) => click(ctx.window, clusterButton(ctx, "Ignore Cluster")),
+    dialog: (ctx) => ctx.document.getElementById("ignore-confirm-modal"),
+    focused: (ctx) => ctx.document.getElementById("btn-ignore-confirm-ok"),
+    cancelled: (ctx) => assert.deepEqual(posted(ctx, "/api/faces/exclude"), [], "Escape ignored the cluster"),
+  },
+  // A name typed, and Escape: the cluster is not assigned.
+  "Assign Cluster": {
+    view: identifyView,
+    opener: (ctx) => clusterButton(ctx, "Assign Cluster"),
+    open: async (ctx) => {
+      click(ctx.window, clusterButton(ctx, "Assign Cluster"));
+      ctx.document.querySelector(".assign-cluster-modal input").value = "Wren Halloway";
+    },
+    dialog: (ctx) => ctx.document.querySelector(".assign-cluster-modal"),
+    focused: (ctx) => ctx.document.querySelector(".assign-cluster-modal input"),
+    cancelled: (ctx) => {
+      assert.equal(ctx.document.querySelector(".assign-cluster-modal"), null, "the question was left in the page");
+      assert.deepEqual(posted(ctx, "/api/faces/match-bulk"), [], "Escape assigned the cluster");
+    },
+  },
+};
+
+describe("TagTuner: every dialog keeps the keyboard -- Escape cancels, Tab goes round, the focus goes back", () => {
+  for (const [label, how] of Object.entries(TUNER_DIALOGS)) {
+    test(label, async (t) => {
+      const ctx = await how.view(t);
+      const { window, document } = ctx;
+      const errors = catchErrors(window);
+      if (how.before) await how.before(ctx);
+      const opener = how.opener(ctx);
+      assert.ok(opener, `${label}: no control opens it`);
+      opener.focus();
+      assert.equal(document.activeElement, opener);
+      await how.open(ctx);
+      await flush(window, 6);
+      const dialog = how.dialog(ctx);
+      assert.ok(dialog && openDialogs(document).includes(dialog), `${label} did not open`);
+      if (how.focused) assert.equal(document.activeElement, how.focused(ctx), `${label}: the focus is not where the owner starts`);
+      else assert.ok(dialog.contains(document.activeElement), `${label}: the focus was not put in it`);
+
+      assertTabGoesRound(ctx, dialog, label);
+
+      const escape = press(window, document.activeElement, "Escape");
+      await flush(window, 6);
+      assert.ok(escape.defaultPrevented, `${label}: Escape went on to the page`);
+      assert.deepEqual(openDialogs(document), [], `${label}: Escape did not close it`);
+      assert.equal(document.activeElement, opener, `${label}: the focus did not go back to what opened it`);
+      if (how.cancelled) await how.cancelled(ctx);
+      assert.deepEqual(errors, []);
+    });
+  }
+
+  test("Exclude pressed twice at once: one question, one Escape closes it, no face excluded", async (t) => {
+    const ctx = await identifyView(t);
+    const { window, document } = ctx;
+    await tickFirstFace(ctx);
+    const exclude = document.getElementById("btn-exclude-selected");
+    exclude.focus();
+    click(window, exclude);
+    click(window, exclude);
+    await flush(window, 6);
+    press(window, document.activeElement, "Escape");
+    await flush(window, 6);
+    assert.deepEqual(openDialogs(document), [], "Escape did not close it");
+    assert.equal(document.activeElement, exclude, "the second press took the first reason for the opener");
+    assert.deepEqual(posted(ctx, "/api/faces/exclude"), []);
+  });
+
+  test("Assign Cluster answered: the cluster is assigned, and the focus is left on nothing the grid took away", async (t) => {
+    const ctx = await identifyView(t);
+    const { window, document } = ctx;
+    ctx.server.on("/api/faces/match-bulk", { success: true, change: 12 });
+    const assign = clusterButton(ctx, "Assign Cluster");
+    assign.focus();
+    click(window, assign);
+    const input = document.querySelector(".assign-cluster-modal input");
+    assert.equal(document.activeElement, input, "the name field does not have the focus at once");
+    input.value = "Wren Halloway";
+    press(window, input, "Enter");
+    await new Promise((r) => window.setTimeout(r, 150));
+    assert.equal(posted(ctx, "/api/faces/match-bulk").length, 1, "the cluster was not assigned");
+    assert.deepEqual(openDialogs(document), []);
+    assert.ok(document.activeElement === document.body || document.activeElement.isConnected,
+      "the focus is on a button the grid removed");
+  });
 });

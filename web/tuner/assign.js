@@ -1,6 +1,8 @@
 // What is done to a selection of faces: assign, unmatch, exclude, restore, ignore,
 // undo, rename.
 import { api } from './common/api.js';
+import { holdFocus, releaseFocus } from './common/dialog.js';
+import { buildElement } from './common/dom.js';
 import { choicesOf, loadRules } from './common/validate.js';
 import { nameProblem, personFields } from './common/vocabulary.js';
 import { state } from './state.js';
@@ -98,6 +100,7 @@ function askWith(reasons, count, modal, choices) {
             if (settled) return;
             settled = true;
             modal.classList.add('hidden');
+            releaseFocus(modal);
             resolve(value);
         };
 
@@ -118,6 +121,8 @@ function askWith(reasons, count, modal, choices) {
         modal.onclick = (e) => { if (e.target === modal) finish(null); };
 
         modal.classList.remove('hidden');
+        // Escape declines: no face is excluded. The first reason has the focus.
+        holdFocus(modal, { cancel: () => finish(null), focus: choices.querySelector('button') });
     });
 }
 
@@ -323,10 +328,12 @@ export function askBeforeIgnoring(faceCount, photoCount, proceed) {
         + `puts the faces back with their names and the tags back in the files.`;
     if (ignoreConfirmDontAsk) ignoreConfirmDontAsk.checked = false;
     ignoreConfirmModal.classList.remove('hidden');
+    holdFocus(ignoreConfirmModal, { cancel: closeIgnoreConfirm });
 }
 
 function closeIgnoreConfirm() {
     if (ignoreConfirmModal) ignoreConfirmModal.classList.add('hidden');
+    releaseFocus(ignoreConfirmModal);
     state.pendingIgnore = null;
 }
 
@@ -581,73 +588,32 @@ function postRenamePerson(oldName, newName, personId = null) {
     });
 }
 
+/**
+ * Ask whom a cluster's faces are: a name typed or taken from the people's list. A dialog of the
+ * page's shared classes (`.modal`), so the sidebar's arrows wait behind it and it keeps the keyboard
+ * as every dialog does (web/common/dialog.js): the focus in its field, Escape cancels, the focus back
+ * on the Assign Cluster button.
+ */
 export function showAutocompletePopup(facesCount, onConfirm) {
-    // Create modal overlay
-    const overlay = document.createElement('div');
-    overlay.style.position = 'fixed';
-    overlay.style.top = '0';
-    overlay.style.left = '0';
-    overlay.style.width = '100vw';
-    overlay.style.height = '100vh';
-    overlay.style.backgroundColor = 'rgba(0, 0, 0, 0.6)';
-    overlay.style.backdropFilter = 'blur(4px)';
-    overlay.style.display = 'flex';
-    overlay.style.justifyContent = 'center';
-    overlay.style.alignItems = 'center';
-    overlay.style.zIndex = '10000';
-
-    // Create modal card
-    const card = document.createElement('div');
-    card.style.backgroundColor = 'var(--bg-secondary)';
-    card.style.border = '1px solid var(--border-color)';
-    card.style.borderRadius = '8px';
-    card.style.padding = '24px';
-    card.style.width = '350px';
-    card.style.boxShadow = '0 10px 25px rgba(0, 0, 0, 0.5)';
-
-    // Title
-    const title = document.createElement('h3');
-    title.style.margin = '0 0 12px 0';
-    title.style.fontSize = '16px';
-    title.style.color = 'var(--text-primary)';
-    title.textContent = `Assign ${facesCount} faces in cluster to:`;
-    card.appendChild(title);
-
-    // Autocomplete Input
-    const input = document.createElement('input');
-    input.type = 'text';
-    input.placeholder = 'Search or enter name...';
-    input.setAttribute('list', 'people-datalist');
-    input.style.width = '100%';
-    input.style.boxSizing = 'border-box';
-    input.style.padding = '8px 12px';
-    input.style.border = '1px solid var(--border-color)';
-    input.style.borderRadius = '4px';
-    input.style.backgroundColor = 'var(--bg-tertiary)';
-    input.style.color = 'var(--text-primary)';
-    input.style.outline = 'none';
-    input.style.marginBottom = '20px';
-    card.appendChild(input);
-
-    // Button group
-    const btnGroup = document.createElement('div');
-    btnGroup.style.display = 'flex';
-    btnGroup.style.justifyContent = 'flex-end';
-    btnGroup.style.gap = '10px';
-
-    const cancelBtn = document.createElement('button');
-    cancelBtn.className = 'btn btn-secondary';
-    cancelBtn.style.padding = '6px 12px';
-    cancelBtn.textContent = 'Cancel';
-    cancelBtn.addEventListener('click', () => {
-        document.body.removeChild(overlay);
-    });
-
-    const confirmBtn = document.createElement('button');
-    confirmBtn.className = 'btn btn-primary';
-    confirmBtn.style.padding = '6px 12px';
-    confirmBtn.textContent = 'Assign';
-    
+    const input = buildElement('input', { className: 'modal-input', attrs: {
+        type: 'text', placeholder: 'Search or enter name...', list: 'people-datalist', autocomplete: 'off' } });
+    const cancelBtn = buildElement('button', { className: 'btn btn-secondary', text: 'Cancel', attrs: { type: 'button' } });
+    const confirmBtn = buildElement('button', { className: 'btn btn-primary', text: 'Assign', attrs: { type: 'button' } });
+    const modal = buildElement('div', {
+        className: 'modal assign-cluster-modal',
+        attrs: { role: 'dialog', 'aria-modal': 'true', 'aria-labelledby': 'assign-cluster-title' },
+    }, [
+        buildElement('div', { className: 'modal-content ignore-confirm-content' }, [
+            buildElement('div', { className: 'modal-header' }, [
+                buildElement('h3', { id: 'assign-cluster-title', text: `Assign ${facesCount} faces in cluster to:` })]),
+            buildElement('div', { className: 'modal-body' }, [input]),
+            buildElement('div', { className: 'modal-footer' }, [cancelBtn, confirmBtn]),
+        ]),
+    ]);
+    const close = () => {
+        modal.remove();
+        releaseFocus(modal);
+    };
     const submitAction = () => {
         const val = input.value.trim();
         if (!val) {
@@ -655,25 +621,16 @@ export function showAutocompletePopup(facesCount, onConfirm) {
             input.focus();
             return;
         }
-        document.body.removeChild(overlay);
+        close();
         onConfirm(val);
     };
-
+    cancelBtn.addEventListener('click', close);
     confirmBtn.addEventListener('click', submitAction);
     input.addEventListener('keydown', (e) => {
-        if (e.key === 'Enter') {
-            submitAction();
-        }
+        if (e.key === 'Enter') submitAction();
     });
-
-    btnGroup.appendChild(cancelBtn);
-    btnGroup.appendChild(confirmBtn);
-    card.appendChild(btnGroup);
-    overlay.appendChild(card);
-    document.body.appendChild(overlay);
-
-    // Focus input
-    setTimeout(() => input.focus(), 50);
+    document.body.append(modal);
+    holdFocus(modal, { cancel: close, focus: input });
 }
 
 // Its listeners, which main.js adds once the page has loaded.

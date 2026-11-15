@@ -195,13 +195,13 @@ describe("cluster buttons act on the faces still in the cluster", () => {
 
     clickOn(window, buttonIn(section, "Assign Cluster"));
     await wait(window, 80);
-    const input = [...document.querySelectorAll("body > div input")]
-      .find((i) => i.placeholder === "Search or enter name...");
-    assert.ok(input, "the name popup did not open");
-    const title = input.parentElement.querySelector("h3");
+    const popup = document.querySelector(".assign-cluster-modal");
+    assert.ok(popup, "the name popup did not open");
+    const input = popup.querySelector("input");
+    const title = popup.querySelector("h3");
     assert.ok(title.textContent.includes("Assign 5 "), `popup counts: ${title.textContent}`);
     input.value = GUESS;
-    clickOn(window, buttonIn(input.parentElement, "Assign"));
+    clickOn(window, buttonIn(popup, "Assign"));
     await wait(window, 150);
 
     assert.deepEqual(idsIn(server.lastBody("/api/faces/match-bulk")), [1, 3, 4, 5, 6]);

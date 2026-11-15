@@ -1,5 +1,6 @@
 // Indexing folders and the folder picker.
 import { api } from './common/api.js';
+import { holdFocus, releaseFocus } from './common/dialog.js';
 import { baseName, samePath } from './common/paths.js';
 import { state } from './state.js';
 import { fetchPhotos, refreshSidebarQuietly } from './sidebar.js';
@@ -188,10 +189,12 @@ function openFolderPicker() {
     folderPickerEmpty.classList.remove('hidden');
     updatePickerSelectionUI();
     folderPickerModal.classList.remove('hidden');
+    holdFocus(folderPickerModal, { cancel: closeFolderPicker, focus: btnFolderPickerBrowse });
 }
 
 function closeFolderPicker() {
     folderPickerModal.classList.add('hidden');
+    releaseFocus(folderPickerModal);
 }
 
 function loadSubfolders(parent) {
@@ -352,6 +355,8 @@ function openRemoveFolder() {
     removeFolderEmpty.classList.remove('hidden');
     updateRemoveFolderUI();
     removeFolderModal.classList.remove('hidden');
+    // Escape removes nothing: it is Cancel.
+    holdFocus(removeFolderModal, { cancel: closeRemoveFolder, focus: removeFolderFilter });
 
     api.json('/api/folder/indexed')
         .then(data => {
@@ -365,6 +370,7 @@ function openRemoveFolder() {
 
 function closeRemoveFolder() {
     removeFolderModal.classList.add('hidden');
+    releaseFocus(removeFolderModal);
 }
 
 function renderRemoveFolderList() {

@@ -6,6 +6,7 @@
 // the last sync's counts give (/api/sync); the list itself is /api/sync/review, one walk
 // of the roots. The page's state is state.js's; requests go through api.js.
 import { api } from './common/api.js';
+import { holdFocus, releaseFocus } from './common/dialog.js';
 import { buildElement, replaceContent } from './common/dom.js';
 import { state } from './state.js';
 import { restoreIndexingState } from './indexing.js';
@@ -166,31 +167,24 @@ function buildReviewDialog() {
     document.body.append(modal);
     close.addEventListener('click', closeReview);
     done.addEventListener('click', closeReview);
-    document.addEventListener('keydown', (e) => {
-        if (e.key !== 'Escape' || modal.classList.contains('hidden')) return;
-        e.preventDefault();
-        e.stopPropagation();
-        closeReview();
-    });
     state.review.modal = modal;
 }
 
 /** Open the dialog, the folders listed now. */
 export function openReview() {
     if (!state.review.modal) buildReviewDialog();
-    state.review.opener = document.activeElement;
     state.review.modal.classList.remove('hidden');
     replaceContent(state.review.body, buildElement('p', { className: 'review-loading',
         text: 'Looking through the library\'s roots...' }));
     say('');
+    holdFocus(state.review.modal, { cancel: closeReview });
     return loadReview();
 }
 
 export function closeReview() {
     if (!state.review.modal) return;
     state.review.modal.classList.add('hidden');
-    const opener = state.review.opener;
-    if (opener && typeof opener.focus === 'function') opener.focus();
+    releaseFocus(state.review.modal);
 }
 
 /**
