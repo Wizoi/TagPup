@@ -16,6 +16,7 @@ import socket
 import sys
 import time
 import unittest
+from unittest import mock
 
 WORKSPACE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, WORKSPACE_DIR)
@@ -146,6 +147,28 @@ class TestHostParsing(unittest.TestCase):
         self.assertEqual("127.0.0.1", security.hostname_of("127.0.0.1:8080"))
         self.assertEqual("localhost", security.hostname_of("LocalHost"))
         self.assertEqual("", security.hostname_of(""))
+
+
+class TestTheTailnetName(unittest.TestCase):
+    """The owner's phone reaches the app through `tailscale serve`, which keeps the host name the phone used. That one
+    name, set in TAGPUP_ALLOWED_HOSTS, is accepted as a Host and an Origin; every other name is still refused."""
+
+    NAME = "staleorange.example-tailnet.ts.net"
+
+    def refusal(self, host, origin=None, allowed=NAME):
+        with mock.patch.dict(os.environ, {"TAGPUP_ALLOWED_HOSTS": allowed}):
+            return security.refusal(host, origin)
+
+    def test_only_the_named_host_is_let_in(self):
+        self.assertIsNone(self.refusal(self.NAME), "the name the owner gave")
+        self.assertIsNone(self.refusal(self.NAME.upper() + ":8080", "https://" + self.NAME))
+        self.assertIsNotNone(self.refusal("other.example-tailnet.ts.net"))
+        self.assertIsNotNone(self.refusal("evil.example.com", "https://evil.example.com"))
+        self.assertIsNotNone(self.refusal(self.NAME, "https://evil.example.com"), "a page of another site")
+
+    def test_without_the_setting_nothing_changes(self):
+        self.assertIsNotNone(self.refusal(self.NAME, allowed=""))
+        self.assertIsNone(self.refusal("localhost:8080", allowed=""))
 
 
 if __name__ == "__main__":

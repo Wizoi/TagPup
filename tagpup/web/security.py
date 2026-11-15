@@ -10,6 +10,7 @@ The same hook answers what is this PC's alone (THIS_PC_ONLY) to this PC's addres
 listens on (`tagpup_web.py --listen lan`, phase 10's): a second guard beside the loopback sockets (DECISIONS
 2026-09-26). Every route is in it or listed with why it is not (tests/test_every_route_answers_this_pc_or_says_why.py).
 """
+import os
 import urllib.parse
 
 from flask import abort, request
@@ -74,11 +75,20 @@ def hostname_of(authority):
     return authority.split(":")[0].lower()
 
 
+def allowed_hosts():
+    """The hosts a request may be for: this PC's, and the names in TAGPUP_ALLOWED_HOSTS (comma-separated, exact): the
+    one name the owner's phone reaches this PC by through `tailscale serve` (DECISIONS 2026-11-14). It is the server's
+    environment, so a changed name counts from the server's next start."""
+    named = (name.strip().lower() for name in os.environ.get("TAGPUP_ALLOWED_HOSTS", "").split(","))
+    return LOCAL_HOSTS + tuple(name for name in named if name)
+
+
 def refusal(host, origin=None):
     """Why a request with these Host and Origin headers is refused, or None."""
-    if hostname_of(host) not in LOCAL_HOSTS:
+    allowed = allowed_hosts()
+    if hostname_of(host) not in allowed:
         return "Forbidden: Invalid Host Header"
-    if origin and hostname_of(urllib.parse.urlparse(origin).netloc) not in LOCAL_HOSTS:
+    if origin and hostname_of(urllib.parse.urlparse(origin).netloc) not in allowed:
         return "Forbidden: Cross-Origin Requests Denied"
     return None
 
