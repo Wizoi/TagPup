@@ -175,6 +175,16 @@ describe("TagTuner from the keyboard", () => {
       "the change handler asked for the finished photos too");
   });
 
+  test("the Tune target select and the Assign field show where the focus is", async (t) => {
+    const ctx = await open(t, `mode=unmatched-faces&person=${encodeURIComponent("Unknown Faces")}`);
+    const order = tabOrder(ctx.document);
+    for (const id of ["tuner-mode", "input-reassign-name"]) {
+      const el = ctx.document.getElementById(id);
+      assert.ok(order.includes(el), `#${id} is a stop`);
+      assert.ok(focusShown(ctx.document, el), `#${id} shows the focus`);
+    }
+  });
+
   test("the page's stops: none unseen, no tabindex above 0, every click reachable or delegated", async (t) => {
     const ctx = await open(t, `mode=folder-match&photo=${encodeURIComponent(PHOTOS[0].path)}`);
     assert.ok(ctx.document.querySelector(".face-card"), "a photo is open, with its faces");

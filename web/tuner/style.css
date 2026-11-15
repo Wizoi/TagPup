@@ -113,6 +113,11 @@ body {
     border-color: var(--accent);
 }
 
+.mode-select:focus-visible {
+    border-color: var(--accent);
+    box-shadow: 0 0 0 3px var(--accent-glow);
+}
+
 /* Main Content split */
 .app-content {
     display: flex;
@@ -1193,6 +1198,23 @@ body {
 .switch-input:checked + .switch-slider::before {
     transform: translateX(16px);
     background-color: var(--text-primary);
+}
+
+/* The banner's Assign to name... field (web/tuner/index.html): the accent border the other fields show when focused. */
+.reassign-name-input {
+    width: 180px;
+    padding: 6px 12px;
+    border: 1px solid var(--border-color);
+    border-radius: 4px;
+    background: var(--bg-secondary);
+    color: var(--text-primary);
+    outline: none;
+    transition: border-color 0.2s, box-shadow 0.2s;
+}
+
+.reassign-name-input:focus {
+    border-color: var(--accent);
+    box-shadow: 0 0 0 2px var(--accent-glow);
 }
 
 /* Matching Group Sections */
