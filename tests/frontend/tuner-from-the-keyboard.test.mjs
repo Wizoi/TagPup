@@ -111,7 +111,7 @@ const folderHeader = (document, folder) => [...document.querySelectorAll("#photo
   .find((h) => h.querySelector(".folder-title").title === folder);
 
 /** The stops a browser tabs onto unseen, but the tag editor's: its closed look is web/common/tag-editor.css's, the shared closed-dialog CSS (cut 3a). */
-const unseen = (document) => invisibleStops(document).filter((el) => !el.closest(".tag-editor")).map(nameOf);
+const unseen = (document) => invisibleStops(document).map(nameOf);
 
 /**
  * What a click acts on that Tab does not reach, each for a reason: a container whose click reaches the same thing as a

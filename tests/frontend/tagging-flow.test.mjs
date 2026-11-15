@@ -136,7 +136,10 @@ describe("keeping your place", () => {
 
   test("list rows can be reached by keyboard", async (t) => {
     const { document } = await scanned(t);
-    assert.equal(rows(document)[0].tabIndex, 0);
+    // One stop for the whole list, not one a row (scenario-tabbing-through-the-main-page): with the grid showing it is the
+    // Folder View row, and Enter on a row still opens it (next test).
+    assert.equal(document.getElementById("folder-view-header").tabIndex, 0);
+    assert.deepEqual(rows(document).filter((row) => row.tabIndex === 0), []);
   });
 
   test("Enter on a focused row opens it", async (t) => {

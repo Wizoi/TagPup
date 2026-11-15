@@ -584,7 +584,11 @@ export function markOpenRow(row) {
     }
     if (row) row.classList.add('active');
     const stop = row === folderViewHeader ? null : row || photoList.querySelector('.photo-item-file');
-    if (stop) stop.tabIndex = 0;
+    if (!stop) return;
+    stop.tabIndex = 0;
+    // The focus was on the row the arrows just left: it goes with them, so Tab goes on from the open row, not onto it (#3047).
+    const at = document.activeElement;
+    if (at !== stop && at && photoList.contains(at) && at.classList.contains('photo-item-file')) stop.focus({ preventScroll: true });
 }
 
 /**

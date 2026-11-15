@@ -102,9 +102,12 @@ describe("the main page by the keyboard", () => {
     assert.deepEqual(after, ["#folder-view-header", "li.photo-item"], "Refresh, the way back to the grid, the photo");
 
     // The arrow steps to the next photo, and the Tab goes with it.
+    rows[0].focus();
     key(ctx, rows[0], "ArrowDown");
     await settle(ctx.window);
     assert.deepEqual(fileStops(ctx).map((el) => el.dataset.path), [`${FOLDER}\\IMG_0006.jpg`]);
+    // The focus went with it: a Tab from it goes on past the list, not onto the open row a second time (#3047).
+    assert.equal(ctx.document.activeElement, fileStops(ctx)[0], "the focus stayed on the row the arrow left");
     noHiddenOrMouseOnlyStops(ctx);
   });
 
