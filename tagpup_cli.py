@@ -1728,10 +1728,6 @@ def embed_photos(ctx, model, apply_):
             console.print("What was kept is kept: run it again to go on once the photos can be read.", markup=False,
                           soft_wrap=True)
             raise SystemExit(1) from None
-        except search_service.FfmpegGone as gone:   # ffmpeg went while the run went on: the start check's sentence
-            console.print("Stopped: %s" % gone, markup=False, soft_wrap=True)
-            console.print("What was kept is kept: run it again to go on once ffmpeg runs.", markup=False, soft_wrap=True)
-            raise SystemExit(1) from None
     _embedded_lines(counts)
     now = photo_reembed.plan(library, runtime, wanted)
     console.print("%d of the library's %d photos now hold a vector under %s." % (now["held"], now["photos"], now["key"]),

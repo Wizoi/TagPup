@@ -100,6 +100,8 @@ SHARING = (32, 33)
 DENIED = 5
 #: What an error with no number (ExifTool's) says when another program holds the file.
 HELD_WORDS = re.compile(r"used by another process|sharing violation|locked by another", re.IGNORECASE)
+#: What an error with no number says for access denied: a held file's only as DENIED is.
+DENIED_WORDS = re.compile(r"permission denied|access is denied|error renaming temporary file", re.IGNORECASE)
 #: What follows a held file's failure when no program on this PC holds it and the file is on a network share: Restart
 #: Manager sees this PC's handles alone, and names none for another computer's or the server's own (holders answers []).
 NOT_ON_THIS_PC = "No program on this PC was found holding it: another computer, or the server itself, may have it open."
@@ -311,24 +313,21 @@ def describe(holders_found):
 
 def looks_held(error, writable=False):
     """Is `error` the kind a file another program holds open makes? The one test of it. A sharing or lock violation
-    (SHARING), or an error with no number in those words (HELD_WORDS), always. Access denied (DENIED, or a
-    PermissionError with no number: open()'s, the C runtime's errno 13, which a file held open answers too, as the
-    picture check's open of the photo does, field_values._same_picture) only when `writable`: the site has seen the file
-    there and not marked read-only, so its move over the file was refused by a holder (os.replace answers DENIED for a
-    held file); an open's, a rename's or a delete's access denied is a read-only file's or a share's permission, never
-    "open in another program" (#2970). No words of ExifTool's count as access denied: a write is `-o` to a new file beside
-    the photo, which it refuses as "Error creating file", and the move over the photo is os.replace's, with its number."""
+    (SHARING), or an error with no number in those words (HELD_WORDS), always. Access denied (DENIED, a PermissionError
+    with no number, DENIED_WORDS) only when `writable`: the site has seen the file there and not marked read-only, so its
+    move over the file was refused by a holder (os.replace answers DENIED for a held file); an open's, a rename's or a
+    delete's access denied is a read-only file's or a share's permission, never "open in another program" (#2970)."""
     number = getattr(error, "winerror", None)
-    if number in SHARING or (number is None and HELD_WORDS.search(str(error))):
+    if number in SHARING:
         return True
-    return writable and denied(error)
-
-
-def denied(error):
-    """Is `error` an access denied (DENIED, or a PermissionError with no number), the kind looks_held counts a holder's
-    only when `writable`? A site whose look at the file costs (an os.stat on a share) asks it first, and looks only then."""
-    number = getattr(error, "winerror", None)
-    return number == DENIED or (number is None and isinstance(error, PermissionError))
+    if number == DENIED:
+        return writable
+    if number is not None:
+        return False
+    text = str(error)
+    if HELD_WORDS.search(text):
+        return True
+    return writable and (isinstance(error, PermissionError) or bool(DENIED_WORDS.search(text)))
 
 
 def _on_a_share(path):

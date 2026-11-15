@@ -15,8 +15,7 @@ vectors; ffmpeg from the runtime): frame 0's vector is its vector, frames 1 to 4
 A file that does not decode, or cannot be read, is counted by why, logged, and tried again by the next run (no list of
 skipped photos: DECISIONS 2026-10-17); a file not found is counted as gone. A clip ffmpeg cannot read as it is
 (search.NoFrames.lasting) is listed apart, as the index lists it, and not counted as unread: it is the file's, not a
-drive away. ffmpeg gone part-way (search.FfmpegGone) is no clip's: the pass stops at once with its sentence, as Suggest
-does (DECISIONS 2026-11-13), what it made before kept, the clip not counted. Gone and unread together past UNREAD_LIMIT
+drive away. Gone and unread together past UNREAD_LIMIT
 stop the pass (Unreachable, STOPPED): Windows answers an unmounted drive and a share that stopped answering as files
 not found, and a library's files really gone are a handful (#1838). Faces are never looked at, and nothing is journaled: the table is derived (DECISIONS
 2026-10-16). The pass itself (embed_pass) is the AI pipeline harness's too (scripts/measure_pipeline_holdouts.py).
@@ -193,8 +192,7 @@ def embed_pass(embeddings, todo, keep, progress=None, should_stop=None, workers=
     embedded again by the next run. A file not found ("gone"), and a photo that cannot be read (by why, logged), are
     counted apart; more of the two together than `unread_limit` of the pass (at least 20) raise Unreachable. A clip
     ffmpeg cannot read as it is (search.NoFrames.lasting) is neither: its (file, ffmpeg's sentence) joins
-    "clips_unread". ffmpeg gone (search.FfmpegGone, its sentence what to install) is raised at once, the vectors made
-    before it kept. {"to_embed", "embedded", "kept", "not_kept", "gone", "unread" {why: count}, "clips_unread",
+    "clips_unread". {"to_embed", "embedded", "kept", "not_kept", "gone", "unread" {why: count}, "clips_unread",
     "stopped", "seconds"}, handed to `progress` after each batch too."""
     counts = {"to_embed": len(todo), "embedded": 0, "kept": 0, "not_kept": 0, "gone": 0, "unread": {},
               "clips_unread": [], "stopped": False, "seconds": 0.0}
@@ -254,8 +252,6 @@ def embed_pass(embeddings, todo, keep, progress=None, should_stop=None, workers=
                     logger.info("No vector: ffmpeg gave no frame of %s: %s", item[0], problem.problem)
                     counts["clips_unread"].append((item[0], problem.problem))
                     continue
-                except search.FfmpegGone:
-                    raise   # not this clip's: the pass stops and says so, and nothing is counted of it
                 except Exception as problem:   # images.Unreadable, a locked file, a share that does not answer
                     not_read(problem)
                     continue
