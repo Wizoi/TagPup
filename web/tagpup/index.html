@@ -212,7 +212,7 @@
                             <div class="details-grid">
                                 <div class="detail-item">
                                     <span class="detail-label">File Path</span>
-                                    <span class="detail-value clickable" id="detail-path"></span>
+                                    <button type="button" class="detail-value clickable" id="detail-path"></button>
                                     <!-- The file's size as the library last read it (photo.js showPhoto; what Sort by's File size orders by). -->
                                     <span class="detail-value one-line" id="detail-file-size"></span>
                                     <!-- Smart Rename of this photo alone: the grouping its name holds, to edit; its number is kept (web/tagpup/rename-one.js). -->
@@ -600,7 +600,7 @@
                 <p id="date-taken-note" style="font-size: 13px; color: var(--text-muted); margin: 0;">Specify the date and time when this photo was taken.</p>
                 <div class="form-group" style="display: flex; flex-direction: column; gap: 6px;">
                     <label for="input-date-taken" style="font-weight: 500; font-size: 13px;">Date and Time</label>
-                    <input type="datetime-local" id="input-date-taken" step="1" style="width: 100%; padding: 8px; border-radius: 6px; border: 1px solid var(--border-color); background: var(--bg-card); color: var(--text-color); outline: none;">
+                    <input type="datetime-local" id="input-date-taken" step="1" style="width: 100%; padding: 8px; border-radius: 6px; background: var(--bg-card); color: var(--text-color);">
                 </div>
             </div>
             <div class="modal-footer" style="display: flex; justify-content: flex-end; gap: 10px;">

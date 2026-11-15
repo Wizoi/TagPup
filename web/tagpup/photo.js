@@ -4,6 +4,7 @@ import { api } from './common/api.js';
 import { buildElement, replaceContent } from './common/dom.js';
 import { openImageZoom, wireImageZoom } from './common/image-zoom.js';
 import { attachPersonFaces } from './common/person-faces.js';
+import { pressable } from './common/press.js';
 import { baseName, isUnc, samePath } from './common/paths.js';
 import { personLabelOf, personTitleOf, photoAlreadyHas, sortedTags } from './common/vocabulary.js';
 import { upper } from './hooks.js';
@@ -12,7 +13,7 @@ import { state } from './state.js';
 import {
     btnCarryForward,
     detailCamera, detailCameraItem, detailDateTaken, detailPath, detailPeople, detailsPanel, detailTags,
-    btnAddAllFaces, emptyState, facesSection, facesStrip, facesSummary, folderViewContent, folderViewHeader,
+    btnAddAllFaces, emptyState, facesSection, facesStrip, facesSummary, folderViewContent,
     folderViewStats, inputAddPerson, inputAddTag,
     inputPhotoTitle, mainImage, panelContent, photoList, statusDot, statusText
 } from './elements.js';
@@ -28,7 +29,9 @@ import {
     leavePhotoThen, postPhotoMetadata, queueWriteOf, redrawIfShowing, saveDetailEdits,
     updateSaveButton
 } from './edits.js';
-import { countSaid, renderFileList, scanFolder, showFolderView, updateListStats, updatePhotoPosition } from './folder.js';
+import {
+    countSaid, markOpenRow, renderFileList, scanFolder, showFolderView, updateListStats, updatePhotoPosition,
+} from './folder.js';
 import { removeFromSelection } from './selected.js';
 import { applyPhotoStale, holdDeletes } from './stale.js';
 import { bigClip, forGoodQuestion } from './bulk-words.js';
@@ -205,6 +208,7 @@ Click to ${does}.`;
             card.addEventListener('click', () => {
                 nameFaceAs(face, namesSomebody);
             });
+            pressable(card);
             actionable.push({ face, who: namesSomebody });
         } else if (alreadyTagged) {
             // Not clickable, and saying so beats a card that looks live
@@ -355,13 +359,8 @@ export function showPhoto(path) {
     }
     state.activePhotoPath = path;
 
-    // Highlight sidebar element
-    photoList.querySelectorAll('.photo-item').forEach(el => el.classList.remove('active'));
-    folderViewHeader.classList.remove('active');
-    const activeLi = photoList.querySelector(`li[data-path="${CSS.escape(path)}"]`);
-    if (activeLi) {
-        activeLi.classList.add('active');
-    }
+    // Highlight sidebar element: it takes the list's Tab
+    markOpenRow(photoList.querySelector(`li[data-path="${CSS.escape(path)}"]`));
 
     // A library view's grid is about to be hidden: keep where it is, and make the photo a place in the history (view-left.js).
     rememberView();
@@ -550,6 +549,7 @@ export function wireZoom() {
         }
         openZoom();
     });
+    pressable(mainImage);                      // Enter or Space on the focused picture opens it too
 }
 
 /**
@@ -591,7 +591,7 @@ export function renderTags(tags) {
             pill.addEventListener('click', () => {
                 deletePhotoTag(tag);
             });
-            detailPeople.appendChild(pill);
+            detailPeople.appendChild(pressable(pill));
         });
     }
 
@@ -609,7 +609,7 @@ export function renderTags(tags) {
             pill.addEventListener('click', () => {
                 deletePhotoTag(tag);
             });
-            detailTags.appendChild(pill);
+            detailTags.appendChild(pressable(pill));
         });
     }
 }

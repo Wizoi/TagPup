@@ -3,6 +3,7 @@
 // (web/common/api.js).
 import { initDatabaseSelector } from './common/library.js';
 import { wireDialogKeys } from './common/dialog.js';
+import { pressable } from './common/press.js';
 import { wireBatchStrip } from './common/batch-strip.js';
 import { wireRootsBanner } from './common/roots-banner.js';
 import { loadRules } from './common/validate.js';
@@ -112,7 +113,7 @@ document.addEventListener('DOMContentLoaded', () => {
     btnRefreshList.addEventListener('click', refreshFolderOrView);
     
     photoSearch.addEventListener('input', filterFileList);
-    folderViewHeader.addEventListener('click', showGrid);
+    pressable(folderViewHeader).addEventListener('click', showGrid);
     
     btnSelectAllThumbnails.addEventListener('click', selectAllThumbnails);
     btnSelectNoneThumbnails.addEventListener('click', selectNoneThumbnails);

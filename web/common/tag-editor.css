@@ -17,12 +17,16 @@
     z-index: 1000;
     opacity: 0;
     pointer-events: none;
-    transition: opacity 0.2s ease;
+    /* Closed, it is out of the Tab order too, not only out of sight: visibility hidden, once the fade is done. */
+    visibility: hidden;
+    transition: opacity 0.2s ease, visibility 0s linear 0.2s;
 }
 
 .tag-editor.active {
     opacity: 1;
     pointer-events: auto;
+    visibility: visible;
+    transition: opacity 0.2s ease;
 }
 
 .tag-editor-dialog {

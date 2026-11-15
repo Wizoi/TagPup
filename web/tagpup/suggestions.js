@@ -2,6 +2,7 @@
 // showing them for a photo, and applying them.
 import { api } from './common/api.js';
 import { attachPersonFaces } from './common/person-faces.js';
+import { pressable } from './common/press.js';
 import { samePath } from './common/paths.js';
 import { leafOf, peopleListHas, personLabelOf, photoAlreadyHas, sortedTags } from './common/vocabulary.js';
 import { state } from './state.js';
@@ -440,12 +441,10 @@ export function renderSuggestionsPanel(photoPath) {
             // A person a clip's frames showed says in how many of those looked at (the suggester's `frames`).
             const seenIn = isPerson && item.frames ? `Seen in ${item.frames.seen} of ${item.frames.of} frames. ` : '';
             chip.title = `${seenIn}Click to add ${shown} to this photo.`;
-            if (isPerson) {
-                chip.tabIndex = 0;      // focusable, so the keyboard sees their faces as well
-                attachPersonFaces(chip, item.person);
-            }
+            // A person's chip shows their faces on focus as on hover.
+            if (isPerson) attachPersonFaces(chip, item.person);
             chip.addEventListener('click', () => applySuggestedTagDirect(name, isPerson, photoPath));
-            container.appendChild(chip);
+            container.appendChild(pressable(chip));
         });
     }
 

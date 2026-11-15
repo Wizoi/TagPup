@@ -2,6 +2,7 @@
 // its photos and the folder view's header, and the sidebar's width.
 import { api } from './common/api.js';
 import { baseName, samePath } from './common/paths.js';
+import { pressable } from './common/press.js';
 import { upper } from './hooks.js';
 import { state } from './state.js';
 import {
@@ -508,10 +509,9 @@ export function renderFileList() {
     filtered.forEach(photo => {
         const li = document.createElement('li');
         li.className = 'photo-item photo-item-file';
-        // Reachable by Tab, and announced as a choice rather than decoration.
-        // Nothing in either list used to be focusable, which is why the arrow
-        // keys only worked while focus happened to be sitting on <body>.
-        li.tabIndex = 0;
+        // Announced as a choice rather than decoration, and focusable: the arrow keys used to work only while the
+        // focus sat on <body>. One row of the list takes the Tab (markOpenRow), not each.
+        li.tabIndex = -1;
         li.setAttribute('role', 'option');
         if (state.activePhotoPath === photo.path) {
             li.classList.add('active');
@@ -562,16 +562,29 @@ export function renderFileList() {
         }
 
         li.addEventListener('click', () => upper.selectPhoto(photo.path));
-        li.addEventListener('keydown', (ev) => {
-            if (ev.key === 'Enter' || ev.key === ' ') {
-                ev.preventDefault();
-                upper.selectPhoto(photo.path);
-            }
-        });
-        fragment.appendChild(li);
+        fragment.appendChild(pressable(li));       // Enter or Space opens it, as a click does
     });
     photoList.appendChild(fragment);
+    markOpenRow(photoList.querySelector('.photo-item.active'));
     updatePhotoPosition();
+}
+
+/**
+ * The row open -- the photo's, or the Folder View row while the grid shows -- is marked, and the file rows are one Tab
+ * stop (a roving tabindex): the open photo's row takes it, the others a click or the arrows, so a folder of 300 photos
+ * is not 300 Tabs between Refresh and the photo. With no photo open the grid has the Tab, unless no row is open at all
+ * (the open photo filtered out of the list): then the first row takes it. The Folder View row is a stop of its own
+ * whenever it shows: with a photo open it is the way back to the grid, and the arrows step photos, never onto it.
+ */
+export function markOpenRow(row) {
+    for (const el of photoList.querySelectorAll('.photo-item.active, .photo-item-file[tabindex="0"]')) {
+        if (el === row) continue;
+        el.classList.remove('active');
+        if (el !== folderViewHeader) el.tabIndex = -1;
+    }
+    if (row) row.classList.add('active');
+    const stop = row === folderViewHeader ? null : row || photoList.querySelector('.photo-item-file');
+    if (stop) stop.tabIndex = 0;
 }
 
 /**
@@ -624,8 +637,7 @@ export function openFolderView() {
     if (facesSection) facesSection.classList.add('hidden');
     
     // Highlight folder view item in list
-    photoList.querySelectorAll('.photo-item').forEach(el => el.classList.remove('active'));
-    folderViewHeader.classList.add('active');
+    markOpenRow(folderViewHeader);
 
     // Hide single views, show Folder Grid
     panelContent.classList.add('hidden');

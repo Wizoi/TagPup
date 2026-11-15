@@ -205,6 +205,17 @@ body {
     outline: none;
 }
 
+/* The field with the focus says so, as the others do: the accent border in place of the outline taken away. */
+.folder-input-group input:focus,
+#input-date-taken:focus {
+    border-color: var(--accent);
+}
+
+#input-date-taken {
+    border: 1px solid var(--border-color);
+    outline: none;
+}
+
 .folder-action-buttons {
     display: flex;
     gap: 8px;
@@ -604,6 +615,16 @@ body {
 .detail-value.clickable:hover {
     color: var(--accent);
     text-decoration: underline;
+}
+
+/* The path is a button (Tab reaches it) drawn as the text it was. */
+button.detail-value.clickable {
+    background: none;
+    border: none;
+    padding: 0;
+    margin: 0;
+    font-family: inherit;
+    text-align: left;
 }
 
 /* Edit container inputs */
@@ -1874,7 +1895,8 @@ body.just-looking #faces-strip {
     cursor: not-allowed;
 }
 
-/* Modal overlay classes */
+/* Modal overlay classes. A closed one is hidden from the keyboard as well as the eye (visibility), or Tab walks
+   through its controls unseen after the page's last; it turns visible at once on open, so holdFocus can focus in it. */
 .modal-overlay {
     position: fixed;
     top: 0;
@@ -1889,12 +1911,16 @@ body.just-looking #faces-strip {
     z-index: 1000;
     opacity: 0;
     pointer-events: none;
-    transition: opacity 0.2s ease;
+    /* Closed, it is out of the Tab order too, not only out of sight: visibility hidden, once the fade is done. */
+    visibility: hidden;
+    transition: opacity 0.2s ease, visibility 0s linear 0.2s;
 }
 
 .modal-overlay.active {
     opacity: 1;
     pointer-events: auto;
+    visibility: visible;
+    transition: opacity 0.2s ease;
 }
 
 .modal-container {
