@@ -2,6 +2,7 @@
 // its photos and the folder view's header, and the sidebar's width.
 import { api } from './common/api.js';
 import { baseName, samePath } from './common/paths.js';
+import { pressable } from './common/press.js';
 import { upper } from './hooks.js';
 import { state } from './state.js';
 import {
@@ -508,10 +509,9 @@ export function renderFileList() {
     filtered.forEach(photo => {
         const li = document.createElement('li');
         li.className = 'photo-item photo-item-file';
-        // Reachable by Tab, and announced as a choice rather than decoration.
-        // Nothing in either list used to be focusable, which is why the arrow
-        // keys only worked while focus happened to be sitting on <body>.
-        li.tabIndex = 0;
+        // Announced as a choice rather than decoration, and focusable: the arrow keys used to work only while the
+        // focus sat on <body>. One row of the list takes the Tab (markOpenRow), not each.
+        li.tabIndex = -1;
         li.setAttribute('role', 'option');
         if (state.activePhotoPath === photo.path) {
             li.classList.add('active');
@@ -562,16 +562,27 @@ export function renderFileList() {
         }
 
         li.addEventListener('click', () => upper.selectPhoto(photo.path));
-        li.addEventListener('keydown', (ev) => {
-            if (ev.key === 'Enter' || ev.key === ' ') {
-                ev.preventDefault();
-                upper.selectPhoto(photo.path);
-            }
-        });
-        fragment.appendChild(li);
+        fragment.appendChild(pressable(li));       // Enter or Space opens it, as a click does
     });
     photoList.appendChild(fragment);
+    markOpenRow(photoList.querySelector('.photo-item.active'));
     updatePhotoPosition();
+}
+
+/**
+ * The list is one Tab stop (a roving tabindex): the row open -- the photo's, or the Folder View row while the grid
+ * shows -- takes the Tab, the others a click or the arrows, so a folder of 300 photos is not 300 Tabs between Refresh
+ * and the photo. With no row open (none yet, or the open photo filtered out of the list) the first row shown takes it.
+ */
+export function markOpenRow(row) {
+    for (const el of photoList.querySelectorAll('.photo-item.active, .photo-item[tabindex="0"]')) {
+        if (el === row) continue;
+        el.classList.remove('active');
+        el.tabIndex = -1;
+    }
+    if (row) row.classList.add('active');
+    const stop = row || photoList.querySelector('.photo-item:not(.hidden)');
+    if (stop) stop.tabIndex = 0;
 }
 
 /**
@@ -624,8 +635,7 @@ export function openFolderView() {
     if (facesSection) facesSection.classList.add('hidden');
     
     // Highlight folder view item in list
-    photoList.querySelectorAll('.photo-item').forEach(el => el.classList.remove('active'));
-    folderViewHeader.classList.add('active');
+    markOpenRow(folderViewHeader);
 
     // Hide single views, show Folder Grid
     panelContent.classList.add('hidden');

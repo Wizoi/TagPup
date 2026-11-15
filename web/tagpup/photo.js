@@ -13,7 +13,7 @@ import { state } from './state.js';
 import {
     btnCarryForward,
     detailCamera, detailCameraItem, detailDateTaken, detailPath, detailPeople, detailsPanel, detailTags,
-    btnAddAllFaces, emptyState, facesSection, facesStrip, facesSummary, folderViewContent, folderViewHeader,
+    btnAddAllFaces, emptyState, facesSection, facesStrip, facesSummary, folderViewContent,
     folderViewStats, inputAddPerson, inputAddTag,
     inputPhotoTitle, mainImage, panelContent, photoList, statusDot, statusText
 } from './elements.js';
@@ -29,7 +29,9 @@ import {
     leavePhotoThen, postPhotoMetadata, queueWriteOf, redrawIfShowing, saveDetailEdits,
     updateSaveButton
 } from './edits.js';
-import { countSaid, renderFileList, scanFolder, showFolderView, updateListStats, updatePhotoPosition } from './folder.js';
+import {
+    countSaid, markOpenRow, renderFileList, scanFolder, showFolderView, updateListStats, updatePhotoPosition,
+} from './folder.js';
 import { removeFromSelection } from './selected.js';
 import { applyPhotoStale, holdDeletes } from './stale.js';
 import { bigClip, forGoodQuestion } from './bulk-words.js';
@@ -357,13 +359,8 @@ export function showPhoto(path) {
     }
     state.activePhotoPath = path;
 
-    // Highlight sidebar element
-    photoList.querySelectorAll('.photo-item').forEach(el => el.classList.remove('active'));
-    folderViewHeader.classList.remove('active');
-    const activeLi = photoList.querySelector(`li[data-path="${CSS.escape(path)}"]`);
-    if (activeLi) {
-        activeLi.classList.add('active');
-    }
+    // Highlight sidebar element: it takes the list's Tab
+    markOpenRow(photoList.querySelector(`li[data-path="${CSS.escape(path)}"]`));
 
     // A library view's grid is about to be hidden: keep where it is, and make the photo a place in the history (view-left.js).
     rememberView();
