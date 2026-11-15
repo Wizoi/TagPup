@@ -32,3 +32,7 @@ tests/.durations.json
 # Where this machine keeps each library's roots (tagpup.config.machine_roots_path): per machine
 machine_roots.json
 .claude/worktrees/
+
+# Local working output and notes (they name files and folders of real people): never committed
+reports/
+research_notes/
