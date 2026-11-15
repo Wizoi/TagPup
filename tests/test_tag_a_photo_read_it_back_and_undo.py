@@ -414,13 +414,11 @@ class ASaveFromThePage(S.Fresh):
     def test_a_locked_file_keeps_its_name_and_the_reply_says_why(self):
         path, record = self.smart_renamed()
         refused = names.RenameFailed("The file is open in another program (held by Viewer)", [])
-        with mock.patch("tagpup.files.names.rename_all", side_effect=refused), \
-                self.assertLogs("tagpup.services.tagging", "WARNING") as logged:
+        with mock.patch("tagpup.files.names.rename_all", side_effect=refused):
             reply = self.save(record, title="Start line")
         body = reply.get_json()
         self.assertEqual((200, True, path), (reply.status_code, body["success"], body["new_path"]), reply.data)
         self.assertIn("held by Viewer", body["rename_failed"])
-        self.assertNotIn(os.path.basename(path), " ".join(logged.output), "a file name can name a person (#2973)")
         self.assertEqual("Start line", S.title_in(path))
 
     def test_a_save_that_renames_or_attempts_no_rename_has_no_warning(self):

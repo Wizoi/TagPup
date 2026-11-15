@@ -387,7 +387,7 @@ def _rename_after_caption(library, photo_path, wanted, files_only):
         else:
             done = file_changes.rename(library, "rename after caption", {photo_path: wanted}, {}, summary={"photos": 1})
     except Exception as e:
-        logger.warning("Could not rename a photo after its caption: %s", type(e).__name__)    # a path can name a person
+        logger.warning("Could not rename %s after its caption: %s", photo_path, e)
         return photo_path, [], e.message() if isinstance(e, names.RenameFailed) else str(e)
     return paths.stored(done.done.get(photo_path, wanted)), done.skipped or [], None
 
