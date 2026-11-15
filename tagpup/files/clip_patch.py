@@ -39,7 +39,10 @@ two XMP boxes (which one a reader takes is not this module's to guess), any XMP 
 take the appended box into itself; none live), and a clip whose walk stops before its end (`Video.tail`): a box that
 claims more than the file holds (it may still be being copied) or bytes that are no box, where an appended box would
 lie past what a reader walks and an XMP box before them is in a file no two readers need agree on. 2 live clips have a
-tail, one of each, and neither holds XMP.
+tail, one of each, and neither holds XMP. Not a tail: zero bytes only after the last box, 8 to 1 MiB of them (`Tail.blank`;
+the padding a Canon camera leaves, 9,556 in the owner's 2014 Leavenworth clip, owner 2026-11-14): no reader finds a box
+there, so the appended box is written over them, at the offset the walk stopped, and the file keeps its length (or grows,
+when the box is longer than the zeros). An undo puts the zeros back (the journal keeps the bytes of every range).
 
 No size of an XMP box is refused here (owner, 2026-11-12): the one bound is the journal's, which keeps a patch's record
 and the bytes its ranges held (file_journal.PATCH_CAP, 1 MiB) and refuses a larger patch before a byte is written.
@@ -339,7 +342,7 @@ def packet_of(layout, raw):
 def _understood(layout):
     """Is `layout` a clip this module may patch: walked whole to its end, one moov with its children whole, every
     track's media box whole (Video.headers_whole), no fragments?"""
-    if not isinstance(layout, containers.Video) or layout.fragmented or layout.tail is not None:
+    if not isinstance(layout, containers.Video) or layout.fragmented or (layout.tail is not None and not layout.tail.blank):
         return False
     return len(layout.of_type("moov")) == 1 and not layout.moov.broken and not any(
         child.broken for child in layout.moov.children) and layout.headers_whole
@@ -380,8 +383,10 @@ def _widened(packet, extra):
 
 def _appended(layout, packet, retired):
     """The Patch that appends a uuid box holding `packet` at the end of the file, after the `retired` ranges (an old XMP
-    box made free); None when the last box runs to the end of the file (size 0)."""
+    box made free); None when the last box runs to the end of the file (size 0). A clip with zero bytes after its last box
+    (Tail.blank) has the box written over them, where a reader's walk ends, not after them."""
     if layout.boxes[-1].to_end:
         return None
     written = _box(None, packet)
-    return Patch(retired + ((layout.file_size, written),), layout.file_size + len(written), APPENDED)
+    at = layout.tail.offset if layout.tail is not None else layout.file_size
+    return Patch(retired + ((at, written),), max(layout.file_size, at + len(written)), APPENDED)

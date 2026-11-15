@@ -207,10 +207,10 @@ class AClipThatStopsBeingOne(Reading):
         cut = self.read(FTYP + MOOV + struct.pack(">I", 1) + b"mdat" + b"\0\0")
         self.assertEqual("truncated", cut.tail.reason, "a 64-bit size cut short")
 
-    def test_zeros_after_mdat_are_a_garbage_tail(self):
+    def test_zeros_after_mdat_are_a_blank_garbage_tail(self):
         layout = self.read(FTYP + MOOV + MDAT + bytes(9556), "clip.mov")
         self.assertEqual(3, len(layout.boxes))
-        self.assertEqual(containers.Tail(len(FTYP + MOOV + MDAT), "garbage"), layout.tail)
+        self.assertEqual(containers.Tail(len(FTYP + MOOV + MDAT), "garbage", blank=True), layout.tail)
 
     def test_a_child_box_that_runs_past_moov_marks_moov_broken(self):
         moov = box(b"moov", box(b"mvhd", bytes(20)) + struct.pack(">I", 500) + b"udta" + bytes(8))

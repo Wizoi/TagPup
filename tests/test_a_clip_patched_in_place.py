@@ -312,6 +312,35 @@ class APacketPlacedInAClip(unittest.TestCase):
                 self.assertIsNone(clip_patch.patch(layout, sized(len(OLD))))
                 self.assertIsNone(clip_patch.patch(layout_of(data.replace(xmp_box(OLD), b"")), OLD))
 
+    def test_zero_padding_after_the_last_box_has_the_packet_written_over_it(self):
+        """A Canon clip as the owner has it (2014 Leavenworth, moov first, then mdat, then 9,556 zero bytes): the box lands
+        where a reader's walk ends, over the zeros, and the file is the length it was; one longer than the zeros grows it."""
+        for zeros, new, size in ((9556, sized(len(OLD)), None), (20, sized(len(OLD)), "longer"), (8, sized(len(OLD)), "shorter")):
+            with self.subTest(zeros=zeros, size=size):
+                whole = FTYP + MOOV + MDAT
+                data = whole + bytes(zeros)
+                layout = layout_of(data)
+                self.assertEqual(zeros > 0, layout.tail is not None and layout.tail.blank)
+                found = clip_patch.patch(layout, new)
+                self.assertEqual(clip_patch.APPENDED, found.how)
+                (at, written), = found.ranges
+                self.assertEqual(len(whole), at, "over the zeros, where the walk ended")
+                after = applied(data, found)
+                self.assertEqual(max(len(data), len(whole) + len(written)), len(after))
+                read = layout_of(after)
+                self.assertEqual(1, len(read.xmp), "the walk now finds the box")
+                self.assertEqual(whole, after[:len(whole)], "no byte of a box moved")
+                self.assertTrue(read.tail is None or read.tail.blank)
+
+    def test_a_tail_of_anything_but_zeros_is_still_the_rewrites(self):
+        whole = FTYP + MOOV + MDAT
+        for name, tail in (("one byte set", bytes(100) + b"\x01" + bytes(100)),
+                           ("more zeros than are read", bytes(containers.BLANK_MOST + 1))):
+            with self.subTest(name):
+                layout = layout_of(whole + tail)
+                self.assertFalse(layout.tail.blank)
+                self.assertIsNone(clip_patch.patch(layout, sized(len(OLD))))
+
     def test_what_this_does_not_understand_is_the_rewrites(self):
         shapes = {
             "two XMP boxes (a .mov ExifTool wrote after an append)": FTYP + mov(xmp_box(OLD, b"XMP_")) + xmp_box(OLD) + MDAT,

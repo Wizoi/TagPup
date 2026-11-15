@@ -120,11 +120,17 @@ class Unreadable:
 @dataclass(frozen=True)
 class Tail:
     """Where the walk stopped before the end of the file: `reason` "truncated" (a box or segment claims more bytes than
-    the file holds; `claimed` is how many) or "garbage" (bytes that are no box or segment header)."""
+    the file holds; `claimed` is how many) or "garbage" (bytes that are no box or segment header). `blank`: a garbage
+    tail of nothing but zero bytes, BLANK_MOST or fewer of them (the padding a Canon camera leaves after mdat; 9,556 in the
+    owner's 2014 Leavenworth clip): no reader finds a box there, so a box written over it is found."""
     offset: int
     reason: str
     claimed: int = 0
     type: str = ""
+    blank: bool = False
+
+#: The most zero bytes after a clip's last box that are read to know they are all zero (a tail of more is garbage).
+BLANK_MOST = 1 << 20
 
 
 @dataclass(frozen=True)
@@ -402,12 +408,18 @@ def _header(handle, offset, end):
     return kind, size, header, uuid, to_end
 
 
+def _blank(handle, offset, file_size):
+    """Is everything from `offset` to the end of the file zero bytes, a box header's worth (8: fewer is a file cut in a
+    header) to BLANK_MOST of them?"""
+    return 8 <= file_size - offset <= BLANK_MOST and not _read_at(handle, offset, file_size - offset).strip(b"\0")
+
+
 def _read_video(handle, file_size):
     boxes, tail, offset = [], None, 0
     while offset < file_size:
         found = _header(handle, offset, file_size)
         if isinstance(found, str):
-            tail = Tail(offset, found)
+            tail = Tail(offset, found, blank=found == "garbage" and _blank(handle, offset, file_size))
             break
         kind, size, header, uuid, to_end = found
         if offset + size > file_size:
