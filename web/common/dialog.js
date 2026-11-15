@@ -36,6 +36,9 @@ const heldDialogs = [];
 // Back; Enter held on the Date Taken button does not save from the field on its repeat).
 const keysDown = new Set();
 const keysSwallowed = new Set();
+// A button the focus waits to go to until Enter is up: a dialog opened by an Enter keydown (the placement question, asked as a
+// tag is typed) focused a button before the same key's keypress, and the keypress pressed it (#3037).
+let focusAfterEnter = null;
 let dialogKeysWired = false;
 
 const TAB_STOPS = 'a[href], button, input, select, textarea, [tabindex], [contenteditable="true"]';
@@ -99,7 +102,8 @@ export function holdFocus(dialog, { cancel, focus } = {}) {
     swallowHeldKeys();
     const primary = [...dialog.querySelectorAll('.btn-primary')].find(button => tabReaches(button, dialog));
     const target = (focus && focus.isConnected && !focus.disabled ? focus : null) || primary || tabEnd(dialog);
-    if (target) target.focus();
+    if (target && target.tagName === 'BUTTON' && keysDown.has('Enter')) focusAfterEnter = target;
+    else if (target) target.focus();
 }
 
 /** Is the opener still there to go back to: in the page, enabled and shown. */
@@ -177,6 +181,10 @@ function onDialogKeyDown(event) {
 function onDialogKeyUp(event) {
     keysDown.delete(event.key);
     keysSwallowed.delete(event.key);
+    if (event.key !== 'Enter' || !focusAfterEnter) return;
+    const waiting = focusAfterEnter;
+    focusAfterEnter = null;
+    if (waiting.isConnected && !waiting.disabled && heldDialogs.some(entry => entry.dialog.contains(waiting))) waiting.focus();
 }
 
 /** The page's one pair of key listeners for every dialog: on the window, capturing, so they hear a key first. */

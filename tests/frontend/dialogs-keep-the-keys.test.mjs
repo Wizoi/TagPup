@@ -147,6 +147,22 @@ describe("TagPup: the page behind a dialog hears none of its shortcuts", () => {
     assert.match(ctx.shown(), /a\.jpg$/, "the arrows stayed kept after the question closed");
   });
 
+  test("a question asked as Enter is typed in a field takes no button until Enter is up (it would be pressed by that keypress)", async (t) => {
+    const ctx = await tagpupOnSecondPhoto(t);
+    const { window, document } = ctx;
+    click(window, document.getElementById("btn-edit-tags"));
+    const input = document.getElementById("input-add-tag");
+    input.value = "Relays";
+    press(window, input, "Enter");
+    await flush(window, 6);
+    const modal = document.querySelector(".modal-overlay.active");
+    assert.ok(modal, "the placement question did not open");
+    assert.notEqual(document.activeElement, modal.querySelector(".btn-confirm"),
+      "Confirm took the focus before the key that opened the question was up: its keypress presses it, the first folder chosen unseen");
+    window.dispatchEvent(new window.KeyboardEvent("keyup", { key: "Enter" }));
+    assert.equal(document.activeElement, modal.querySelector(".btn-confirm"), "Confirm has the focus once Enter is up");
+  });
+
   test("the Date Taken dialog", async (t) => {
     const ctx = await tagpupOnSecondPhoto(t);
     click(ctx.window, ctx.document.getElementById("btn-edit-date-taken"));
@@ -263,10 +279,12 @@ const TAGPUP_DIALOGS = {
       click(ctx.window, ctx.document.getElementById("btn-edit-tags"));
       return ctx.document.getElementById("input-add-tag");
     },
-    open: (ctx) => {
+    open: async (ctx) => {
       const input = ctx.document.getElementById("input-add-tag");
       input.value = "Relays";
       press(ctx.window, input, "Enter");
+      await flush(ctx.window, 6);
+      ctx.window.dispatchEvent(new ctx.window.KeyboardEvent("keyup", { key: "Enter" }));   // the key goes up, as it does
     },
     dialog: (ctx) => ctx.document.querySelector(".modal-overlay.active"),
   },

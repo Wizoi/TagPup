@@ -8,8 +8,8 @@
 /* In a dialog the focused button is the one Enter presses, and looks it: the accent fill. On
    :focus, not only :focus-visible: a dialog opened by a click puts the focus on its button from
    the script (Just look, Cancel), which a browser does not mark focus-visible, and the primary
-   gives up its look below all the same. */
-:is(.modal-overlay, .modal, .tag-editor) button:focus {
+   gives up its look below all the same. Only the footer and header buttons: a tree row's icon button keeps its own colour. */
+:is(.modal-footer, .tag-editor-footer, .modal-header) button:focus {
     background-color: var(--accent);
     color: white;
 }
