@@ -18,6 +18,7 @@
  * again, shows the one that runs. The page is told (`changed`) when names were written, so it shows what its faces hold now.
  */
 import { api } from './api.js';
+import { holdFocus, releaseFocus } from './dialog.js';
 import { buildElement, replaceContent } from './dom.js';
 import { baseName } from './paths.js';
 
@@ -44,7 +45,6 @@ const nfDialog = {
     chosen: null,
     onlyFolder: null,
     wholeLibrary: null,
-    opener: null,
     /** The page's own: the open folder (or null) and what to do once names were written. */
     folder: null,
     changed: null,
@@ -399,12 +399,6 @@ function nfBuild() {
     nfDialog.yes.addEventListener('click', nfYes);
     nfDialog.no.addEventListener('click', nfNo);
     nfDialog.cancel.addEventListener('click', () => nfAct('/api/name-faces/cancel', { job: nfDialog.job }));
-    document.addEventListener('keydown', (e) => {
-        if (e.key !== 'Escape' || modal.classList.contains('hidden')) return;
-        e.preventDefault();
-        e.stopPropagation();
-        closeNameFaces();
-    });
 }
 
 /**
@@ -416,8 +410,8 @@ export function openNameFaces({ folder, changed } = {}) {
     if (!nfDialog.modal) nfBuild();
     nfDialog.folder = typeof folder === 'function' ? folder : null;
     nfDialog.changed = typeof changed === 'function' ? changed : null;
-    nfDialog.opener = document.activeElement;
     nfDialog.modal.classList.remove('hidden');
+    holdFocus(nfDialog.modal, { cancel: closeNameFaces });
     const start = () => {
         nfDialog.job = null;
         nfDialog.last = null;
@@ -453,8 +447,8 @@ export function attachNameFaces({ folder, changed } = {}) {
         nfDialog.folder = typeof folder === 'function' ? folder : null;
         nfDialog.changed = typeof changed === 'function' ? changed : null;
         nfDialog.chosen = null;
-        nfDialog.opener = document.activeElement;
         nfDialog.modal.classList.remove('hidden');
+        holdFocus(nfDialog.modal, { cancel: closeNameFaces });
         return nfFollow(status);
     }).catch(err => {
         console.error('Could not ask whether naming faces is under way:', err);
@@ -467,5 +461,5 @@ export function closeNameFaces() {
     nfStopPolling();
     nfDialog.token += 1;
     nfDialog.modal.classList.add('hidden');
-    if (nfDialog.opener && typeof nfDialog.opener.focus === 'function') nfDialog.opener.focus();
+    releaseFocus(nfDialog.modal);
 }

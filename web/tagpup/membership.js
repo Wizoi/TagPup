@@ -23,6 +23,7 @@
 // files only. What stays held back here is what needs a row of the library's: naming faces.
 import { api, libraryIn } from './common/api.js';
 import { samePath } from './common/paths.js';
+import { holdFocus, releaseFocus } from './common/dialog.js';
 import { upper } from './hooks.js';
 import { redrawFaceBoxes } from './face-boxes.js';
 import { state } from './state.js';
@@ -144,11 +145,13 @@ export function askToAdd(found) {
     btnAddFolder.textContent = `Add to ${name}`;
     btnAddFolderFromNote.textContent = `Add to ${name}`;
     addFolderModal.classList.add('active');
-    btnJustLook.focus();
+    // Escape is Just look (or Not now), never Add.
+    holdFocus(addFolderModal, { cancel: justLook, focus: btnJustLook });
 }
 
 function closeDialog() {
     addFolderModal.classList.remove('active');
+    releaseFocus(addFolderModal);
 }
 
 /** Just look: the photos, edited in their files only, and Suggest analysing them in memory; face naming is held back until added. */
@@ -238,12 +241,6 @@ export function wireMembership() {
     btnAddFolder.addEventListener('click', addFolderToLibrary);
     btnAddFolderFromNote.addEventListener('click', addFolderToLibrary);
     btnJustLook.addEventListener('click', justLook);
-    addFolderModal.addEventListener('keydown', (e) => {
-        if (e.key === 'Escape') {
-            e.preventDefault();
-            justLook();
-        }
-    });
     window.addEventListener('click', (e) => {
         if (!isJustLooking()) return;
         const target = e.target && e.target.closest ? e.target.closest(WRITE_CONTROLS) : null;

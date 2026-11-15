@@ -119,11 +119,5 @@ for (const appName of ["tagpup", "tagtuner"]) {
       assert.equal(undoButton(12).textContent, "Undo");
       assert.match(note(12).textContent, /^Cannot be undone: change 13/);
     });
-
-    test("Escape closes it", async (t) => {
-      const { window, document, dialog } = await openFrom(appName, t, { changes: CHANGES, undo: () => REHEARSED });
-      document.dispatchEvent(new window.KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
-      assert.ok(dialog.classList.contains("hidden"));
-    });
   });
 }

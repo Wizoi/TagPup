@@ -1,0 +1,31 @@
+/* The keyboard's focus on the buttons, both pages (web/common/dialog.js keeps the keys).
+   The pages' .btn drops the browser's outline; a button reached by Tab shows it again. */
+.btn:focus-visible {
+    outline: 2px solid var(--text-primary);
+    outline-offset: 2px;
+}
+
+/* In a dialog the focused button is the one Enter presses, and looks it: the accent fill. On
+   :focus, not only :focus-visible: a dialog opened by a click puts the focus on its button from
+   the script (Just look, Cancel), which a browser does not mark focus-visible, and the primary
+   gives up its look below all the same. Only the footer and header buttons: a tree row's icon button keeps its own colour. */
+:is(.modal-footer, .tag-editor-footer, .modal-header) button:focus {
+    background-color: var(--accent);
+    color: white;
+}
+:is(.modal-overlay, .modal, .tag-editor) button:focus-visible {
+    outline: 2px solid var(--text-primary);
+    outline-offset: 2px;
+}
+
+/* The footer's primary carries the Enter look while no other button has the focus... */
+:is(.modal-footer, .tag-editor-footer) .btn-primary:not(:disabled) {
+    box-shadow: 0 0 0 2px var(--text-primary);
+}
+
+/* ...and gives it up to the button that has it. */
+:is(.modal-footer, .tag-editor-footer):has(button:focus:not(.btn-primary)) .btn-primary:not(:disabled) {
+    box-shadow: none;
+    background-color: var(--bg-tertiary);
+    color: var(--text-primary);
+}

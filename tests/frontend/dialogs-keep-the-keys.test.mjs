@@ -12,7 +12,7 @@
  */
 import { test, describe, afterEach } from "node:test";
 import assert from "node:assert/strict";
-import { loadApp, FakeServer, photoRecord, flush, click, openFolder, closeAllApps } from "./harness.mjs";
+import { loadApp, FakeServer, photoRecord, flush, click, openFolder, closeAllApps, pageExports } from "./harness.mjs";
 
 afterEach(() => closeAllApps());
 
@@ -147,6 +147,22 @@ describe("TagPup: the page behind a dialog hears none of its shortcuts", () => {
     assert.match(ctx.shown(), /a\.jpg$/, "the arrows stayed kept after the question closed");
   });
 
+  test("a question asked as Enter is typed in a field takes no button until Enter is up (it would be pressed by that keypress)", async (t) => {
+    const ctx = await tagpupOnSecondPhoto(t);
+    const { window, document } = ctx;
+    click(window, document.getElementById("btn-edit-tags"));
+    const input = document.getElementById("input-add-tag");
+    input.value = "Relays";
+    press(window, input, "Enter");
+    await flush(window, 6);
+    const modal = document.querySelector(".modal-overlay.active");
+    assert.ok(modal, "the placement question did not open");
+    assert.notEqual(document.activeElement, modal.querySelector(".btn-confirm"),
+      "Confirm took the focus before the key that opened the question was up: its keypress presses it, the first folder chosen unseen");
+    window.dispatchEvent(new window.KeyboardEvent("keyup", { key: "Enter" }));
+    assert.equal(document.activeElement, modal.querySelector(".btn-confirm"), "Confirm has the focus once Enter is up");
+  });
+
   test("the Date Taken dialog", async (t) => {
     const ctx = await tagpupOnSecondPhoto(t);
     click(ctx.window, ctx.document.getElementById("btn-edit-date-taken"));
@@ -221,6 +237,281 @@ describe("TagPup: the page behind a dialog hears none of its shortcuts", () => {
     press(ctx.window, ctx.document.body, "ArrowUp");
     await flush(ctx.window, 6);
     assert.match(ctx.shown(), /a\.jpg$/);
+  });
+});
+
+/**
+ * Every dialog keeps the keyboard one way (web/common/dialog.js, owner 2026-11-15): Escape
+ * cancels it, Tab and Shift+Tab go round its controls, and the focus goes back to what
+ * opened it -- so after Date Taken, saved or cancelled, the arrows step photos at once.
+ */
+const OPEN = ".modal-overlay.active, .tag-editor.active, .modal:not(.hidden)";
+const openDialogs = (document) => [...document.querySelectorAll(OPEN)];
+const PEOPLE = [{ id: 7, name: "Sam", tag: "People/Friends/Sam" }, { id: 8, name: "Sam", tag: "Pets/Sam" }];
+
+function viaGear(action, id) {
+  return {
+    opener: (ctx) => ctx.document.getElementById("btn-gear"),
+    open: (ctx) => {
+      click(ctx.window, ctx.document.getElementById("btn-gear"));
+      click(ctx.window, ctx.document.querySelector(`#gear-menu [data-action="${action}"]`));
+    },
+    dialog: (ctx) => ctx.document.getElementById(id),
+  };
+}
+
+const dateButton = (ctx) => ctx.document.getElementById("btn-edit-date-taken");
+
+// Each opened the way the page opens it, from the control the owner would be on.
+const TAGPUP_DIALOGS = {
+  "Date Taken": {
+    opener: dateButton,
+    open: (ctx) => click(ctx.window, dateButton(ctx)),
+    dialog: (ctx) => ctx.document.getElementById("date-taken-modal"),
+  },
+  "the tag editor": viaGear("tag-editor", "taxonomy-modal"),
+  "Library settings": viaGear("library-settings", "settings-modal"),
+  "History": viaGear("library-history", "history-modal"),
+  "Name faces from tags": viaGear("name-faces", "name-faces-modal"),
+  "the placement question": {
+    opener: (ctx) => {
+      // The tag field, shown the way the owner shows it.
+      click(ctx.window, ctx.document.getElementById("btn-edit-tags"));
+      return ctx.document.getElementById("input-add-tag");
+    },
+    open: async (ctx) => {
+      const input = ctx.document.getElementById("input-add-tag");
+      input.value = "Relays";
+      press(ctx.window, input, "Enter");
+      await flush(ctx.window, 6);
+      ctx.window.dispatchEvent(new ctx.window.KeyboardEvent("keyup", { key: "Enter" }));   // the key goes up, as it does
+    },
+    dialog: (ctx) => ctx.document.querySelector(".modal-overlay.active"),
+  },
+  "Save changes?": {
+    opener: dateButton,
+    open: (ctx) => {
+      typeATitle(ctx, "Harbour Day");
+      press(ctx.window, dateButton(ctx), "ArrowLeft");
+    },
+    dialog: (ctx) => ctx.document.querySelector(".unsaved-edits-modal"),
+    cancelled: (ctx) => assert.match(ctx.shown(), /b\.jpg$/, "Escape on Save changes? stepped the photo"),
+  },
+  "Which person?": {
+    opener: dateButton,
+    open: (ctx) => { ctx.answer = pageExports(ctx.window, "web/common/person-choice.js").choosePerson(PEOPLE); },
+    dialog: (ctx) => ctx.document.querySelector(".person-choice"),
+    cancelled: async (ctx) => assert.equal(await ctx.answer, null, "Escape chose a person"),
+  },
+  // Escape on "Add this folder?" is Just look (Not now), never Add.
+  "Add this folder?": {
+    opener: dateButton,
+    open: (ctx) => pageExports(ctx.window, "web/tagpup/membership.js").askToAdd({ photos: 2, photos_held: 0, folder: "D:/Library/2020" }),
+    dialog: (ctx) => ctx.document.getElementById("add-folder-modal"),
+    cancelled: (ctx) => {
+      assert.ok(ctx.document.body.classList.contains("just-looking"), "Escape was not Just look");
+      assert.equal(ctx.server.calls.filter((c) => c.method === "POST" && c.url.includes("/api/folder/add")).length, 0,
+        "Escape added the folder");
+    },
+  },
+};
+
+/** Tab from the page behind comes in; Shift+Tab on the first goes round to the last, and Tab on the last to the first. */
+function assertTabGoesRound(ctx, dialog, label) {
+  const { window, document } = ctx;
+  document.activeElement.blur();
+  press(window, document.body, "Tab");
+  const first = document.activeElement;
+  assert.ok(dialog.contains(first), `${label}: Tab from the page behind did not come into the dialog`);
+  const back = press(window, first, "Tab", { shiftKey: true });
+  const last = document.activeElement;
+  assert.ok(back.defaultPrevented && dialog.contains(last) && last !== first,
+    `${label}: Shift+Tab on the first control did not go round to the last`);
+  assert.ok(press(window, last, "Tab").defaultPrevented, `${label}: Tab on the last control left the dialog`);
+  assert.equal(document.activeElement, first, `${label}: Tab on the last control did not go round to the first`);
+}
+
+/** Thrown in a listener: jsdom reports it on the window, where a test would not otherwise see it. */
+function catchErrors(window) {
+  const errors = [];
+  window.addEventListener("error", (event) => errors.push(event.error || event.message));
+  return errors;
+}
+
+async function openTagEditor(ctx) {
+  ctx.document.getElementById("btn-gear").focus();
+  click(ctx.window, ctx.document.getElementById("btn-gear"));
+  click(ctx.window, ctx.document.querySelector('#gear-menu [data-action="tag-editor"]'));
+  await flush(ctx.window, 4);
+  return ctx.document.getElementById("taxonomy-modal");
+}
+
+/** The delete question over the tag editor, asked from the bin of the row "Activity" (used by a photo). */
+async function askToDelete(ctx) {
+  const bin = [...ctx.document.querySelectorAll('#taxonomy-modal li[data-id="2"] > .taxonomy-node-content button')]
+    .find((b) => b.textContent.includes("\u{1F5D1}"));
+  bin.focus();
+  click(ctx.window, bin);
+  await flush(ctx.window, 4);
+  const question = ctx.document.querySelector(".tag-editor-conflict.active");
+  assert.ok(question, "the delete question did not open");
+  return { bin, question };
+}
+
+describe("TagPup: every dialog keeps the keyboard -- Escape cancels, Tab goes round, the focus goes back", () => {
+  for (const [label, how] of Object.entries(TAGPUP_DIALOGS)) {
+    test(label, async (t) => {
+      const ctx = await tagpupOnSecondPhoto(t);
+      const { window, document } = ctx;
+      const errors = catchErrors(window);
+      const opener = how.opener(ctx);
+      opener.focus();
+      assert.equal(document.activeElement, opener);
+      await how.open(ctx);
+      await flush(window, 6);
+      const dialog = how.dialog(ctx);
+      assert.ok(dialog && openDialogs(document).includes(dialog), `${label} did not open`);
+      assert.ok(dialog.contains(document.activeElement), `${label}: the focus was not put in it`);
+
+      assertTabGoesRound(ctx, dialog, label);
+
+      const escape = press(window, document.activeElement, "Escape");
+      await flush(window, 6);
+      assert.ok(escape.defaultPrevented, `${label}: Escape went on to the page`);
+      assert.deepEqual(openDialogs(document), [], `${label}: Escape did not close it`);
+      assert.equal(document.activeElement, opener, `${label}: the focus did not go back to what opened it`);
+      if (how.cancelled) await how.cancelled(ctx);
+      assert.deepEqual(errors, []);
+    });
+  }
+
+  test("the owner's steps: Date Taken cancelled or saved, then the arrows step photos without a click", async (t) => {
+    const ctx = await tagpupOnSecondPhoto(t);
+    const { window, document } = ctx;
+    dateButton(ctx).focus();
+    click(window, dateButton(ctx));
+    await flush(window, 2);
+    assert.equal(document.activeElement, document.getElementById("input-date-taken"), "the date field is not focused");
+    press(window, document.activeElement, "Escape");
+    await flush(window, 4);
+    assert.equal(document.activeElement, dateButton(ctx), "after Escape the focus is not on the Date Taken button");
+    press(window, document.activeElement, "ArrowLeft");
+    await flush(window, 6);
+    assert.match(ctx.shown(), /a\.jpg$/, "ArrowLeft after Escape did not step the photo");
+
+    // Saved by Enter in the date field: the focus is back on the button, and ArrowRight steps on.
+    dateButton(ctx).focus();
+    click(window, dateButton(ctx));
+    await flush(window, 2);
+    const input = document.getElementById("input-date-taken");
+    input.value = "2018-03-04T09:08:07";
+    press(window, input, "Enter");
+    await flush(window, 8);
+    assert.equal(ctx.saves(), 1, "the date was not saved");
+    assert.equal(document.activeElement, dateButton(ctx), "after Save the focus is not on the Date Taken button");
+    press(window, document.activeElement, "ArrowRight");
+    await flush(window, 6);
+    assert.match(ctx.shown(), /b\.jpg$/, "ArrowRight after Save did not step the photo");
+  });
+
+  test("a dialog over another: Escape closes the top one alone, held or pressed again", async (t) => {
+    const ctx = await tagpupOnSecondPhoto(t);
+    const { window, document } = ctx;
+    let reachedThePage = 0;
+    document.addEventListener("keydown", (e) => { if (e.key === "Escape") reachedThePage += 1; });
+    const editor = await openTagEditor(ctx);
+    const { bin, question } = await askToDelete(ctx);
+    // Confirm deletes a tag from its photos: the focus starts on Cancel.
+    assert.ok(document.activeElement.classList.contains("btn-cancel") && question.contains(document.activeElement),
+      "the delete question's focus is not on its Cancel");
+    assertTabGoesRound(ctx, question, "delete question");
+
+    // Escape held: the first press closes the question, its repeats close nothing and reach nothing.
+    press(window, document.activeElement, "Escape");
+    for (let i = 0; i < 3; i++) {
+      assert.ok(press(window, document.activeElement, "Escape", { repeat: true }).defaultPrevented);
+    }
+    await flush(window, 4);
+    assert.ok(!question.classList.contains("active"), "Escape did not close the delete question");
+    assert.ok(editor.classList.contains("active"), "a held Escape closed the editor under the question too");
+    assert.equal(document.activeElement, bin, "the focus did not go back to the row's bin");
+    assert.equal(reachedThePage, 0, "Escape reached the page behind");
+
+    // Let go and pressed again: the editor closes, the focus back on the gear.
+    window.dispatchEvent(new window.KeyboardEvent("keyup", { key: "Escape" }));
+    press(window, document.activeElement, "Escape");
+    await flush(window, 4);
+    assert.ok(!editor.classList.contains("active"), "a second Escape did not close the editor");
+    assert.equal(document.activeElement, document.getElementById("btn-gear"));
+  });
+
+  test("Enter held on the Date Taken button opens it and does not save from the date field on its repeat", async (t) => {
+    const ctx = await tagpupOnSecondPhoto(t);
+    const { window, document } = ctx;
+    dateButton(ctx).focus();
+    press(window, dateButton(ctx), "Enter");
+    click(window, dateButton(ctx));             // the browser's click, after the keydown
+    await flush(window, 2);
+    const repeat = press(window, document.activeElement, "Enter", { repeat: true });
+    await flush(window, 6);
+    assert.ok(repeat.defaultPrevented);
+    assert.equal(ctx.saves(), 0, "the held Enter saved the date it had just shown");
+    assert.ok(document.getElementById("date-taken-modal").classList.contains("active"), "the held Enter closed it");
+  });
+
+  test("a rapid second open keeps the first opener", async (t) => {
+    const ctx = await tagpupOnSecondPhoto(t);
+    const { window, document } = ctx;
+    dateButton(ctx).focus();
+    click(window, dateButton(ctx));
+    await flush(window, 1);
+    click(window, dateButton(ctx));
+    await flush(window, 2);
+    press(window, document.activeElement, "Escape");
+    await flush(window, 2);
+    assert.ok(!document.getElementById("date-taken-modal").classList.contains("active"), "Escape did not close it");
+    assert.equal(document.activeElement, dateButton(ctx), "the second open took the date field for the opener");
+
+    // The gear's Tag editor activated twice: the second open finds the focus in the editor's search.
+    const editor = await openTagEditor(ctx);
+    pageExports(window, "web/common/tag-editor.js").openTagEditor();
+    await flush(window, 2);
+    press(window, document.activeElement, "Escape");
+    await flush(window, 2);
+    assert.ok(!editor.classList.contains("active"), "Escape did not close the editor");
+    assert.equal(document.activeElement, document.getElementById("btn-gear"), "the second open took the search for the opener");
+  });
+
+  test("an opener gone when the dialog closes: the focus goes to the dialog beneath, or nowhere, and nothing throws", async (t) => {
+    const ctx = await tagpupOnSecondPhoto(t);
+    const { window, document } = ctx;
+    const errors = catchErrors(window);
+    const choose = pageExports(window, "web/common/person-choice.js").choosePerson;
+    const asked = () => document.querySelector(".person-choice");
+
+    // Over nothing: a button that is gone by the time the question closes.
+    const gone = document.createElement("button");
+    document.body.append(gone);
+    gone.focus();
+    const answer = choose(PEOPLE);
+    gone.remove();
+    press(window, document.activeElement, "Escape");
+    assert.equal(await answer, null);
+    assert.equal(asked(), null, "Escape did not close the question");
+    assert.equal(document.activeElement, document.body);
+
+    // Over the tag editor: its row's button gone, the focus goes into the editor.
+    const editor = await openTagEditor(ctx);
+    const row = document.createElement("button");
+    editor.querySelector(".tag-editor-body, .taxonomy-tree, div").append(row);
+    row.focus();
+    const second = choose(PEOPLE);
+    row.remove();
+    press(window, document.activeElement, "Escape");
+    assert.equal(await second, null);
+    assert.ok(editor.classList.contains("active"), "Escape on the question closed the editor too");
+    assert.ok(editor.contains(document.activeElement), "the focus did not go into the editor beneath");
+    assert.deepEqual(errors, []);
   });
 });
 

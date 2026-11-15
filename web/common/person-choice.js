@@ -8,6 +8,7 @@
  * Built from the pages' shared modal classes (`.modal-overlay.active`), so a page's shortcuts leave their keys alone while it
  * is open (web/common/dialog.js).
  */
+import { holdFocus, releaseFocus } from './dialog.js';
 import { buildElement } from './dom.js';
 import { personTitle } from './vocabulary.js';
 
@@ -24,7 +25,6 @@ export function choosePerson(people, { title = 'Which person?', about = '' } = {
     if (personQuestion && personQuestion.key === key) return personQuestion.promise;
     if (personQuestion) personQuestion.cancel();
     const mine = { key, promise: null, cancel: null };
-    const opener = document.activeElement;
     mine.promise = new Promise((resolve) => {
         let chosen = list.length ? list[0] : null;
         const choices = list.map((person, index) => buildElement('label', {
@@ -50,19 +50,12 @@ export function choosePerson(people, { title = 'Which person?', about = '' } = {
             ]),
         ]);
         const finish = (value) => {
-            document.removeEventListener('keydown', onKey, true);
             overlay.remove();
+            releaseFocus(overlay);
             if (personQuestion === mine) personQuestion = null;
-            if (opener && typeof opener.focus === 'function' && opener.isConnected) opener.focus();
             resolve(value);
         };
         mine.cancel = () => finish(null);
-        const onKey = (event) => {
-            if (event.key !== 'Escape') return;
-            event.preventDefault();
-            event.stopPropagation();
-            finish(null);
-        };
         overlay.addEventListener('change', (event) => {
             const index = Number(event.target && event.target.value);
             if (Number.isInteger(index) && list[index]) chosen = list[index];
@@ -72,10 +65,9 @@ export function choosePerson(people, { title = 'Which person?', about = '' } = {
         });
         cancel.addEventListener('click', () => finish(null));
         confirm.addEventListener('click', () => finish(chosen));
-        document.addEventListener('keydown', onKey, true);
         document.body.append(overlay);
-        const first = overlay.querySelector('input');
-        if (first) first.focus();
+        // Escape declines it; the focus starts on the first person and goes back where it was (web/common/dialog.js).
+        holdFocus(overlay, { cancel: mine.cancel, focus: overlay.querySelector('input') });
     });
     personQuestion = mine;
     return mine.promise;

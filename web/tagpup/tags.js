@@ -1,6 +1,7 @@
 // TagPup's page: the library's tags and people -- what they are, the lists the fields
 // offer, and turning what someone typed into a tag, asking where to file a new one.
 import { api } from './common/api.js';
+import { holdFocus, releaseFocus } from './common/dialog.js';
 import { buildElement, replaceContent } from './common/dom.js';
 import { PeopleDirectory, leafOf, rootOf, samePerson, sortedTags, tagProblem } from './common/vocabulary.js';
 import { upper } from './hooks.js';
@@ -253,20 +254,14 @@ export function showPlacementModal(title, message, options, allowNewRoot = false
             });
         });
         
-        // Escape declines the question wherever the focus is, and nothing underneath hears it.
-        const onKey = (e) => {
-            if (e.key !== 'Escape') return;
-            e.preventDefault();
-            e.stopPropagation();
-            close(null);
-        };
-        document.addEventListener('keydown', onKey, true);
         const close = (value) => {
-            document.removeEventListener('keydown', onKey, true);
             overlay.className = 'modal-overlay';
+            releaseFocus(overlay);
             setTimeout(() => overlay.remove(), 300);
             resolve(value);
         };
+        // Escape declines the question (web/common/dialog.js).
+        holdFocus(overlay, { cancel: () => close(null), focus: overlay.querySelector('.btn-confirm') });
 
         overlay.querySelector('.modal-close-btn').onclick = () => close(null);
         overlay.querySelector('.btn-cancel').onclick = () => close(null);

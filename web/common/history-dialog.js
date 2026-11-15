@@ -17,6 +17,7 @@
  * TagPup's page styles no `.modal`.
  */
 import { api } from './api.js';
+import { holdFocus, releaseFocus } from './dialog.js';
 import { buildElement, replaceContent } from './dom.js';
 
 const historyDialog = {
@@ -24,7 +25,6 @@ const historyDialog = {
     title: null,
     body: null,
     status: null,
-    opener: null,
     /** What to do once an undo changed something: the page's own refresh. */
     undone: null,
     /** The change whose undo was rehearsed and waits for Confirm undo, or null. */
@@ -200,12 +200,6 @@ function buildHistoryDialog() {
     document.body.append(modal);
     close.addEventListener('click', closeHistory);
     done.addEventListener('click', closeHistory);
-    document.addEventListener('keydown', (e) => {
-        if (e.key !== 'Escape' || modal.classList.contains('hidden')) return;
-        e.preventDefault();
-        e.stopPropagation();
-        closeHistory();
-    });
     historyDialog.modal = modal;
 }
 
@@ -216,8 +210,8 @@ function buildHistoryDialog() {
 export function openHistory({ undone } = {}) {
     if (!historyDialog.modal) buildHistoryDialog();
     historyDialog.undone = undone || null;
-    historyDialog.opener = document.activeElement;
     historyDialog.modal.classList.remove('hidden');
+    holdFocus(historyDialog.modal, { cancel: closeHistory });
     replaceContent(historyDialog.body, buildElement('p', { className: 'history-loading', text: 'Reading the history...' }));
     say('');
     return loadHistory();
@@ -227,5 +221,5 @@ export function closeHistory() {
     if (!historyDialog.modal) return;
     historyDialog.modal.classList.add('hidden');
     historyDialog.confirming = null;
-    if (historyDialog.opener && typeof historyDialog.opener.focus === 'function') historyDialog.opener.focus();
+    releaseFocus(historyDialog.modal);
 }

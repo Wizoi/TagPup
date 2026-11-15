@@ -1,7 +1,7 @@
 // TagPup's page: Image Details' unsaved edits, saving them, and the queue every write to
 // a photo goes through.
 import { api } from './common/api.js';
-import { dialogOpen } from './common/dialog.js';
+import { dialogOpen, holdFocus, releaseFocus } from './common/dialog.js';
 import { buildElement, replaceContent } from './common/dom.js';
 import { baseName, pathKey, samePath } from './common/paths.js';
 import { leafOf, photoAlreadyHas, tagProblem, textProblem } from './common/vocabulary.js';
@@ -603,12 +603,12 @@ export function leavePhotoThen(move, { onStay } = {}) {
 /**
  * "Save changes to IMG_0001.jpg?" -- Save, Discard or Cancel.
  *
- * Save is focused, so Enter saves; Escape cancels. Resolves 'save', 'discard' or
- * 'cancel'. Built like showPlacementModal, from the page's modal classes.
+ * Save is focused, so Enter saves; Escape cancels (web/common/dialog.js), and the focus goes
+ * back to what had it however it closes. Resolves 'save', 'discard' or 'cancel'. Built like
+ * showPlacementModal, from the page's modal classes.
  */
 export function askToSaveEdits(fileName) {
     return new Promise((resolve) => {
-        const returnFocusTo = document.activeElement;
         const overlay = document.createElement('div');
         overlay.className = 'modal-overlay active unsaved-edits-modal';
         overlay.setAttribute('role', 'dialog');
@@ -636,9 +636,7 @@ export function askToSaveEdits(fileName) {
 
         const close = (choice) => {
             overlay.remove();
-            if (choice === 'cancel' && returnFocusTo && returnFocusTo.focus) {
-                returnFocusTo.focus();
-            }
+            releaseFocus(overlay);
             resolve(choice);
         };
         overlay.querySelectorAll('[data-choice]').forEach(btn => {
@@ -647,16 +645,13 @@ export function askToSaveEdits(fileName) {
         overlay.addEventListener('keydown', (e) => {
             // Nothing underneath hears these keys while the question is open.
             e.stopPropagation();
-            if (e.key === 'Escape') {
-                e.preventDefault();
-                close('cancel');
-            } else if (e.key === 'Enter') {
+            if (e.key === 'Enter') {
                 e.preventDefault();
                 const focused = document.activeElement;
                 const choice = focused && overlay.contains(focused) && focused.dataset.choice;
                 close(choice || 'save');
             }
         });
-        overlay.querySelector('[data-choice="save"]').focus();
+        holdFocus(overlay, { cancel: () => close('cancel'), focus: overlay.querySelector('[data-choice="save"]') });
     });
 }
