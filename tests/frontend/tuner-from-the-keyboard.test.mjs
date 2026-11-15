@@ -78,6 +78,35 @@ function tabTo(ctx, el) {
   el.focus();
 }
 
+/**
+ * Does `el` show the keyboard's focus: a rule of the page's stylesheets for it under :focus or :focus-visible (on it, or
+ * on what follows it, as the switch's slider) giving an outline, an accent border or a glow -- and no `outline: none` in
+ * its own style attribute, which wins over every such rule.
+ */
+function focusShown(document, el) {
+  if (el.style.getPropertyValue("outline") === "none" || el.style.getPropertyValue("outline-style") === "none") return false;
+  const rules = [];
+  const walk = (list) => {
+    for (const rule of list) {
+      if (rule.cssRules && !rule.selectorText) walk(rule.cssRules);
+      else if (rule.selectorText) rules.push(rule);
+    }
+  };
+  for (const sheet of document.styleSheets) walk(sheet.cssRules);
+  return rules.some((rule) => rule.selectorText.split(",").some((selector) => {
+    const at = selector.search(/:focus(-visible)?\b/);
+    if (at < 0) return false;
+    const subject = selector.slice(0, at).trim();
+    let matches = false;
+    try { matches = subject !== "" && el.matches(subject); } catch { matches = false; }
+    const style = rule.style;
+    const outline = style.getPropertyValue("outline") || style.getPropertyValue("outline-style");
+    const shows = (outline !== "" && outline !== "none" && outline !== "0") || style.getPropertyValue("border-color") !== ""
+      || style.getPropertyValue("box-shadow") !== "";
+    return matches && shows;
+  }));
+}
+
 const folderHeader = (document, folder) => [...document.querySelectorAll("#photo-list .folder-header")]
   .find((h) => h.querySelector(".folder-title").title === folder);
 
@@ -131,6 +160,19 @@ describe("TagTuner from the keyboard", () => {
     assert.equal(years[1].getAttribute("aria-expanded"), "true");
     assert.ok(tabOrder(ctx.document).some((el) => el.closest(".year-group") === years[1].closest(".year-group")
       && el.closest(".folder-header")), "the opened year's folders are stops");
+  });
+
+  test("the Show Matched switch is a stop, Space turns it on, and the list is asked for again", async (t) => {
+    const ctx = await open(t, "mode=folder-match");
+    const toggle = ctx.document.getElementById("show-matched-toggle");
+    tabTo(ctx, toggle);
+    assert.ok(focusShown(ctx.document, toggle), "its slider shows the focus");
+    assert.equal(toggle.checked, false);
+    const asked = ctx.server.urls().length;
+    await press(ctx, toggle, " ");
+    assert.equal(toggle.checked, true, "Space turned it on");
+    assert.ok(ctx.server.urls().slice(asked).some((u) => u.includes("/api/photos") && u.includes("show_matched=true")),
+      "the change handler asked for the finished photos too");
   });
 
   test("the page's stops: none unseen, no tabindex above 0, every click reachable or delegated", async (t) => {

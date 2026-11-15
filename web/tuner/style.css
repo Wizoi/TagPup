@@ -1131,6 +1131,7 @@ body {
 
 /* Custom Toggle Switch */
 .switch-container {
+    position: relative;
     display: flex;
     align-items: center;
     gap: 8px;
@@ -1138,8 +1139,23 @@ body {
     user-select: none;
 }
 
+/* Out of sight but not out of the Tab order: Space toggles it, and the slider shows its focus. */
 .switch-input {
-    display: none;
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    margin: -1px;
+    padding: 0;
+    border: 0;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    clip-path: inset(50%);
+    white-space: nowrap;
+}
+
+.switch-input:focus-visible + .switch-slider {
+    outline: 2px solid var(--text-primary);
+    outline-offset: 2px;
 }
 
 .switch-label {
