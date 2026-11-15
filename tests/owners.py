@@ -302,7 +302,7 @@ _FILES = {
             "library-selection library-selection-jumps library-tally library-view looking-suggestions navigator "
             "navigator-multi photo-camera photo-details-layout photo-position photo-suggestions-panel search-page selection "
             "selection-follows-the-photo selection-panel selection-suggestions stale-cards suggest-cancel suggestions-follow-a-saved-photo "
-            "tagging-by-keyboard tagging-flow carry-tags-forward-clips "
+            "tagging-by-keyboard tagging-flow carry-tags-forward-clips tuner-from-the-keyboard "
             "test_a_search_keeps_no_thread_buffers "
             "test_camera_words test_caption_order test_chip_keys_follow_the_server test_view_rules_follow_the_server "
             "test_clip_sees_photos_upright test_embeddings_follow_their_photo "

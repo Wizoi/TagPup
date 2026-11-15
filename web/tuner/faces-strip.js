@@ -9,7 +9,7 @@ import {
 import { state } from './state.js';
 import { emptyState, panelContent, photoList } from './elements.js';
 import { UNKNOWN_YEAR } from './rules.js';
-import { personGone, resolveTyped, updateURLParams } from './shared.js';
+import { personGone, resolveTyped, showGroup, updateURLParams } from './shared.js';
 import { openNewPersonModal } from './new-person.js';
 
 const mainImage = document.getElementById('main-image');
@@ -40,13 +40,7 @@ export function selectPhoto(path, element) {
         let parent = activeEl.parentElement;
         while (parent && parent !== photoList) {
             if (parent.classList.contains('folder-content') || parent.classList.contains('year-content')) {
-                parent.style.display = 'block';
-                // Update chevron of corresponding header
-                const header = parent.previousElementSibling;
-                if (header) {
-                    const chevron = header.querySelector('.chevron-icon');
-                    if (chevron) chevron.textContent = '▼';
-                }
+                showGroup(parent.previousElementSibling, parent, true);
             }
             parent = parent.parentElement;
         }
@@ -226,6 +220,15 @@ function renderPhotoDetails(details) {
         header.appendChild(cropContainer);
         header.appendChild(info);
         card.appendChild(header);
+        // The keyboard's way in: Tab reaches the header, and Enter or Space opens the face's
+        // panel as a click on the card does. The panel's field and buttons are stops after it.
+        header.tabIndex = 0;
+        header.setAttribute('role', 'button');
+        header.addEventListener('keydown', (e) => {
+            if (e.key !== 'Enter' && e.key !== ' ') return;
+            e.preventDefault();   // Space would scroll the panel
+            card.click();
+        });
 
         // Edit Panel (initially hidden)
         const editPanel = document.createElement('div');
