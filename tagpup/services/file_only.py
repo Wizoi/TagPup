@@ -168,15 +168,21 @@ def _write_one(et, path, before, after, just_read, result):
         try:
             now = field_values.read_one(et, path, list(after))
         except field_values.Unreadable:
-            return lock_owners.explain(error, path, writable=file_changes.writable(path))
+            return lock_owners.explain(error, path, writable=_writable_if_denied(error, path))
         if fields.reads_same(now, after):
             return None
-        error = lock_owners.explain(error, path, writable=file_changes.writable(path))
+        error = lock_owners.explain(error, path, writable=_writable_if_denied(error, path))
         if fields.reads_same(now, before):
             return error
         result.details["conflicts"].append(path)
         return "a write failed (%s) and left it holding neither what it held nor what it was to hold" % error
     return None
+
+
+def _writable_if_denied(error, path):
+    """`writable` for lock_owners.explain: the file's stat is taken only for an error that could be a held file's (an
+    access denied needs it, looks_held); a share that stopped answering has no use for an unbounded look (#2992)."""
+    return lock_owners.looks_held(error, writable=True) and file_changes.writable(path)
 
 
 def _read_back(et, wrote, result):

@@ -39,6 +39,7 @@ from tagpup.core.library import Library  # noqa: E402
 from tagpup.files import exiftool_session, field_values, images  # noqa: E402
 from tagpup.files.exiftool_session import ExifToolSession  # noqa: E402
 from tagpup.files.metadata import MetadataExtractor  # noqa: E402
+from tagpup.services import file_only  # noqa: E402
 from tagpup.services import libraries as library_actions  # noqa: E402
 from tagpup.services import settings as settings_service  # noqa: E402
 from tagpup.services import sync  # noqa: E402
@@ -708,6 +709,20 @@ class TheModuleOpensNoDatabase(unittest.TestCase):
             source = handle.read()
         self.assertEqual([], re.findall(r"^\s*(?:from|import)\s+tagpup\.store\b.*$", source, re.M))
         self.assertEqual([], re.findall(r"\bdb\.|sqlite3|\.connect\(", source))
+
+
+class AJustLookWriteThatFails(unittest.TestCase):
+    def test_a_share_that_stopped_answering_is_not_looked_at_again(self):
+        """#2992: the file's read-only mark is asked only after an access denied (a held file's, looks_held); a write
+        that failed because its share went away (WinError 64) has no use for it, and the look is unbounded."""
+        gone = OSError("The specified network name is no longer available")
+        gone.winerror = 64
+        with mock.patch.object(field_values, "written_once_more", side_effect=gone), \
+                mock.patch.object(field_values, "read_one", side_effect=field_values.Unreadable("away")), \
+                mock.patch("tagpup.services.file_changes.writable") as looked:
+            said = file_only._write_one(None, "x.jpg", {"A": []}, {"A": ["b"]}, True, mock.Mock())
+        self.assertIn("no longer available", str(said))
+        looked.assert_not_called()
 
 
 if __name__ == "__main__":
