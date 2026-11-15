@@ -253,12 +253,21 @@ export function showPlacementModal(title, message, options, allowNewRoot = false
             });
         });
         
+        // Escape declines the question wherever the focus is, and nothing underneath hears it.
+        const onKey = (e) => {
+            if (e.key !== 'Escape') return;
+            e.preventDefault();
+            e.stopPropagation();
+            close(null);
+        };
+        document.addEventListener('keydown', onKey, true);
         const close = (value) => {
+            document.removeEventListener('keydown', onKey, true);
             overlay.className = 'modal-overlay';
             setTimeout(() => overlay.remove(), 300);
             resolve(value);
         };
-        
+
         overlay.querySelector('.modal-close-btn').onclick = () => close(null);
         overlay.querySelector('.btn-cancel').onclick = () => close(null);
         
