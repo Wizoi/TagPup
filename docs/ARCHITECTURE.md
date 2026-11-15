@@ -212,7 +212,7 @@ tagpup/                config (where the libraries are), logs, runtime (composit
                        lifecycle, libraries, state, responses
   cli.py (tagpup_cli.py at the root is its launcher)    mcp/ (the MCP server, one tool per read; it writes nothing)
 web/                   the pages (ES modules, no build step): common/ (api, paths, vocabulary, validate, dom,
-                       dialog, tag-editor, settings, history), tagpup/, tuner/, activity/
+                       dialog, press, tag-editor, settings, history), tagpup/, tuner/, activity/
 scripts/               programs to run (install_app, startup, measure_*, maintenance scripts); nothing imports from it
 tools/                 development tools: run_tests, affected_tests, doctor, add_findings, stale_findings, retro_metrics, patch, watch_processes
 tests/                 Python (unittest) and tests/frontend (node --test)
@@ -350,7 +350,8 @@ same transaction (`store/derived.py`, `people.tree_edit`).
 
 - `web/common/` holds ES modules shared by the pages: `api.js` (library-aware URLs and JSON, with a read
   retried across a server update), `batch-strip.js` (the strip of the batches of photo files), `paths.js`, `vocabulary.js`, `library.js`, `validate.js` (the rules
-  `/api/rules` publishes), `dom.js` (elements built from text), `dialog.js`, and the gear's tag editor,
+  `/api/rules` publishes), `dom.js` (elements built from text), `dialog.js`, `press.js` (a pill, chip, card or row the keyboard presses
+  as a click: Tab reaches it, Enter or Space clicks it), and the gear's tag editor,
   settings and history dialogs.
 - `web/activity/` is the Activity page; `web/tagpup/` and `web/tuner/` have a `main.js` that only wires the
   page, plus one module per feature, and their mutable state in one `state` object.

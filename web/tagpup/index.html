@@ -150,7 +150,7 @@
 
                 <!-- File List -->
                 <ul class="photo-list" id="photo-list">
-                    <li id="folder-view-header" class="photo-item folder-header-item hidden">
+                    <li id="folder-view-header" class="photo-item folder-header-item hidden" role="option">
                         <span class="folder-header-icon">📂</span> Folder View (Thumbnails)
                     </li>
                     <!-- Filenames will load dynamically here -->
@@ -212,7 +212,7 @@
                             <div class="details-grid">
                                 <div class="detail-item">
                                     <span class="detail-label">File Path</span>
-                                    <span class="detail-value clickable" id="detail-path"></span>
+                                    <button type="button" class="detail-value clickable" id="detail-path"></button>
                                     <!-- The file's size as the library last read it (photo.js showPhoto; what Sort by's File size orders by). -->
                                     <span class="detail-value one-line" id="detail-file-size"></span>
                                     <!-- Smart Rename of this photo alone: the grouping its name holds, to edit; its number is kept (web/tagpup/rename-one.js). -->
