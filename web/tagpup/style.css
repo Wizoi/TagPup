@@ -205,6 +205,17 @@ body {
     outline: none;
 }
 
+/* The field with the focus says so, as the others do: the accent border in place of the outline taken away. */
+.folder-input-group input:focus,
+#input-date-taken:focus {
+    border-color: var(--accent);
+}
+
+#input-date-taken {
+    border: 1px solid var(--border-color);
+    outline: none;
+}
+
 .folder-action-buttons {
     display: flex;
     gap: 8px;
