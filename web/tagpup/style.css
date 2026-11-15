@@ -1874,7 +1874,8 @@ body.just-looking #faces-strip {
     cursor: not-allowed;
 }
 
-/* Modal overlay classes */
+/* Modal overlay classes. A closed one is hidden from the keyboard as well as the eye (visibility), or Tab walks
+   through its controls unseen after the page's last; it turns visible at once on open, so holdFocus can focus in it. */
 .modal-overlay {
     position: fixed;
     top: 0;
@@ -1889,12 +1890,16 @@ body.just-looking #faces-strip {
     z-index: 1000;
     opacity: 0;
     pointer-events: none;
-    transition: opacity 0.2s ease;
+    /* Closed, it is out of the Tab order too, not only out of sight: visibility hidden, once the fade is done. */
+    visibility: hidden;
+    transition: opacity 0.2s ease, visibility 0s linear 0.2s;
 }
 
 .modal-overlay.active {
     opacity: 1;
     pointer-events: auto;
+    visibility: visible;
+    transition: opacity 0.2s ease;
 }
 
 .modal-container {
