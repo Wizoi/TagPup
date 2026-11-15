@@ -10,4 +10,4 @@ edit, how it fails, when to ask, the rules, findings and the report. You are the
 for a smaller task. If the task turns out larger than its brief -- more than a few files, a
 design choice, a failure mode the brief did not settle -- stop and say so in your report
 rather than growing it. Its section "A domain pass" holds for you too when the brief is a domain's queue, and
-"Reading economically" always: `tools/read_code.py outline`/`show` before a Read, findings by `add_findings.py --open`.
+"Reading economically" always (a batch of lows: no sweep, a row a fix or its review spawns is reported, not built; a DECISIONS row quotes only the owner's answer): `tools/read_code.py outline`/`show` before a Read, findings by `add_findings.py --open`.

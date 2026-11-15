@@ -179,8 +179,8 @@ reviewed once by each owner: it adds no debt, or it is refused.
 - **A special case needs a real instance** (owner, 2026-10-11). Every fallback, compatibility arm, defensive branch and
   'what if' path cites a live count above zero (counted this session, read-only) or the user action, through the real
   writers, that produces it; with neither, the write that could make it is refused at the source and the branch is not
-  written. An owner decision that rules a class out is cited, not re-argued; a fixture shape nothing real makes is not an
-  instance.
+  written. A new `low` finding says `live: N` or `user action:`, and `live: 0` closes it `decided` (`tools/add_findings.py`,
+  `tests/test_add_findings.py`).
 - **Tests answer scenarios, not code** (owner, 2026-10-11). A test is a scenario a person lives through (rapid clicks, a
   crash half way, two libraries, an update while working), grouped by domain owner and named for it; a test that only
   restates what a function does is too granular and misses the scenario between functions. New work adds or lifts a

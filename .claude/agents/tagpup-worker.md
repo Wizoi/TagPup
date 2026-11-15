@@ -63,9 +63,8 @@ of them, missed:
 - **Moved code is new code**: code that moves from `scripts/` (a spike, a harness) into `tagpup/` meets this whole list
   and the write path's owner (batching, a share that stops answering) as if written today, and each test the move
   deletes names its successor.
-- **Is the case real?** A fallback, a compatibility arm or a defensive branch needs a live count above zero or the user
-  action that produces it (CLAUDE.md, 'A special case needs a real instance'). If it has neither, refuse the write that
-  could make it and write no branch. Say in the report which cases you did not handle for that reason.
+- **Is the case real?** A fallback or defensive branch needs a live count above zero or the user action that produces
+  it (CLAUDE.md); with neither, write no branch and say so in the report.
 Test the scenario the owner lives in, not only the unit: rapid clicks, switching library
 mid-folder, two libraries holding one folder, the server updating.
 
