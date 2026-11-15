@@ -659,6 +659,14 @@ class ClipsBesideThePhotos(_Library):
         self.assertEqual(sorted([(damaged, 5), (away, 5)]), sorted(self.asked))
         self.assertEqual(4, len(self.held_new(self.clip_paths[1])[1]))
 
+    def test_ffmpeg_going_while_the_run_goes_on_stops_it_and_counts_no_clip_unread(self):
+        """#3000: ffmpeg is the run's (checked at its start); gone part-way it stops the pass, as it stops Suggest, and
+        the clips are not counted as unread one by one until the limit does."""
+        with mock.patch.object(config, "ffmpeg_problem", return_value="ffmpeg is gone"), \
+                self.assertRaises(search.FfmpegGone):
+            self.embed()
+        self.assertEqual((None, None), (self.held_new(self.clip_paths[0]), self.held_new(self.clip_paths[1])))
+
 
 class ARunWaitsForTheCard(_Library):
 

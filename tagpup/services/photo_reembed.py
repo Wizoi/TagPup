@@ -252,6 +252,8 @@ def embed_pass(embeddings, todo, keep, progress=None, should_stop=None, workers=
                     logger.info("No vector: ffmpeg gave no frame of %s: %s", item[0], problem.problem)
                     counts["clips_unread"].append((item[0], problem.problem))
                     continue
+                except search.FfmpegGone:
+                    raise   # not this clip's: the pass stops and says so, as Suggest does (DECISIONS 2026-11-13)
                 except Exception as problem:   # images.Unreadable, a locked file, a share that does not answer
                     not_read(problem)
                     continue
