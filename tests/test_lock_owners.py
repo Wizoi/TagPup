@@ -265,12 +265,12 @@ class ExplainAFailure(Base):
     def test_exiftools_words_count_as_its_numbers_do(self):
         stand_in, asked = holding([{"name": "OneDrive.exe", "pid": 9, "kind": "application", "service": None}])
         with stand_in:
-            said = lock_owners.explain("Error renaming temporary file to IMG_0001.jpg", self.path, writable=True)
+            said = lock_owners.explain("Permission denied: IMG_0001.jpg", self.path, writable=True)
             held = lock_owners.explain("The file is used by another process", self.path)
-            unknown = lock_owners.explain("Error renaming temporary file to IMG_0001.jpg", self.path)
+            unknown = lock_owners.explain("Permission denied: IMG_0001.jpg", self.path)
         self.assertTrue(said.endswith("It is held open by OneDrive.exe (OneDrive sync, pid 9)."), said)
         self.assertTrue(held.endswith("It is held open by OneDrive.exe (OneDrive sync, pid 9)."), held)
-        self.assertEqual("Error renaming temporary file to IMG_0001.jpg", unknown, "access denied's words need writable")
+        self.assertEqual("Permission denied: IMG_0001.jpg", unknown, "access denied's words need writable")
         self.assertEqual(2, len(asked))
 
     def test_a_lookup_that_raises_leaves_the_error(self):
@@ -345,7 +345,7 @@ class AFailedWrite(Base):
     def test_a_journaled_write_names_the_holder(self):
         library = mock.Mock(path="library.db")
         row = mock.Mock(path=self.path, id=3, stamp=None, patched=False, stale=())
-        error = RuntimeError("Error renaming temporary file to IMG_0001.jpg")
+        error = RuntimeError("Permission denied: IMG_0001.jpg")
         with mock.patch.object(field_values, "read_one", return_value=FIELDS_BEFORE), \
                 mock.patch.object(file_changes.file_journal, "withdraw") as withdraw, \
                 mock.patch.object(lock_owners, "holders", return_value=MSMPENG):

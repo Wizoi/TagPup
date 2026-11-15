@@ -101,7 +101,7 @@ DENIED = 5
 #: What an error with no number (ExifTool's) says when another program holds the file.
 HELD_WORDS = re.compile(r"used by another process|sharing violation|locked by another", re.IGNORECASE)
 #: What an error with no number says for access denied: a held file's only as DENIED is.
-DENIED_WORDS = re.compile(r"permission denied|access is denied|error renaming temporary file", re.IGNORECASE)
+DENIED_WORDS = re.compile(r"permission denied|access is denied", re.IGNORECASE)
 #: What follows a held file's failure when no program on this PC holds it and the file is on a network share: Restart
 #: Manager sees this PC's handles alone, and names none for another computer's or the server's own (holders answers []).
 NOT_ON_THIS_PC = "No program on this PC was found holding it: another computer, or the server itself, may have it open."
