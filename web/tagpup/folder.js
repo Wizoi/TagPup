@@ -570,18 +570,20 @@ export function renderFileList() {
 }
 
 /**
- * The list is one Tab stop (a roving tabindex): the row open -- the photo's, or the Folder View row while the grid
- * shows -- takes the Tab, the others a click or the arrows, so a folder of 300 photos is not 300 Tabs between Refresh
- * and the photo. With no row open (none yet, or the open photo filtered out of the list) the first row shown takes it.
+ * The row open -- the photo's, or the Folder View row while the grid shows -- is marked, and the file rows are one Tab
+ * stop (a roving tabindex): the open photo's row takes it, the others a click or the arrows, so a folder of 300 photos
+ * is not 300 Tabs between Refresh and the photo. With no photo open the grid has the Tab, unless no row is open at all
+ * (the open photo filtered out of the list): then the first row takes it. The Folder View row is a stop of its own
+ * whenever it shows: with a photo open it is the way back to the grid, and the arrows step photos, never onto it.
  */
 export function markOpenRow(row) {
-    for (const el of photoList.querySelectorAll('.photo-item.active, .photo-item[tabindex="0"]')) {
+    for (const el of photoList.querySelectorAll('.photo-item.active, .photo-item-file[tabindex="0"]')) {
         if (el === row) continue;
         el.classList.remove('active');
-        el.tabIndex = -1;
+        if (el !== folderViewHeader) el.tabIndex = -1;
     }
     if (row) row.classList.add('active');
-    const stop = row || photoList.querySelector('.photo-item:not(.hidden)');
+    const stop = row === folderViewHeader ? null : row || photoList.querySelector('.photo-item-file');
     if (stop) stop.tabIndex = 0;
 }
 
