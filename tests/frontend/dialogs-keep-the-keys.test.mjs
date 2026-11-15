@@ -406,6 +406,7 @@ describe("TagPup: every dialog keeps the keyboard -- Escape cancels, Tab goes ro
     const input = document.getElementById("input-date-taken");
     input.value = "2018-03-04T09:08:07";
     press(window, input, "Enter");
+    window.dispatchEvent(new window.KeyboardEvent("keyup", { key: "Enter" }));   // the key is up long before the save answers
     await flush(window, 8);
     assert.equal(ctx.saves(), 1, "the date was not saved");
     assert.equal(document.activeElement, dateButton(ctx), "after Save the focus is not on the Date Taken button");
@@ -818,6 +819,8 @@ describe("TagTuner: every dialog keeps the keyboard -- Escape cancels, Tab goes 
     click(window, exclude);
     click(window, exclude);
     await flush(window, 6);
+    assert.ok(document.querySelector(".modal:not(.hidden)").contains(document.activeElement),
+      "the second press rebuilt the reasons and left the focus on nothing");
     press(window, document.activeElement, "Escape");
     await flush(window, 6);
     assert.deepEqual(openDialogs(document), [], "Escape did not close it");
@@ -839,7 +842,9 @@ describe("TagTuner: every dialog keeps the keyboard -- Escape cancels, Tab goes 
     await new Promise((r) => window.setTimeout(r, 150));
     assert.equal(posted(ctx, "/api/faces/match-bulk").length, 1, "the cluster was not assigned");
     assert.deepEqual(openDialogs(document), []);
-    assert.ok(document.activeElement === document.body || document.activeElement.isConnected,
-      "the focus is on a button the grid removed");
+    // The key that answered is still down: its keypress would press the button the focus went back to and ask the question again (#3039).
+    assert.notEqual(document.activeElement, assign, "the focus went back to Assign Cluster while Enter was down");
+    window.dispatchEvent(new window.KeyboardEvent("keyup", { key: "Enter" }));
+    assert.ok(!assign.isConnected || document.activeElement === assign, "the focus did not go back once Enter was up");
   });
 });

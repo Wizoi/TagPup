@@ -36,9 +36,10 @@ const heldDialogs = [];
 // Back; Enter held on the Date Taken button does not save from the field on its repeat).
 const keysDown = new Set();
 const keysSwallowed = new Set();
-// A button the focus waits to go to until Enter is up: a dialog opened by an Enter keydown (the placement question, asked as a
-// tag is typed) focused a button before the same key's keypress, and the keypress pressed it (#3037).
-let focusAfterEnter = null;
+// Where the focus waits to go until Enter is up: a dialog opened by an Enter keydown (the placement question, asked as a tag is
+// typed) focused a button before the same key's keypress, and the keypress pressed it (#3037); one closed on an Enter keydown
+// (Assign cluster's name field) put the focus back on its opener, a button, the same way (#3039). A function that moves it.
+let afterEnter = null;
 let dialogKeysWired = false;
 
 const TAB_STOPS = 'a[href], button, input, select, textarea, [tabindex], [contenteditable="true"]';
@@ -97,13 +98,21 @@ function swallowHeldKeys() {
  */
 export function holdFocus(dialog, { cancel, focus } = {}) {
     topDialog();
-    if (!dialog || heldDialogs.some(entry => entry.dialog === dialog)) return;
+    if (!dialog) return;
+    if (heldDialogs.some(entry => entry.dialog === dialog)) {
+        // Asked again (a rapid second click) while the first rebuilt what held the focus: the focus is brought back in.
+        if (!dialog.contains(document.activeElement) && !keysDown.has('Enter')) tabEnd(dialog)?.focus();
+        return;
+    }
     heldDialogs.push({ dialog, cancel: typeof cancel === 'function' ? cancel : null, opener: document.activeElement });
     swallowHeldKeys();
     const primary = [...dialog.querySelectorAll('.btn-primary')].find(button => tabReaches(button, dialog));
     const target = (focus && focus.isConnected && !focus.disabled ? focus : null) || primary || tabEnd(dialog);
-    if (target && target.tagName === 'BUTTON' && keysDown.has('Enter')) focusAfterEnter = target;
-    else if (target) target.focus();
+    if (target && target.tagName === 'BUTTON' && keysDown.has('Enter')) {
+        afterEnter = () => {
+            if (target.isConnected && !target.disabled && heldDialogs.some(entry => entry.dialog.contains(target))) target.focus();
+        };
+    } else if (target) target.focus();
 }
 
 /** Is the opener still there to go back to: in the page, enabled and shown. */
@@ -124,7 +133,8 @@ export function releaseFocus(dialog) {
     swallowHeldKeys();
     if (!onTop) return;
     if (canGoBackTo(entry.opener)) {
-        entry.opener.focus();
+        if (keysDown.has('Enter')) afterEnter = () => { if (canGoBackTo(entry.opener)) entry.opener.focus(); };
+        else entry.opener.focus();
         return;
     }
     const under = topDialog();
@@ -181,10 +191,10 @@ function onDialogKeyDown(event) {
 function onDialogKeyUp(event) {
     keysDown.delete(event.key);
     keysSwallowed.delete(event.key);
-    if (event.key !== 'Enter' || !focusAfterEnter) return;
-    const waiting = focusAfterEnter;
-    focusAfterEnter = null;
-    if (waiting.isConnected && !waiting.disabled && heldDialogs.some(entry => entry.dialog.contains(waiting))) waiting.focus();
+    if (event.key !== 'Enter' || !afterEnter) return;
+    const move = afterEnter;
+    afterEnter = null;
+    move();
 }
 
 /** The page's one pair of key listeners for every dialog: on the window, capturing, so they hear a key first. */
