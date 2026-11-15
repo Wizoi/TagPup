@@ -4,6 +4,7 @@
 import { wireBatchStrip } from './common/batch-strip.js';
 import { wireRootsBanner } from './common/roots-banner.js';
 import { initDatabaseSelector } from './common/library.js';
+import { wireDialogKeys } from './common/dialog.js';
 import { loadRules } from './common/validate.js';
 import { state } from './state.js';
 import { modeSelect, showMatchedToggle } from './elements.js';
@@ -66,6 +67,8 @@ document.addEventListener('DOMContentLoaded', () => {
     // Each feature's listeners, in the order the page first added them.
     wireSidebar();
     wireFacesStrip();
+    // The shared dialogs' Escape, Tab and focus given back (web/common/dialog.js); the page's own keep theirs.
+    wireDialogKeys();
     wireAssign();
     wireNewPerson();
     wireSelection();

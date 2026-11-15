@@ -1,6 +1,7 @@
 // TagPup's page: the Edit Date Taken dialog of the open photo or clip -- the file's name, the date field, Save (a click or
 // Enter in the field) and Cancel (or Escape); the write goes through the photo write queue with every other.
 import { baseName } from './common/paths.js';
+import { holdFocus, releaseFocus } from './common/dialog.js';
 import { upper } from './hooks.js';
 import { state } from './state.js';
 import {
@@ -32,10 +33,13 @@ export function wireDateTakenModal() {
             dateTakenFile.title = name;
             dateTakenNote.textContent = `Specify the date and time when this ${isVideo(photo) ? 'photo or video' : 'photo'} was taken.`;
             dateTakenModal.classList.add('active');
+            holdFocus(dateTakenModal, { cancel: closeDateModal, focus: inputDateTaken });
         });
 
+        // Closed by Save, Cancel or Escape, the focus is back on the Date Taken button: the arrows step photos again.
         const closeDateModal = () => {
             dateTakenModal.classList.remove('active');
+            releaseFocus(dateTakenModal);
         };
 
         btnCloseDateModal.addEventListener('click', closeDateModal);
@@ -96,15 +100,12 @@ export function wireDateTakenModal() {
         };
         btnSaveDateModal.addEventListener('click', saveDate);
 
-        // Enter in the date field saves (also from inside its day, month and time parts), Escape cancels; a button
-        // keeps its own Enter. The dialog hears the keys alone: closing it here must not let the same Enter reach
-        // the page's grid (it would open a photo), as askToSaveEdits does.
+        // Enter in the date field saves (also from inside its day, month and time parts); a button keeps its own
+        // Enter, and Escape is web/common/dialog.js's. The dialog hears the keys alone: closing it here must not let
+        // the same Enter reach the page's grid (it would open a photo), as askToSaveEdits does.
         dateTakenModal.addEventListener('keydown', (e) => {
             e.stopPropagation();
-            if (e.key === 'Escape') {
-                e.preventDefault();
-                closeDateModal();
-            } else if (e.key === 'Enter' && !(e.target.closest && e.target.closest('button'))) {
+            if (e.key === 'Enter' && !(e.target.closest && e.target.closest('button'))) {
                 e.preventDefault();
                 saveDate();
             }

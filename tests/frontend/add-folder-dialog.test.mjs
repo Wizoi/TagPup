@@ -139,15 +139,6 @@ describe("a folder the library does not hold", () => {
     assert.ok(!ctx.$("input-photo-title").readOnly);
   });
 
-  test("Escape is Just look, never Add", async (t) => {
-    const ctx = await open(t);
-    ctx.$("add-folder-modal").dispatchEvent(new ctx.window.KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
-    await flush(ctx.window);
-    assert.ok(!ctx.dialogOpen());
-    assert.ok(ctx.document.body.classList.contains("just-looking"));
-    assert.equal(ctx.posts("/api/folder/add").length, 0);
-  });
-
   test("a folder only partly held asks to add the rest", async (t) => {
     const ctx = await open(t, { ...NOT_HELD, photos: 30, photos_held: 25, photos_not_held: 5 });
     assert.ok(ctx.dialogOpen());

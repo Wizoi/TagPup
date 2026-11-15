@@ -2,6 +2,7 @@
 // Every request goes through api.js, which puts the library in front of it
 // (web/common/api.js).
 import { initDatabaseSelector } from './common/library.js';
+import { wireDialogKeys } from './common/dialog.js';
 import { wireBatchStrip } from './common/batch-strip.js';
 import { wireRootsBanner } from './common/roots-banner.js';
 import { loadRules } from './common/validate.js';
@@ -186,6 +187,9 @@ document.addEventListener('DOMContentLoaded', () => {
     wireEditToggles();
 
     wireDateTakenModal();
+
+    // Every dialog's Escape, Tab and focus given back (web/common/dialog.js).
+    wireDialogKeys();
 
     // The gear: the tag editor (web/common/tag-editor.js) and TagTuner on this library.
     wireTagPupGear();

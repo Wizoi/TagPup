@@ -23,6 +23,7 @@
  * open (web/common/dialog.js).
  */
 import { api } from './api.js';
+import { holdFocus, releaseFocus } from './dialog.js';
 import { buildElement, replaceContent } from './dom.js';
 import { choicesOf, loadRules, ruleProblem } from './validate.js';
 
@@ -38,7 +39,6 @@ const settingsDialog = {
     fields: new Map(),
     /** The locked groups opened through Change..., by name -> their consequence boxes. */
     opened: new Map(),
-    opener: null,
     saving: false,
 };
 
@@ -246,22 +246,14 @@ function buildSettingsDialog() {
     close.addEventListener('click', closeSettings);
     cancel.addEventListener('click', closeSettings);
     save.addEventListener('click', saveSettings);
-    // Escape closes it wherever the focus is: a Save that disables itself after saving
-    // drops the focus to the page's body, where a listener on the dialog never heard it.
-    document.addEventListener('keydown', (e) => {
-        if (e.key !== 'Escape' || modal.classList.contains('hidden')) return;
-        e.preventDefault();
-        e.stopPropagation();
-        closeSettings();
-    });
     settingsDialog.modal = modal;
 }
 
 /** Open the dialog on the page's library: its settings read now, and the rules to check them by. */
 export function openSettings() {
     if (!settingsDialog.modal) buildSettingsDialog();
-    settingsDialog.opener = document.activeElement;
     settingsDialog.modal.classList.remove('hidden');
+    holdFocus(settingsDialog.modal, { cancel: closeSettings });
     replaceContent(settingsDialog.body, buildElement('p', { className: 'settings-loading', text: 'Loading the settings...' }));
     settingsDialog.save.disabled = true;
     return Promise.all([api.json('/api/settings'), loadRules()])
@@ -283,7 +275,7 @@ export function openSettings() {
 export function closeSettings() {
     if (!settingsDialog.modal) return;
     settingsDialog.modal.classList.add('hidden');
-    if (settingsDialog.opener && typeof settingsDialog.opener.focus === 'function') settingsDialog.opener.focus();
+    releaseFocus(settingsDialog.modal);
 }
 
 /**

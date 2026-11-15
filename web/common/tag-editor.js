@@ -17,6 +17,7 @@
  *               and/or photos were rewritten, so what the page shows of them is old.
  */
 import { api } from './api.js';
+import { holdFocus, releaseFocus } from './dialog.js';
 import { joinTag, nameProblem, tagProblem } from './vocabulary.js';
 import { createTagTree } from './tag-tree.js';
 
@@ -44,8 +45,6 @@ const tagEditor = {
     search: null,
     tree: null,
     footerStatus: null,
-    opener: null,
-    conflictOpen: false,
 };
 
 function editorNodes() {
@@ -148,15 +147,10 @@ function buildTagEditor() {
     search.addEventListener('input', () => {
         tagEditor.view.applyFilter(search.value);
     });
-    overlay.addEventListener('keydown', (e) => {
-        if (e.key !== 'Escape' || tagEditor.conflictOpen) return;
-        e.preventDefault();
-        e.stopPropagation();
-        closeTagEditor();
-    });
     // The pages' own keys -- TagPup's arrows, TagTuner's sidebar -- are left alone
     // while the editor is open, wherever its focus is: the pages ask dialogOpen()
-    // (web/common/dialog.js), which the open editor answers.
+    // (web/common/dialog.js), which the open editor answers. Escape closes it, or the
+    // delete question over it alone (holdFocus).
 
     tagEditor.overlay = overlay;
     tagEditor.search = search;
@@ -202,7 +196,6 @@ export function wireTagEditor(hooks = {}) {
 /** Show the editor. The focus goes back to what had it when the editor closes. */
 export function openTagEditor() {
     if (!tagEditor.overlay) return;
-    tagEditor.opener = document.activeElement;
     tagEditor.overlay.classList.add('active');
     const view = tagEditor.view;
     if (view.size() === 0) {
@@ -212,7 +205,7 @@ export function openTagEditor() {
         syncTree();
     }
     tagEditor.tree.scrollTop = tagEditor.scrolled;
-    tagEditor.search.focus();
+    holdFocus(tagEditor.overlay, { cancel: closeTagEditor, focus: tagEditor.search });
     // A page that keeps the tree has it already; otherwise it is read now.
     if (!tagEditor.hooks.nodes) reloadTree().then(syncTree);
 }
@@ -221,9 +214,7 @@ export function closeTagEditor() {
     if (!tagEditor.overlay) return;
     tagEditor.scrolled = tagEditor.tree.scrollTop;
     tagEditor.overlay.classList.remove('active');
-    const opener = tagEditor.opener;
-    tagEditor.opener = null;
-    if (opener && typeof opener.focus === 'function' && document.contains(opener)) opener.focus();
+    releaseFocus(tagEditor.overlay);
 }
 
 /**
@@ -559,7 +550,6 @@ export function showDeleteConflictModal(tagName, count, targetTagsOptions) {
     return new Promise((resolve) => {
         const overlay = document.createElement('div');
         overlay.className = 'tag-editor active tag-editor-conflict';
-        tagEditor.conflictOpen = true;
 
         // Built from text: a tag is the person's to name, and one holding a quote once
         // ended its option's value early, so "move to" sent a tag other than the one shown.
@@ -631,19 +621,15 @@ export function showDeleteConflictModal(tagName, count, targetTagsOptions) {
 
         const close = (value) => {
             overlay.className = 'tag-editor tag-editor-conflict';
-            tagEditor.conflictOpen = false;
+            releaseFocus(overlay);
             setTimeout(() => overlay.remove(), 300);
             resolve(value);
         };
 
         overlay.querySelector('.tag-editor-close').onclick = () => close(null);
         overlay.querySelector('.btn-cancel').onclick = () => close(null);
-        overlay.addEventListener('keydown', (e) => {
-            if (e.key !== 'Escape') return;
-            e.preventDefault();
-            e.stopPropagation();
-            close(null);
-        });
+        // Escape closes the question alone, the editor staying open; the focus starts on Cancel, since Confirm deletes.
+        holdFocus(overlay, { cancel: () => close(null), focus: overlay.querySelector('.btn-cancel') });
 
         overlay.querySelector('.btn-confirm').onclick = () => {
             const selected = overlay.querySelector('input[name="delete-opt"]:checked').value;
