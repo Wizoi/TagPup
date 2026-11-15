@@ -147,6 +147,8 @@ export const state = {
     // asked, if any. Up here for the same reason: restoring a cached folder at startup
     // reaches selectPhoto and showFolderView, which read both.
     detailSaveInFlight: null,
+    // A clip playing when a write began: its id and where it was, so it plays on when the writes are done (media.js holdForWrite).
+    heldForWrite: null,
     leavePrompt: null,
     // The last write queued for one photo, by pathKey: what leaving that photo waits
     // for, where detailSaveInFlight, the tail of the whole queue, has bulk writes too.

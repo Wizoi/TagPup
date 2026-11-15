@@ -233,6 +233,7 @@ export function queuePhotoWrite(job, label = 'Save a photo', again = () => queue
     const before = state.detailSaveInFlight || Promise.resolve();
     const run = before.then(() => {
         markEntry(entry, 'writing');
+        upper.holdForWrite();   // a clip playing lets go of its file for the write, and plays on after the last one
         return job(entry);
     }).then(result => {
         markEntry(entry, result === false ? 'failed' : 'done');
@@ -246,7 +247,10 @@ export function queuePhotoWrite(job, label = 'Save a photo', again = () => queue
         markEntry(entry, 'failed');
         return false;
     }).finally(() => {
-        if (state.detailSaveInFlight === run) state.detailSaveInFlight = null;
+        if (state.detailSaveInFlight === run) {
+            state.detailSaveInFlight = null;
+            upper.resumeAfterWrite();
+        }
         updateSaveButton();
     });
     state.detailSaveInFlight = run;

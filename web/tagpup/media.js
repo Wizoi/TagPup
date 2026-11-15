@@ -31,6 +31,7 @@ import { clipActionsFollow, offerConvert } from './clip-convert.js';
 import { detailFileSize, detailVideoSize, mainImage, mainVideo, panelContent } from './elements.js';
 import { fileSizeSaid } from './format.js';
 import { setStatus } from './status.js';
+import { state } from './state.js';
 
 /** Is `photo` a video? Only what the library says: a record without `media` is a photo. */
 export function isVideo(photo) {
@@ -81,6 +82,35 @@ export function stopVideo() {
     delete mainVideo.dataset.clip;
     mainVideo.load();
     clipActionsFollow();
+}
+
+
+/**
+ * A write to a photo file is about to start: a clip playing lets go of its file (the server reads it a range at a time, and a
+ * range being read as the file is written makes Windows refuse the write), and carries on after `resumeAfterWrite`. A clip
+ * that is paused, or none shown, is left alone; a second call while one is held changes nothing.
+ */
+export function holdForWrite() {
+    if (state.heldForWrite || !mainVideo.getAttribute('src') || mainVideo.paused || mainVideo.ended) return;
+    state.heldForWrite = { clip: mainVideo.dataset.clip, time: mainVideo.currentTime };
+    mainVideo.pause();
+    mainVideo.removeAttribute('src');
+    mainVideo.load();
+}
+
+/** The writes are done: the held clip plays on from where it stopped, when it is still the one shown (the file may have changed: its route is asked again). */
+export function resumeAfterWrite() {
+    const held = state.heldForWrite;
+    state.heldForWrite = null;
+    if (!held || mainVideo.dataset.clip !== held.clip || mainVideo.classList.contains('hidden')) return;
+    const start = () => {
+        mainVideo.currentTime = held.time;
+        mainVideo.play().catch(() => {});   // the browser may refuse a play it did not see asked for: the clip then waits, paused
+    };
+    // A redraw may have set the clip again already (showMedia, the new mtime in its route): it is only seeked and played.
+    if (!mainVideo.getAttribute('src')) mainVideo.src = api.url(mainVideo.dataset.route);
+    if (mainVideo.readyState >= 1) start();
+    else mainVideo.addEventListener('loadedmetadata', start, { once: true });
 }
 
 const FORMAT = 'This video’s format cannot be played in this browser (an HEVC video needs the HEVC extension).';

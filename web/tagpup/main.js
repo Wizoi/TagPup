@@ -52,7 +52,7 @@ import {
 import { recordUndo, undoLastOperation } from './undo.js';
 import { enableSwipeNavigation, wireKeyboard } from './navigation.js';
 import { wireFaceBoxes } from './face-boxes.js';
-import { wireMedia } from './media.js';
+import { holdForWrite, resumeAfterWrite, wireMedia } from './media.js';
 import { wireEditToggles } from './edit-toggles.js';
 import {
     bulkAddPeopleToSelection, bulkAddTagsToSelection, updateSelectedThumbnailsCount
@@ -72,7 +72,7 @@ import { wireClipConvert } from './clip-convert.js';
 // What a feature calls in a module above it (hooks.js).
 Object.assign(upper, {
     addedFromView, applySuggestedTagsDirect, checkFolderMembership, checkSuggestionsStatus, choosePane,
-    facesFollowTags, forgetFolderSuggestions,
+    facesFollowTags, forgetFolderSuggestions, holdForWrite, resumeAfterWrite,
     populateCameraModelsDropdown, recordUndo, removePhotoTags,
     renderFileList, renderPhotoFaces, renderPhotoFacesHere, renderSuggestionsPanel, renderSyncInfo, renderTags, renderThumbnails, searchFollows, searchVocabularyChanged,
     selectPhoto,
