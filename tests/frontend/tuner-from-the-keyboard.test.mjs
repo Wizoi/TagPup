@@ -124,6 +124,28 @@ const DELEGATED = {
   "div.face-card": "its header is the stop (role button); the card's click covers the rest of it",
 };
 
+/** The rows the arrow keys step; every other delegated container holds the stop that does what its click does. */
+const ROWS = "li.photo-item";
+
+/**
+ * A face of a person's grid (Identify Faces, Review People): one stop each would put up to 10,751 faces (the largest
+ * person, 2026-11-15) between the banner and the face's details. Its keyboard is a roving grid, not built here.
+ */
+const GRID_FACE = "div.face-match-item";
+
+/** The page's stops: none unseen, no tabindex above 0, and every click a stop, a row, or a container holding a stop. */
+function checkStops(ctx, allowed = {}) {
+  assert.deepEqual(unseen(ctx.document), [], "no stop at opacity 0");
+  assert.deepEqual([...ctx.document.querySelectorAll("[tabindex]")].filter((el) => el.tabIndex > 0).map(nameOf), [],
+    "no tabindex above 0: the order is the page's");
+  const mouse = mouseOnly(ctx.window);
+  assert.deepEqual(mouse.map(nameOf).filter((name) => !DELEGATED[name] && !allowed[name]), [],
+    "every other click target is a stop");
+  const order = tabOrder(ctx.document);
+  const empty = mouse.filter((el) => DELEGATED[nameOf(el)] && !el.matches(ROWS) && !order.some((stop) => el.contains(stop)));
+  assert.deepEqual(empty.map(nameOf), [], "each delegated container holds its stop");
+}
+
 describe("TagTuner from the keyboard", () => {
   afterEach(() => closeAllApps());
 
@@ -185,13 +207,36 @@ describe("TagTuner from the keyboard", () => {
     }
   });
 
+  test("a face of the open photo opens its panel from the keyboard, and Tab goes on into the panel", async (t) => {
+    const ctx = await open(t, `mode=folder-match&photo=${encodeURIComponent(PHOTOS[0].path)}`);
+    const card = ctx.document.querySelector("#faces-grid .face-card");
+    const header = card.querySelector(".face-card-header");
+    tabTo(ctx, header);
+    assert.ok(focusShown(ctx.document, header), "the header shows the focus");
+    await press(ctx, header, "Enter");
+    assert.ok(card.classList.contains("selected"), "Enter selected the face");
+    const panel = card.querySelector(".face-edit-panel");
+    assert.ok(!panel.classList.contains("hidden"), "and opened its panel");
+    const order = tabOrder(ctx.document);
+    assert.ok(panel.contains(order[order.indexOf(header) + 1]), "Tab goes from the face into its panel");
+    assert.ok(order.includes(panel.querySelector(".custom-match-input")), "whose name field is a stop");
+    assert.ok(ctx.server.urls().some((u) => u.includes("/api/face-matches")), "its suggestions were asked for");
+  });
+
   test("the page's stops: none unseen, no tabindex above 0, every click reachable or delegated", async (t) => {
     const ctx = await open(t, `mode=folder-match&photo=${encodeURIComponent(PHOTOS[0].path)}`);
     assert.ok(ctx.document.querySelector(".face-card"), "a photo is open, with its faces");
-    assert.deepEqual(unseen(ctx.document), [], "no stop at opacity 0");
-    assert.deepEqual([...ctx.document.querySelectorAll("[tabindex]")].filter((el) => el.tabIndex > 0).map(nameOf), [],
-      "no tabindex above 0: the order is the page's");
-    assert.deepEqual(mouseOnly(ctx.window).map(nameOf).filter((name) => !DELEGATED[name]), [],
-      "every other click target is a stop");
+    checkStops(ctx);
+  });
+
+  test("Identify Faces' stops: none unseen, the banner, then the tabs, then each group's buttons", async (t) => {
+    const ctx = await open(t, `mode=unmatched-faces&person=${encodeURIComponent("Unknown Faces")}`);
+    assert.ok(ctx.document.querySelector(".face-match-item"), "a grid of faces is shown");
+    checkStops(ctx, { [GRID_FACE]: "the grid's faces: see GRID_FACE" });
+    const order = tabOrder(ctx.document).map(nameOf);
+    const at = (name) => order.indexOf(name);
+    assert.ok(at("#input-reassign-name") < at("#tab-matches"), "the banner before the tabs");
+    assert.ok(at("#tab-matches") < order.findIndex((name) => name.startsWith("button.cluster-suggestion")),
+      "the tabs before the groups");
   });
 });

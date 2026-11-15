@@ -914,6 +914,12 @@ body {
     font-weight: normal;
 }
 
+/* A face of the open photo: its header is the keyboard's stop (web/tuner/faces-strip.js). */
+.face-card-header:focus-visible {
+    outline: 2px solid var(--text-primary);
+    outline-offset: 2px;
+}
+
 /* A year's or folder's toggle (web/tuner/sidebar.js, groupHeader): a button for the keyboard,
    looking as the header's chevron and title did before it held them. */
 .tree-toggle {

@@ -220,6 +220,15 @@ function renderPhotoDetails(details) {
         header.appendChild(cropContainer);
         header.appendChild(info);
         card.appendChild(header);
+        // The keyboard's way in: Tab reaches the header, and Enter or Space opens the face's
+        // panel as a click on the card does. The panel's field and buttons are stops after it.
+        header.tabIndex = 0;
+        header.setAttribute('role', 'button');
+        header.addEventListener('keydown', (e) => {
+            if (e.key !== 'Enter' && e.key !== ' ') return;
+            e.preventDefault();   // Space would scroll the panel
+            card.click();
+        });
 
         // Edit Panel (initially hidden)
         const editPanel = document.createElement('div');
