@@ -1204,8 +1204,9 @@ def photos_bulk_tags():
         # What is added is checked, not what is removed (tagpup.services.tagging). The
         # page's records are told in the order the files were written.
         with file_changes.batch_exclusively(library, "bulk tags", len(photo_paths)):
+            # `group`: the token of the one action of the page's this request is a chunk of (History's one line).
             result = tagging_actions.change_tags(library, photo_paths, add_tags, remove_tags,
-                                                 state.exiftool(library))
+                                                 state.exiftool(library), group=body.get("group"))
             if result.refused:
                 return _refused_after_writing(library, result)
             records_written(library, result)

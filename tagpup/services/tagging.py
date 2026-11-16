@@ -7,10 +7,10 @@ from tagpup.core.result import CHANGED_ON_DISK, CHANGED_ON_DISK_SENTENCE, UNREAD
 # Looked up at call time, as exiftool_session.ExifToolSession, so a test standing in for
 # ExifTool there reaches this too.
 from tagpup.files import exiftool_session, field_values, images, metadata, names
-from tagpup.services import file_changes, file_only, libraries
+from tagpup.services import batches, file_changes, file_only, libraries
 from tagpup.services import photos as photo_actions
 from tagpup.services import roots as roots_service
-from tagpup.store import db, person_ids, photos, taxonomy
+from tagpup.store import db, journal, person_ids, photos, taxonomy
 
 logger = logging.getLogger(__name__)
 
@@ -433,7 +433,7 @@ ADD_TO_ALL = "add to all selected"
 
 @roots_service.canonical_args("photo_paths")
 def change_tags(library, photo_paths, add, remove, exiftool_path, operation=ADD_TO_ALL, stop_at_first_error=True,
-                persons=None, et=None):
+                persons=None, et=None, group=None):
     """Add the same tags to many photos and take the same tags off them. Adding or
     removing tags on a selection of photos. See _change_each.
 
@@ -441,7 +441,7 @@ def change_tags(library, photo_paths, add, remove, exiftool_path, operation=ADD_
     `stop_at_first_error=False`: a photo that cannot be read or written is an error and the others are written all the
     same. `persons` ({paths.key(path): the tags of `add` that are people}): a person the file already names is not
     added again (_change_each). `et`: an ExifTool session the caller opened (a bulk edit gets its own,
-    with a deadline of its own), used instead of one per write.
+    with a deadline of its own), used instead of one per write. `group`: as change_each's.
 
     A photo whose file is gone is left out and listed in the result's skips (details[SKIPPED_MISSING] says how many);
     the photos after it are written. Only a read or write ERROR of a present file stops the run
@@ -456,7 +456,7 @@ def change_tags(library, photo_paths, add, remove, exiftool_path, operation=ADD_
     present, gone = leave_out_missing(photo_paths)
     add = [vocabulary.normalize(tag) for tag in add]
     result = (change_each(library, {path: (add, remove) for path in present}, exiftool_path, operation, persons=persons,
-                          et=et, stop_at_first_error=stop_at_first_error)
+                          et=et, stop_at_first_error=stop_at_first_error, group=group)
               if present else _refused(0, None))
     if not result.refused:
         result.attempted += len(gone)
@@ -483,7 +483,7 @@ def add_tags(library, additions, exiftool_path, persons=None):
 
 @roots_service.canonical_args("changes")
 def change_each(library, changes, exiftool_path, operation, persons=None, et=None, stop_at_first_error=True,
-                unpooled=None, on_planned=None):
+                unpooled=None, on_planned=None, group=None):
     """Give each photo in `changes` (path -> (tags to add, tags to take off)) its own, as ONE change of
     photo files named `operation` in the journal. A photo with nothing to add or take off is left alone.
     Held photos are written with their rows and journaled; a photo in a folder
@@ -496,9 +496,16 @@ def change_each(library, changes, exiftool_path, operation, persons=None, et=Non
     change_tags'. `stop_at_first_error` False: a photo that cannot be read or written is an error and the others are
     written, as a bulk edit does. Apply All's own is add_tags; the faces' (tagpup.services.face_people) adds and takes
     off a person per photo. `unpooled`: the caller asks which faces the held photos' records take out of identity work;
-    `on_planned` is told the id of the held photos' change (file_changes.write_fields)."""
+    `on_planned` is told the id of the held photos' change (file_changes.write_fields).
+
+    `group`: the token of the one action of the owner's this is a chunk of (journal.GROUP, written in the change's
+    summary): History lists the chunks as one line and undoes them together. A token that is not one (journal.group_problem),
+    or a chunk of more than batches.CHUNK photos -- a batch, which the batch strip finds in History by its own id -- refuses
+    the whole of it, nothing written."""
     adds = dict.fromkeys(t for add, _remove in changes.values() for t in add)
-    problem = validation.first_problem("tag", adds) or refuse_under_people(library, adds)
+    problem = (validation.first_problem("tag", adds) or refuse_under_people(library, adds) or journal.group_problem(group)
+               or (group is not None and len(changes) > batches.CHUNK
+                   and "A write of one group names at most %d photos (%d were named)." % (batches.CHUNK, len(changes))))
     if problem:
         return _refused(len(changes), problem)
     refused = _refused(len(changes), None)
@@ -509,7 +516,8 @@ def change_each(library, changes, exiftool_path, operation, persons=None, et=Non
     done = None
     if held or not loose:
         done = _change_each(library, plan_of(held), exiftool_path, operation, persons=persons, et=et,
-                            stop_at_first_error=stop_at_first_error, unpooled=unpooled, on_planned=on_planned)
+                            stop_at_first_error=stop_at_first_error, unpooled=unpooled, on_planned=on_planned,
+                            group=group)
     if not loose:
         return file_only.combined(done, None)
     if stop_at_first_error and done is not None and not done.ok:
@@ -645,7 +653,7 @@ def keywords_planner(library, edit):
 
 
 def _change_each(library, plan, exiftool_path, operation, files_only=False, persons=None, stop_at_first_error=True,
-                 et=None, unpooled=None, on_planned=None):
+                 et=None, unpooled=None, on_planned=None, group=None):
     """Write each photo in `plan` -- (path, tags to add, tags to take off) -- as one change
     of photo files (tagpup.services.file_changes): planned from what every file holds,
     committed, then written a file at a time, each recorded in its row as it is marked
@@ -666,7 +674,8 @@ def _change_each(library, plan, exiftool_path, operation, files_only=False, pers
 
     `persons` ({paths.key(path): tags that are people}): of what is added, a person the file already names
     is left out -- by the id of their node (two people called alike are two: vocabulary.names_same_person) --
-    read from the file here, under the lock, as the page leaves out one the photo already has.
+    read from the file here, under the lock, as the page leaves out one the photo already has. `group`: the token
+    the change's summary carries (change_each).
     """
     known = taxonomy.people_vocabulary(library.path) if persons else None
     wanted = {paths.key(path): (add, remove) for path, add, remove in plan}
@@ -683,7 +692,8 @@ def _change_each(library, plan, exiftool_path, operation, files_only=False, pers
         return file_only.write_fields(exiftool_path, [path for path, _a, _r in plan], KEYWORD_READ, plan_one,
                                       stop_at_first_error=stop_at_first_error, et=et)
     return file_changes.write_fields(library, operation, exiftool_path, [path for path, _a, _r in plan],
-                                     KEYWORD_READ, plan_one, summary={"photos": len(plan)},
+                                     KEYWORD_READ, plan_one,
+                                     summary={"photos": len(plan), **({journal.GROUP: group} if group else {})},
                                      stop_at_first_error=stop_at_first_error, et=et, unpooled=unpooled,
                                      on_planned=on_planned)
 

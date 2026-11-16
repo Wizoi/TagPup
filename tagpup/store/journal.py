@@ -68,6 +68,7 @@ real people, many of them minors.
 import collections
 import json
 import logging
+import re
 import sqlite3
 import threading
 from dataclasses import asdict, dataclass, field
@@ -185,6 +186,22 @@ CHUNK = 500
 
 #: How many rows a rehearsal lists that an undo did not restore.
 SHOWN = 20
+
+#: The key of a change's summary naming the one action of the owner's it is a write of: a page's bulk tag write sent in
+#: chunks, each chunk a change of its own (tagpup.services.tagging.change_each, its `group`). History lists the changes
+#: holding one token as one line and undoes them newest first (tagpup.services.journal.lines). No column: the summary is
+#: the change's own free-form account (plan one-queue-for-tag-changes, cut 2).
+GROUP = "group"
+
+#: What a group token may be: letters, digits and `_.:-`, at most 64, so that it can hold no path, name or tag.
+GROUP_TOKEN = re.compile(r"[A-Za-z0-9_.:-]{1,64}")
+
+
+def group_problem(group):
+    """Why `group` cannot be a change's group token (GROUP), or None: None (no group) or a GROUP_TOKEN."""
+    if group is None or (isinstance(group, str) and GROUP_TOKEN.fullmatch(group)):
+        return None
+    return "A group is 1 to 64 letters, digits or _.:- (it names one action's writes, never a photo or a tag)."
 
 
 @dataclass
@@ -1409,23 +1426,32 @@ def _shown(value):
     return "<%d bytes>" % len(value) if isinstance(value, bytes) else value
 
 
-def history(db_path, limit=20, change_id=None, values=False):
+def history(db_path, limit=20, change_id=None, values=False, before=None, groups=()):
     """The library's changes, newest first (or change `change_id` alone): id, operation,
     status, schema version, when made, applied and undone, its summary, how many rows
     of each table it inserted, updated and deleted, and how many photo files it planned
     in each state (tagpup.store.file_journal). One change also lists its row keys,
     and with `values` each column's old and new value (a BLOB by its size): these can
     hold names. An internal change (file_journal.INTERNAL: the index's bake, while it is under way) is not
-    listed: it is no operation of the owner's."""
+    listed: it is no operation of the owner's. `before`: only the changes older than that id. `groups`: only the
+    changes whose summary's GROUP is one of these tokens, every one of them (no `limit`): History completing a group's
+    line (tagpup.services.journal.lines). A scan of `changes`, which holds no BLOB (10,296 rows, 1.1 MB of summaries
+    in the largest library, counted 2026-11-16), asked only when a line listed is a group."""
     conn = db.connect(db.readonly_uri(db_path), uri=True)
     try:
         internal, params = file_journal.not_internal("operation")
         query = ("SELECT id, operation, status, schema_version, created, applied, undone, summary FROM changes"
                  " WHERE " + internal)
-        if change_id is None:
-            found = conn.execute(query + " ORDER BY id DESC LIMIT ?", params + (max(0, limit),)).fetchall()
+        if change_id is not None:
+            query, params = query + " AND id = ?", params + (change_id,)
+        if before is not None:
+            query, params = query + " AND id < ?", params + (before,)
+        if groups:
+            query += " AND json_extract(summary, '$.%s') IN (%s)" % (GROUP, ",".join("?" * len(groups)))
+            params += tuple(groups)
         else:
-            found = conn.execute(query + " AND id = ?", params + (change_id,)).fetchall()
+            query, params = query + " ORDER BY id DESC LIMIT ?", params + (max(0, limit),)
+        found = conn.execute(query + (" ORDER BY id DESC" if groups else ""), params).fetchall()
         entries = []
         for cid, operation, status, version, created, applied, undone, summary in found:
             entries.append({"id": cid, "operation": operation, "status": status, "schema_version": version,
