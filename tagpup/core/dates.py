@@ -76,8 +76,6 @@ UNKNOWN_YEAR = "Unknown"
 #: A date in a file name: YYYY-MM-DD, YYYY_MM_DD, YYYY.MM.DD or YYYYMMDD (one separator, the same both times, or
 #: none), of a year 1900-2099, with no digit on either side (a longer run of digits is a counter, not a date).
 _NAME_DATE = re.compile(r"(?<!\d)((?:19|20)\d\d)([-_.]?)(\d\d)\2(\d\d)(?!\d)")
-#: A folder named for a day: its name starts YYYY-MM-DD (folder_date).
-_FOLDER_DATE = re.compile(r"^(\d{4})-(\d{2})-(\d{2})")
 
 _YEAR_AT_START = re.compile(r"^(\d{4})")
 _FOUR_DIGITS = re.compile(r"\d{4}")
@@ -146,20 +144,6 @@ def name_date(path):
             continue
         return "%04d:%02d:%02d 00:00:00" % (year, month, day)
     return None
-
-
-def folder_date(path):
-    """The day the folder holding `path` is named for, as a Date Taken at midnight ("2018:06:23 00:00:00"): its own
-    folder's name starts YYYY-MM-DD and that is a real day; else None (a year-month or year-only folder, any other).
-    What the one-off scripts/date_undated_by_folder.py writes into an undated photo or clip (DECISIONS 2026-11-15:
-    photo_index 777, counted 2026-11-15), deleted with it: the readers above never date a photo by its folder."""
-    found = _FOLDER_DATE.match(PurePath(path).parent.name)
-    if not found:
-        return None
-    try:
-        return datetime.date(*map(int, found.groups())).strftime("%Y:%m:%d 00:00:00")
-    except ValueError:
-        return None
 
 
 def _clip_dates(raw_metadata):

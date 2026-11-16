@@ -50,7 +50,6 @@ SCENARIO = frozenset({
     "test_a_clip_patch_cut_short",
     "test_a_clip_dated_through_the_journal",
     "test_a_clip_dated_by_its_name",
-    "test_undated_photos_dated_by_their_folders",
     "test_a_clip_renamed",
     "test_a_clip_deleted",
     "test_a_clip_converted",

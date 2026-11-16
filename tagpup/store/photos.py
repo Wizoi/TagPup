@@ -664,15 +664,6 @@ def raw_rows(conn):
         yield paths.from_row(path, roots), json.loads(raw_json)
 
 
-def undated(conn):
-    """[(id, path native, kind)] of the rows holding no Date Taken (`taken` NULL; none holds it empty, photo_index
-    counted 2026-11-15): one search of idx_photos_taken, no BLOB read. What the one-off scripts/date_undated_by_folder.py
-    lists from, deleted with it."""
-    roots = store_roots.roots_for(conn)
-    return [(photo_id, paths.from_row(path, roots), kind)
-            for photo_id, path, kind in conn.execute("SELECT id, path, kind FROM photos WHERE taken IS NULL ORDER BY id")]
-
-
 def row_paths(conn):
     """{photo id: path as the row holds it} of every photo: what sweeping the cache compares its entries
     with. 68,000 short strings; one scan of the table, once per sweep."""

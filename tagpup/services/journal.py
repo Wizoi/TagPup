@@ -104,9 +104,6 @@ UNDO_CHECKS = {
     "rename tag": None,
     "remove tag": None,
     tagging.CLEAR_DUPLICATES: None,
-    # The one-off dating undated photos and clips by their folders (scripts/date_undated_by_folder.py): a save of their
-    # Date Taken, undone as Save's is.
-    "date undated photos by their folders": None,
     "rename after caption": None,
     "smart rename": None,
     "smart rename: original names": None,
@@ -124,6 +121,9 @@ UNDO_CHECKS.update({operation: None for operation in face_batch.DESCRIPTIONS.val
 #: Kinds of change no code makes any more, which the live journals hold (counted read-only 2026-10-23: photo_index 3,247
 #: changes, kr-track 341, renton_parkrun 1,220): what their way back says of itself, as UNDO_CHECKS.
 RETIRED = {
+    # The one-off that dated undated photos and clips by their folders (deleted, DECISIONS 2026-11-15): 2 applied in
+    # photo_index (changes 10630 and 10631, counted 2026-11-15). A save of their Date Taken, undone as Save's is.
+    "date undated photos by their folders": None,
     # The retiring of the old detector's faces: 1 applied in each library (photo_index 3247, kr-track 347,
     # renton_parkrun 1225, counted 2026-10-25). Never undone: the faces it deleted are the old model's.
     RETIRED_FACES: ("change %(change)d (%(operation)s): the old detector's faces it deleted are not put back: "
