@@ -630,6 +630,11 @@ def _write_fields(et, library, operation, exiftool_path, photo_paths, read, plan
                     detail["faces_turned"] = row.followed
                 if row.named_faces:
                     result.details.setdefault("named_faces", []).extend(row.named_faces)   # the one-face rule's, for the reply
+                if row.id in wrote:
+                    # The stat its row was recorded with, taken after the write: the reply's stamp, not looked at again.
+                    seen = wrote[row.id][1]
+                    result.details.setdefault("stamps", {})[paths.key(path)] = (
+                        (seen.st_mtime, seen.st_size) if seen is not None else None)
                 written[path] = detail
                 continue
             result.fail(path, why)
@@ -988,20 +993,32 @@ def _carry(et, library, row, origin, target, finished, on_failure, wrote=None, n
         failed = field_values.PictureChanged(file_journal.PICTURE_CHANGED)
     # What the file holds now: `target`, but for the fields the write left as they were (row.stale).
     held = fields.as_patched(origin, target, row.stale)
+    looked = {}
+
+    def read_back():
+        """The file's stat, then the file read back whole when `whole` asks (_read_whole), kept in `looked` for the
+        row: what it holds of the change's fields, or None when that read failed (_verified then reads them alone)."""
+        # The stat before the read back: a change another program makes after it leaves the row older than its file,
+        # which the next scan reads again; taken after, it stamped what was read before the change as the newer file.
+        looked["stat"] = _stat(row.path)
+        looked["whole"] = _read_whole(et, row, whole) if whole is not None else None
+        return whole.get(paths.key(row.path)) if looked["whole"] is not None else None
+
     if failed is None and row.patched:
-        failed = _verified(et, library, row, held)
+        # A patch's check of its fields is the read back whole, when one is asked: one read of the file, not two.
+        failed = _verified(et, library, row, held, read_back if whole is not None else None)
     if failed is not None:
+        if whole is not None:
+            whole.pop(paths.key(row.path), None)       # a patch put back holds nothing of what was read of it
         return _after_failure(et, library, row, origin, target, finished, on_failure, failed, stall_stops)
     _reached("file written")
-    # The stat before the read back: a change another program makes after it leaves the row older than its file, which
-    # the next scan reads again; taken after, it stamped what was read before the change as the newer file.
-    stat = _stat(row.path)
+    if not looked:
+        read_back()
     # Going forward, a field left stale is the journal's after too: an undo starts from what the file holds.
     after = None
     if row.stale and finished == "done":
         after = row.after = held
-    stat = _record(library, row, held, finished, stamp, stat=stat, after=after,
-                   whole=_read_whole(et, row, whole) if whole is not None else None)
+    stat = _record(library, row, held, finished, stamp, stat=looked["stat"], after=after, whole=looked["whole"])
     if wrote is not None:
         wrote[row.id] = (row, stat)
     _reached("file recorded")
@@ -1035,17 +1052,22 @@ def _saving(library, row):
     return saving
 
 
-def _verified(et, library, row, held):
+def _verified(et, library, row, held, read_back=None):
     """None when the patch just written leaves the file of `row` holding what it wrote, its size and its ranges
     (in_place.held: NEW), and its fields read back as `held` (what the write left: fields.as_patched); else what
     failed, for _after_failure to settle the file by its bytes. A file whose bytes are as written but whose fields do
-    not read so is put back here first. No byte outside the ranges is read (DECISIONS 2026-11-03, "AN IN-PLACE PATCH CHECKS ONLY THE BYTES IT CHANGED")."""
+    not read so is put back here first. No byte outside the ranges is read (DECISIONS 2026-11-03, "AN IN-PLACE PATCH CHECKS ONLY THE BYTES IT CHANGED").
+    `read_back()`, called once the bytes are as written, is what the file holds of `held`'s fields as the caller reads
+    it back for its row (_carry's, whole), or None when that read failed: then they are read here alone, as before."""
     saved = file_journal.patch_of(library.path, row.id)
     try:
         found = in_place.held(row.path, *saved)
         if found != in_place.NEW:
             return RuntimeError("the patch did not leave the file as it wrote it (%s)" % found)
-        if fields.reads_same(field_values.read_one(et, row.path, list(held)), held):
+        now = read_back() if read_back is not None else None
+        if now is None:
+            now = field_values.read_one(et, row.path, list(held))
+        if fields.reads_same(now, held):
             return None
         in_place.put_back(row.path, *saved)
     except (OSError, field_values.Unreadable) as e:

@@ -247,7 +247,8 @@ def save_photo(library, photo_path, title, tags, date_taken, exiftool_path, rena
     not made from what the file holds. Not given at all is no check.
 
     details: `new_path`, `renamed`, `tags` as written, `flat` and `hierarchical` as
-    written, `change`, `dates`, the date fields the write set ({field: value}; a clip's XMP:CreateDate only where it
+    written, `change`, `stamp`, the file's (mtime, size) as the write recorded it, after the write, when it wrote the
+    file and did not rename it (None: the caller looks), `dates`, the date fields the write set ({field: value}; a clip's XMP:CreateDate only where it
     held one, fields.held_dates), `taken`, the Date Taken saved as the library spells it (None when none was sent),
     `base`, the tags and title the file holds after the write (the page's next `base`), and
     `index_warning` when the renamed photo's new name already had rows; `file_only` and `with_rows`, how many files (0 or 1) were written each way; `pictures_refused` when the write
@@ -330,6 +331,8 @@ def save_photo(library, photo_path, title, tags, date_taken, exiftool_path, rena
             result.details["pictures_refused"] = written.details["pictures_refused"]
         if written.details.get("named_faces"):
             result.details["named_faces"] = written.details["named_faces"]
+        if not renamed:
+            result.details["stamp"] = (written.details.get("stamps") or {}).get(paths.key(photo_path))
         result.details.update(new_path=new_path, renamed=renamed, tags=tags, flat=flat,
                               hierarchical=hierarchical, index_warning=None, change=written.details["change"],
                               dates=dates_written, taken=fields.date_taken_value(date_taken) if date_taken else None,
