@@ -21,9 +21,10 @@ import {
     btnToggleRename, btnToggleTimeshift,
     folderPathInput, folderViewHeader, folderViewMain, folderViewStats, folderViewTitle, folderViewTop, indexProgressContainer,
     libraryStrip, libraryStripSource, libraryStripStatus, libraryStripTotal,
-    photoList, photoSearch, renamePanel, suggestProgressContainer, timeshiftPanel
+    photoList, photoSearch, renamePanel, statusText, suggestProgressContainer, timeshiftPanel
 } from './elements.js';
 import { setStatus } from './status.js';
+import { isJustLooking } from './looking.js';
 import { hasUnsavedEdits, leavePhotoThen, openPhotoWrite } from './edits.js';
 import {
     openFolderView, scanFolder, updateCurrentFolderLabel, updateListStats, updatePhotoPosition, viewCountSaid
@@ -419,10 +420,14 @@ export function photosDeleted() {
 /**
  * What a folder's Refresh found (POST /api/sync {folder, apply: true}: tagpup/web/sync_routes.py, recurring.refresh_folder),
  * as [kind, sentence] for the status line: `res` the Response (null when none came), `reply` its JSON (null when it held
- * none), `failure` what went wrong reaching it. The one wording of the answer: no other page says it.
+ * none), `failure` what went wrong reaching it, `looking` whether the folder is one looked at without being added (its
+ * refusal is calm: there is nothing to sync, and the list was read). The one wording of the answer: no other page says it.
  */
-export function folderRefreshSaid(res, reply, failure) {
+export function folderRefreshSaid(res, reply, failure, looking = false) {
     const answer = reply && typeof reply === 'object' && !Array.isArray(reply) ? reply : {};
+    if (looking && res && res.status === 400) {
+        return ['ready', 'This folder is not part of the library, so there is nothing to sync; its list was read from the disk.'];
+    }
     // A refusal (the folder's, or the 409 while names are written from tags) says its own sentence, as every guarded write does.
     if (res && (res.status === 400 || res.status === 409) && answer.error) return ['error', answer.error];
     if (!res || res.status >= 500 || !answer.folder) {
@@ -435,10 +440,20 @@ export function folderRefreshSaid(res, reply, failure) {
     if (counts.folders_not_looked_at) {
         return ['error', 'This folder could not be looked at (a share that did not answer, or a folder that would not list); nothing was changed.'];
     }
-    const found = ['new', 'changed', 'moved'].filter(name => counts[name]).map(name => `${counts[name]} ${name}`).join(', ');
+    // `new` is the files of the folders queued for indexing; those of a folder that waits for review are counted apart.
+    const found = ['new', 'changed', 'moved'].filter(name => counts[name]).map(name => {
+        const said = `${counts[name]} ${name}`;
+        return name === 'new' && !answer.queued ? said + ' (not queued for indexing)' : said;
+    }).join(', ');
     const gone = counts.missing || 0;
-    if (!found && !gone) return ['ready', 'This folder is in step.'];
-    const checked = found ? `Checked this folder: ${found}.` : 'Checked this folder.';
+    const review = counts.review_photos || 0;
+    if (!found && !gone && !review) {
+        return answer.in_step
+            ? ['ready', 'This folder is in step.']
+            : ['ready', 'Checked this folder; it is not fully in step yet (the Activity page says why).'];
+    }
+    let checked = found ? `Checked this folder: ${found}.` : 'Checked this folder.';
+    if (review) checked += ` ${review} new ${review === 1 ? 'file is' : 'files are'} in folders that wait for your review.`;
     if (!gone) return ['ready', checked];
     const one = gone === 1;
     let whole;
@@ -468,17 +483,24 @@ function syncFolderThenScan(folder) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ folder, apply: true }),
     }).then(
-        res => res.json().then(reply => folderRefreshSaid(res, reply), err => folderRefreshSaid(res, null, err)),
+        res => res.json().then(reply => folderRefreshSaid(res, reply, null, isJustLooking()),
+                               err => folderRefreshSaid(res, null, err)),
         err => folderRefreshSaid(null, null, err),
     ).then(([kind, sentence]) => {
         state.folderRefresh = null;
         btnRefreshList.disabled = false;
-        if (state.library || !samePath(state.scannedFolder, folder)) return;
+        if (state.library || !samePath(state.scannedFolder, folder)) {
+            // A view opened meanwhile leaves the line it was given; it does not keep saying it is checking.
+            if (state.library && statusText.textContent === 'Checking this folder...') setStatus('ready', 'Ready');
+            return;
+        }
         // Said once the list is on screen (the scan says Ready as it lands), and only of this folder.
         state.afterScan = () => {
             if (!state.library && samePath(state.scannedFolder, folder)) setStatus(kind, sentence);
         };
         // The gate asked before the sync; what is typed while it ran stays, as it does while a scan runs.
+        // The scan reads the box: the folder synced goes back in it, as staying on a folder does (folder.js).
+        folderPathInput.value = folder;
         scanFolder(true, { keepTyped: true });
     });
 }

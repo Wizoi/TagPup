@@ -7,7 +7,7 @@
  */
 import { test, describe, afterEach } from "node:test";
 import assert from "node:assert/strict";
-import { loadApp, FakeServer, photoRecord, closeAllApps, openFolder, click, PHOTO_WRITES } from "./harness.mjs";
+import { loadApp, pageExports, FakeServer, photoRecord, closeAllApps, openFolder, click, PHOTO_WRITES } from "./harness.mjs";
 
 afterEach(() => closeAllApps());
 
@@ -88,7 +88,7 @@ describe("V21: Refresh on a folder syncs it, then reads its list again", () => {
   });
 
   test("a file found gone starts the full check, and the sentence says it removes the file only if it is gone everywhere", async (t) => {
-    const sentence = await said(t, synced({ counts: { new: 2, changed: 1, missing: 1 }, whole: "started", whole_run_id: 41 }));
+    const sentence = await said(t, synced({ counts: { new: 2, changed: 1, missing: 1 }, queued: 1, whole: "started", whole_run_id: 41 }));
     assert.equal(sentence, "Checked this folder: 2 new, 1 changed. 1 file is gone; a full check was started and removes it if it is gone from the whole library.");
   });
 
@@ -115,6 +115,34 @@ describe("V21: Refresh on a folder syncs it, then reads its list again", () => {
   test("a share that did not answer is not 'in step'", async (t) => {
     const sentence = await said(t, synced({ counts: { folders_not_looked_at: 1 }, in_step: false }));
     assert.match(sentence, /^This folder could not be looked at/);
+  });
+
+  test("the reply's in_step decides: a folder not fully in step is not said to be", async (t) => {
+    const sentence = await said(t, synced({ in_step: false, counts: { unreadable: 1 } }));
+    assert.equal(sentence, "Checked this folder; it is not fully in step yet (the Activity page says why).");
+  });
+
+  test("new files in folders that wait for review are not 'in step', and not 'new' either", async (t) => {
+    const sentence = await said(t, synced({ counts: { review_photos: 12, review_folders: 1 } }));
+    assert.equal(sentence, "Checked this folder. 12 new files are in folders that wait for your review.");
+  });
+
+  test("new files whose folders were queued are 'new'; not queued they say so", async (t) => {
+    assert.equal(await said(t, synced({ in_step: false, queued: 1, counts: { new: 3 } })), "Checked this folder: 3 new.");
+    const sentence = await said(t, synced({ in_step: false, queued: 0, counts: { new: 3 } }));
+    assert.equal(sentence, "Checked this folder: 3 new (not queued for indexing).");
+  });
+
+  test("a Just-look folder outside the roots: the refusal is said calmly, not as an error", async (t) => {
+    const error = "The library holds no photo under that folder, and it is under none of the library's root folders: sync keeps the library's folders in step.";
+    const body = { ...synced(), success: false, refused: error, folder: "not synced", whole: null, error };
+    const ctx = await onFolder(t, () => body, { status: 400 });
+    pageExports(ctx.window, "web/tagpup/state.js").state.justLooking = FOLDER;
+    refresh(ctx);
+    await settle(ctx.window);
+    assert.equal(status(ctx), "This folder is not part of the library, so there is nothing to sync; its list was read from the disk.");
+    assert.equal(ctx.document.getElementById("status-dot").className.includes("error"), false);
+    assert.equal(forcedScans(ctx).length, 1);
   });
 
   test("a refused folder sync says the refusal", async (t) => {
@@ -153,6 +181,85 @@ describe("V21: what Refresh does not do", () => {
     assert.equal(ctx.document.getElementById("folder-path-input").value, "D:\\q");
     assert.doesNotMatch(status(ctx), /gone/);
     assert.equal(ctx.document.getElementById("btn-refresh-list").disabled, false);
+  });
+
+  test("a library view opened while the sync is out: the answer is dropped and the line is not left checking", async (t) => {
+    const releases = [];   // the view asks GET /api/sync too (when the library was last in step)
+    const ctx = await onFolder(t, () => new Promise((r) => { releases.push(() => r(synced())); }));
+    refresh(ctx);
+    await settle(ctx.window);
+    assert.equal(status(ctx), "Checking this folder...");
+    pageExports(ctx.window, "web/tagpup/library-view.js").openLibraryView({ kind: "all", value: null, recursive: false });
+    await settle(ctx.window);
+    const before = forcedScans(ctx).length;
+    releases.forEach((release) => release());
+    await settle(ctx.window);
+    assert.equal(forcedScans(ctx).length, before);
+    assert.notEqual(status(ctx), "Checking this folder...");
+    assert.equal(ctx.document.getElementById("status-dot").className.includes("busy"), false);
+    assert.equal(ctx.document.getElementById("btn-refresh-list").disabled, false);
+  });
+
+  test("another folder typed while the sync is out: the folder synced is the one read again", async (t) => {
+    let release;
+    const ctx = await onFolder(t, () => new Promise((r) => { release = () => r(synced()); }));
+    refresh(ctx);
+    await settle(ctx.window);
+    ctx.document.getElementById("folder-path-input").value = "D:\\q";
+    release();
+    await settle(ctx.window);
+    const scans = forcedScans(ctx);
+    assert.equal(scans.length, 1);
+    assert.ok(decodeURIComponent(scans[0].url).includes("path=D:\\p"), "the scan names the synced folder");
+    assert.equal(ctx.document.getElementById("folder-path-input").value, FOLDER);
+  });
+
+  test("Cancel on the unsaved-edits question: nothing sent, the button never disabled", async (t) => {
+    const ctx = await onFolder(t, () => synced());
+    ctx.document.dispatchEvent(new ctx.window.KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true, cancelable: true }));
+    await settle(ctx.window);
+    const title = ctx.document.getElementById("input-photo-title");
+    title.focus();
+    title.value = "Harbour";
+    title.dispatchEvent(new ctx.window.Event("input", { bubbles: true }));
+    refresh(ctx);
+    await settle(ctx.window);
+    const modal = ctx.document.querySelector(".unsaved-edits-modal");
+    click(ctx.window, modal.querySelector('[data-choice="cancel"]'));
+    await settle(ctx.window);
+    assert.equal(syncs(ctx).length, 0);
+    assert.equal(forcedScans(ctx).length, 0);
+    assert.equal(ctx.document.getElementById("btn-refresh-list").disabled, false);
+    assert.notEqual(status(ctx), "Checking this folder...");
+  });
+
+  test("the open photo gone from the folder, and the owner cancels: no sentence is kept for the next open", async (t) => {
+    let scans = 0;
+    const server = new FakeServer()
+      .on(/\/api\/sync$/, () => synced())
+      .on("/api/folder/scan", () => (++scans > 1 ? [PHOTOS[1]] : PHOTOS).map((p) => ({ ...p })))
+      .on("/api/folder/suggest-status", { status: "idle" })
+      .on("/api/tags", [])
+      .on("/api/people", [])
+      .on("/api/taxonomy/tree", []);
+    const ctx = await loadApp("tagpup", { t, server });
+    ctx.window.alert = () => {};
+    await openFolder(ctx, FOLDER);
+    ctx.document.dispatchEvent(new ctx.window.KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true, cancelable: true }));
+    await settle(ctx.window);
+    const state = pageExports(ctx.window, "web/tagpup/state.js").state;
+    const title = ctx.document.getElementById("input-photo-title");
+    title.focus();
+    title.value = "Harbour";
+    title.dispatchEvent(new ctx.window.Event("input", { bubbles: true }));
+    state.afterScan = () => {};
+    pageExports(ctx.window, "web/tagpup/folder.js").scanFolder(true, { keepTyped: true });
+    await settle(ctx.window);
+    const modal = ctx.document.querySelector(".unsaved-edits-modal");
+    assert.ok(modal, "the photo being edited is gone: Save, Discard or Cancel");
+    click(ctx.window, modal.querySelector('[data-choice="cancel"]'));
+    await settle(ctx.window);
+    assert.equal(state.afterScan, null);
   });
 
   test("unsaved edits: the question comes first, and no sync is sent until it is answered", async (t) => {
