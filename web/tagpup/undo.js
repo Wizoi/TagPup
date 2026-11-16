@@ -6,7 +6,7 @@ import { btnUndo } from './elements.js';
 import { setStatus } from './status.js';
 import { saveToLocalStorageCache } from './cache.js';
 import { renderFileList } from './folder.js';
-import { facesFollowTags, renderTags } from './photo.js';
+import { facesFollowReply, renderTags } from './photo.js';
 import { renderThumbnails } from './grid.js';
 import { queuePhotoWrite, takeWritten } from './edits.js';
 
@@ -66,6 +66,7 @@ async function undoEntry(entry, queued) {
     setStatus('busy', `Undoing: ${entry.label}...`);
     let restored = 0;
     let failed = 0;
+    const replies = [];   // each group's: the faces they name or unname, followed together (photo.js facesFollowReply)
     for (const group of undoGroups(entry)) {
         let data;
         try {
@@ -77,6 +78,7 @@ async function undoEntry(entry, queued) {
         } catch (err) {
             data = { success: false, error: err.message };
         }
+        replies.push(data);
         // The photos the undo wrote are of their files as they are now: the stamp and the tags a save names next.
         const stamps = new Map(Object.entries(data.stamps || {}).map(([path, stamp]) => [pathKey(path), stamp]));
         const heldTags = new Map(Object.entries(data.written || {}).map(([path, held]) => [pathKey(path), held]));
@@ -112,7 +114,7 @@ async function undoEntry(entry, queued) {
         const photo = state.folderPhotos.find(p => p.path === state.activePhotoPath);
         if (photo) {
             renderTags(photo.tags || []);
-            facesFollowTags(photo.path);
+            facesFollowReply(photo.path, replies);
         }
     }
     saveToLocalStorageCache();

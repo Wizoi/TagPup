@@ -124,7 +124,7 @@ export function clearPhotoFaces() {
     box.open = null;
     box.matches = {};
     box.busy = false;
-    box.readWith = [];
+    box.owed = false;
     hidePersonFaces();
     faceLayer.classList.add('hidden');
     replaceContent(faceLayer);
@@ -602,13 +602,16 @@ async function drainNamings() {
 }
 
 /**
- * A naming, unnaming or leaving out is done: the boxes take clicks again, and a tag written meanwhile, which the faces did
- * not follow while they were busy, is followed now (photo.js facesFollowTags).
+ * A naming, unnaming or leaving out is done: the boxes take clicks again, and a save that changed a face meanwhile, which the
+ * faces did not follow while they were busy, is followed now (photo.js facesFollowReply).
  */
 function notBusy() {
     const box = state.faceBoxes;
     box.busy = false;
-    if (box.path) upper.facesFollowTags(box.path);
+    if (box.owed && box.path) {
+        box.owed = false;
+        upper.renderPhotoFaces(box.path);
+    }
 }
 
 /** The people of `batch` (namings of one photo) on the photo, in one write; then each face named, one at a time. */

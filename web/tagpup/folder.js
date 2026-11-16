@@ -17,6 +17,7 @@ import { forgetSelectionFaces } from './selection-faces.js';
 import { CACHE_TTL_MS, CACHE_VERSION, folderCacheKey, saveToLocalStorageCache } from './cache.js';
 import { updatePeopleDatalist, updateTagsDatalist } from './tags.js';
 import { discardDetailEdits, hasUnsavedEdits, leavePhotoThen, openPhotoWrite } from './edits.js';
+import { clearPhotoFaces } from './face-boxes.js';
 import { DEFAULT_MEDIA, libraryKinds, libraryPosition } from './library-source.js';
 import { replaceAddress } from './history-entries.js';
 import { isVideo } from './media.js';
@@ -638,6 +639,8 @@ export function openFolderView() {
     state.activePhotoPath = null;
     discardDetailEdits();              // nothing pending by now; empty the fields
     state.facesRequestToken++;               // abandon any in-flight face lookup
+    // Leaving the photo is leaving its faces: the same photo opened again reads them and says so, not hides them as if read.
+    clearPhotoFaces();
     if (facesSection) facesSection.classList.add('hidden');
     
     // Highlight folder view item in list

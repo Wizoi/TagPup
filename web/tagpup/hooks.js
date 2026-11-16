@@ -11,7 +11,7 @@ export const upper = {
     checkFolderMembership: null,
     checkSuggestionsStatus: null,
     choosePane: null,
-    facesFollowTags: null,
+    facesFollowReply: null,
     forgetFolderSuggestions: null,
     holdForWrite: null,
     landOnAnchor: null,

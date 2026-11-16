@@ -524,8 +524,9 @@ export function applySuggestedTagsDirect(tagNames, isPerson, forPath = state.act
         const updatedTags = [...(photo.tags || []), ...added];
 
         setStatus('busy', 'Saving...');
+        let saved;
         try {
-            await postPhotoMetadata(photo, { tags: updatedTags });
+            saved = await postPhotoMetadata(photo, { tags: updatedTags });
         } catch (err) {
             console.error(err);
             setStatus('error', 'Error');
@@ -540,7 +541,7 @@ export function applySuggestedTagsDirect(tagNames, isPerson, forPath = state.act
             }
         }
         // The suggestion has been taken, so it is no longer a suggestion.
-        redrawIfShowing(photo);
+        redrawIfShowing(photo, saved);
         setStatus('ready', 'Ready');
         saveToLocalStorageCache();
         return true;
@@ -587,8 +588,9 @@ export async function applyAllSingleSuggestions() {
         const updatedTags = Array.from(new Set([...(photo.tags || []), ...resolvedSuggestions]));
 
         setStatus('busy', 'Saving...');
+        let saved;
         try {
-            await postPhotoMetadata(photo, { tags: updatedTags });
+            saved = await postPhotoMetadata(photo, { tags: updatedTags });
         } catch (err) {
             console.error(err);
             setStatus('error', 'Error');
@@ -601,7 +603,7 @@ export async function applyAllSingleSuggestions() {
             const leaf = leafOf(t);
             if (!photo.people.includes(leaf)) photo.people.push(leaf);
         });
-        redrawIfShowing(photo);
+        redrawIfShowing(photo, saved);
         setStatus('ready', 'Ready');
         saveToLocalStorageCache();
         return true;

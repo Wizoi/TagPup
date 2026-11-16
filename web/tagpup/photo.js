@@ -7,7 +7,7 @@ import { attachPersonFaces } from './common/person-faces.js';
 import { pressable } from './common/press.js';
 import { baseName, isUnc, samePath } from './common/paths.js';
 import {
-    personLabelOf, personTitleOf, photoAlreadyHas, rootOf, samePerson, sameTagPerson, sortedTags,
+    personLabelOf, personTitleOf, photoAlreadyHas, sortedTags,
 } from './common/vocabulary.js';
 import { upper } from './hooks.js';
 import { clearPhotoFaces, nameFaceAs, showPhotoFaces } from './face-boxes.js';
@@ -62,8 +62,6 @@ export function renderPhotoFaces(photoPath) {
         sayAboutFaces(FACES_LOADING);
         clearPhotoFaces();
     }
-    // The photo's tags as the answer is read: what the next change of them is measured against (facesFollowTags).
-    const readWith = tagsOf(photoPath);
 
     api.fetch(`/api/photo-faces?path=${encodeURIComponent(photoPath)}`)
         .then(res => {
@@ -75,9 +73,13 @@ export function renderPhotoFaces(photoPath) {
             // the strip the later request will draw.
             if (token !== state.facesRequestToken) return;
             drawPhotoFaces(photoPath, data);
-            state.faceBoxes.readWith = readWith;
-            // A tag written while this was read was not followed (the boxes were another photo's then): it is now.
-            facesFollowTags(photoPath);
+            // A save that touched a face while this was read was not followed (the faces were not here yet): it is now,
+            // unless a naming is under way, whose end follows it (face-boxes.js notBusy).
+            const box = state.faceBoxes;
+            if (box.owed && !box.busy) {
+                box.owed = false;
+                renderPhotoFaces(photoPath);
+            }
         })
         .catch(err => {
             console.error('Error loading faces:', err);
@@ -96,12 +98,6 @@ export function renderPhotoFaces(photoPath) {
 function holdsFacesOf(photoPath) {
     const box = state.faceBoxes;
     return Boolean(box.path) && samePath(box.path, photoPath);
-}
-
-/** The tags of a photo of the folder as the page holds them, a copy: none for a photo it does not hold. */
-function tagsOf(photoPath) {
-    const photo = state.folderPhotos.find(p => samePath(p.path, photoPath));
-    return ((photo && photo.tags) || []).slice();
 }
 
 export const FACES_LOADING = 'Loading faces...';
@@ -536,8 +532,9 @@ export function carryTagsForward() {
         }
         const updatedTags = Array.from(new Set([...before, ...missing]));
         setStatus('busy', `Copying ${missing.length} tag(s) from ${from}...`);
+        let saved;
         try {
-            await postPhotoMetadata(photo, { tags: updatedTags });
+            saved = await postPhotoMetadata(photo, { tags: updatedTags });
         } catch (err) {
             console.error(err);
             setStatus('error', 'Could not copy tags: ' + err.message);
@@ -548,7 +545,7 @@ export function carryTagsForward() {
             label: `carry ${missing.length} tag(s) from ${from}`,
             photos: [{ path: photo.path, before, after: updatedTags }],
         });
-        redrawIfShowing(photo);
+        redrawIfShowing(photo, saved);
         renderFileList();
         upper.renderThumbnails();
         saveToLocalStorageCache();
@@ -686,40 +683,30 @@ export function deletePhotoTag(tagToRemove) {
 
 /**
  * The open photo's faces, read again after its tags were written (the one hook of every write of them: a save, a chip, Apply
- * All, an Undo, a pill taken off), and only when the change can have changed them; the one place that decides it. A tag can
- * name a face on the server (the one-face rule, tagpup.store.face_tags, #788) or take a name off one (#908), and the page's
- * copy of the faces, which the boxes and the strip are drawn from, would go on saying otherwise until the photo was opened
- * again. The save's reply does not say which faces a tag named, so the change is measured against the tags the faces were
- * read with: read again when a tag that may name somebody came on while a face has no name and no named face is them, or
- * went off while a named face is them. Not while a naming of this page's is under way: its end follows the tags then
- * (face-boxes.js notBusy).
+ * All, an Undo, a pill taken off, a face's card), and only when the write changed one of them; the one place that decides it.
+ * The server names a face when a person put on the photo is its one face to be named (#788), takes a name off when the person
+ * goes (#908), and names it again when they come back, and its reply says which: `named_faces`, `unnamed_faces`,
+ * `renamed_faces` ([{id, name}] each; tagpup/web/tagpup_routes.py _faces_unnamed). The page's copy of the faces, which the
+ * boxes and the strip are drawn from, is read again when a face it holds is listed; an undo's replies, of other photos too,
+ * are given together. A reply while a naming of this page's is under way, or while this photo's faces are still being read,
+ * is owed: the naming's end (face-boxes.js notBusy) or the read's answer (renderPhotoFaces) reads them again.
  */
-export function facesFollowTags(path) {
+export function facesFollowReply(path, replies) {
     const box = state.faceBoxes;
-    if (!path || !samePath(state.activePhotoPath, path) || !holdsFacesOf(path) || box.busy) return;
-    const now = tagsOf(path);
-    const added = now.filter(tag => !box.readWith.includes(tag) && mayNameAFace(tag));
-    const removed = box.readWith.filter(tag => !now.includes(tag) && mayNameAFace(tag));
-    const named = box.faces.filter(face => face.name);
-    // By the person's id: a tag no person has counts as nobody's face yet, and reads again (the safe way to be wrong).
-    const isFaceOf = (tag) => named.some(face => sameTagPerson(tag, (face.person && face.person.tag) || face.name, state.people));
-    const nameless = box.faces.some(face => !face.name && !face.excluded);
-    // Off: by the name alone, loosely, so a person whose record changed is still followed.
-    if ((nameless && added.some(tag => !isFaceOf(tag)))
-        || removed.some(tag => named.some(face => samePerson(tag, face.name)))) {
-        renderPhotoFaces(path);
+    if (!path || !samePath(state.activePhotoPath, path)) return;
+    const listed = [].concat(replies || []).flatMap(reply => (reply ? [
+        ...(reply.named_faces || []), ...(reply.unnamed_faces || []), ...(reply.renamed_faces || []),
+    ] : []).map(face => face.id));
+    if (!listed.length) return;
+    if (!holdsFacesOf(path)) {
+        // Not drawn yet, so whose faces were listed cannot be told: the read under way may be older than the write.
+        box.owed = true;
+        return;
     }
-}
-
-/**
- * Can this tag be a person's (the server names a face only after one)? A person's, or one under a root the tree does not
- * hold or that holds faces: a child takes has_face from its root (tagpup.store.taxonomy), so under a root of keywords never.
- */
-function mayNameAFace(tag) {
-    if (namesAPerson(tag)) return true;
-    const root = rootOf(tag).toLowerCase();
-    const node = state.taxonomyNodes.find(n => n.parent_id === null && n.name.toLowerCase() === root);
-    return !node || node.has_face !== 0;
+    const held = new Set(box.faces.map(face => face.id));
+    if (!listed.some(id => held.has(id))) return;
+    if (box.busy) box.owed = true;
+    else renderPhotoFaces(path);
 }
 
 /**
@@ -740,8 +727,9 @@ export function removePhotoTags(path, tagsToRemove) {
         if (updatedTags.length === current.length) return true;
 
         setStatus('busy', 'Deleting tag...');
+        let saved;
         try {
-            await postPhotoMetadata(photo, { tags: updatedTags });
+            saved = await postPhotoMetadata(photo, { tags: updatedTags });
         } catch (err) {
             console.error(err);
             setStatus('error', 'Error');
@@ -749,8 +737,8 @@ export function removePhotoTags(path, tagsToRemove) {
             return false;
         }
         photo.tags = updatedTags;
-        // The faces follow (facesFollowTags): a person taken off the photo is taken off its faces by the server (#908).
-        redrawIfShowing(photo);
+        // The faces follow the reply (facesFollowReply): a person taken off the photo is taken off its faces by the server (#908).
+        redrawIfShowing(photo, saved);
         updateTagsDatalist();
         setStatus('ready', 'Ready');
         saveToLocalStorageCache();

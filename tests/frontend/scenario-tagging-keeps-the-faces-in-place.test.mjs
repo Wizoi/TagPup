@@ -1,11 +1,14 @@
 /**
  * V19: somebody tags the open photo while its faces are shown under it. The strip keeps its cards while it is read again,
  * with no "Loading faces..." between (owner, 2026-11-15: "keep the old strip until the new one is ready"), and it is read
- * again only when the tag can have changed its faces ("reload only when needed"): a keyword under a root of keywords
- * reads nothing, a person put on a photo with a face to be named does (the server may have named it, #788). Two quick
- * saves, another photo chosen meanwhile, a read that fails, the keyboard's focus on a card, a save that ends while a face
- * is being named: each as it happens on the page. The photo's first read says it is loading (an empty strip looked like a
- * photo with no faces), a failed one says so, and a photo chosen after another never shows the other's faces.
+ * again only when the save's reply says a face of it changed ("reload only when needed"): the server lists the faces the
+ * one-face rule named (#788), those a person taken off unnamed (#908) and those named again (`named_faces`,
+ * `unnamed_faces`, `renamed_faces`); a reply that lists none reads nothing, whatever the tag was. A face named by its card,
+ * its person then taken off by the pill; two quick saves, another photo chosen meanwhile, back to the grid and the same
+ * photo again, a read that fails, the keyboard's focus on a card, a save that ends while a face is being named or while
+ * the faces are first read, an undo of another photo: each as it happens on the page. The photo's first read says it is
+ * loading (an empty strip looked like a photo with no faces), a failed one says so, and a photo chosen after another never
+ * shows the other's faces.
  */
 import { test, describe, afterEach } from "node:test";
 import assert from "node:assert/strict";
@@ -28,8 +31,10 @@ const TAXONOMY = [
   { id: 6, tag: "Events/Birthday", name: "Birthday", parent_id: 5, has_face: 0 },
 ];
 const JANE = { id: 2, name: "Jane Doe", tag: "People/Jane Doe" };
+const ALEX = { id: 3, name: "Alex Roe", tag: "People/Alex Roe" };
+const SAM = { id: 4, name: "Sam Gray", tag: "People/Sam Gray" };
 
-const named = (id) => ({ id, box: [0, 0, 50, 50], area: 2500, name: JANE.name, person: JANE, excluded: false });
+const named = (id, who = JANE) => ({ id, box: [0, 0, 50, 50], area: 2500, name: who.name, person: who, excluded: false });
 const proposed = (id) => ({
   id, box: [60, 0, 50, 50], area: 2500, name: null, suggestion: "Alex Roe", similarity: 0.8, excluded: false,
 });
@@ -37,6 +42,9 @@ const nameless = (id) => ({ id, box: [120, 0, 50, 50], area: 2500, name: null, e
 const reply = (faces) => ({ faces, total: faces.length, unmatched: faces.filter((f) => !f.name).length });
 // Jane named, a face that looks like Alex, and one nobody is like (no card): two faces still to be named.
 const THREE = () => reply([named(1), proposed(2), nameless(3)]);
+// The save's reply when the one-face rule named face 3 (Sam), and when a person taken off unnamed `id`.
+const NAMED_3 = { success: true, named_faces: [{ id: 3, name: SAM.name }] };
+const unnamed = (id, who) => ({ success: true, unnamed_faces: [{ id, name: who.name }] });
 
 /** A reply the test lets go of when it chooses: [promise, release(body)]. */
 function held() {
@@ -47,10 +55,13 @@ function held() {
 
 /**
  * The page on a folder of A and B, A open. `faces(url)` answers each read of the faces unless the test queued an answer
- * of its own (ctx.next): the reads in the order they are asked.
+ * of its own (ctx.next): the reads in the order they are asked. A save answers what the test queued (ctx.nextSave), else
+ * `{success: true}`, a reply that lists no face; an undo's bulk write likewise (ctx.nextBulk).
  */
 async function open(t, { faces = THREE, tags = [], status = 200 } = {}) {
   const queued = [];
+  const saves = [];
+  const bulks = [];
   const server = new FakeServer()
     .on("/api/tags", [])
     .first(PEOPLE_ROUTE, peopleRecordsOf(TAXONOMY))
@@ -60,7 +71,9 @@ async function open(t, { faces = THREE, tags = [], status = 200 } = {}) {
     .on("/api/folder/suggest-status", { status: "idle" })
     .on("/api/folder/index-status", { status: "completed", percent: 100, message: "Ready" })
     .on("/api/folder/scan", [{ ...A, tags: tags.slice() }, { ...B, tags: [] }])
-    .on("/api/photo/save-metadata", { success: true })
+    .on("/api/photo/save-metadata", () => (saves.length ? saves.shift() : { success: true }))
+    .on("/api/photos/bulk-tags", () => (bulks.length ? bulks.shift() : { success: true }))
+    .on("/api/face/match", { success: true })
     .on("/api/photo-faces", (url) => (queued.length ? queued.shift()(url) : faces(url)), { status });
   const ctx = await loadApp("tagpup", { t, url: "http://localhost:8090/photo_index/", server });
   ctx.window.console.error = () => {};
@@ -68,11 +81,14 @@ async function open(t, { faces = THREE, tags = [], status = 200 } = {}) {
   await openFolder(ctx, "D:/Library/2020", { settle: 6 });
   const $ = (id) => ctx.document.getElementById(id);
   ctx.next = (answer) => queued.push(answer);
+  ctx.nextSave = (body) => saves.push(body);
+  ctx.nextBulk = (body) => bulks.push(body);
   ctx.select = async (photo) => {
     ctx.document.querySelector(`li[data-path="${photo.path.replace(/\\/g, "\\\\")}"]`).click();
     await flush(ctx.window, 8);
   };
   ctx.shown = () => ($("faces-section").classList.contains("hidden") ? null : $("faces-strip").textContent);
+  ctx.summary = () => $("faces-summary").textContent;
   ctx.cards = () => Array.from(ctx.document.querySelectorAll("#faces-strip .face-card"));
   // A card is its face's by the crop it shows.
   ctx.faceOf = (card) => new URL(card.querySelector("img").src, "http://localhost").searchParams.get("id");
@@ -89,6 +105,14 @@ async function open(t, { faces = THREE, tags = [], status = 200 } = {}) {
     $("input-add-person").value = text;
     $("btn-add-person").click();
     await flush(ctx.window, 10);
+  };
+  ctx.pill = async (text) => {
+    Array.from(ctx.document.querySelectorAll(".tag-pill")).find((each) => each.textContent.includes(text)).click();
+    await flush(ctx.window, 12);
+  };
+  ctx.click = async (id) => {
+    $(id).click();
+    await flush(ctx.window, 12);
   };
   await ctx.select(A);
   return ctx;
@@ -107,55 +131,71 @@ describe("V19: tagging the open photo keeps its faces in place", () => {
     assert.ok(!ctx.shown().includes("Loading"), "the placeholder stayed after the faces came");
   });
 
-  test("a person put on the photo reads its faces again, and the cards stay, never 'Loading', until the answer", async (t) => {
+  test("a person put on the photo whose reply names a face reads its faces again, the cards kept until the answer", async (t) => {
     const ctx = await open(t);
     assert.equal(ctx.ids(), "1,2");
     const before = ctx.reads();
     const [pending, answer] = held();
     ctx.next(() => pending);
+    ctx.nextSave(NAMED_3);
     await ctx.addPerson("Sam Gray");
-    assert.equal(ctx.reads(), before + 1, "a person on a photo with a face to be named did not read the faces again");
+    assert.equal(ctx.reads(), before + 1, "the faces were not read again after the reply named one");
     assert.ok(!ctx.shown().includes(LOADING), "the strip said it was loading on a read of the same photo");
     assert.equal(ctx.ids(), "1,2", "the cards went while the faces were read again");
-    answer(reply([named(1), proposed(2), { ...nameless(3), name: "Sam Gray", person: { id: 4, name: "Sam Gray", tag: "People/Sam Gray" } }]));
+    answer(reply([named(1), proposed(2), named(3, SAM)]));
     await flush(ctx.window, 6);
     assert.equal(ctx.ids(), "1,2,3", "the new answer was not drawn");
   });
 
-  test("a keyword under a root of keywords does not read the faces again", async (t) => {
+  test("a reply that lists no face reads nothing: a keyword, and a person put on a photo with faces to be named", async (t) => {
     const ctx = await open(t);
     const before = ctx.reads();
     await ctx.addTag("Events/Birthday");
-    assert.equal(ctx.reads(), before, "a keyword that can name nobody read the faces again");
+    assert.equal(ctx.reads(), before, "a keyword read the faces again");
+    await ctx.addPerson("Sam Gray");
+    assert.deepEqual(ctx.server.lastBody("/api/photo/save-metadata").tags, ["Events/Birthday", "People/Sam Gray"]);
+    assert.equal(ctx.reads(), before, "a person the server named no face after read the faces again");
     assert.equal(ctx.ids(), "1,2");
   });
 
-  test("a person taken off a photo whose face is them reads the faces again (the server unnames it, #908)", async (t) => {
+  test("a person taken off whose reply unnames their face reads the faces again (#908)", async (t) => {
     const ctx = await open(t, { faces: () => reply([named(1)]), tags: ["People/Jane Doe"] });
     const before = ctx.reads();
-    const pill = Array.from(ctx.document.querySelectorAll(".tag-pill")).find((each) => each.textContent.includes("Jane Doe"));
-    pill.click();
-    await flush(ctx.window, 10);
+    ctx.nextSave(unnamed(1, JANE));
+    await ctx.pill("Jane Doe");
     assert.deepEqual(ctx.server.lastBody("/api/photo/save-metadata").tags, [], "the person was not taken off");
     assert.equal(ctx.reads(), before + 1, "the faces were not read again after their person went");
   });
 
-  test("a person put on the photo while its faces are first read is followed when they come", async (t) => {
-    const [pending, answer] = held();
-    const ctx = await open(t, { faces: () => pending });
-    await ctx.addPerson("Sam Gray");
+  test("a face named by its card, its person then taken off by the pill: the strip is read again, not left 'all identified'", async (t) => {
+    const ctx = await open(t, { faces: () => reply([named(1), proposed(2)]) });
+    // Alex's card: his tag is written (the one-face rule names face 2 on the server), then the face itself is named.
+    ctx.nextSave({ success: true, named_faces: [{ id: 2, name: ALEX.name }] });
+    ctx.next(() => reply([named(1), named(2, ALEX)]));
+    ctx.card(2).click();
+    await flush(ctx.window, 12);
+    assert.match(ctx.summary(), /all identified/);
     const before = ctx.reads();
-    answer(THREE());
-    await flush(ctx.window, 10);
-    assert.equal(ctx.reads(), before + 1, "the faces read before the person was saved were left as they were");
+    ctx.nextSave(unnamed(2, ALEX));
+    await ctx.pill("Alex Roe");
+    assert.deepEqual(ctx.server.lastBody("/api/photo/save-metadata").tags, [], "the person was not taken off");
+    assert.equal(ctx.reads(), before + 1, "the faces were not read again after their person went");
+    assert.doesNotMatch(ctx.summary(), /all identified/, "the strip still said the unnamed face was named");
+    assert.equal(ctx.card(2).classList.contains("unmatched"), true);
   });
 
-  test("a photo with no faces is not read again after a person is put on it", async (t) => {
-    const ctx = await open(t, { faces: () => reply([]) });
-    assert.equal(ctx.shown(), null);
-    const before = ctx.reads();
-    await ctx.addPerson("Sam Gray");
-    assert.equal(ctx.reads(), before);
+  test("a save that lands while the faces are first read is followed once they come, if its reply lists a face", async (t) => {
+    for (const [said, more] of [[NAMED_3, 1], [{ success: true }, 0]]) {
+      const [pending, answer] = held();
+      const ctx = await open(t, { faces: () => pending });
+      ctx.nextSave(said);
+      await ctx.addPerson("Sam Gray");
+      const before = ctx.reads();
+      answer(THREE());
+      await flush(ctx.window, 10);
+      assert.equal(ctx.reads(), before + more, `a reply of ${JSON.stringify(said)} during the first read`);
+      closeAllApps();
+    }
   });
 
   test("two quick saves, their reads answered out of order: the later answer is the one shown", async (t) => {
@@ -164,19 +204,22 @@ describe("V19: tagging the open photo keeps its faces in place", () => {
     const [second, answerSecond] = held();
     ctx.next(() => first);
     ctx.next(() => second);
+    ctx.nextSave(NAMED_3);
+    ctx.nextSave(NAMED_3);
     await ctx.addPerson("Sam Gray");
     await ctx.addPerson("Alex Roe");
-    answerSecond(reply([named(1), named(7)]));
+    answerSecond(reply([named(1), named(3)]));
     await flush(ctx.window, 6);
     answerFirst(reply([named(1), proposed(2), named(8)]));
     await flush(ctx.window, 6);
-    assert.equal(ctx.ids(), "1,7", "the earlier read's late answer replaced the later one");
+    assert.equal(ctx.ids(), "1,3", "the earlier read's late answer replaced the later one");
   });
 
   test("another photo chosen while the faces are read again: the old photo's answer is drawn nowhere", async (t) => {
     const ctx = await open(t, { faces: (url) => (url.includes("b.jpg") ? reply([named(9)]) : THREE()) });
     const [pending, answer] = held();
     ctx.next(() => pending);
+    ctx.nextSave(NAMED_3);
     await ctx.addPerson("Sam Gray");
     await ctx.select(B);
     assert.equal(ctx.ids(), "9");
@@ -185,9 +228,46 @@ describe("V19: tagging the open photo keeps its faces in place", () => {
     assert.equal(ctx.ids(), "9", "A's late answer was drawn over B's faces");
   });
 
+  test("back to the grid, then the same photo again: its faces are read and say they are loading", async (t) => {
+    const ctx = await open(t);
+    assert.equal(ctx.ids(), "1,2");
+    await ctx.click("folder-view-header");
+    const [pending, answer] = held();
+    ctx.next(() => pending);
+    await ctx.select(A);
+    assert.equal(ctx.shown(), LOADING, "the faces section was hidden, or showed the faces left behind as if read");
+    answer(THREE());
+    await flush(ctx.window, 6);
+    assert.equal(ctx.ids(), "1,2");
+  });
+
+  test("an undo is followed by the open photo's faces only: another photo's face in its reply reads nothing", async (t) => {
+    const ctx = await open(t, { faces: (url) => (url.includes("b.jpg") ? reply([named(9)]) : THREE()), tags: ["Events/Birthday"] });
+    await ctx.select(B);
+    await ctx.click("btn-carry-forward");
+    assert.deepEqual(ctx.server.lastBody("/api/photo/save-metadata").tags, ["Events/Birthday"]);
+    await ctx.select(A);
+    const before = ctx.reads();
+    ctx.nextBulk({ success: true, unnamed_faces: [{ id: 9, name: JANE.name }] });
+    await ctx.click("btn-undo");
+    assert.deepEqual(ctx.server.lastBody("/api/photos/bulk-tags").paths, [B.path], "the undo did not write B");
+    assert.equal(ctx.reads(), before, "B's face in the undo's reply read A's faces again");
+  });
+
+  test("an undo of the open photo whose reply lists its face reads the faces again", async (t) => {
+    const ctx = await open(t, { faces: (url) => (url.includes("b.jpg") ? reply([named(9)]) : THREE()), tags: ["Events/Birthday"] });
+    await ctx.select(B);
+    await ctx.click("btn-carry-forward");
+    const before = ctx.reads();
+    ctx.nextBulk({ success: true, renamed_faces: [{ id: 9, name: JANE.name }] });
+    await ctx.click("btn-undo");
+    assert.equal(ctx.reads(), before + 1, "the undo that named B's face again did not read B's faces");
+  });
+
   test("a read again that fails keeps the cards and says they could not be refreshed", async (t) => {
     const ctx = await open(t);
     ctx.next(() => Promise.reject(new Error("network down")));
+    ctx.nextSave(NAMED_3);
     await ctx.addPerson("Sam Gray");
     assert.equal(ctx.ids(), "1,2", "the cards went with the failed read");
     assert.ok(ctx.shown().includes(NOT_REFRESHED), ctx.shown());
@@ -228,6 +308,7 @@ describe("V19: tagging the open photo keeps its faces in place", () => {
     card.focus();
     const [pending, answer] = held();
     ctx.next(() => pending);
+    ctx.nextSave(NAMED_3);
     await ctx.addPerson("Sam Gray");
     assert.equal(ctx.document.activeElement, card, "the focus left the card while the faces were read");
     answer(THREE());
@@ -238,7 +319,7 @@ describe("V19: tagging the open photo keeps its faces in place", () => {
     assert.ok(now.isConnected, "the focus is on a card no longer shown");
   });
 
-  test("a person saved while a face is being named is followed once the naming ends", async (t) => {
+  test("a save whose reply lists a face, landing while a face is being named, is followed once the naming ends", async (t) => {
     const ctx = await open(t);
     const [matched, answerMatch] = held();
     ctx.server.first("/api/face/match", () => matched);
@@ -246,10 +327,11 @@ describe("V19: tagging the open photo keeps its faces in place", () => {
     ctx.card(2).click();
     await flush(ctx.window, 10);
     const before = ctx.reads();
+    ctx.nextSave(NAMED_3);
     await ctx.addPerson("Sam Gray");
     assert.equal(ctx.reads(), before, "the faces were read while a face was being named");
     answerMatch({ success: true });
     await flush(ctx.window, 10);
-    assert.equal(ctx.reads(), before + 1, "the person saved during the naming was not followed when it ended");
+    assert.equal(ctx.reads(), before + 1, "the face the save named during the naming was not followed when it ended");
   });
 });

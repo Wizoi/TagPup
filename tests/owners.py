@@ -51,6 +51,7 @@ SCENARIOS = {
     "P11": ("people", "The same face gets the same nearest person in Suggest, Identify, the strip, the boxes and Name faces from tags, a person who changed over the years by the faces of the face's own years, an undated face by every year."),
     "P12": ("people", "A face in the background of its picture (under 2% of the shorter side the photo's row stores) is hidden by the strip and offered or named by none of Organize, Suggest, Name faces from tags and cluster-faces; on a photo of no stored size it is in the background nowhere."),
     "P13": ("people", "A clip's people are the people its frames show: seen in one frame or four, offered once by the one matrix, Apply All writes the tag and the clip's photo_people row follows, nothing of a face is stored, frames unreadable is tags only, a cancel keeps nothing."),
+    "V19": ("people", "Somebody tags the open photo while its faces are shown: the strip keeps its cards, never 'Loading', until the new answer replaces them in one step, and is read again only when the save's reply lists a face of it (named by the one-face rule, unnamed by a person taken off, named again), never for a reply that lists none; a face named by its card, its person then taken off by the pill; two quick saves, another photo chosen meanwhile, back to the grid and the same photo again, an undo of another photo, a failed read, the focus on a card, a save during a naming or during the first read."),
     "F1": ("files", "A photo write is journaled, one at a time, read back; a click three times writes once."),
     "F2": ("files", "The indexer writes nothing into a photo that does not decode; nothing is written into a folder the library does not hold."),
     "F3": ("files", "A bulk edit over many photos: dry run first, a crash or a stalled ExifTool part-way, then resume."),
@@ -86,7 +87,6 @@ SCENARIOS = {
     "V14": ("views", "After the switch, the old photo model's vectors and Suggest's words under it are retired (retire-photo-vectors): a dry run that writes nothing, the own key's vectors and words kept byte for byte, one change a key whose undo is refused and the undo of the switch refused with the switch's sentence, a run stopped (or an app started) and run again as the same change, a switch back beside the run ending it, a photo removed meanwhile, and a library whose own model does not hold its photos refused."),
     "V17": ("views", "The owner measures Suggest's neighbour cut for clips on a copy of a library, nothing written to it and no model loaded: a clip matched on its best of five frames against its frame 0 alone, the share of the neighbour slots clips take and the tags offered at each cut, held out by photo and by folder, ids and counts only."),
     "V18": ("views", "Somebody works the main page by the keyboard alone: Tab reaches every control the mouse does, in reading order, nothing unseen (a closed dialog), the file list one stop, an opened dialog holds the focus and gives it back."),
-    "V19": ("views", "Somebody tags the open photo while its faces are shown: the strip keeps its cards, never 'Loading', until the new answer replaces them in one step, and is read again only when the tag can have changed its faces (a person on a photo with a face to be named, a person taken off a face), not for a keyword; two quick saves, another photo chosen meanwhile, a failed read, the focus on a card, a save during a naming."),
     "I1": ("apps", "Switching library in the middle of a folder shows no card of the first."),
     "I2": ("apps", "A write through a server update is waited out and not repeated."),
     "I3": ("apps", "An update by a launch and by an install hands one server over to the next without killing its work."),
@@ -191,6 +191,7 @@ _SCENARIO_FILES = {
     "P11": "test_a_face_gets_one_nearest_person_everywhere",
     "P12": "test_a_face_in_the_background_is_one_answer",
     "P13": "test_a_clips_people_are_the_people_its_frames_show",
+    "V19": "scenario-tagging-keeps-the-faces-in-place",
     "V1": "test_library_views_scenarios test_a_view_of_photos_or_videos_alone scenario-a-view-of-photos-or-videos-alone "
           "test_photos_with_no_tag",
     "V2": "test_library_search",
@@ -209,7 +210,6 @@ _SCENARIO_FILES = {
     "V14": "test_retiring_the_old_photo_models_vectors",
     "V17": "test_measuring_the_neighbour_cut_for_clips",
     "V18": "scenario-tabbing-through-the-main-page",
-    "V19": "scenario-tagging-keeps-the-faces-in-place",
 }
 
 #: owner -> kind -> the unit, migration and guard files, a .mjs without its ".test.mjs".
