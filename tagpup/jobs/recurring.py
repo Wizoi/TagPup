@@ -344,8 +344,8 @@ def refresh_folder(library, folder, runner, sync):
     started on `runner` (Runner.start_job: its own thread, claimed as every run of the `sync` job is, so it starts once
     however often Refresh is pressed); `runner` None, a process that runs no recurring jobs, starts none. A Refreshed."""
     result = sync_folder(library, lambda: sync(library, folder=folder, apply=True))
-    if result is None:
-        return Refreshed(None)
+    if result is None or not result.ok:
+        return Refreshed(result)
     if not ((result.details or {}).get("counts") or {}).get("missing"):
         return Refreshed(result, "not needed")
     if runner is None:

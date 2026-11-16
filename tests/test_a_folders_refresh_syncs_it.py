@@ -166,7 +166,7 @@ class ARefreshOfAFolder(unittest.TestCase):
 
     def test_a_file_moved_to_a_sibling_folder_keeps_its_row_through_the_whole_sync(self):
         """The folder's sync cannot see where the file went; the whole sync pairs the move and the row follows it.
-        Break: a folder's sync removing what it did not find."""
+        Break: the whole sync not started, so the row never follows the move."""
         runner, _held = self.runner()
         client = self.client(runner)
         source = os.path.join(self.regatta, "IMG_0001.jpg")
@@ -198,6 +198,20 @@ class ARefreshOfAFolder(unittest.TestCase):
         self.assertEqual("not needed", reply["whole"], reply)
         self.assertEqual(0, (reply.get("counts") or {}).get("missing", 0), reply)
         self.assertEqual(before, self.rows())
+        self.assertEqual((0, []), (held.wholes, self.sync_runs()))
+
+    def test_a_folder_the_library_does_not_hold_is_refused_and_the_whole_sync_is_not_assessed(self):
+        """A folder outside the library's roots. Break: refresh_folder answering "not needed" for a sync that did not
+        succeed, as if the whole sync had been looked at."""
+        runner, held = self.runner()
+        client = self.client(runner)
+        outside = os.path.join(self.home.root, "Elsewhere")
+        os.makedirs(outside)
+        reply = client.post("/regatta/api/sync", json={"folder": outside, "apply": True})
+        self.assertEqual(400, reply.status_code, reply.get_data(as_text=True))
+        answer = reply.get_json()
+        self.assertEqual(("not synced", None, None, None),
+                         (answer["folder"], answer["whole"], answer["whole_run_id"], answer["whole_why"]), answer)
         self.assertEqual((0, []), (held.wholes, self.sync_runs()))
 
     def test_a_server_with_no_runner_syncs_the_folder_and_says_so_as_run_now_does(self):
