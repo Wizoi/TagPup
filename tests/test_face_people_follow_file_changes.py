@@ -199,6 +199,27 @@ class APersonPutBackNamesNoFaceByItself(Case):
         self.assertIn("changed since", undone.details["faces_problem"])
 
 
+class APersonPutOnAPhotoSaysTheFaceItNamed(Case):
+    """The one-face rule (#788): a person put on a photo whose one face is still to be named names that face, and the reply of
+    the save says which (`named_faces`, [{"id", "name"}]), as it says the faces a removal unnamed. The page reads the photo's
+    faces again only when a reply lists one (web/tagpup/photo.js facesFollowReply): a keyword's lists none.
+
+    Break that fails it: tagpup/store/photos.py follow_fields drops face_tags.name_photos' return."""
+
+    def test_the_pill_and_the_undo_say_the_face_the_person_named_and_a_keyword_says_none(self):
+        photo = self.held("one_001.jpg", ["Regatta"])
+        face = self.face(photo)
+        reply = self.save(photo, ["Regatta", "Trips/Lake"])
+        self.assertNotIn("named_faces", reply, "a keyword named no face")
+        reply = self.save(photo, ["Regatta", "Trips/Lake", PEOPLE + WREN])     # Add person on the open photo
+        self.assertEqual(WREN, self.row(face)[0])
+        self.assertEqual([{"id": face, "name": WREN}], reply["named_faces"])
+        other = self.held("one_002.jpg", ["Regatta"])
+        on_other = self.face(other)
+        reply = self.bulk_tags([other], add=[PEOPLE + ODA])                    # web/tagpup/undo.js puts a person back so
+        self.assertEqual([{"id": on_other, "name": ODA}], reply["named_faces"])
+
+
 class TheQueryIsFast(Case):
     def test_a_photos_named_faces_are_not_found_through_the_index_of_every_named_face(self):
         photo = self.held("plan.jpg")

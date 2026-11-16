@@ -430,7 +430,7 @@ def name_photos(conn, photo_ids, references=None, vocabulary=None, batch=None):
     """Name the faces of `photo_ids` that their keyword people name (`plan`), in the caller's
     write: the people the plan read are read in the same transaction as the write, begun here
     when the caller has none open, so a person renamed by another process meanwhile is not
-    written under the old spelling. Returns the ids of the faces named -- those the write
+    written under the old spelling. Returns the faces named, [{"id", "name"}] -- those the write
     changed, a face named or ruled out meanwhile not counted. `vocabulary` is the tree's people when the
     caller has read them (a batch of photos reads the tree once, #838); `batch` the run's derived.Batch, which
     keeps each person's decided faces for the run (#841). The caller commits."""
@@ -446,7 +446,8 @@ def name_photos(conn, photo_ids, references=None, vocabulary=None, batch=None):
     done = faces.name_unnamed(conn, {choice.face_id: choice.person.id for choice in found.named}, vocabulary)
     if cache is not None and done:
         _remember(conn, cache, found.named, done)
-    return done
+    done = set(done)
+    return [{"id": choice.face_id, "name": choice.name} for choice in found.named if choice.face_id in done]
 
 
 def name_paths(conn, photo_paths, references=None):
