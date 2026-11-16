@@ -98,6 +98,60 @@ class Chunks(T.Bulk):
         self.assertIn("before anything was written", done["errors"][0]["why"])
 
 
+class ASaveBetweenTwoChunks(T.Bulk):
+    """The owner saves a photo of a 50-photo tag edit while it runs: the save is let in between two chunks. A photo the
+    edit has planned and not yet written is refused, saying why, and every photo of the edit takes its tag; written ahead
+    of the edit, the file held neither what the edit read nor what it was to leave, and the edit's tag was lost on it as a
+    conflict (#3057). The folder view's edit lets no writer in (#3058): the save meets the file once the edit is done,
+    holding the edit's tag, and the page is told it changed on disk."""
+    PHOTOS = 50
+
+    def save_between_chunks(self, bulk):
+        """`bulk(paths)` run with a save of the 41st photo asked while its 11th file is written: (what the bulk
+        answered, the save's reply, how many files the bulk had written when the save read its file, the paths)."""
+        photos, seen = [self.path(photo_id) for photo_id in self.ids], {}
+
+        def hook(_path, n):
+            if n == 10:
+                def save():
+                    seen["save thread"] = threading.current_thread()
+                    seen["save"] = self.app.test_client().post("/library/api/photo/save-metadata", json={
+                        "path": photos[40], "title": "", "tags": ["Trips/Lakes"], "base": {"tags": [], "title": ""}})
+                seen["thread"] = threading.Thread(target=save)
+                seen["thread"].start()
+                wait_until(lambda: file_changes._waiting == 1, "the save waits for the lock")
+
+        def on_read(_path, _n):
+            if threading.current_thread() is seen.get("save thread"):
+                seen.setdefault("read at", self.files.writes)
+        self.files.on_write, self.files.on_read = hook, on_read
+        answered = bulk(photos)
+        seen["thread"].join(30)
+        return answered, seen["save"], seen.get("read at"), photos
+
+    def journal(self):
+        return self.vl.rows("SELECT c.operation, f.state, COUNT(*) FROM change_files f JOIN changes c "
+                            "ON c.id = f.change_id GROUP BY 1, 2 ORDER BY 1, 2")
+
+    def test_the_library_views_edit_refuses_a_save_of_a_photo_it_has_still_to_write_and_writes_every_photo(self):
+        done, save, read_at, photos = self.save_between_chunks(lambda _photos: self.tags_edit(add=["Trips/Coast"]))
+        self.assertEqual(25, read_at, "the save was let in after the first chunk, not after the whole edit")
+        self.assertEqual((self.PHOTOS, 0, []), (done["changed"], done["error_count"], done["errors"]))
+        self.assertEqual([], [n for n, path in enumerate(photos) if "Trips/Coast" not in self.files.tags_of(path)])
+        self.assertFalse(save.get_json().get("success"))
+        self.assertIn(file_changes.UNSETTLED, save.get_json()["error"])
+        self.assertNotIn("Trips/Lakes", self.files.tags_of(photos[40]), "the refused save wrote nothing")
+        self.assertEqual([("bulk tags", "done", self.PHOTOS)], self.journal())
+        self.assertEqual({}, file_changes._unsettled, "the photos are free once the edit is done")
+
+    def test_the_folder_views_edit_lets_no_save_in_and_the_save_meets_the_file_it_left(self):
+        reply, save, read_at, photos = self.save_between_chunks(lambda photos: self.client.post(
+            "/library/api/photos/bulk-tags", json={"paths": photos, "add_tags": ["Trips/Coast"], "remove_tags": []}))
+        self.assertEqual((200, 409, True), (reply.status_code, save.status_code, save.get_json().get("changed_on_disk")))
+        self.assertEqual(self.PHOTOS, read_at, "the save waited for the whole edit")
+        self.assertEqual([], [n for n, path in enumerate(photos) if "Trips/Coast" not in self.files.tags_of(path)])
+        self.assertEqual([("add to all selected", "done", self.PHOTOS)], self.journal())
+
 class Line(T.Bulk):
     def test_a_second_batch_waits_its_turn_then_runs_and_the_drain_names_them(self):
         gate = T.Gate(1)

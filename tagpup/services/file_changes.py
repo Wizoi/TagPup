@@ -19,7 +19,9 @@ per file. dpkg's per-item states, and its recovery at start, are the model here:
    files written are read back, in one read a chunk (batches.CHUNK), and a file that does not
    hold quite what was written -- IPTC cuts a keyword at 64 bytes -- is recorded, in the
    journal and its row, as it holds it (_read_back). The change is `applied` once every
-   file is done or a conflict.
+   file is done or a conflict. A writer that waits takes the lock between two chunks
+   (let_others_in); a file the change has planned and not yet written is refused to it, as
+   its error (unsettled), or the change would find it changed and its edit be lost on it.
 3. **Settle**, at start (settle_once): a file a crash left `writing` is settled by what it
    holds -- what the plan read: written again; what it was to hold: marked done and its
    row recorded; neither: a conflict. A settle of more than batches.CHUNK files is a batch, carried out a chunk at a
@@ -586,7 +588,11 @@ def _write_fields(et, library, operation, exiftool_path, photo_paths, read, plan
 
     if unpooled is not None:
         unpooled.watch(change_id)
+    mine = (library.key, change_id)
     try:
+        # Its files are refused to a writer let in between two chunks (unsettled) until their chunk is carried out: written
+        # ahead of it, a file would hold neither what the change read nor what it was to leave, its edit lost as a conflict.
+        _unsettled.update((paths.key(row.path), mine) for row in rows)
         _reached("plan committed")
         if on_planned is not None:
             on_planned(change_id)
@@ -594,6 +600,7 @@ def _write_fields(et, library, operation, exiftool_path, photo_paths, read, plan
         for n, row in enumerate(rows):
             if n and n % batches.CHUNK == 0:
                 read_back()
+                _free(mine, rows[n - batches.CHUNK:n])
             if n and n % batches.CHUNK == 0 and on_chunk is not None:
                 on_chunk(n, len(rows))
             if n and n % batches.CHUNK == 0 and not between_chunks(batch):
@@ -679,6 +686,8 @@ def _write_fields(et, library, operation, exiftool_path, photo_paths, read, plan
         file_journal.release(library.path, change_id)
         raise
     finally:
+        # Done, stopped, withdrawn, or cut off by an error: what a cut-off change left planned is the next settle's.
+        _free(mine, rows)
         if unpooled is not None:
             unpooled.release()
     logger.info("%s: change %d, %s, wrote %d file(s)", library.path, change_id, operation, result.changed)
@@ -1580,22 +1589,30 @@ def _finished(library, change, exiftool_path):
 #: done for the next start, not taken up again by the settle every write begins with.
 _put_off = set()
 
-#: The files a settle of this process has still to write, {paths.key(path): (library key, change id)}: a chunk's taken
-#: out once it is settled, a stopped settle's kept until the next start (_put_off). A writer let in between two chunks
-#: (let_others_in) refuses them (unsettled), in any library holding the file: written ahead of the settle, the settle
-#: would find the file holding neither what the cut-off change read nor what it was to leave, and mark it a conflict, the
-#: cut-off change's edit lost on it. Read and changed only under the lock of changes of photo files.
+#: The files a change of this process has still to write, {paths.key(path): (library key, change id)}: a running write's
+#: planned files (_write_fields), a settle's (_settle_files, _settle_on_a_thread); a chunk's taken out once it is carried
+#: out, the rest when the write ends, a stopped settle's kept until the next start (_put_off). A writer let in between two
+#: chunks (let_others_in) refuses them (unsettled), in any library holding the file: written ahead of the change, the
+#: change would find the file holding neither what it read nor what it was to leave, and mark it a conflict, its edit
+#: lost on it. Read and changed only under the lock of changes of photo files.
 _unsettled = {}
 
 #: Why a write leaves a photo of _unsettled alone; no change id, which may be another library's.
-UNSETTLED = ("its file is still to be written by an earlier change of the same files that was cut short: it is being "
+UNSETTLED = ("its file is still to be written by an earlier change of the same files, under way or cut short: it is being "
              "finished now, or, stopped, the next time TagPup starts; nothing was written to it, try again once it is "
              "finished")
 
 
 def unsettled(path):
-    """The sentence a write gives for a photo whose file a settle of this process has still to write (_unsettled), or None."""
+    """The sentence a write gives for a photo whose file a change of this process has still to write (_unsettled), or None."""
     return UNSETTLED if paths.key(path) in _unsettled else None
+
+
+def _free(mine, rows):
+    """Take the files of `rows` (journal rows) that `mine`, (library key, change id), holds in _unsettled out of it."""
+    for row in rows:
+        if _unsettled.get(paths.key(row.path)) == mine:
+            del _unsettled[paths.key(row.path)]
 
 
 class _NoTurn(Exception):
@@ -1722,14 +1739,10 @@ def _settle_files(library, change, exiftool_path, changed, stop):
                         left = left or outcome == "writing"
                     except _Stalled:
                         return True
-                for row in chunk:
-                    if _unsettled.get(paths.key(row.path)) == mine:
-                        del _unsettled[paths.key(row.path)]
+                _free(mine, chunk)
         finally:
             if not put_off:
-                for row in changed:
-                    if _unsettled.get(paths.key(row.path)) == mine:
-                        del _unsettled[paths.key(row.path)]
+                _free(mine, changed)
             _read_back(et, library, wrote)
     return left
 
