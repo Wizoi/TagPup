@@ -104,6 +104,9 @@ UNDO_CHECKS = {
     "rename tag": None,
     "remove tag": None,
     tagging.CLEAR_DUPLICATES: None,
+    # The one-off dating undated photos and clips by their folders (scripts/date_undated_by_folder.py): a save of their
+    # Date Taken, undone as Save's is.
+    "date undated photos by their folders": None,
     "rename after caption": None,
     "smart rename": None,
     "smart rename: original names": None,
