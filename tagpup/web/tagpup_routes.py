@@ -1215,7 +1215,7 @@ def photos_bulk_tags():
                                                  state.exiftool(library), group=body.get("group"))
             if result.refused:
                 return _refused_after_writing(library, result)
-            records_written(library, result)
+            stamps = records_written(library, result)
     except responses.ANSWERED as why:
         # Conflict: too many batches wait ahead (tagpup.services.batches); Refused: more photos than a write may name
         # (file_changes.too_many), or cancelled before its turn. Nothing was written.
@@ -1229,7 +1229,7 @@ def photos_bulk_tags():
         logger.error("Error in bulk tags write: %s", result.message())
         return responses.error(500, result.message(), written=_written_tags(result))
     return jsonify({"success": True, "written": _written_tags(result), **_skipped_photos(result),
-                    "stamps": {path: _stamp_reply(photo_actions.file_stamp(path)) for path in result.details["written"]},
+                    "stamps": {path: _stamp_reply(stamp) for path, stamp in stamps.items()},
                     **_where(result),
                     **_faces_unnamed(result)})
 
@@ -1289,18 +1289,30 @@ def _refused_after_writing(library, result):
     return responses.refused(result)
 
 
+def _stamps_after(result):
+    """{path: (mtime, size), or None} of each photo a bulk write wrote or found holding its tags (`written` in its
+    details): the stamp the write recorded its row with, taken after the write (file_changes.write_fields' `stamps`; a
+    None there was looked at and gave none, and is not looked at again), else the file's now, looked at once (a file of
+    a folder the library does not hold, one that held the tags already, a write that says no stamps)."""
+    recorded = result.details.get("stamps") or {}
+    return {path: recorded[paths.key(path)] if paths.key(path) in recorded else photo_actions.file_stamp(path)
+            for path in result.details["written"]}
+
+
 def records_written(library, result):
     """The page's records of the photos a bulk write wrote (`written` in its details).
     The photos written before any failure are written; the page's copy of them has to
-    say so either way."""
+    say so either way. Their stamps after the write (_stamps_after), for the reply."""
     cache = folders.of(library)
+    stamps = _stamps_after(result)
     for path, (tags, flat, hierarchical) in result.details["written"].items():
-        stamp = photo_actions.file_stamp(path)
+        stamp = stamps[path]
         for _held, record in cache.entries_for(path):
             photo_actions.record_written(library, record, path, tags, flat, hierarchical)
             if stamp:
                 # The cached scan carries the file's stamp now, or the next save from it is refused.
                 record["mtime"], record["size"] = stamp
+    return stamps
 
 
 # ---- Autocomplete -----------------------------------------------------------------
