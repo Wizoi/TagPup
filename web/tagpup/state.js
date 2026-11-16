@@ -138,6 +138,8 @@ export const state = {
     // in the panel of face `typedFor`.
     faceBoxes: {
         path: null, faces: [], size: null, shown: false, open: null, matches: {}, busy: false,
+        // The open photo's tags when its faces were read: a change of them is measured against these (photo.js facesFollowTags).
+        readWith: [],
         // The namings under way: the faces' ids, and the one chain of their writes (face-boxes.js nameFaceAs).
         naming: [], waiting: [], writes: null,
         note: '', typed: '', typedFor: null,

@@ -86,6 +86,7 @@ SCENARIOS = {
     "V14": ("views", "After the switch, the old photo model's vectors and Suggest's words under it are retired (retire-photo-vectors): a dry run that writes nothing, the own key's vectors and words kept byte for byte, one change a key whose undo is refused and the undo of the switch refused with the switch's sentence, a run stopped (or an app started) and run again as the same change, a switch back beside the run ending it, a photo removed meanwhile, and a library whose own model does not hold its photos refused."),
     "V17": ("views", "The owner measures Suggest's neighbour cut for clips on a copy of a library, nothing written to it and no model loaded: a clip matched on its best of five frames against its frame 0 alone, the share of the neighbour slots clips take and the tags offered at each cut, held out by photo and by folder, ids and counts only."),
     "V18": ("views", "Somebody works the main page by the keyboard alone: Tab reaches every control the mouse does, in reading order, nothing unseen (a closed dialog), the file list one stop, an opened dialog holds the focus and gives it back."),
+    "V19": ("views", "Somebody tags the open photo while its faces are shown: the strip keeps its cards, never 'Loading', until the new answer replaces them in one step, and is read again only when the tag can have changed its faces (a person on a photo with a face to be named, a person taken off a face), not for a keyword; two quick saves, another photo chosen meanwhile, a failed read, the focus on a card, a save during a naming."),
     "I1": ("apps", "Switching library in the middle of a folder shows no card of the first."),
     "I2": ("apps", "A write through a server update is waited out and not repeated."),
     "I3": ("apps", "An update by a launch and by an install hands one server over to the next without killing its work."),
@@ -208,6 +209,7 @@ _SCENARIO_FILES = {
     "V14": "test_retiring_the_old_photo_models_vectors",
     "V17": "test_measuring_the_neighbour_cut_for_clips",
     "V18": "scenario-tabbing-through-the-main-page",
+    "V19": "scenario-tagging-keeps-the-faces-in-place",
 }
 
 #: owner -> kind -> the unit, migration and guard files, a .mjs without its ".test.mjs".
@@ -233,7 +235,7 @@ _FILES = {
     },
     "people": {
         "unit": (
-            "face-strip faces-say-they-are-loading grid-build-progress identify-faces identify-faces-cluster-buttons identify-faces-counts "
+            "face-strip grid-build-progress identify-faces identify-faces-cluster-buttons identify-faces-counts "
             "identify-faces-in-place-removal library-sort-and-organize-header name-faces organize-faces person-directory "
             "person-faces person-filing-table person-names person-tag-form review-dialog review-from-activity "
             "selection-suggests-who-the-faces-look-like show-matched-toggle tag-editor-in-place tag-order tag-view tag-vocabulary tagpup-people-by-id "
