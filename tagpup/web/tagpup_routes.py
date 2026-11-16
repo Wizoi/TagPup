@@ -934,8 +934,9 @@ def _clip_converted(library, source, how):
         return {"success": False, "error": how.message(), **responses.STATUS[how.refused_kind][1], **sizes}
     new_path = how.details["path"]
     renamed = not paths.same(source, new_path)
-    _followed_rename(library, [(source, new_path, renamed)])
-    reply = {"success": True, "new_path": new_path, "renamed": renamed, **sizes, **_stamp_reply(new_path)}
+    left = photo_actions.file_stamp(new_path)
+    _followed_rename(library, [(source, new_path, renamed)], stamps={paths.key(new_path): left})
+    reply = {"success": True, "new_path": new_path, "renamed": renamed, **sizes, **_stamp_reply(left)}
     if how.details.get("original_kept"):
         reply["original_kept"] = how.details["original_kept"]
     return reply
@@ -1063,13 +1064,13 @@ def _base_of(sent):
     return {"tags": sent.get("tags", []), "title": sent.get("title", "")}, None
 
 
-def _stamp_reply(path):
-    """{"mtime", "size"} of the file at `path` now, for the page's record: the stamp its next write names."""
-    stamp = photo_actions.file_stamp(path)
+def _stamp_reply(stamp):
+    """{"mtime", "size"} of a file's `stamp`, (mtime, size) as it was just looked at (None: none, said as nothing), for
+    the page's record: the stamp its next write names."""
     return {"mtime": stamp[0], "size": stamp[1]} if stamp else {}
 
 
-def _followed_rename(library, moves):
+def _followed_rename(library, moves, stamps=None):
     """What the server keeps of photos follows a write of them that may have renamed them: `moves`, [(old path, new
     path, renamed)], `renamed` as the write says (a Smart Rename of one photo or of a folder's, a file that rename moved
     aside, a save renaming a photo after its title, a clip's conversion to its MP4): the one follow-up of them all
@@ -1080,8 +1081,9 @@ def _followed_rename(library, moves):
     Renamed or not, each record takes the file's stamp now: the write wrote the file, and the next save from the record
     names that stamp (one look at each file a map holds). Memory only, nothing of the library's: a crash loses it with
     the maps, which are scanned again. `library` is the one the write was made in, handed on: the conversion's
-    follow-up runs on its own thread, after the request that asked for it was answered. The records, in the order of
-    `moves`, for a write that tells them more of what it wrote."""
+    follow-up runs on its own thread, after the request that asked for it was answered. `stamps`, {paths.key(new
+    path): (mtime, size) or None}, the files the caller looked at already since the write, not looked at again (None:
+    there was none to see). The records, in the order of `moves`, for a write that tells them more of what it wrote."""
     moves = list(moves)
     renames = {old: new for old, new, renamed in moves if renamed}
     if renames:
@@ -1095,7 +1097,9 @@ def _followed_rename(library, moves):
                 record["path"] = new
                 record["filename"] = os.path.basename(new)
             records.append(record)
-        written_stamp = photo_actions.file_stamp(new) if entries else None
+        seen = stamps or {}
+        written_stamp = (seen[paths.key(new)] if paths.key(new) in seen else photo_actions.file_stamp(new)) if entries \
+            else None
         for _held, record in (entries if written_stamp else ()):
             record["mtime"], record["size"] = written_stamp
     # The keys move last, under the cache's lock, all of them at once (#2907).
@@ -1133,12 +1137,13 @@ def photo_smart_rename():
         new_path = result.details["new_path"]
         renamed = bool(result.details["renamed"])
         # Keeping the name it had wrote the file too (photos.preserve_names): the records take its stamp all the same.
-        _followed_rename(library, [(photo_path, new_path, renamed)])
+        left = photo_actions.file_stamp(new_path)
+        _followed_rename(library, [(photo_path, new_path, renamed)], stamps={paths.key(new_path): left})
     except Exception as e:
         logger.error("Error smart renaming %s: %s", photo_path, e, exc_info=True)
         return responses.error(500, str(e))
     return jsonify({"success": True, "new_path": new_path, "renamed": renamed,
-                    "updated_paths": result.details["updated_paths"], **_where(result), **_stamp_reply(new_path)})
+                    "updated_paths": result.details["updated_paths"], **_where(result), **_stamp_reply(left)})
 
 
 @routes.post("/api/photo/save-metadata")
@@ -1170,7 +1175,9 @@ def photo_save_metadata():
             logger.error("Error saving metadata for %s: %s", photo_path, result.message())
             return responses.error(500, result.message())
         new_path, renamed, tags = result.details["new_path"], result.details["renamed"], result.details["tags"]
-        for record in _followed_rename(library, [(photo_path, new_path, renamed)]):
+        # The stamp the write recorded, taken after it; a rename, or a file not written, is looked at once.
+        left = result.details.get("stamp") or photo_actions.file_stamp(new_path)
+        for record in _followed_rename(library, [(photo_path, new_path, renamed)], stamps={paths.key(new_path): left}):
             raw_meta = photo_actions.record_written(
                 library, record, new_path, tags, result.details["flat"], result.details["hierarchical"],
                 result.details["dates"])
@@ -1180,7 +1187,7 @@ def photo_save_metadata():
     except Exception as e:
         logger.error("Error saving metadata for %s: %s", photo_path, e)
         return responses.error(500, str(e))
-    reply = {"success": True, "new_path": new_path, **_where(result), **_stamp_reply(new_path),
+    reply = {"success": True, "new_path": new_path, **_where(result), **_stamp_reply(left),
              "base": result.details.get("base"), **_faces_unnamed(result), **_pictures_refused(result)}
     if result.details["taken"]:
         reply["taken"] = result.details["taken"]   # the date as the library spells it: the page shows this, spells nothing
@@ -1223,7 +1230,8 @@ def photos_bulk_tags():
         logger.error("Error in bulk tags write: %s", result.message())
         return responses.error(500, result.message(), written=_written_tags(result))
     return jsonify({"success": True, "written": _written_tags(result), **_skipped_photos(result),
-                    "stamps": {path: _stamp_reply(path) for path in result.details["written"]}, **_where(result),
+                    "stamps": {path: _stamp_reply(photo_actions.file_stamp(path)) for path in result.details["written"]},
+                    **_where(result),
                     **_faces_unnamed(result)})
 
 
