@@ -14,7 +14,7 @@ Decision (owner, 2026-11-16): Refresh syncs the folder; if that finds a file gon
 
 Sentences (the whole sync may not remove: a root not confirmed, a share dropping mid-walk, a possible copy held back):
 - "Checked this folder: 2 new, 1 changed. 1 file is gone; a full check was started and removes it if it is gone from the whole library."
-- "...a full check is already running." (`whole: "running"`) / "The whole library is being checked now; this folder is part of it." (`folder: "running"`, nothing synced)
+- "...a full check is already running." (`whole: "running"`) / "Another check of this library is under way; press Refresh again when it ends." (`folder: "running"`, nothing synced: a run of the `sync` job or another folder's sync holds the walk)
 - naming faces writing: the 409 every guarded write gives, with its sentence (no `waited` field).
 - nothing found: "This folder is in step."
 

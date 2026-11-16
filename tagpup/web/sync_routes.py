@@ -7,7 +7,9 @@ library the URL names (tagpup.runtime.Runtime.sync): a dry run unless the body s
 says what it found and would write; applied, the rows are written as one change of the
 journal, the new files' folders go on this process's index queue (TagTuner's indexing
 panel shows them), and the run is recorded. After an apply that changed rows, the folder
-scans TagPup keeps are let go, as after any rewrite of photos.
+scans TagPup keeps are let go, as after any rewrite of photos. An applied sync of a
+`folder` is a folder's Refresh (tagpup.jobs.recurring.refresh_folder): it takes the
+library's walk, and a file it finds gone starts the whole sync on the recurring runner.
 
 The folders to review -- under the library's roots, holding photos and no indexed photo,
 not ignored -- are GET /api/sync/review, with their paths: the page that asks lists them,
@@ -20,6 +22,7 @@ import logging
 from flask import Blueprint, jsonify, request
 
 from tagpup import runtime as runtimes
+from tagpup.jobs import recurring
 from tagpup.services import settings as settings_service
 from tagpup.services import sync as sync_service
 from tagpup.web import activity_routes, responses, state
@@ -46,11 +49,21 @@ def sync_library():
     apply = body.get("apply") is True
     # Checked by the service (tagpup.core.validation), as the index routes' folder is.
     folder = body.get("folder") or None
+    refreshed = None
     try:
-        result = state.runtime().sync(library, folder=folder, apply=apply)
+        if folder is not None and apply:
+            refreshed = recurring.refresh_folder(library, folder, activity_routes.recurring_runner(),
+                                                 state.runtime().sync)
+            result = refreshed.result
+        else:
+            result = state.runtime().sync(library, folder=folder, apply=apply)
     except Exception as e:
         logger.error("Could not sync %s: %s", library.name, e, exc_info=True)
         return responses.error(500, str(e))
+    if refreshed is not None and result is None:
+        # The library's walk is another's in this process: nothing synced, nothing asked.
+        return jsonify({"success": False, "dry_run": False, "folder": "running", "whole": None, "whole_run_id": None,
+                        "whole_why": None})
     answer = {"success": result.ok, "dry_run": not apply, "refused": result.refused,
               "attempted": result.attempted, "changed": result.changed,
               "changed_by_kind": result.details.get("changed", {}), "queued": result.details.get("queued", 0),
@@ -58,6 +71,9 @@ def sync_library():
               "counts": result.details["counts"], "behind": result.details.get("behind", 0),
               "skipped": len(result.skipped), "warnings": result.details.get("warnings", []),
               "errors": len(result.errors)}
+    if refreshed is not None:
+        answer.update(folder="synced" if result.ok else "not synced", whole=refreshed.whole,
+                      whole_run_id=refreshed.run_id, whole_why=refreshed.why)
     if not result.ok:
         answer["error"] = result.message()
     # Refused, nothing was written: 400, as every route answers a refusal.

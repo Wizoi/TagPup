@@ -33,7 +33,9 @@ The folder watcher's sync of a whole library is a run of the `sync` job too (syn
 and ended as this runner's are (run_claimed): one walk of a library at a time, whichever of the two
 wants it (#2102), and a whole sync by either counts as the daily one. Its sync of one folder (sync_folder) records no
 run; it and a run of the `sync` job take the library's walk in this process (walk), so neither starts while the other
-walks: the one that asks second is told "running" and asked again later (#2755).
+walks: the one that asks second is told "running" and asked again later (#2755). A folder's Refresh in the pages
+(refresh_folder) syncs that folder the same way, and starts a run of the `sync` job on this runner when it finds a file
+gone: a sync of one folder never removes a row (DECISIONS 2026-10-28), the whole sync does.
 """
 import contextlib
 import logging
@@ -253,6 +255,22 @@ def overview(library, registry=JOBS, now=None, limit=10):
 
 # ---- The runner ----------------------------------------------------------------------------
 
+#: Why a run of a job was not started, as the pages say it (said): a claim's `why`, and "no runner" (a process that runs
+#: no recurring jobs) and "not yet" (Runner.start_job answered None). Read by Run now (POST /api/activity/jobs/run) and by
+#: the whole sync a folder's Refresh asks for (refresh_folder, POST /api/sync): one wording for both.
+NOT_STARTED = {"running": "a run of it is under way already",
+               "behind": "the library has not had this version's migrations; open it in an app first",
+               "no library": "there is no library",
+               "no runner": "This server runs no recurring jobs (one a test started, or TAGPUP_NO_JOBS is set)",
+               "not yet": "it has not started yet; its run shows here once it does"}
+
+
+def said(why):
+    """Why a run was not started (an Outcome's `why`, or a key of NOT_STARTED), as the pages say it; a `why` it does not
+    name, as it is."""
+    return NOT_STARTED.get(why, why)
+
+
 @dataclass
 class Outcome:
     """What became of one job for one library: `result` when it ran, else `why` not
@@ -299,6 +317,45 @@ def sync_folder(library, call):
     records no run: a folder's sync is recorded by the sync itself, when worth it (tagpup.services.sync.worth_recording)."""
     with walk(library) as turn:
         return call() if turn else None
+
+
+@dataclass
+class Refreshed:
+    """What a folder's Refresh did (refresh_folder). `result`: the folder's sync; None when it was not run, the library's
+    walk another's in this process (a run of the `sync` job, the watcher's sync of a folder, another Refresh). `whole`:
+    what became of the whole sync it asks for when the folder's found a file gone -- None (the folder was not synced),
+    "not needed" (none gone), "started" (`run_id`, its run), "no runner", "not yet", or why its run was refused
+    ("running": a run of it holds the claim, in this process or another)."""
+    result: Optional[Result]
+    whole: Optional[str] = None
+    run_id: Optional[int] = None
+
+    @property
+    def why(self):
+        """Why the whole sync was not started, as the pages say it (said); None when it started or was not needed."""
+        return None if self.whole in (None, "started", "not needed") else said(self.whole)
+
+
+def refresh_folder(library, folder, runner, sync):
+    """A folder's Refresh (POST /api/sync with a `folder`, applied): `sync(library, folder=folder, apply=True)` -- the
+    process's Runtime.sync -- through the library's walk (sync_folder), as the watcher syncs a folder: not run while a
+    run of the `sync` job walks the library. A sync of one folder never removes a row (DECISIONS 2026-10-28): when it
+    found a file gone (`counts.missing`), the whole sync, which removes it if it is gone from the whole library, is
+    started on `runner` (Runner.start_job: its own thread, claimed as every run of the `sync` job is, so it starts once
+    however often Refresh is pressed); `runner` None, a process that runs no recurring jobs, starts none. A Refreshed."""
+    result = sync_folder(library, lambda: sync(library, folder=folder, apply=True))
+    if result is None or not result.ok:
+        return Refreshed(result)
+    if not ((result.details or {}).get("counts") or {}).get("missing"):
+        return Refreshed(result, "not needed")
+    if runner is None:
+        return Refreshed(result, "no runner")
+    outcome = runner.start_job(SYNC, library)
+    if outcome is None:
+        return Refreshed(result, "not yet")
+    if outcome.ran:
+        return Refreshed(result, "started", outcome.run_id)
+    return Refreshed(result, outcome.why)
 
 
 def run_claimed(job, where, run_for, call, clock=time.time, due=None, started=None):
