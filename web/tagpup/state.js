@@ -213,4 +213,8 @@ export const state = {
     // `in_memory`): kept in the server's memory, not the library's. Once the library holds the folder, or
     // the server has let them go, Suggest is run again (suggestions.js).
     suggestionsInMemory: null,
+
+    // The tag removals asked for and not answered yet, of every photo (`open`), and whether one failed (`failed`): the status line
+    // says 'Deleting tag...' until the last is answered, then 'Ready', unless one failed (tags-off.js).
+    removals: { open: 0, failed: false },
 };

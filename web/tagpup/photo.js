@@ -26,7 +26,8 @@ import { forgetCachedPhoto, saveToLocalStorageCache } from './cache.js';
 import {
     formatFriendlyDateSingle, getFolderDateStats, parseExifDateToLocalDate, takenOf
 } from './format.js';
-import { namesAPerson, normalizeTag, updateTagsDatalist } from './tags.js';
+import { namesAPerson, normalizeTag } from './tags.js';
+import { goingOffOf, removePhotoTags } from './tags-off.js';
 import {
     leavePhotoThen, postPhotoMetadata, queueWriteOf, redrawIfShowing, saveDetailEdits,
     updateSaveButton
@@ -602,11 +603,18 @@ export function wireZoom() {
  * list is not touched, so a save sends the tags in the order the file holds them.
  */
 export function renderTags(tags) {
+    // A pill with the focus keeps it through a redraw (a write's reply), by its tag: it was lost to the page.
+    const focused = document.activeElement;
+    const keep = focused && focused.classList && focused.classList.contains('tag-pill')
+        && (detailPeople.contains(focused) || detailTags.contains(focused)) ? focused.textContent : null;
     detailPeople.innerHTML = '';
     detailTags.innerHTML = '';
-    
+
     const photo = state.folderPhotos.find(p => p.path === state.activePhotoPath);
     const photoPeople = (photo && photo.people) ? photo.people : [];
+    // A tag taken off and not written yet is not drawn, whatever a write queued before it answers meanwhile.
+    const marks = goingOffOf(photo);
+    if (marks && tags) tags = tags.filter(tag => !marks.has(normalizeTag(tag)));
     
     const peopleTags = [];
     const nonPeopleTags = [];
@@ -633,9 +641,7 @@ export function renderTags(tags) {
             pill.style.cursor = 'pointer';
             pill.title = 'Click to remove person';
             pill.textContent = tag;
-            pill.addEventListener('click', () => {
-                deletePhotoTag(tag);
-            });
+            pill.addEventListener('click', () => takeOffPill(pill, tag, inputAddPerson));
             detailPeople.appendChild(pressable(pill));
         });
     }
@@ -651,12 +657,30 @@ export function renderTags(tags) {
             pill.style.cursor = 'pointer';
             pill.title = 'Click to remove tag';
             pill.textContent = tag;
-            pill.addEventListener('click', () => {
-                deletePhotoTag(tag);
-            });
+            pill.addEventListener('click', () => takeOffPill(pill, tag, inputAddTag));
             detailTags.appendChild(pressable(pill));
         });
     }
+    if (keep !== null) {
+        const again = [...detailPeople.children, ...detailTags.children].find(each => each.textContent === keep
+            && each.classList.contains('tag-pill'));
+        if (again) again.focus({ preventScroll: true });
+    }
+}
+
+/**
+ * A pill clicked or pressed: its tag taken off. The focus, when it was on the pill, goes to the next pill of its list (the one
+ * before when it was the last), or to the list's add box when none is left: not to the page, where Tab starts again.
+ */
+function takeOffPill(pill, tag, addBox) {
+    const list = pill.parentElement;
+    const pills = Array.from(list.querySelectorAll('.tag-pill'));
+    const at = pills.indexOf(pill);
+    const next = document.activeElement === pill ? (pills[at + 1] || pills[at - 1] || null) : undefined;
+    deletePhotoTag(tag);
+    if (next === undefined) return;
+    const again = next && Array.from(list.querySelectorAll('.tag-pill')).find(each => each.textContent === next.textContent);
+    (again || addBox).focus({ preventScroll: true });
 }
 
 // Single Photo Actions
@@ -707,43 +731,6 @@ export function facesFollowReply(path, replies) {
     if (!listed.some(id => held.has(id))) return;
     if (box.busy) box.owed = true;
     else renderPhotoFaces(path);
-}
-
-/**
- * Take tags off a photo, through the page's own save of its keywords (its queue, its stamp, its refusal of a file changed on
- * disk). `tagsToRemove` as the photo spells them. Resolves true when they are off, or were not there.
- */
-export function removePhotoTags(path, tagsToRemove) {
-    const photo = path && state.folderPhotos.find(p => samePath(p.path, path));
-    if (!photo) return Promise.resolve(false);
-    const gone = new Set(tagsToRemove.map(normalizeTag));
-
-    return queueWriteOf(photo.path, async () => {
-        // From the tags as they are when this runs: two pills clicked in quick
-        // succession each used to write "all but mine", and the later one put
-        // the other back.
-        const current = photo.tags || [];
-        const updatedTags = current.filter(t => !gone.has(normalizeTag(t)));
-        if (updatedTags.length === current.length) return true;
-
-        setStatus('busy', 'Deleting tag...');
-        let saved;
-        try {
-            saved = await postPhotoMetadata(photo, { tags: updatedTags });
-        } catch (err) {
-            console.error(err);
-            setStatus('error', 'Error');
-            alert("Error deleting tag: " + err.message);
-            return false;
-        }
-        photo.tags = updatedTags;
-        // The faces follow the reply (facesFollowReply): a person taken off the photo is taken off its faces by the server (#908).
-        redrawIfShowing(photo, saved);
-        updateTagsDatalist();
-        setStatus('ready', 'Ready');
-        saveToLocalStorageCache();
-        return true;
-    });
 }
 
 // The path in Image Details opens the photo in the app Windows uses for it.
