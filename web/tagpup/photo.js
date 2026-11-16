@@ -6,7 +6,9 @@ import { openImageZoom, wireImageZoom } from './common/image-zoom.js';
 import { attachPersonFaces } from './common/person-faces.js';
 import { pressable } from './common/press.js';
 import { baseName, isUnc, samePath } from './common/paths.js';
-import { personLabelOf, personTitleOf, photoAlreadyHas, sortedTags } from './common/vocabulary.js';
+import {
+    personLabelOf, personTitleOf, photoAlreadyHas, sortedTags,
+} from './common/vocabulary.js';
 import { upper } from './hooks.js';
 import { clearPhotoFaces, nameFaceAs, showPhotoFaces } from './face-boxes.js';
 import { state } from './state.js';
@@ -50,13 +52,16 @@ export function renderPhotoFaces(photoPath) {
     if (!facesSection || !facesStrip) return;
     const token = ++state.facesRequestToken;
 
-    if (btnAddAllFaces) btnAddAllFaces.classList.add('hidden');
-    if (facesSummary) facesSummary.textContent = '';
-    // Until the answer comes the section says so: an empty strip looked like a photo with no faces.
-    sayAboutFaces(FACES_LOADING);
-    // The boxes over the photo are another photo's until this one's faces arrive. The same photo drawn
-    // again (after a face was named) keeps its boxes and its panel until the new answer replaces them.
-    if (!state.faceBoxes.path || !samePath(state.faceBoxes.path, photoPath)) clearPhotoFaces();
+    // The same photo read again (a tag written, a face named or left out) keeps its strip, its boxes and its panel until the
+    // new answer replaces them in one step (drawPhotoFaces): no "Loading", no empty strip in between (owner, 2026-11-15).
+    // Another photo's are cleared at once, and the section says it is loading: an empty strip looked like a photo with no faces.
+    const again = holdsFacesOf(photoPath);
+    if (!again) {
+        if (btnAddAllFaces) btnAddAllFaces.classList.add('hidden');
+        if (facesSummary) facesSummary.textContent = '';
+        sayAboutFaces(FACES_LOADING);
+        clearPhotoFaces();
+    }
 
     api.fetch(`/api/photo-faces?path=${encodeURIComponent(photoPath)}`)
         .then(res => {
@@ -64,25 +69,48 @@ export function renderPhotoFaces(photoPath) {
             return res.json();
         })
         .then(data => {
-            // A slower reply for a previously selected photo must not overwrite
-            // the strip for the one now on screen.
+            // A slower reply for a previously selected photo, or an earlier read of this one, must not overwrite
+            // the strip the later request will draw.
             if (token !== state.facesRequestToken) return;
             drawPhotoFaces(photoPath, data);
+            // A save that touched a face while this was read was not followed (the faces were not here yet): it is now,
+            // unless a naming is under way, whose end follows it (face-boxes.js notBusy).
+            const box = state.faceBoxes;
+            if (box.owed && !box.busy) {
+                box.owed = false;
+                renderPhotoFaces(photoPath);
+            }
         })
         .catch(err => {
             console.error('Error loading faces:', err);
             if (token !== state.facesRequestToken) return;
+            if (holdsFacesOf(photoPath)) {
+                // The faces shown are this photo's still, maybe out of date: they stay, and a line says so.
+                sayAboutFaces(FACES_NOT_REFRESHED, { keep: true });
+                return;
+            }
             clearPhotoFaces();
             sayAboutFaces(FACES_FAILED);
         });
 }
 
+/** Are the faces on the page (the boxes, and the strip drawn with them) this photo's? */
+function holdsFacesOf(photoPath) {
+    const box = state.faceBoxes;
+    return Boolean(box.path) && samePath(box.path, photoPath);
+}
+
 export const FACES_LOADING = 'Loading faces...';
 export const FACES_FAILED = 'The faces of this photo could not be loaded. Select the photo again to try once more.';
+export const FACES_NOT_REFRESHED = 'The faces of this photo could not be refreshed. Select the photo again to try once more.';
 
-/** The faces section holding only a line of words: it is loading, or it failed (never an empty strip). */
-function sayAboutFaces(words) {
-    facesStrip.innerHTML = '';
+/**
+ * The faces section holding only a line of words: it is loading, or it failed (never an empty strip). With `keep`, the cards
+ * shown stay and the line goes under them, in place of any line before it (a read again that failed).
+ */
+function sayAboutFaces(words, { keep = false } = {}) {
+    if (keep) facesStrip.querySelectorAll('.faces-note').forEach(old => old.remove());
+    else facesStrip.innerHTML = '';
     const note = document.createElement('div');
     note.className = 'faces-note';
     note.setAttribute('role', 'status');
@@ -96,25 +124,15 @@ function sayAboutFaces(words) {
  * page's own copy of it (renderPhotoFacesHere).
  */
 function drawPhotoFaces(photoPath, data) {
-    facesStrip.innerHTML = '';
-    facesSection.classList.add('hidden');
-    if (btnAddAllFaces) btnAddAllFaces.classList.add('hidden');
-    if (facesSummary) facesSummary.textContent = '';
     const faces = data.faces || [];
     showPhotoFaces(photoPath, data);
-    if (faces.length === 0) return;
 
     // Who this photo already names, so a face is only offered when acting
     // on it would change something.
     const photoRecord = state.folderPhotos.find(p => p.path === photoPath);
-
-    facesSection.classList.remove('hidden');
-    if (facesSummary) {
-        const unmatched = data.unmatched || 0;
-        facesSummary.textContent = unmatched
-            ? `${faces.length} detected, ${unmatched} unidentified`
-            : `${faces.length} detected, all identified`;
-    }
+    // The cards are made aside and put in place in one step, with the section, the summary and Add all: the strip on screen
+    // stays as it was until then, so a photo read again does not blink empty.
+    const cards = [];
 
     // The faces a click would name, in the strip's order: what Add all goes through.
     const actionable = [];
@@ -124,6 +142,7 @@ function drawPhotoFaces(photoPath, data) {
         if (!face.excluded && !face.name && !face.suggestion) return;
         const card = document.createElement('div');
         card.className = 'face-card';
+        card.dataset.faceId = String(face.id);
         if (face.excluded) card.classList.add('excluded');
         else if (!face.name) card.classList.add('unmatched');
 
@@ -216,10 +235,19 @@ Click to ${does}.`;
             card.classList.add('face-card-settled');
             card.title = `${shownSomebody} is already tagged on this photo`;
         }
-        facesStrip.appendChild(card);
+        cards.push(card);
     });
+    const unmatched = data.unmatched || 0;
+    const focused = focusedFace();
+    facesStrip.replaceChildren(...cards);
+    facesSection.classList.toggle('hidden', faces.length === 0);
+    if (facesSummary) {
+        facesSummary.textContent = !faces.length ? ''
+            : unmatched ? `${faces.length} detected, ${unmatched} unidentified` : `${faces.length} detected, all identified`;
+    }
+    if (focused !== null) focusFaceAgain(focused);
+    if (btnAddAllFaces) btnAddAllFaces.classList.toggle('hidden', actionable.length === 0);
     if (btnAddAllFaces && actionable.length > 0) {
-        btnAddAllFaces.classList.remove('hidden');
         btnAddAllFaces.onclick = async () => {
             // The people on the photo in one write of the file; then each face is named (the database only, no file),
             // one at a time, and not on into another photo.
@@ -231,6 +259,22 @@ Click to ${does}.`;
             }
         };
     }
+}
+
+/** The face whose card in the strip has the keyboard's focus, by its id; null when the focus is elsewhere. */
+function focusedFace() {
+    const card = facesStrip.querySelector('.face-card:focus');
+    return card && card.dataset.faceId ? card.dataset.faceId : null;
+}
+
+/**
+ * The focus given back to the same face's card in the strip drawn again; to the strip's first card that takes it when that
+ * card takes it no more (a recognised face's "add them to this photo" pressed is settled, with no tab stop).
+ */
+function focusFaceAgain(faceId) {
+    const same = Array.from(facesStrip.children).find(card => card.dataset.faceId === faceId);
+    const card = same && same.hasAttribute('tabindex') ? same : facesStrip.querySelector('.face-card[tabindex]');
+    if (card) card.focus({ preventScroll: true });
 }
 
 /**
@@ -488,8 +532,9 @@ export function carryTagsForward() {
         }
         const updatedTags = Array.from(new Set([...before, ...missing]));
         setStatus('busy', `Copying ${missing.length} tag(s) from ${from}...`);
+        let saved;
         try {
-            await postPhotoMetadata(photo, { tags: updatedTags });
+            saved = await postPhotoMetadata(photo, { tags: updatedTags });
         } catch (err) {
             console.error(err);
             setStatus('error', 'Could not copy tags: ' + err.message);
@@ -500,7 +545,7 @@ export function carryTagsForward() {
             label: `carry ${missing.length} tag(s) from ${from}`,
             photos: [{ path: photo.path, before, after: updatedTags }],
         });
-        redrawIfShowing(photo);
+        redrawIfShowing(photo, saved);
         renderFileList();
         upper.renderThumbnails();
         saveToLocalStorageCache();
@@ -638,16 +683,30 @@ export function deletePhotoTag(tagToRemove) {
 
 /**
  * The open photo's faces, read again after its tags were written (the one hook of every write of them: a save, a chip, Apply
- * All, an Undo). A tag can name a face on the server (tagpup.store.face_tags, #788) and the page's copy of the faces, which the
- * boxes and the strip are drawn from, would go on saying "not found" until the photo was opened again. Only when the photo has
- * a face still to be named (nothing else a tag could change), and not while a naming of this page's is under way, which draws
- * them again itself when it is done.
+ * All, an Undo, a pill taken off, a face's card), and only when the write changed one of them; the one place that decides it.
+ * The server names a face when a person put on the photo is its one face to be named (#788), takes a name off when the person
+ * goes (#908), and names it again when they come back, and its reply says which: `named_faces`, `unnamed_faces`,
+ * `renamed_faces` ([{id, name}] each; tagpup/web/tagpup_routes.py _faces_unnamed). The page's copy of the faces, which the
+ * boxes and the strip are drawn from, is read again when a face it holds is listed; an undo's replies, of other photos too,
+ * are given together. A reply while a naming of this page's is under way, or while this photo's faces are still being read,
+ * is owed: the naming's end (face-boxes.js notBusy) or the read's answer (renderPhotoFaces) reads them again.
  */
-export function facesFollowTags(path) {
+export function facesFollowReply(path, replies) {
     const box = state.faceBoxes;
-    if (!path || !samePath(state.activePhotoPath, path) || !box.path || !samePath(box.path, path) || box.busy) return;
-    if (!box.faces.some(each => !each.name && !each.excluded)) return;
-    renderPhotoFaces(path);
+    if (!path || !samePath(state.activePhotoPath, path)) return;
+    const listed = [].concat(replies || []).flatMap(reply => (reply ? [
+        ...(reply.named_faces || []), ...(reply.unnamed_faces || []), ...(reply.renamed_faces || []),
+    ] : []).map(face => face.id));
+    if (!listed.length) return;
+    if (!holdsFacesOf(path)) {
+        // Not drawn yet, so whose faces were listed cannot be told: the read under way may be older than the write.
+        box.owed = true;
+        return;
+    }
+    const held = new Set(box.faces.map(face => face.id));
+    if (!listed.some(id => held.has(id))) return;
+    if (box.busy) box.owed = true;
+    else renderPhotoFaces(path);
 }
 
 /**
@@ -668,9 +727,9 @@ export function removePhotoTags(path, tagsToRemove) {
         if (updatedTags.length === current.length) return true;
 
         setStatus('busy', 'Deleting tag...');
-        let data;
+        let saved;
         try {
-            data = await postPhotoMetadata(photo, { tags: updatedTags });
+            saved = await postPhotoMetadata(photo, { tags: updatedTags });
         } catch (err) {
             console.error(err);
             setStatus('error', 'Error');
@@ -678,12 +737,8 @@ export function removePhotoTags(path, tagsToRemove) {
             return false;
         }
         photo.tags = updatedTags;
-        redrawIfShowing(photo);
-        // A person taken off the photo is taken off its faces by the server (#908): the boxes and the strip are read again,
-        // which facesFollowTags does not do for a photo with no face left to be named.
-        if (data && Array.isArray(data.unnamed_faces) && data.unnamed_faces.length && samePath(state.activePhotoPath, photo.path)) {
-            renderPhotoFaces(photo.path);
-        }
+        // The faces follow the reply (facesFollowReply): a person taken off the photo is taken off its faces by the server (#908).
+        redrawIfShowing(photo, saved);
         updateTagsDatalist();
         setStatus('ready', 'Ready');
         saveToLocalStorageCache();

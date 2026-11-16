@@ -621,6 +621,8 @@ def _write_fields(et, library, operation, exiftool_path, photo_paths, read, plan
                     result.changed += 1       # a file held what it was to hold: its rows alone were written
                 if isinstance(detail, dict) and row.followed:
                     detail["faces_turned"] = row.followed
+                if row.named_faces:
+                    result.details.setdefault("named_faces", []).extend(row.named_faces)   # the one-face rule's, for the reply
                 written[path] = detail
                 continue
             result.fail(path, why)
@@ -845,7 +847,7 @@ def _record(library, row, values, state, stamp=None, wrote=True, after=None, who
         # the faces the transaction takes out of identity work must start from the faces as they were.
         for each in follow:
             getattr(each, "start", lambda _conn: None)(conn)
-        photos.follow_fields(conn, row.path, values, stat, stamp, whole=whole)
+        row.named_faces = photos.follow_fields(conn, row.path, values, stat, stamp, whole=whole) or []
         _follow_rename(conn, row.path, row.known_as, stat)
         for each in follow:
             each(conn)

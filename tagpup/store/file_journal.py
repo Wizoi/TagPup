@@ -98,6 +98,9 @@ class FileRow:
     #: Not stored: what recording the file made of its photo's rows besides the fields, as the writer reports it (the face
     #: boxes a rotation turned, tagpup.services.rotation).
     followed: int = 0
+    #: Not stored: the faces recording the file named (the one-face rule: store.photos.follow_fields), [{"id", "name"}], said in
+    #: the write's reply (`named_faces`) so that a page reads the photo's faces again.
+    named_faces: list = field(default_factory=list)
     #: Not stored: the quarter turn of face boxes this process made for the file, (direction, width, height) of the picture before it
     #: (tagpup.services.rotation), so that taking the file out of its change after it was done turns them back exactly.
     turned: Optional[tuple] = None

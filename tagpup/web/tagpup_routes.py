@@ -1227,10 +1227,13 @@ def photos_bulk_tags():
 
 
 def _faces_unnamed(result):
-    """What a write that took a person off a photo says of the faces it unnamed (#908): `unnamed_faces`, [{"id", "name"}], for
-    the page's Undo to name again; `faces_problem`, a sentence, when they could not be. Only what happened, nothing when no face
-    was touched."""
+    """What a write of tags says of the faces it changed, [{"id", "name"}] each: `named_faces`, those the one-face rule named
+    (#788); `unnamed_faces`, those a person taken off unnamed (#908), for the page's Undo to name again; `renamed_faces`, those a
+    person put back named again; `faces_problem`, a sentence, when they could not be followed. The page reads the open photo's
+    faces again when one is listed (web/tagpup/photo.js facesFollowReply). Only what happened, nothing when no face was touched."""
     said = {}
+    if result.details.get("named_faces"):
+        said["named_faces"] = result.details["named_faces"]
     if result.details.get("unnamed_faces"):
         said["unnamed_faces"] = result.details["unnamed_faces"]
     if result.details.get("renamed_faces"):

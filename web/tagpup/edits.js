@@ -363,13 +363,13 @@ export function photosRenamed(renames) {
     for (const [oldPath, newPath] of Object.entries(renames)) renameInSelection(oldPath, newPath);
 }
 
-/** After a write: redraw the panel for this photo, but only if it is still the one open. */
-export function redrawIfShowing(photo) {
+/** After a write: redraw the panel for this photo, but only if it is still the one open; its faces follow the write's `reply`. */
+export function redrawIfShowing(photo, reply) {
     if (!samePath(state.activePhotoPath, photo.path)) return;
     upper.renderTags(photo.tags);
     upper.renderSuggestionsPanel(photo.path);
     upper.updateCarryForwardState();
-    upper.facesFollowTags(photo.path);
+    upper.facesFollowReply(photo.path, reply);
 }
 
 /**
@@ -499,7 +499,7 @@ export async function writeDetailEdits(fields, { intent = null, taken = null, pa
     // is logged, not reported as a failed save: saying "Not saved" about a
     // photo that was saved would keep you on it, offering to save it again.
     try {
-        refreshAfterDetailSave(photo, path, newTitle, added);
+        refreshAfterDetailSave(photo, path, newTitle, added, data);
     } catch (err) {
         console.error('Saved, but redrawing the page failed:', err);
     }
@@ -523,7 +523,7 @@ function settleFailedSaves(path, entry) {
     }
 }
 
-export function refreshAfterDetailSave(photo, path, newTitle, added) {
+export function refreshAfterDetailSave(photo, path, newTitle, added, reply) {
     saveToLocalStorageCache();
     // `path !== photo.path` asks whether the file's spelling changed (a rename, even of case only): exact on purpose.
     if (path !== photo.path && samePath(state.activePhotoPath, path)) {
@@ -532,7 +532,7 @@ export function refreshAfterDetailSave(photo, path, newTitle, added) {
     }
     if (samePath(state.activePhotoPath, photo.path)) {
         upper.renderTags(photo.tags);
-        upper.facesFollowTags(photo.path);
+        upper.facesFollowReply(photo.path, reply);
     }
     if (newTitle !== null) {
         upper.renderFileList();

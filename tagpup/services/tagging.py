@@ -251,7 +251,8 @@ def save_photo(library, photo_path, title, tags, date_taken, exiftool_path, rena
     held one, fields.held_dates), `taken`, the Date Taken saved as the library spells it (None when none was sent),
     `base`, the tags and title the file holds after the write (the page's next `base`), and
     `index_warning` when the renamed photo's new name already had rows; `file_only` and `with_rows`, how many files (0 or 1) were written each way; `pictures_refused` when the write
-    changed the picture's bytes and was made again (file_changes).
+    changed the picture's bytes and was made again (file_changes); `named_faces` ([{"id", "name"}]) when the tags written named
+    a face (the one-face rule, as the row was recorded), and what follow_people says.
     """
     result = Result(attempted=1)
     _held, loose = libraries.split(library, [photo_path])
@@ -327,6 +328,8 @@ def save_photo(library, photo_path, title, tags, date_taken, exiftool_path, rena
             result.details["rename_failed"] = rename_failed
         if written.details.get("pictures_refused"):
             result.details["pictures_refused"] = written.details["pictures_refused"]
+        if written.details.get("named_faces"):
+            result.details["named_faces"] = written.details["named_faces"]
         result.details.update(new_path=new_path, renamed=renamed, tags=tags, flat=flat,
                               hierarchical=hierarchical, index_warning=None, change=written.details["change"],
                               dates=dates_written, taken=fields.date_taken_value(date_taken) if date_taken else None,

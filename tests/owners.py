@@ -51,6 +51,7 @@ SCENARIOS = {
     "P11": ("people", "The same face gets the same nearest person in Suggest, Identify, the strip, the boxes and Name faces from tags, a person who changed over the years by the faces of the face's own years, an undated face by every year."),
     "P12": ("people", "A face in the background of its picture (under 2% of the shorter side the photo's row stores) is hidden by the strip and offered or named by none of Organize, Suggest, Name faces from tags and cluster-faces; on a photo of no stored size it is in the background nowhere."),
     "P13": ("people", "A clip's people are the people its frames show: seen in one frame or four, offered once by the one matrix, Apply All writes the tag and the clip's photo_people row follows, nothing of a face is stored, frames unreadable is tags only, a cancel keeps nothing."),
+    "V19": ("people", "Somebody tags the open photo while its faces are shown: the strip keeps its cards, never 'Loading', until the new answer replaces them in one step, and is read again only when the save's reply lists a face of it (named by the one-face rule, unnamed by a person taken off, named again), never for a reply that lists none; a face named by its card, its person then taken off by the pill; two quick saves, another photo chosen meanwhile, back to the grid and the same photo again, an undo of another photo, a failed read, the focus on a card, a save during a naming or during the first read."),
     "F1": ("files", "A photo write is journaled, one at a time, read back; a click three times writes once."),
     "F2": ("files", "The indexer writes nothing into a photo that does not decode; nothing is written into a folder the library does not hold."),
     "F3": ("files", "A bulk edit over many photos: dry run first, a crash or a stalled ExifTool part-way, then resume."),
@@ -190,6 +191,7 @@ _SCENARIO_FILES = {
     "P11": "test_a_face_gets_one_nearest_person_everywhere",
     "P12": "test_a_face_in_the_background_is_one_answer",
     "P13": "test_a_clips_people_are_the_people_its_frames_show",
+    "V19": "scenario-tagging-keeps-the-faces-in-place",
     "V1": "test_library_views_scenarios test_a_view_of_photos_or_videos_alone scenario-a-view-of-photos-or-videos-alone "
           "test_photos_with_no_tag",
     "V2": "test_library_search",
@@ -233,7 +235,7 @@ _FILES = {
     },
     "people": {
         "unit": (
-            "face-strip faces-say-they-are-loading grid-build-progress identify-faces identify-faces-cluster-buttons identify-faces-counts "
+            "face-strip grid-build-progress identify-faces identify-faces-cluster-buttons identify-faces-counts "
             "identify-faces-in-place-removal library-sort-and-organize-header name-faces organize-faces person-directory "
             "person-faces person-filing-table person-names person-tag-form review-dialog review-from-activity "
             "selection-suggests-who-the-faces-look-like show-matched-toggle tag-editor-in-place tag-order tag-view tag-vocabulary tagpup-people-by-id "

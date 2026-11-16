@@ -41,7 +41,7 @@ import { renderSyncInfo } from './sync-state.js';
 import { photosWritten } from './tally.js';
 import { landOnAnchor, libraryViewPainted, openInOrganize, wireMoves } from './library-moves.js';
 import {
-    carryTagsForward, deleteActivePhoto, facesFollowTags, openLibraryPhoto, openPhotoInDefaultApp, removePhotoTags,
+    carryTagsForward, deleteActivePhoto, facesFollowReply, openLibraryPhoto, openPhotoInDefaultApp, removePhotoTags,
     renderPhotoFaces, renderPhotoFacesHere, renderTags, rotatePhoto,
     reloadChangedPhoto, saveSingleAddPerson, saveSingleAddTag, saveSingleTitle, selectPhoto,
     updateCarryForwardState, wireZoom
@@ -74,7 +74,7 @@ import { wireClipConvert } from './clip-convert.js';
 // What a feature calls in a module above it (hooks.js).
 Object.assign(upper, {
     addedFromView, applySuggestedTagsDirect, checkFolderMembership, checkSuggestionsStatus, choosePane,
-    facesFollowTags, forgetFolderSuggestions, holdForWrite, resumeAfterWrite,
+    facesFollowReply, forgetFolderSuggestions, holdForWrite, resumeAfterWrite,
     populateCameraModelsDropdown, recordUndo, removePhotoTags,
     renderFileList, renderPhotoFaces, renderPhotoFacesHere, renderSuggestionsPanel, renderSyncInfo, renderTags, renderThumbnails, searchFollows, searchVocabularyChanged,
     selectPhoto,

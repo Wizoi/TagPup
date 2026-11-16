@@ -219,7 +219,8 @@ def follow_fields(conn, photo_path, written, stat=None, before=None, batch=None,
     identity written. With `stat`, the file's new mtime and size, its vectors carried over
     `before`, its stamp just before the write (_stamp). Without it -- a file read and not
     written -- the stamp stays, so the scan still reads what the row does not say. The
-    photo's people and dates are rebuilt. Returns the photo's id, or None without a row.
+    photo's people and dates are rebuilt; the one-face rule names what the tags now name (face_tags.name_photos). Returns
+    the faces that named, [{"id", "name"}] (none: []), or None without a row.
 
     Only the fields written are recorded, so a row that did not describe the file just
     before the write -- one Suggest made, or one the file has moved on from -- is not
@@ -292,10 +293,10 @@ def follow_fields(conn, photo_path, written, stat=None, before=None, batch=None,
     if stat is not None:
         embeddings.restamp(conn, photo_id, before, (stat.st_mtime, stat.st_size))
     people.rebuild(conn, [photo_id])
-    face_tags.name_photos(conn, [photo_id])
+    named = face_tags.name_photos(conn, [photo_id])
     date_photos(conn, [photo_id])
     derived.refresh_photos(conn, [photo_id], batch)
-    return photo_id
+    return named
 
 
 def read_tags(db_path, photo_paths):
