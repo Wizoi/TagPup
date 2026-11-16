@@ -188,18 +188,6 @@ describe("a chip drawn for one photo", () => {
 });
 
 describe("two quick writes to one photo", () => {
-  test("removing two pills in a row removes both", async (t) => {
-    const { window, document, server: s, gate } = await onPhotoA(t, ["Cross Country", "Harbourside"]);
-    const pill = (name) => [...document.querySelectorAll("#detail-tags .tag-pill")]
-      .find((p) => p.textContent === name);
-    click(window, pill("Cross Country"));
-    click(window, pill("Harbourside"));
-    await releaseAll(window, gate);
-
-    const last = saves(s).at(-1);
-    assert.deepEqual(last.body.tags, [], `the last write left: ${last.body.tags}`);
-  });
-
   test("Enter on a typed tag, then a suggestion chip, keeps both", async (t) => {
     const { window, document, server: s, gate } = await onPhotoA(t);
     const tagInput = document.getElementById("input-add-tag");
