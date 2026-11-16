@@ -11,8 +11,9 @@
 // through here and follows them (phase 9c): `upper.navigatorFollows` as one opens or closes; so does the search box
 // (search.js, phase 9e-2: `upper.searchFollows`). A search's place in the history says how many places back the view before
 // it is (`searchBack`), so clearing the search returns to that view.
+import { api } from './common/api.js';
 import { VIEW_PARAMS } from './common/library.js';
-import { baseName } from './common/paths.js';
+import { baseName, samePath } from './common/paths.js';
 import { upper } from './hooks.js';
 import { state } from './state.js';
 import {
@@ -415,10 +416,89 @@ export function photosDeleted() {
     });
 }
 
-/** The Refresh button of the sidebar: the folder's list, or the view's order. */
+/**
+ * What a folder's Refresh found (POST /api/sync {folder, apply: true}: tagpup/web/sync_routes.py, recurring.refresh_folder),
+ * as [kind, sentence] for the status line: `res` the Response (null when none came), `reply` its JSON (null when it held
+ * none), `failure` what went wrong reaching it. The one wording of the answer: no other page says it.
+ */
+export function folderRefreshSaid(res, reply, failure) {
+    const answer = reply && typeof reply === 'object' && !Array.isArray(reply) ? reply : {};
+    // A refusal (the folder's, or the 409 while names are written from tags) says its own sentence, as every guarded write does.
+    if (res && (res.status === 400 || res.status === 409) && answer.error) return ['error', answer.error];
+    if (!res || res.status >= 500 || !answer.folder) {
+        const why = answer.error || (failure && failure.message) || (res ? `the server answered ${res.status}` : 'no answer');
+        return ['error', 'Could not check this folder against the library (' + why + '); its list was read again from the disk.'];
+    }
+    if (answer.folder === 'running') return ['ready', 'Another check of this library is under way; press Refresh again when it ends.'];
+    if (answer.error) return ['error', answer.error];
+    const counts = answer.counts || {};
+    if (counts.folders_not_looked_at) {
+        return ['error', 'This folder could not be looked at (a share that did not answer, or a folder that would not list); nothing was changed.'];
+    }
+    const found = ['new', 'changed', 'moved'].filter(name => counts[name]).map(name => `${counts[name]} ${name}`).join(', ');
+    const gone = counts.missing || 0;
+    if (!found && !gone) return ['ready', 'This folder is in step.'];
+    const checked = found ? `Checked this folder: ${found}.` : 'Checked this folder.';
+    if (!gone) return ['ready', checked];
+    const one = gone === 1;
+    let whole;
+    if (answer.whole === 'started') {
+        whole = 'a full check was started and removes ' + (one ? 'it if it is' : 'them if they are') + ' gone from the whole library.';
+    } else if (answer.whole === 'running') {
+        whole = 'another check of this library is under way; press Refresh again when it ends.';
+    } else {
+        const why = String(answer.whole_why || answer.whole || 'not asked').replace(/\.$/, '');
+        whole = 'no full check was started: ' + why.charAt(0).toLowerCase() + why.slice(1) + '.';
+    }
+    return ['ready', `${checked} ${gone} ${one ? 'file is' : 'files are'} gone; ${whole}`];
+}
+
+/**
+ * The open folder synced, then its list read again: the sync re-reads changed files into the rows, so it goes first; then
+ * one scan. One at a time: a press while one is out sends nothing. An answer for a folder no longer open, or once a view
+ * of the library is, is dropped (another library is another page load).
+ */
+function syncFolderThenScan(folder) {
+    if (state.folderRefresh) return;
+    state.folderRefresh = folder;
+    btnRefreshList.disabled = true;
+    setStatus('busy', 'Checking this folder...', { transient: false });
+    api.fetch('/api/sync', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ folder, apply: true }),
+    }).then(
+        res => res.json().then(reply => folderRefreshSaid(res, reply), err => folderRefreshSaid(res, null, err)),
+        err => folderRefreshSaid(null, null, err),
+    ).then(([kind, sentence]) => {
+        state.folderRefresh = null;
+        btnRefreshList.disabled = false;
+        if (state.library || !samePath(state.scannedFolder, folder)) return;
+        // Said once the list is on screen (the scan says Ready as it lands), and only of this folder.
+        state.afterScan = () => {
+            if (!state.library && samePath(state.scannedFolder, folder)) setStatus(kind, sentence);
+        };
+        // The gate asked before the sync; what is typed while it ran stays, as it does while a scan runs.
+        scanFolder(true, { keepTyped: true });
+    });
+}
+
+/**
+ * The Refresh button of the sidebar: the view's order; or the open folder synced and its list read again, once the photo's
+ * unsaved edits are answered (as scanFolder asks). A box naming another folder than the open one is that folder opened.
+ */
 export function refreshFolderOrView() {
-    if (state.library) refreshLibraryView();
-    else scanFolder(true);
+    if (state.library) {
+        refreshLibraryView();
+        return;
+    }
+    const folder = state.scannedFolder;
+    if (!folder || !samePath(folderPathInput.value.trim(), folder)) {
+        scanFolder(true);
+        return;
+    }
+    if (state.folderRefresh) return;
+    leavePhotoThen(() => syncFolderThenScan(folder));
 }
 
 // ---- The menu, the address, Back and Forward ----------------------------------------------------

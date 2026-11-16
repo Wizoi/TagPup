@@ -98,6 +98,8 @@ export const state = {
     // What to say once the folder just asked for again has been put on screen (folder.js
     // showScannedFolder): a refusal because the photo's file changed reads the folder, then tells the owner.
     afterScan: null,
+    // The folder a Refresh is syncing now (library-view.js syncFolderThenScan), or null: one at a time.
+    folderRefresh: null,
     // The grid (vgrid.js, built by wireThumbnailGrid), what it is showing -- the folder's photos
     // after the filter, and where each is by pathKey -- and which folder and filter that was,
     // to tell a new list (scroll to the top) from the same one drawn again (keep the place).
