@@ -58,16 +58,16 @@ export function describeChange(change) {
     return parts.join(', ');
 }
 
-/** A group's line, by what is left of it: "Tags on 50 photos (3 writes)". */
+/** A group's line, by what is left of it and what was written: "Tags on 50 photos (3 writes)". */
 function groupWords(change) {
-    const photos = (change.summary && change.summary.photos) || 0;
+    const photos = total(change.files);
     return `Tags on ${photos} ${photos === 1 ? 'photo' : 'photos'} (${change.writes} ${change.writes === 1 ? 'write' : 'writes'})`;
 }
 
 /** What an undo's answer says, for a person to read. */
 function outcome(answer, rehearsed) {
     if (!answer) return 'The server did not answer.';
-    if (answer.refused) return `Cannot be undone: ${answer.refused}`;
+    if (answer.refused || !answer.success) return `Cannot be undone: ${answer.refused || answer.error}`;
     const refused = (answer.errors || []).map(e => `${e.what}: ${e.why}`);
     const differences = answer.differences || [];
     if (rehearsed) {
@@ -83,7 +83,7 @@ function outcome(answer, rehearsed) {
 function groupOutcome(answers, rehearsed) {
     const sum = key => answers.reduce((n, { answer }) => n + ((answer && answer[key]) || 0), 0);
     const refused = answers.flatMap(({ id, answer }) => (!answer ? [`#${id}: the server did not answer`]
-        : answer.refused ? [`#${id}: ${answer.refused}`]
+        : (answer.refused || !answer.success) ? [`#${id}: ${answer.refused || answer.error}`]
             : (answer.errors || []).map(e => `${e.what}: ${e.why}`)));
     if (rehearsed) {
         const notes = refused.length ? `; not now: ${refused.join('; ')}` : '';

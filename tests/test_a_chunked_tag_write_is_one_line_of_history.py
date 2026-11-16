@@ -126,6 +126,15 @@ class AChunkedTagWrite(unittest.TestCase):
                                                         line["summary"]["photos"], line["undoable"]))
         self.assertIn("undone", line["why_not"])
 
+    def test_the_headline_counts_the_photos_written_not_the_photos_planned(self):
+        # The second chunk names a photo the first gave the tag already: planned, and nothing to write to it.
+        first = self.chunk(self.photos[0:2], "Trips/Coast", "drain-1")
+        second = self.chunk(self.photos[1:3], "Trips/Coast", "drain-1")
+        line = self.lines()[0]
+        self.assertEqual((second, 2, [second, first]), (line["id"], line["writes"], [m["id"] for m in line["members"]]))
+        self.assertEqual(3, sum(line["files"].values()), "the chunks wrote three photos")
+        self.assertEqual(3, line["summary"]["photos"], "four were planned, three were written")
+
     def test_a_token_that_is_not_one_or_a_batch_in_a_group_is_refused_and_nothing_written(self):
         before = self.newest()
         for group in ("People/Wren Ashby", 7, ""):

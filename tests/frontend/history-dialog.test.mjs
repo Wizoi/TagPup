@@ -151,5 +151,54 @@ for (const appName of ["tagpup", "tagtuner"]) {
       assert.deepEqual(posted.slice(2), [[15, true], [14, true], [13, true]], "not every write, or not newest first");
       assert.match(dialog.querySelector(".history-status-line").textContent, /^Undone: 60 put back\.$/);
     });
+
+    test("a group's line says the photos written, not the photos its chunks planned", async (t) => {
+      const group = change(15, "add to all selected", { summary: { group: "drain-1", photos: 80 }, files: { done: 1 },
+        group: "drain-1", writes: 1, members: [{ id: 15, why_not: null }] });
+      const { dialog } = await openFrom(appName, t, { changes: [group], undo: () => REHEARSED });
+      const line = dialog.querySelector('.history-change[data-change="15"]');
+      assert.equal(line.querySelector(".history-operation").textContent, "Tags on 1 photo (1 write)");
+    });
+
+    const partial = async (t, answerOf) => {
+      const group = change(15, "add to all selected", { summary: { group: "drain-1", photos: 3 }, files: { done: 3 },
+        group: "drain-1", writes: 3, members: [{ id: 15, why_not: null }, { id: 14, why_not: null }, { id: 13, why_not: null }] });
+      const posted = [];
+      const routes = [15, 14, 13].map((id) => [`/api/history/${id}/undo`, (body) => {
+        posted.push([id, body.apply]);
+        return answerOf(id, body.apply);
+      }]);
+      const ctx = await openFrom(appName, t, { changes: [group], undo: () => REHEARSED, routes });
+      click(ctx.window, ctx.undoButton(15));
+      await flush(ctx.window, 12);
+      click(ctx.window, ctx.undoButton(15));
+      await flush(ctx.window, 16);
+      return { ...ctx, posted };
+    };
+
+    test("a group's Undo with one member refused makes the others and names the refusal", async (t) => {
+      const { dialog, posted } = await partial(t, (id, apply) => (id === 15
+        ? { success: false, dry_run: !apply, change: 15, changed: 0, refused: "the share is away", errors: [], differences: [] }
+        : { ...(apply ? UNDONE : REHEARSED), change: id, changed: apply ? 20 : 0, would_put_back: 20 }));
+      assert.deepEqual(posted.slice(3), [[15, true], [14, true], [13, true]], "a refusal stopped the rest");
+      const text = dialog.querySelector(".history-status-line").textContent;
+      assert.match(text, /^Undone: 40 put back; not undone: #15: the share is away$/);
+    });
+
+    test("a member answered success false without a refusal is said as refused", async (t) => {
+      const { dialog } = await partial(t, (id, apply) => (id === 14
+        ? { success: false, error: "server error", changed: 0 }
+        : { ...(apply ? UNDONE : REHEARSED), change: id, changed: apply ? 20 : 0, would_put_back: 20 }));
+      assert.match(dialog.querySelector(".history-status-line").textContent, /#14: server error/);
+    });
+
+    test("a request that throws part-way reads the list again and says it could not undo all of it", async (t) => {
+      const { dialog, posted } = await partial(t, (id, apply) => {
+        if (apply && id === 14) throw new Error("connection lost");
+        return { ...(apply ? UNDONE : REHEARSED), change: id, changed: apply ? 20 : 0, would_put_back: 20 };
+      });
+      assert.deepEqual(posted.filter(([, apply]) => apply).map(([id]) => id), [15, 14]);
+      assert.match(dialog.querySelector(".history-status-line").textContent, /Could not undo all of it/);
+    });
   });
 }

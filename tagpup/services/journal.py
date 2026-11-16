@@ -287,7 +287,8 @@ def _by_line(entries):
 
 def _group_line(members):
     """One line of History for the changes of one group (`members`, newest first, each with its why_not): what is left of
-    it -- the changes not undone, or all of them once every one is -- its photos, rows and files summed, `writes` how many
+    it -- the changes not undone, or all of them once every one is -- its photos (the photo files WRITTEN, the sum of its
+    files, not the photos a chunk planned: a photo skipped is not counted), rows and files summed, `writes` how many
     changes, and `members` those not undone, {"id", "why_not"} newest first, which the dialog's Undo posts one at a time
     through the one per-change undo (a newer write of a file is undone before an older one: journal.refusal). Undoable
     while one of them is; else why not, as its newest says."""
@@ -295,9 +296,10 @@ def _group_line(members):
     shown = left or members
     newest = shown[0]
     token = newest["summary"][journal.GROUP]
+    files = _summed(entry["files"] for entry in shown)
     return {**newest, "created": shown[-1]["created"],
-            "summary": {journal.GROUP: token, "photos": sum(entry["summary"].get("photos", 0) for entry in shown)},
-            "rows": _summed(entry["rows"] for entry in shown), "files": _summed(entry["files"] for entry in shown),
+            "summary": {journal.GROUP: token, "photos": sum(files.values())},
+            "rows": _summed(entry["rows"] for entry in shown), "files": files,
             "why_not": None if any(entry["why_not"] is None for entry in left) else newest["why_not"],
             "group": token, "writes": len(shown),
             "members": [{"id": entry["id"], "why_not": entry["why_not"]} for entry in left]}
