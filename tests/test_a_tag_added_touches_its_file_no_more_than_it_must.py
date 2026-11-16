@@ -3,6 +3,8 @@
 One save of a photo a folder view holds, no rename, looks at its file four times: the route's check that it is there,
 the stamp the page named compared under the lock, the stat before the write and the stat after it. It was six: the
 route looked at the file twice after the write for what the write had looked at already. It starts one ExifTool.
+A tag added to a selection (Add to all selected) looks at each file five times: the route's look for a file gone
+before the write, the write's four, none after it. It was seven, two after the write (#3069).
 
 A tag taken off is a patch in place (its segments shrink): ExifTool reads the file twice, before the write and once
 after it, whole, for its row and as the patch's check of its fields at once. It was three: the check read the fields
@@ -17,6 +19,7 @@ after the save, at its new name after a rename by its title.
 
 Real ExifTool and real Pillow on photos made here; rows as the indexer makes them (tests/photo_rows.py); fictional names.
 """
+import contextlib
 import os
 import sys
 import threading
@@ -220,6 +223,30 @@ class ATagAdded(Fresh):
         cached = self.cached(new_path)
         self.assertEqual((body["mtime"], body["size"]), (cached["mtime"], cached["size"]))
 
+
+    def test_a_tag_added_to_two_photos_at_once_looks_at_each_file_five_times(self):
+        """Add to all selected: the route looks at each file once before the write (tagging.leave_out_missing: is it
+        gone?), the write four times as a save's does, and nothing after it: the folder map's record and the reply take
+        the stamp the write recorded the row with (file_changes.write_fields' details["stamps"]). It was seven: the route
+        looked twice more after the write, for the folder maps and for the reply (#3069). The reply's stamp is the
+        file's now, and the panel's next save from the record is not refused."""
+        photos = [self.held("h.jpg", 58)[0], self.held("i.jpg", 59)[0]]
+        with contextlib.ExitStack() as stack:
+            touches = [stack.enter_context(Touches(path)) for path in photos]
+            reply = self.client.post("/library/api/photos/bulk-tags", json={"paths": photos, "add_tags": ["Trips/Lakes"]})
+        self.assertEqual(200, reply.status_code, reply.data)
+        self.assertEqual([5, 5], [each.counted()["stats"] for each in touches])
+        stamps = reply.get_json()["stamps"]
+        for path in photos:
+            (sent,) = [stamp for named, stamp in stamps.items() if paths.same(named, path)]
+            now = stamp_of(path)
+            self.assertEqual(now["size"], sent["size"])
+            self.assertAlmostEqual(now["mtime"], sent["mtime"], places=6)
+            cached = self.cached(path)
+            self.assertEqual((sent["mtime"], sent["size"]), (cached["mtime"], cached["size"]))
+            self.assertEqual(sorted(TWO + ["Trips/Lakes"]), sorted(cached["tags"]))
+        again = self.save(self.cached(photos[0]), tags=["Trips/Coast"])
+        self.assertEqual(200, again.status_code, again.data)
 
 if __name__ == "__main__":
     unittest.main()

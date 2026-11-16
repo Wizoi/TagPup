@@ -854,8 +854,9 @@ class APageAskingOfAShareThatHangs(unittest.TestCase):
                              200),
                             (lambda: client.get("/library/api/autocomplete-folder",
                                                 query_string={"path": os.path.join(self.folder, "Du")}), 200),
+                            # The photo on a share that did not answer is not called gone (#3068).
                             (lambda: client.post("/library/api/photo/rotate",
-                                                 json={"path": self.photo, "direction": "left"}), 400)):
+                                                 json={"path": self.photo, "direction": "left"}), 503)):
             shares.forget()   # each request meets the share hanging, not one already taken as away
             reply, took = self.answered(ask)
             self.assertEqual(status, reply.status_code, reply.data)
@@ -1005,6 +1006,83 @@ class AFolderOnAShareThatDoesNotAnswerIsRefusedAsAway(unittest.TestCase):
         self.assertEqual(self.AWAY, result.refused)
         self.assertEqual(SHARE_AWAY, result.refused_kind)
 
+
+class APhotoOnAShareThatDoesNotAnswerIsRefusedAsAway(unittest.TestCase):
+    """#3068: the owner adds a tag to a photo, turns it, deletes it or shows it in Explorer while its share sleeps: every
+    route that acts on one photo says the SHARE is not answering, 503, in the sentence a folder on it is refused with
+    (shares.SHARE_AWAY_SENTENCE), and writes nothing: the file, its row and the journal are as they were. A photo whose
+    file is really gone is still 400 "Invalid file path". Break: the routes' one check reading shares.known_stamp's None
+    for a share that did not answer as no file (as _a_file did): the share asleep is 400 "Invalid file path"."""
+
+    #: (route, the request's body for `path`): every route that acts on one photo (responses.file_refused).
+    SITES = (
+        ("/api/photo/save-metadata", lambda path: {"path": path, "title": "", "tags": ["Trips/Coast"]}),
+        ("/api/photo/rotate", lambda path: {"path": path, "direction": "right"}),
+        ("/api/photo/delete", lambda path: {"path": path}),
+        ("/api/photo/open-explorer", lambda path: {"path": path}),
+        ("/api/photo/open", lambda path: {"path": path}),
+    )
+
+    def setUp(self):
+        app, home = web_client.app_for(self, "tagpup")
+        self.client = app.test_client()
+        self.library_path = home.library("library.db")
+        self.asleep_folder = os.path.join(home.root, "Pictures", "Coast")
+        self.photo = os.path.join(self.asleep_folder, "IMG_0001.jpg")
+        os.makedirs(self.asleep_folder)
+        Image.new("RGB", (64, 48), (90, 110, 130)).save(self.photo, "JPEG")
+        self.gone = os.path.join(home.root, "Pictures", "Lakes", "IMG_0002.jpg")
+        conn = db.connect(self.library_path)
+        try:
+            for path in (self.photo, self.gone):
+                photo_rows.add_read(conn, path, {"XMP:Subject": ["Trips/Lakes"]})
+            conn.commit()
+        finally:
+            conn.close()
+        asleep, under = threading.Event(), os.path.normcase(self.asleep_folder)
+        self.addCleanup(asleep.set)
+        shares.forget()
+        self.addCleanup(shares.forget)
+        real_stat = os.stat
+
+        def on_it(path):
+            return os.path.normcase(str(path)).startswith(under)
+
+        def stat(path, *args, **kwargs):
+            if on_it(path):
+                asleep.wait(1.5)
+                raise FileNotFoundError(2, "not found")
+            return real_stat(path, *args, **kwargs)
+        for patcher in (mock.patch.object(os, "stat", stat),
+                        mock.patch.object(shares, "on_a_network_drive", on_it),
+                        mock.patch.object(shares, "SHARE_WAIT", 0.05)):
+            patcher.start()
+            self.addCleanup(patcher.stop)
+
+    def held(self):
+        """What the library holds: its photos' rows and its journal."""
+        conn = db.connect(self.library_path)
+        try:
+            return (conn.execute("SELECT * FROM photos ORDER BY id").fetchall(),
+                    conn.execute("SELECT * FROM changes ORDER BY id").fetchall())
+        finally:
+            conn.close()
+
+    def test_every_route_says_the_share_is_not_answering_503_writes_nothing_and_a_file_gone_is_400(self):
+        with open(self.photo, "rb") as handle:
+            before = handle.read()
+        held = self.held()
+        away = shares.SHARE_AWAY_SENTENCE % os.path.splitdrive(self.photo)[0]
+        for route, made in self.SITES:
+            with self.subTest(route=route):
+                reply = self.client.post("/library" + route, json=made(self.photo))
+                self.assertEqual((503, away), (reply.status_code, reply.get_json()["error"]), route)
+                self.assertNotIn("IMG_0001", reply.get_json()["error"], "the photo's path is named")
+                reply = self.client.post("/library" + route, json=made(self.gone))
+                self.assertEqual((400, "Invalid file path"), (reply.status_code, reply.get_json()["error"]), route)
+        with open(self.photo, "rb") as handle:
+            self.assertEqual(before, handle.read(), "the photo was written")
+        self.assertEqual(held, self.held(), "a row or the journal changed")
 
 class TheCardStatsHaveABudget(unittest.TestCase):
     def setUp(self):

@@ -82,6 +82,14 @@ def folder_refused(folder):
     return refused(refusal) if refusal else None
 
 
+def file_refused(path):
+    """None when there is a file at `path`, as a request sent it; else the reply that refuses it: 503 with the share's
+    sentence when its network share did not answer (a file not known to be gone, #3068), 400 when it is not there
+    (tagpup.services.photos.file_refusal). The one check of the routes that act on one photo."""
+    refusal = photo_actions.file_refusal(path)
+    return refused(refusal) if refusal else None
+
+
 def image(content, content_type, cache_seconds=None):
     """An image's bytes. `cache_seconds` lets the browser keep it that long."""
     response = Response(content, mimetype=content_type)

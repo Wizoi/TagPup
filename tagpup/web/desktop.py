@@ -55,10 +55,10 @@ def show_in_explorer(photo_path):
 
 
 def is_openable(photo_path):
-    """May `photo_path` be opened in its own program? Only an existing file with a photo
-    extension: startfile runs whatever it is handed, and this route only ever opens a
-    photo."""
-    return bool(photo_path) and photo_actions.is_photo(photo_path) and photo_actions.file_stamp(photo_path) is not None
+    """May `photo_path` be opened in its own program? Only a file with a photo extension: startfile runs whatever it
+    is handed, and this route only ever opens a photo. That there is a file is the route's to ask first
+    (responses.file_refused)."""
+    return bool(photo_path) and photo_actions.is_photo(photo_path)
 
 
 def open_photo(photo_path):
