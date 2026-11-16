@@ -957,6 +957,9 @@ def photo_open():
     """Open a photo in the application Windows associates with its type."""
     body = request.get_json(silent=True) or {}
     photo_path = paths.stored(body.get("path") or "")
+    refused = responses.file_refused(photo_path)
+    if refused:
+        return refused
     if not desktop.is_openable(photo_path):
         return responses.error(400, "Not a photo file")
     try:

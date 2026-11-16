@@ -1020,6 +1020,7 @@ class APhotoOnAShareThatDoesNotAnswerIsRefusedAsAway(unittest.TestCase):
         ("/api/photo/rotate", lambda path: {"path": path, "direction": "right"}),
         ("/api/photo/delete", lambda path: {"path": path}),
         ("/api/photo/open-explorer", lambda path: {"path": path}),
+        ("/api/photo/open", lambda path: {"path": path}),
     )
 
     def setUp(self):
