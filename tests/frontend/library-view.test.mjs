@@ -554,6 +554,8 @@ describe("the details panel on a library photo", () => {
     await ctx.settle(60);
     assert.equal(ctx.state.activePhotoPath, cardOf(IDS[2]).path);
     assert.equal(ctx.document.getElementById("photo-position").textContent, "3 of 68,000");
+    assert.equal(ctx.server.calls.filter((c) => c.method === "POST" && /\/api\/sync$/.test(c.url)).length, 0,
+      "a view's Refresh reads its order again and syncs no folder (V21 is the folder's)");
   });
 });
 

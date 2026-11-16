@@ -88,6 +88,7 @@ SCENARIOS = {
     "V17": ("views", "The owner measures Suggest's neighbour cut for clips on a copy of a library, nothing written to it and no model loaded: a clip matched on its best of five frames against its frame 0 alone, the share of the neighbour slots clips take and the tags offered at each cut, held out by photo and by folder, ids and counts only."),
     "V20": ("views", "Somebody takes tags off the open photo by its pills: each goes at the click, its write queued behind the photo's others; two quick clicks leave the file holding neither, a removal and an add or a title saved around it keep both, a failed write puts back only its own tag and says so while the next removal still goes, another photo chosen meanwhile shows its own tags, and a pill taken off by the keyboard leaves the focus on the next pill or the add box."),
     "V18": ("views", "Somebody works the main page by the keyboard alone: Tab reaches every control the mouse does, in reading order, nothing unseen (a closed dialog), the file list one stop, an opened dialog holds the focus and gives it back."),
+    "V21": ("views", "Somebody presses Refresh on an open folder: it is synced first and its list read again once, the status line saying what was found and whether the full check that removes a gone file started, ran already, or could not; three presses during a slow answer send one, another folder opened meanwhile drops the answer, a sync that fails or is refused still reads the list and says so, and unsaved edits are asked about before anything is sent."),
     "I1": ("apps", "Switching library in the middle of a folder shows no card of the first."),
     "I2": ("apps", "A write through a server update is waited out and not repeated."),
     "I3": ("apps", "An update by a launch and by an install hands one server over to the next without killing its work."),
@@ -214,6 +215,7 @@ _SCENARIO_FILES = {
     "V17": "test_measuring_the_neighbour_cut_for_clips",
     "V18": "scenario-tabbing-through-the-main-page",
     "V20": "scenario-taking-tags-off-the-open-photo",
+    "V21": "scenario-refreshing-a-folder",
 }
 
 #: owner -> kind -> the unit, migration and guard files, a .mjs without its ".test.mjs".

@@ -324,7 +324,8 @@ export function scanFolder(forceRefresh = false, { keepTyped = false } = {}) {
             if (!stillHere && hasUnsavedEdits()) {
                 leavePhotoThen(() => showScannedFolder(path, data), {
                     onStay: () => {
-                        // Keep editing: the folder still open goes back on screen.
+                        // Keep editing: the folder still open goes back on screen, and what was to be said of the scan is not.
+                        state.afterScan = null;
                         folderPathInput.value = state.scannedFolder || '';
                         renderFileList();
                         updateListStats();
