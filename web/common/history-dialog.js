@@ -11,6 +11,10 @@
  * Confirm undo, and a second press makes it. A photo file changed since the change is
  * refused, named by photo id, and never overwritten.
  *
+ * The writes of one action sent in chunks are ONE line, "Tags on 50 photos (3 writes)"
+ * (/api/history's `members`, tagpup.services.journal.lines); its Undo posts each of them,
+ * newest first, through the same per-change route, rehearsed and then confirmed alike.
+ *
  * After an undo that changed something the page is told (`undone`), so it can show what
  * its photos hold now. The dialog is a `.modal`, so the pages' shortcuts leave it alone
  * while it is open (web/common/dialog.js); its frame is its own (history-dialog.css), as
@@ -54,10 +58,16 @@ export function describeChange(change) {
     return parts.join(', ');
 }
 
+/** A group's line, by what is left of it and what was written: "Tags on 50 photos (3 writes)". */
+function groupWords(change) {
+    const photos = total(change.files);
+    return `Tags on ${photos} ${photos === 1 ? 'photo' : 'photos'} (${change.writes} ${change.writes === 1 ? 'write' : 'writes'})`;
+}
+
 /** What an undo's answer says, for a person to read. */
 function outcome(answer, rehearsed) {
     if (!answer) return 'The server did not answer.';
-    if (answer.refused) return `Cannot be undone: ${answer.refused}`;
+    if (answer.refused || !answer.success) return `Cannot be undone: ${answer.refused || answer.error}`;
     const refused = (answer.errors || []).map(e => `${e.what}: ${e.why}`);
     const differences = answer.differences || [];
     if (rehearsed) {
@@ -69,12 +79,27 @@ function outcome(answer, rehearsed) {
     return refused.length ? `${done}; not undone: ${refused.join('; ')}` : `${done}.`;
 }
 
+/** What the answers to a group's undo ({id, answer} each) say, summed, for a person to read. */
+function groupOutcome(answers, rehearsed) {
+    const sum = key => answers.reduce((n, { answer }) => n + ((answer && answer[key]) || 0), 0);
+    const refused = answers.flatMap(({ id, answer }) => (!answer ? [`#${id}: the server did not answer`]
+        : (answer.refused || !answer.success) ? [`#${id}: ${answer.refused || answer.error}`]
+            : (answer.errors || []).map(e => `${e.what}: ${e.why}`)));
+    if (rehearsed) {
+        const notes = refused.length ? `; not now: ${refused.join('; ')}` : '';
+        return `Undoing its ${answers.length} write(s) would put back ${sum('would_put_back')} item(s)${notes}. Press Confirm undo to do it.`;
+    }
+    const done = `Undone: ${sum('changed')} put back`;
+    return refused.length ? `${done}; not undone: ${refused.join('; ')}` : `${done}.`;
+}
+
 function changeRow(change) {
+    const grouped = Array.isArray(change.members);
     const when = change.undone || change.applied || change.created || '';
     const note = buildElement('div', { className: 'history-note', attrs: { role: 'status' } });
     const children = [
         buildElement('div', { className: 'history-what' }, [
-            buildElement('span', { className: 'history-operation', text: change.operation }),
+            buildElement('span', { className: 'history-operation', text: grouped ? groupWords(change) : change.operation }),
             buildElement('span', { className: 'history-id', text: `#${change.id}` }),
         ]),
         buildElement('div', { className: 'history-detail' }, [
@@ -93,7 +118,7 @@ function changeRow(change) {
             attrs: { type: 'button' },
             data: { change: String(change.id) },
         });
-        button.addEventListener('click', () => undoChange(change, button, note));
+        button.addEventListener('click', () => (grouped ? undoGroup : undoChange)(change, button, note));
         row.querySelector('.history-what').append(button);
     } else if (change.why_not) {
         // Why not, as the server's undo would refuse it: no button to press in vain.
@@ -174,6 +199,57 @@ export function undoChange(change, button, note) {
         console.error('Could not undo:', err);
         note.textContent = 'Could not undo it.';
         return null;
+    });
+}
+
+/**
+ * Undo of a group's line: each of its changes not undone posted newest first through the one per-change route (a newer
+ * write of a file is undone before an older one). The first press rehearses those the server offers now, the second makes
+ * every one; a refused one is said and the rest are made. Stopped part-way (a closed tab, a server gone), the list read
+ * again shows what is left, and Undo makes the rest.
+ */
+export function undoGroup(change, button, note) {
+    if (historyDialog.busy) return Promise.resolve(null);
+    historyDialog.busy = true;
+    button.disabled = true;
+    const confirming = historyDialog.confirming === change.id;
+    const asked = confirming ? change.members : change.members.filter(member => !member.why_not);
+    const answers = [];
+    const next = index => {
+        if (index >= asked.length) return Promise.resolve();
+        note.textContent = `${confirming ? 'Undoing' : 'Checking'} write ${index + 1} of ${asked.length}...`;
+        return askUndo(asked[index], confirming).then(answer => {
+            answers.push({ id: asked[index].id, answer });
+            return next(index + 1);
+        });
+    };
+    return next(0).then(() => {
+        historyDialog.busy = false;
+        button.disabled = false;
+        if (!confirming) {
+            note.textContent = groupOutcome(answers, true);
+            if (answers.some(({ answer }) => answer && answer.success && !answer.refused)) {
+                historyDialog.confirming = change.id;
+                button.textContent = 'Confirm undo';
+            }
+            return answers;
+        }
+        historyDialog.confirming = null;
+        const text = groupOutcome(answers, false);
+        const changed = answers.find(({ answer }) => answer && answer.changed);
+        return loadHistory().then(() => {
+            say(text);
+            if (changed && typeof historyDialog.undone === 'function') historyDialog.undone(changed.answer);
+            return answers;
+        });
+    }).catch(err => {
+        historyDialog.busy = false;
+        button.disabled = false;
+        historyDialog.confirming = null;
+        console.error('Could not undo:', err);
+        note.textContent = 'Could not undo it.';
+        // Part of it may be undone: the list read again shows what is left, and Undo makes the rest.
+        return confirming ? loadHistory().then(() => { say('Could not undo all of it: the list shows what is left.'); return null; }) : null;
     });
 }
 

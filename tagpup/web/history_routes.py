@@ -7,7 +7,8 @@ Every bulk edit, file write and settings change is a change of the library's jou
 undo one. GET lists the library the URL names' last changes, newest first: what each
 was, when, what it touched by count, and whether it can be undone -- or why not, as the
 journal's one account says it (tagpup.services.journal.why_not, on every entry). No values are
-sent -- a change's rows can name people -- and the summary holds counts only. POST
+sent -- a change's rows can name people -- and the summary holds counts only. The writes of one action
+sent in chunks, each a change holding one group token, are one line (tagpup.services.journal.lines). POST
 rehearses the undo of one (`apply` false: nothing is written, and the answer says what
 would be put back and what refused) or makes it (`apply` true): a change of rows only
 where the rehearsal restores every row exactly, a change of photo files file by file,
@@ -34,12 +35,14 @@ def _listed(entry):
     """An entry as the dialog lists it: offered to be undone unless the journal says why
     not (its `why_not`, journal_service.why_not: the account the rehearsal and the undo
     refuse by). A change of files whose files have changed since is still offered; its
-    rehearsal reads them."""
+    rehearsal reads them. A line of a group's changes (tagpup.services.journal.lines) says so: its `group`, `writes`
+    and `members`, the changes the dialog's Undo posts one at a time, newest first."""
     why_not = entry["why_not"]
+    group = {key: entry[key] for key in ("group", "writes", "members")} if "members" in entry else {}
     return {"id": entry["id"], "operation": entry["operation"], "status": entry["status"],
             "created": entry["created"], "applied": entry["applied"], "undone": entry["undone"],
             "summary": entry["summary"], "rows": entry["rows"], "files": entry["files"],
-            "undoable": why_not is None, "why_not": why_not}
+            "undoable": why_not is None, "why_not": why_not, **group}
 
 
 @routes.get("/api/history")
@@ -50,7 +53,7 @@ def library_history():
     except ValueError:
         return responses.error(400, "Say how many changes to list as a number: ?limit=20.")
     try:
-        found = journal_service.history(library, limit=max(1, min(limit, MOST)))
+        found = journal_service.lines(library, limit=max(1, min(limit, MOST)))
     except Exception as e:
         return responses.error(500, str(e))
     return jsonify({"library": library.name,

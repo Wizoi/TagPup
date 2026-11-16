@@ -55,6 +55,9 @@ RETIRED_FACES = "retire faces (%s)"
 #: (RETIRED), which the face gate reads the passes by and pass_check matches.
 FACE_PASS = "face pass (%s)"
 
+#: How many changes History reads at a time while it gathers its lines (lines).
+READ_AT_ONCE = 100
+
 #: Why an undo of a face pass's change is refused while a retiring after it stands (pass_check).
 PASS_STANDS_IN = "change %d (retire faces) deleted the old faces this pass's new faces stand in for, and is not undone"
 
@@ -233,12 +236,82 @@ def history(library, change_id=None, reveal=False, limit=20):
     for entry in entries:
         entry["why_not"] = reasons[entry["id"]]
     if not reveal:
-        # A folder is a path, and paths can name people: the summary keeps it for `reveal` only.
         for entry in entries:
-            entry["summary"] = {key: value for key, value in entry["summary"].items() if key != "folder"}
+            entry["summary"] = _without_folder(entry["summary"])
     if change_id is not None and not entries:
         raise NotFound("There is no change %d in the library %s." % (change_id, library.name))
     return {"changes": entries}
+
+
+def _without_folder(summary):
+    """A summary without its folder: a folder is a path, and paths can name people (kept for `reveal` only)."""
+    return {key: value for key, value in summary.items() if key != "folder"}
+
+
+def lines(library, limit=20):
+    """The library's history as the History dialog lists it: up to `limit` lines, newest first, each one change (an entry
+    of history's, with its why_not, without its folder) -- or the changes of one action of the owner's written in chunks,
+    each holding one token in its summary (journal.GROUP: a page's bulk tag write, tagging.change_each), all of them,
+    however far back, as ONE line (_group_line). A token on one change alone is that change's own line; two groups
+    written at once are two lines, by their tokens, never by being next to each other."""
+    entries, before = [], None
+    while True:
+        batch = journal.history(library.path, limit=READ_AT_ONCE, before=before)
+        entries += batch
+        if len(batch) < READ_AT_ONCE or len(_by_line(entries)) >= limit:
+            break
+        before = batch[-1]["id"]
+    kept = dict(list(_by_line(entries).items())[:limit])
+    tokens = [token for kind, token in kept if kind == journal.GROUP]
+    if tokens:
+        # The older changes of a group listed: past what was read, however many.
+        for older in journal.history(library.path, before=entries[-1]["id"], groups=tokens):
+            kept[(journal.GROUP, older["summary"][journal.GROUP])].append(older)
+    members = [entry for line in kept.values() for entry in line]
+    reasons = refusals(library, members)
+    for entry in members:
+        entry["why_not"] = reasons[entry["id"]]
+        entry["summary"] = _without_folder(entry["summary"])
+    return {"changes": [line[0] if len(line) == 1 else _group_line(line) for line in kept.values()]}
+
+
+def _by_line(entries):
+    """{key: its entries, newest first} of `entries` (newest first), in the order of each line's newest: a change of a
+    group (journal.GROUP in its summary) under (GROUP, its token), any other under ("change", its id)."""
+    found = {}
+    for entry in entries:
+        token = entry["summary"].get(journal.GROUP)
+        found.setdefault((journal.GROUP, token) if token else ("change", entry["id"]), []).append(entry)
+    return found
+
+
+def _group_line(members):
+    """One line of History for the changes of one group (`members`, newest first, each with its why_not): what is left of
+    it -- the changes not undone, or all of them once every one is -- its photos (the photo files WRITTEN, the sum of its
+    files, not the photos a chunk planned: a photo skipped is not counted), rows and files summed, `writes` how many
+    changes, and `members` those not undone, {"id", "why_not"} newest first, which the dialog's Undo posts one at a time
+    through the one per-change undo (a newer write of a file is undone before an older one: journal.refusal). Undoable
+    while one of them is; else why not, as its newest says."""
+    left = [entry for entry in members if entry["status"] != "undone"]
+    shown = left or members
+    newest = shown[0]
+    token = newest["summary"][journal.GROUP]
+    files = _summed(entry["files"] for entry in shown)
+    return {**newest, "created": shown[-1]["created"],
+            "summary": {journal.GROUP: token, "photos": sum(files.values())},
+            "rows": _summed(entry["rows"] for entry in shown), "files": files,
+            "why_not": None if any(entry["why_not"] is None for entry in left) else newest["why_not"],
+            "group": token, "writes": len(shown),
+            "members": [{"id": entry["id"], "why_not": entry["why_not"]} for entry in left]}
+
+
+def _summed(counts):
+    """The counts of `counts` ({key: count, or counts of their own}: rows by table and action, files by state) added up."""
+    total = {}
+    for each in counts:
+        for key, value in each.items():
+            total[key] = _summed([total.get(key, {}), value]) if isinstance(value, dict) else total.get(key, 0) + value
+    return total
 
 
 def _why_not(library, change_id):
