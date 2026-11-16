@@ -103,13 +103,17 @@ async function writeRemoval(photo, batch, entry) {
         console.error(err);
         unmarkBatch(photo, batch);
         const holds = photo.tags || [];
+        // Only what the file still holds comes back: a write queued before the click may have written the removal itself
+        // (its list came from the page's copy), and a tag the file no longer holds put back would be written again.
+        const inFile = ((baseOf(photo) || {}).tags || []).map(normalizeTag);
         const back = batch.taken.filter((t, at) => batch.taken.indexOf(t) === at
+            && inFile.includes(normalizeTag(t))
             && !holds.some(each => normalizeTag(each) === normalizeTag(t)));
         photo.tags = [...holds, ...back];
         redrawIfShowing(photo);
         if (entry) entry.error = err.message;
         state.removals.failed = true;
-        setStatus('error', `Not taken off${back.length ? ' ' + back.join(', ') : ''}: ${err.message}`, { transient: false });
+        setStatus('error', back.length ? `Not taken off ${back.join(', ')}: ${err.message}` : `Not saved: ${err.message}`, { transient: false });
         alert("Error deleting tag: " + err.message);
         return false;
     }

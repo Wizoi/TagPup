@@ -142,6 +142,26 @@ describe("V20: taking tags off the open photo is answered at the click, the writ
     assert.ok(ctx.document.querySelector(".write-queue-retry"), "the failed write offers no Retry");
   });
 
+  test("a removal that fails after an earlier write already wrote it does not put the tag back, nor write it again", async (t) => {
+    const ctx = await open(t);
+    await ctx.takeOff("Kentridge");
+    ctx.$("input-add-tag").value = "Places/Beach";
+    ctx.$("btn-add-tag").click();
+    await flush(ctx.window, 8);
+    await ctx.takeOff("Cross Country");
+    await ctx.answer();
+    await ctx.answer();
+    assert.ok(!ctx.saves()[1].tags.includes("Cross Country"), "the add queued before the click was expected to carry it off");
+    await ctx.answer("The share did not answer");
+    assert.ok(!ctx.pills().includes("Cross Country"), "the file no longer holds it, yet its pill came back");
+    assert.doesNotMatch(ctx.status(), /Not taken off Cross Country/);
+    ctx.$("input-add-tag").value = "Kentridge";
+    ctx.$("btn-add-tag").click();
+    await flush(ctx.window, 8);
+    while (ctx.unanswered()) await ctx.answer();
+    assert.ok(!ctx.saves().at(-1).tags.includes("Cross Country"), "the next save wrote the tag back");
+  });
+
   test("another photo chosen while a removal is out shows its own tags; the first, opened again, its tags as written", async (t) => {
     const ctx = await open(t);
     await ctx.takeOff("Cross Country");
