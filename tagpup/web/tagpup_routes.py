@@ -237,12 +237,6 @@ def _a_folder(folder):
     return isinstance(folder, str) and bool(folder) and photo_actions.folder_state(folder) == "there"
 
 
-def _a_file(path):
-    """Is there a file (or a folder) at `path`, as a request sent it? Through photos.file_stamp, which waits a moment on
-    a network share. The one check of the routes that act on one photo."""
-    return isinstance(path, str) and bool(path) and photo_actions.file_stamp(path) is not None
-
-
 def _sorted(photos):
     """A folder's records in the order the page shows them."""
     return sorted(photos.values(), key=photo_actions.taken_order)
@@ -270,7 +264,8 @@ def autocomplete_folder():
 
 def _folder_suggestions(typed):
     if not typed:
-        return [letter + ":\\" for letter in string.ascii_uppercase if _a_file(letter + ":\\")]
+        return [letter + ":\\" for letter in string.ascii_uppercase
+                if photo_actions.file_stamp(letter + ":\\") is not None]
     typed = os.path.expandvars(typed)
     if re.match(r"^[a-zA-Z]$", typed):
         return [typed.upper() + ":\\"]
@@ -946,8 +941,9 @@ def _clip_converted(library, source, how):
 def photo_open_explorer():
     body = request.get_json(silent=True) or {}
     photo_path = body.get("path")
-    if not _a_file(photo_path):
-        return responses.error(400, "Invalid file path")
+    refused = responses.file_refused(photo_path)
+    if refused:
+        return refused
     try:
         desktop.show_in_explorer(photo_path)
     except Exception as e:
@@ -977,8 +973,9 @@ def photo_rotate():
     body = request.get_json(silent=True) or {}
     photo_path = body.get("path")
     direction = body.get("direction")
-    if not _a_file(photo_path):
-        return responses.error(400, "Invalid file path")
+    refused = responses.file_refused(photo_path)
+    if refused:
+        return refused
     photo_path = paths.stored(photo_path)
     try:
         # Anything but an explicit direction is refused by the service, with the
@@ -1006,8 +1003,9 @@ def photo_delete():
     library = state.require()
     body = request.get_json(silent=True) or {}
     photo_path = body.get("path")
-    if not _a_file(photo_path):
-        return responses.error(400, "Invalid file path")
+    refused = responses.file_refused(photo_path)
+    if refused:
+        return refused
     try:
         result = photo_actions.delete(library, photo_path, body.get("for_good") is True)
         if result.refused:
@@ -1154,8 +1152,9 @@ def photo_save_metadata():
     title = body.get("title")
     tags = body.get("tags", [])
     date_taken = body.get("date_taken")
-    if not _a_file(photo_path):
-        return responses.error(400, "Invalid file path")
+    refused = responses.file_refused(photo_path)
+    if refused:
+        return refused
     photo_path = paths.stored(photo_path)
     stamp, why = _stamp_of(body.get("stamp"))
     if why:

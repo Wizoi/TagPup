@@ -284,6 +284,13 @@ def folder_state(folder, seconds=None):
 SHARE_AWAY_SENTENCE = "The network share %s is not answering just now. Try again when it is back."
 #: What a folder that is not there, or is not a folder, is refused with.
 NOT_A_FOLDER_SENTENCE = "Path is not a valid directory: %s"
+#: What a photo that is not there, or cannot be read, is refused with by a route that acts on one photo.
+NOT_A_FILE_SENTENCE = "Invalid file path"
+
+
+def _refused_as_away(result, path):
+    """Refuse `result` as SHARE_AWAY with SHARE_AWAY_SENTENCE, naming `path`'s share, never `path` (it names people)."""
+    result.refuse(SHARE_AWAY_SENTENCE % os.path.splitdrive(paths.stored(path))[0], SHARE_AWAY)
 
 
 def folder_refusal(folder, state=None):
@@ -296,9 +303,25 @@ def folder_refusal(folder, state=None):
     if state == "there":
         return None
     if state == "unanswered":
-        result.refuse(SHARE_AWAY_SENTENCE % os.path.splitdrive(paths.stored(folder))[0], SHARE_AWAY)
+        _refused_as_away(result, folder)
     else:
         result.refuse(NOT_A_FOLDER_SENTENCE % folder)
+    return result
+
+
+def file_refusal(path):
+    """None when there is a file (or a folder) at `path`, as a request sent it, now (stamp_of); else a Result refused
+    with why, as folder_refusal's: SHARE_AWAY_SENTENCE, refused as SHARE_AWAY (a route answers 503), when it is on a
+    network share that did not answer -- not known to be gone, so never refused as gone (#3068) --; NOT_A_FILE_SENTENCE
+    when it is not there, or is there and cannot be read."""
+    stamp = stamp_of(path) if isinstance(path, str) and path else None
+    if isinstance(stamp, tuple):
+        return None
+    result = Result(attempted=1)
+    if stamp is UNANSWERED:
+        _refused_as_away(result, path)
+    else:
+        result.refuse(NOT_A_FILE_SENTENCE)
     return result
 
 
