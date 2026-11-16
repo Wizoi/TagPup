@@ -41,11 +41,12 @@ import { renderSyncInfo } from './sync-state.js';
 import { photosWritten } from './tally.js';
 import { landOnAnchor, libraryViewPainted, openInOrganize, wireMoves } from './library-moves.js';
 import {
-    carryTagsForward, deleteActivePhoto, facesFollowReply, openLibraryPhoto, openPhotoInDefaultApp, removePhotoTags,
+    carryTagsForward, deleteActivePhoto, facesFollowReply, openLibraryPhoto, openPhotoInDefaultApp,
     renderPhotoFaces, renderPhotoFacesHere, renderTags, rotatePhoto,
     reloadChangedPhoto, saveSingleAddPerson, saveSingleAddTag, saveSingleTitle, selectPhoto,
     updateCarryForwardState, wireZoom
 } from './photo.js';
+import { removePhotoTags } from './tags-off.js';
 import { wireDateTakenModal } from './date-taken.js';
 import {
     renderThumbnails, selectAllThumbnails, selectNoneThumbnails, wireGridContextMenu,

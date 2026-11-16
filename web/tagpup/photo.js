@@ -26,9 +26,10 @@ import { forgetCachedPhoto, saveToLocalStorageCache } from './cache.js';
 import {
     formatFriendlyDateSingle, getFolderDateStats, parseExifDateToLocalDate, takenOf
 } from './format.js';
-import { namesAPerson, normalizeTag, updateTagsDatalist } from './tags.js';
+import { namesAPerson, normalizeTag } from './tags.js';
+import { goingOffOf, removePhotoTags } from './tags-off.js';
 import {
-    baseOf, leavePhotoThen, postPhotoMetadata, queueWriteOf, redrawIfShowing, saveDetailEdits,
+    leavePhotoThen, postPhotoMetadata, queueWriteOf, redrawIfShowing, saveDetailEdits,
     updateSaveButton
 } from './edits.js';
 import {
@@ -612,7 +613,7 @@ export function renderTags(tags) {
     const photo = state.folderPhotos.find(p => p.path === state.activePhotoPath);
     const photoPeople = (photo && photo.people) ? photo.people : [];
     // A tag taken off and not written yet is not drawn, whatever a write queued before it answers meanwhile.
-    const marks = photo && goingOff.get(photo);
+    const marks = goingOffOf(photo);
     if (marks && tags) tags = tags.filter(tag => !marks.has(normalizeTag(tag)));
     
     const peopleTags = [];
@@ -730,124 +731,6 @@ export function facesFollowReply(path, replies) {
     if (!listed.some(id => held.has(id))) return;
     if (box.busy) box.owed = true;
     else renderPhotoFaces(path);
-}
-
-/**
- * The tags of each photo taken off on this page and not written yet ({photo: Map(normalized tag: removals)}): renderTags
- * does not draw them, whatever a write queued before them answers in between (its reply sets the tags it was asked with).
- */
-const goingOff = new WeakMap();
-
-function markGoingOff(photo, keys, by) {
-    const marks = goingOff.get(photo) || new Map();
-    for (const key of keys) {
-        const left = (marks.get(key) || 0) + by;
-        if (left > 0) marks.set(key, left);
-        else marks.delete(key);
-    }
-    if (marks.size) goingOff.set(photo, marks);
-    else goingOff.delete(photo);
-}
-
-/** A batch's tags drawn again by renderTags (written, or put back): once, whichever comes first. */
-function unmarkBatch(photo, batch) {
-    if (batch.marked) markGoingOff(photo, batch.keys, -1);
-    batch.marked = false;
-}
-
-/** {photo: the removal of it queued and not started yet}: a pill clicked meanwhile joins it, one write for the lot. */
-const removalWaiting = new WeakMap();
-
-/**
- * The removals asked for and not answered yet, of every photo: the status line says 'Deleting tag...' until the last, then
- * 'Ready' -- unless one of them failed: what it says stays until they are all answered.
- */
-let removalsOpen = 0;
-let removalFailed = false;
-
-/**
- * Take tags off a photo, through the page's own save of its keywords (its queue, its stamp, its refusal of a file changed on
- * disk). `tagsToRemove` as the photo spells them. Resolves true when they are off, or were not there.
- *
- * The click is answered at once, as naming a face is (face-boxes.js nameFaceAs): the tags leave the page's copy and the pills
- * now, and the write waits its turn behind the photo's others (a write of a file on a share takes seconds); the pills clicked
- * while it waits are written with it. If it fails, the tags it took are put back, and only those.
- */
-export function removePhotoTags(path, tagsToRemove) {
-    const photo = path && state.folderPhotos.find(p => samePath(p.path, path));
-    if (!photo) return Promise.resolve(false);
-    const keys = tagsToRemove.map(normalizeTag);
-    // What the file held is taken before the page's copy changes: the write names the file as it was read (baseOf).
-    baseOf(photo);
-    const taken = (photo.tags || []).filter(t => keys.includes(normalizeTag(t)));
-    markGoingOff(photo, keys, 1);
-    if (taken.length) {
-        photo.tags = photo.tags.filter(t => !keys.includes(normalizeTag(t)));
-        redrawIfShowing(photo);
-    }
-    const waiting = removalWaiting.get(photo);
-    if (waiting) {
-        waiting.keys.push(...keys);
-        waiting.taken.push(...taken);
-        return waiting.run;
-    }
-    const batch = { keys: keys.slice(), taken: taken.slice(), marked: true };
-    removalWaiting.set(photo, batch);
-    removalsOpen += 1;
-    if (!removalFailed) setStatus('busy', 'Deleting tag...');
-    batch.run = queueWriteOf(photo.path, (entry) => writeRemoval(photo, batch, entry)).then((done) => {
-        removalsOpen -= 1;
-        if (!removalsOpen) removalFailed = false;
-        unmarkBatch(photo, batch);
-        return done;
-    });
-    return batch.run;
-}
-
-/**
- * A removal's turn (or its Retry): the photo's tags as they are now, without the batch's, written -- whatever was added or
- * taken off since the clicks, so that neither undoes the other. Nothing is written when the batch took nothing off the
- * page's copy and the copy holds none of them (an earlier removal wrote it, or it was never on the photo).
- */
-async function writeRemoval(photo, batch, entry) {
-    if (removalWaiting.get(photo) === batch) removalWaiting.delete(photo);
-    const gone = new Set(batch.keys);
-    const isGone = (tag) => gone.has(normalizeTag(tag));
-    const current = photo.tags || [];
-    const updatedTags = current.filter(t => !isGone(t));
-    if (!batch.taken.length && updatedTags.length === current.length) {
-        unmarkBatch(photo, batch);
-        if (removalsOpen <= 1 && !removalFailed) setStatus('ready', 'Ready');
-        return true;
-    }
-
-    if (!removalFailed) setStatus('busy', 'Deleting tag...');
-    let saved;
-    try {
-        saved = await postPhotoMetadata(photo, { tags: updatedTags });
-    } catch (err) {
-        console.error(err);
-        unmarkBatch(photo, batch);
-        const holds = photo.tags || [];
-        const back = batch.taken.filter((t, at) => batch.taken.indexOf(t) === at
-            && !holds.some(each => normalizeTag(each) === normalizeTag(t)));
-        photo.tags = [...holds, ...back];
-        redrawIfShowing(photo);
-        if (entry) entry.error = err.message;
-        removalFailed = true;
-        setStatus('error', `Not taken off${back.length ? ' ' + back.join(', ') : ''}: ${err.message}`, { transient: false });
-        alert("Error deleting tag: " + err.message);
-        return false;
-    }
-    unmarkBatch(photo, batch);
-    // The page's copy as it is now (a pill clicked while this was out is already off it), without what this wrote off.
-    photo.tags = (photo.tags || []).filter(t => !isGone(t));
-    // The faces follow the reply (facesFollowReply): a person taken off the photo is taken off its faces by the server (#908).
-    redrawIfShowing(photo, saved);
-    updateTagsDatalist();
-    if (removalsOpen <= 1 && !removalFailed) setStatus('ready', 'Ready');
-    saveToLocalStorageCache();
-    return true;
 }
 
 // The path in Image Details opens the photo in the app Windows uses for it.
