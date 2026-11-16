@@ -99,6 +99,7 @@ SCENARIOS = {
     "I9": ("apps", "A page's saved scan of an older shape is read again, not trusted."),
     "I10": ("apps", "A background run that failed overnight says, from its row, what happened and what to do next; TagPup's own work in the way never asks."),
     "I11": ("apps", "On a machine without ffmpeg (or with one that does not run) the server and the CLI's index runs start nothing and say what to install; an install says so and leaves the old server running."),
+    "I12": ("apps", "Refresh on a folder syncs it through the library's walk, and a file it finds gone starts the whole sync once, which removes it or follows its move; pressed again while that walks, a share that does not answer, another process's run and a server with no runner each sync or start nothing more and say why in Run now's words."),
 }
 
 #: scenario id -> its scenario files; a file listed under more than one runs more than one scenario (the first is its owner's).
@@ -176,6 +177,7 @@ _SCENARIO_FILES = {
     "I9": "scenario-a-scan-kept-by-an-older-page",
     "I10": "test_a_failed_run_says_what_to_do",
     "I11": "test_ffmpeg_is_a_prerequisite",
+    "I12": "test_a_folders_refresh_syncs_it",
     "P1": "test_people_by_id_at_once",
     "P2": (
         "test_a_cropped_picture_gets_new_faces test_bulk_faces_and_tags test_cluster_faces_on_a_crowded_library test_clustering_meets_naming "

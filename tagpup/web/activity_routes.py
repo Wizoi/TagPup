@@ -144,6 +144,12 @@ def _task(name):
     return background.task(name) if background is not None else None
 
 
+def recurring_runner():
+    """This process's runner of the recurring jobs (tagpup.jobs.recurring.Runner), or None when it runs none (a server a
+    test started, TAGPUP_NO_JOBS): Run now's, and the whole sync a folder's Refresh starts (tagpup.web.sync_routes)."""
+    return _task(runtimes.RECURRING_JOBS)
+
+
 def is_syncing(library):
     """Is this process's folder watcher syncing `library` right now? False when it runs none (a test server, a
     TagPup started without its jobs): the answer is what this process knows, not the library's."""
@@ -252,7 +258,7 @@ def cancel_batch():
 @routes.get("/api/activity/jobs")
 def jobs():
     limit = _int_arg("runs", RUNS, MOST_RUNS)
-    runner = _task(runtimes.RECURRING_JOBS)
+    runner = recurring_runner()
     listed = []
     libraries = _libraries()
     # Run now is the recurring runner's (POST /api/activity/jobs/run): an index, say, is not one of its jobs.
@@ -277,10 +283,9 @@ def run_job():
     """Run a recurring job now for a library, on the runner of this process's recurring
     jobs: answered once the run has started or been refused (a run holds it already)."""
     body = request.get_json(silent=True) or {}
-    runner = _task(runtimes.RECURRING_JOBS)
+    runner = recurring_runner()
     if runner is None:
-        return responses.error(409, "This server runs no recurring jobs (one a test started, or TAGPUP_NO_JOBS "
-                                    "is set)")
+        return responses.error(409, recurring.said("no runner"))
     job = runner.registry.get(body.get("job") or "")
     if job is None:
         return responses.error(404, "There is no recurring job called %s" % (body.get("job"),))
@@ -289,13 +294,11 @@ def run_job():
         return responses.error(404, "There is no library called %s" % (body.get("library"),))
     outcome = runner.start_job(job.name, library)
     if outcome is None:
-        return jsonify({"success": True, "started": None, "run_id": None,
-                        "why": "it has not started yet; its run shows here once it does"})
+        return jsonify({"success": True, "started": None, "run_id": None, "why": recurring.said("not yet")})
     if outcome.ran:
         return jsonify({"success": True, "started": True, "run_id": outcome.run_id,
                         "run": runs.job_tag(outcome.library, outcome.run_id)})
-    why = {"running": "a run of it is under way already", "behind": "the library has not had this version's "
-           "migrations; open it in an app first", "no library": "there is no library"}.get(outcome.why, outcome.why)
+    why = recurring.said(outcome.why)
     return jsonify({"success": False, "started": False, "run_id": None, "why": why,
                     "error": "Not started: %s." % why})
 
