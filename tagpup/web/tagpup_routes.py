@@ -1204,18 +1204,28 @@ def photo_save_metadata():
 def photos_bulk_tags():
     library = state.require()
     body = request.get_json(silent=True) or {}
-    photo_paths = body.get("paths", [])
-    add_tags = body.get("add_tags", [])
-    remove_tags = body.get("remove_tags", [])
-    if not photo_paths:
-        return responses.error(400, "Missing paths list")
+    changes = body.get("changes")
+    if changes is not None:
+        # Each photo's own tags to add and take off. The body of one list for every photo (`paths`, `add_tags`,
+        # `remove_tags`) is the page's until it sends `changes` (plan one-queue-for-tag-changes, cut 3).
+        if "paths" in body or "add_tags" in body or "remove_tags" in body:
+            return responses.error(400, "A bulk tag write names its photos once: send changes, or paths with "
+                                        "add_tags and remove_tags, not both.")
+        changes, why = _tag_changes(changes)
+        if why:
+            return responses.error(400, why)
+    else:
+        photo_paths = body.get("paths", [])
+        if not photo_paths:
+            return responses.error(400, "Missing paths list")
+        add_tags, remove_tags = body.get("add_tags", []), body.get("remove_tags", [])
+        changes = {path: (add_tags, remove_tags) for path in photo_paths}
     try:
         # What is added is checked, not what is removed (tagpup.services.tagging). The
         # page's records are told in the order the files were written.
-        with file_changes.batch_exclusively(library, "bulk tags", len(photo_paths)):
+        with file_changes.batch_exclusively(library, "bulk tags", len(changes)):
             # `group`: the token of the one action of the page's this request is a chunk of (History's one line).
-            result = tagging_actions.change_tags(library, photo_paths, add_tags, remove_tags,
-                                                 state.exiftool(library), group=body.get("group"))
+            result = tagging_actions.change_tags_of(library, changes, state.exiftool(library), group=body.get("group"))
             if result.refused:
                 return _refused_after_writing(library, result)
             stamps = records_written(library, result)
@@ -1235,6 +1245,34 @@ def photos_bulk_tags():
                     "stamps": {path: _stamp_reply(stamp) for path, stamp in stamps.items()},
                     **_where(result),
                     **_faces_unnamed(result)})
+
+
+#: What one photo of a bulk tag write's `changes` may say: the tags to add and the tags to take off.
+CHANGE_KEYS = ("add", "remove")
+
+
+def _tag_changes(changes):
+    """({path: ([tags to add], [tags to take off])}, None) of a bulk tag write's `changes`, {path: {"add": [tag],
+    "remove": [tag]}} (a list left out is none), or (None, the sentence that refuses it). Nothing is checked of the tags
+    here: what is added is the service's to check (tagpup.services.tagging.change_tags_of)."""
+    shape = 'Send changes as {path: {"add": [tags], "remove": [tags]}}, one entry for each photo.'
+    if not isinstance(changes, dict):
+        return None, shape
+    if not changes:
+        return None, "The bulk tag write names no photo. " + shape
+    found = {}
+    named = set()
+    for path, change in changes.items():
+        if not path or not isinstance(change, dict) or set(change) - set(CHANGE_KEYS):
+            return None, shape
+        if paths.key(path) in named:
+            return None, "A photo is named once in a request: %s is named twice. " % os.path.basename(path) + shape
+        named.add(paths.key(path))
+        lists = tuple(change.get(key, []) for key in CHANGE_KEYS)
+        if not all(isinstance(tags, list) and all(isinstance(tag, str) for tag in tags) for tags in lists):
+            return None, shape
+        found[path] = lists
+    return found, None
 
 
 def _faces_unnamed(result):

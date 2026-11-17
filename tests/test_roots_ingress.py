@@ -213,6 +213,24 @@ class ThePageIsToldItsPathsAreOld(AfterAMove):
             "X-TagPup-Roots-Moved"))
 
 
+class EachPhotosOwnChanges(AfterAMove):
+    def test_old_paths_as_the_keys_of_changes_write_the_first_places_files_and_the_reply_names_them(self):
+        # The page's queue of tag changes is keyed by the paths it holds; after a move they are the old place's.
+        self.move()
+        reply = self.post("/api/photos/bulk-tags", {"changes": {self.held[0]: {"add": ["Harbour"]},
+                                                                self.held[1]: {"add": ["Quay"], "remove": []}}})
+        self.assertEqual(200, reply.status_code, reply.get_data(as_text=True))
+        self.assertEqual("pictures", reply.headers.get("X-TagPup-Roots-Moved"), "the page is not told its paths are old")
+        self.assertIn("Harbour", keywords(self.moved[0]))
+        self.assertIn("Quay", keywords(self.moved[1]))
+        self.assertNotIn("Harbour", keywords(self.held[0]), "the old copy was written")
+        self.assertNotIn("Quay", keywords(self.held[1]), "the old copy was written")
+        body = reply.get_json()
+        first = sorted(paths.key(moved) for moved in self.moved[:2])
+        self.assertEqual((first, first), (sorted(paths.key(each) for each in body["written"]),
+                                          sorted(paths.key(each) for each in body["stamps"])))
+
+
 class ThePhotoServedAndOpened(AfterAMove):
     def test_a_rotate_by_the_old_path_is_what_photo_file_serves_for_the_old_path(self):     # #481
         self.move()
