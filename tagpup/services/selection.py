@@ -1,7 +1,7 @@
 """A SELECTION of photos, by id, and what is made of one: the photos it holds, in order (docs/ARCHITECTURE.md, phase
 9d-1). The one reading and the one resolver of the bulk edits (tagpup.services.bulk_edit) and of the selection panel's tally.
 
-A selection is one of two shapes, sent by a page that never holds 68,000 ids to send:
+A selection is one of three shapes, sent by a page that never holds 68,000 ids to send:
 
 * `{"ids": [photo id, ...]}`: the photos picked, at most MAX_LISTED. Ids the library has no photo of -- deleted,
   another library's, never anyone's -- are simply not in it, and an id named twice is one.
@@ -10,6 +10,10 @@ A selection is one of two shapes, sent by a page that never holds 68,000 ids to 
   names, as the view's Photos / Videos filter shows it, library_view.media_of) but the excluded ones
   (at most MAX_LISTED; ids not in the source are no matter). The ids are those of `/api/library/ids` for the same
   source, in the same order, read here, on the server, in one transaction: the page sends the source, not its list.
+* `{"paths": [path, ...]}`: the photos at these paths, at most MAX_LISTED, each named once (paths.key): what a folder opened in
+  Organize holds, whose scan carries no ids. Each is the photo whose row is at it, however it is spelled
+  (store.roots.photo_ids_at), looked up when the selection is resolved; a path no row has (a file not indexed yet) is
+  missing, as an id nobody has.
 
 A selection holds at most batches.MAX_BATCH photos; a larger one is Refused, with how many it was. Reads only, on a read-only
 connection; a root this machine does not place raises paths.RootsError (the web layer's gate answers that first).
@@ -24,17 +28,18 @@ from tagpup.files import recycle_bin
 from tagpup.services import batches, file_changes, library_view
 from tagpup.store import library_view as store
 from tagpup.store import person_ids
+from tagpup.store import roots as store_roots
 from tagpup.store import selection_folders as store_folders
 
-#: The most ids a selection lists (`ids`, or `excluded`).
+#: The most ids or paths a selection lists (`ids`, `excluded` or `paths`).
 MAX_LISTED = 20_000
 
 #: The most tags, and the most people, a tally lists; the rest are counted in `more`.
 MAX_TALLIED = 500
 
-#: A selection read: exactly one of `ids` (a tuple, or None) and `source` (a store.Source, or None); `excluded` (a tuple) goes
-#: with a source.
-Selection = collections.namedtuple("Selection", "ids source excluded")
+#: A selection read: exactly one of `ids` (a tuple), `source` (a store.Source) and `paths` (a tuple of paths as named), the others
+#: None; `excluded` (a tuple) goes with a source.
+Selection = collections.namedtuple("Selection", "ids source excluded paths")
 
 #: The photos a selection holds: `ids`, in order, each once; `requested` how many ids or how big a source it was asked
 #: for; `missing` the ids asked for that have no photo (an ids selection); `excluded` those of the source it left out.
@@ -54,23 +59,44 @@ def _id_list(found, what):
     return tuple(dict.fromkeys(found))
 
 
+def _path_list(found):
+    """`found`, a list of photos' paths, as a tuple in the order named; Refused for anything but text, too many, or one photo
+    named twice (paths.key: a page sends each once, so a second spelling of one is a page's mistake, said, not guessed at),
+    or not a full path on this computer: a row's own form (`@pictures/...`) or a relative one would be read under the server's
+    own folder and count as a photo the library lacks."""
+    if not isinstance(found, list):
+        raise Refused("paths must be a list of photos' paths.")
+    if len(found) > MAX_LISTED:
+        raise Refused("paths lists %d photos; at most %d may be named." % (len(found), MAX_LISTED))
+    if not all(isinstance(each, str) and each for each in found):
+        raise Refused("paths must hold photos' paths, as text.")
+    if not all(paths.is_native_absolute(each) for each in found):
+        raise Refused("paths must be full paths on this computer, as a scan lists them.")
+    if len({paths.key(each) for each in found}) != len(found):
+        raise Refused("paths names a photo twice: name each once.")
+    return tuple(found)
+
+
 def read(library, body):
-    """The Selection a request's `selection` says, or Refused with why it means nothing: neither shape, both, ids that are
-    not whole numbers, too many of them, a source that is none (library_view.source_of's own sentences)."""
+    """The Selection a request's `selection` says, or Refused with why it means nothing: no shape, two, ids that are not whole
+    numbers, paths that are not text or name a photo twice, too many of either, a source that is none (library_view.source_of's
+    own sentences)."""
     if not isinstance(body, dict):
-        raise Refused("A selection is {\"ids\": [...]} or {\"source\": {...}, \"excluded\": [...]}.")
-    has_ids, has_source = "ids" in body, "source" in body
-    if has_ids == has_source:
-        raise Refused("A selection names photos either by \"ids\" or by a \"source\", not both and not neither.")
-    if has_ids:
-        if "excluded" in body:
-            raise Refused("\"excluded\" goes with a source, not with a list of ids.")
-        return Selection(_id_list(body["ids"], "ids"), None, ())
+        raise Refused("A selection is {\"ids\": [...]}, {\"source\": {...}, \"excluded\": [...]} or {\"paths\": [...]}.")
+    shapes = [shape for shape in ("ids", "source", "paths") if shape in body]
+    if len(shapes) != 1:
+        raise Refused("A selection names photos by \"ids\", by a \"source\" or by \"paths\": one of them, not two and not none.")
+    if shapes[0] != "source" and "excluded" in body:
+        raise Refused("\"excluded\" goes with a source, not with a list of ids or paths.")
+    if shapes[0] == "ids":
+        return Selection(_id_list(body["ids"], "ids"), None, (), None)
+    if shapes[0] == "paths":
+        return Selection(None, None, (), _path_list(body["paths"]))
     named = body["source"]
     if not isinstance(named, dict):
         raise Refused("A source is {\"kind\": ..., \"value\": ..., \"recursive\": ...}.")
     source = library_view.source_of(library, named.get("kind"), named.get("value"), named.get("recursive"), named.get("media"))
-    return Selection(None, source, _id_list(body.get("excluded", []), "excluded"))
+    return Selection(None, source, _id_list(body.get("excluded", []), "excluded"), None)
 
 
 #: The most folders the panel lists under "Folders to Organize" (#675); more are counted and the owner asked to narrow.
@@ -92,6 +118,7 @@ def tally(library, selection):
     takes: the panel may tally a whole library."""
     conn = library_view.opened(library)
     try:
+        selection = _by_id(conn, selection)
         found = store.tally(conn, selection.ids, selection.source, selection.excluded)
         # In the tally's read transaction: the folders are of the photos just counted.
         folders = _folders(conn, selection)
@@ -356,13 +383,27 @@ def _refuse_if_large(count):
         raise Refused(why)
 
 
+def _by_id(conn, selection):
+    """`selection`, when it names photos by path, as the ids of the photos whose rows are at those paths now, in the order
+    named, each once (store.roots.photo_ids_at, one seek of the path index a path: the one lookup of a row by its path, any
+    spelling); a path no row has is in none. Any other selection as it is."""
+    if selection.paths is None:
+        return selection
+    return Selection(tuple(dict.fromkeys(store_roots.photo_ids_at(conn, selection.paths))), None, (), None)
+
+
 def resolve(library, selection):
-    """The photos `selection` holds, as Resolved: those that exist now, in order -- an ids selection in the order named, a
-    source in `/api/library/ids`'s order -- each once, at most batches.MAX_BATCH once the excluded are out (else Refused). The photo that exists is decided
-    here, by the library's own rows; a source is read in one transaction, so a library changing meanwhile gives a list that
-    was true at one moment."""
+    """The photos `selection` holds, as Resolved: those that exist now, in order -- an ids or paths selection in the order named,
+    a source in `/api/library/ids`'s order -- each once, at most batches.MAX_BATCH once the excluded are out (else Refused). The
+    photo that exists is decided here, by the library's own rows: a path no row has is `missing`, as an id nobody has, and a
+    photo re-indexed since (a new id at its path) is another photo, so a delete's start refuses it (bulk_edit.refuse_if_changed).
+    A source is read in one transaction, so a library changing meanwhile gives a list that was true at one moment."""
     conn = library_view.opened(library)
     try:
+        if selection.paths is not None:
+            _refuse_if_large(len(selection.paths))
+            ids = list(_by_id(conn, selection).ids)
+            return Resolved(ids, len(selection.paths), len(selection.paths) - len(ids), 0)
         if selection.source is None:
             _refuse_if_large(len(selection.ids))
             there = store.existing_ids(conn, selection.ids)

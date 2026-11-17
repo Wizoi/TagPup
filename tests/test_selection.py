@@ -37,7 +37,7 @@ class Library(unittest.TestCase):
 
 class Reading(Library):
     def test_the_two_shapes(self):
-        self.assertEqual(((1, 2), None, ()), tuple(selection.read(self.library, {"ids": [1, 2]})))
+        self.assertEqual(((1, 2), None, (), None), tuple(selection.read(self.library, {"ids": [1, 2]})))
         read = selection.read(self.library, {"source": {"kind": "year", "value": "2024"}, "excluded": [5]})
         self.assertEqual((None, "year", 2024, (5,)), (read.ids, read.source.kind, read.source.value, read.excluded))
 
