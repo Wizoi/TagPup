@@ -222,7 +222,9 @@ def _tags_differing(original, theirs, own, stale):
         group = tag.split(":")[0]
         if group in SET_ASIDE or tag in SET_ASIDE or tag in KNOWN or group == READER_SAYS:
             continue
-        if "%s:%s" % (group, tag.rsplit(":", 1)[-1]) in stale:
+        if group == "MakerNotes" or "%s:%s" % (group, tag.rsplit(":", 1)[-1]) in stale:
+            # A maker note ExifTool cannot parse (bad offsets) is dropped by its rewrite and kept byte for byte by the
+            # own writer: the own writer's reads as the original's, or it is a difference (#3109).
             if not _same(own.get(tag), original.get(tag)):
                 found.append(tag)
         elif not _same(theirs.get(tag), own.get(tag)):
