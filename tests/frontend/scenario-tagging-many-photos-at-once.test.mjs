@@ -519,3 +519,36 @@ describe("opening another folder while changes wait", () => {
     await answer(ctx);
   });
 });
+
+describe("leaving asks about the changes it drops, no others", () => {
+  test("back onto the folder whose changes wait asks about an undo made in the view, drops only it, and keeps the folder's own", async (t) => {
+    const ctx = await viewableFolder(t);
+    await addTags(ctx, "Trips/Coast");
+    ctx.document.getElementById("btn-show-in-library").click();
+    await ctx.settle(100);
+    pendingOf(ctx).files.set("undo", { path: `${FOLDER}\\IMG_0049.JPG`, add: new Set(["Places/Undone"]), remove: new Set(), token: "u", actions: new Set(), folder: null });
+    ctx.window.history.back();
+    await ctx.settle(300);
+    assert.ok(ctx.confirms.some((m) => /Tag changes for 1 photo are not written yet/.test(m)), ctx.confirms.join("|"));
+    assert.equal(pendingOf(ctx).files.size, 25, "the folder's own changes were dropped with the one asked about");
+    assert.ok(!pendingOf(ctx).files.has("undo"));
+    await answer(ctx);
+    await answer(ctx);
+  });
+});
+
+describe("a second way out while the photo's question is open", () => {
+  test("is not asked about the changes again, and the owner's answer takes the folder first asked about", async (t) => {
+    const ctx = await folderOf(t, 50);
+    await addTags(ctx, "Trips/Coast");
+    await typeInOpenPhoto(ctx, "Places/Typed");
+    await openFolder(ctx, OTHER);
+    await openFolder(ctx, OTHER);
+    assert.equal(ctx.confirms.filter((m) => /not written yet/.test(m)).length, 1, "the tag question was asked twice");
+    await choose(ctx, "discard");
+    await flush(ctx.window, 8);
+    const { state } = pageExports(ctx.window, "web/tagpup/state.js");
+    assert.equal(state.scannedFolder, OTHER, "the owner went to the folder and stayed in the one left");
+    await answer(ctx);
+  });
+});

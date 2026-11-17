@@ -83,15 +83,15 @@ function resume() {
  * Drop every change not sent yet; a chunk out finishes as a normal write, but neither gives back nor says Ready. A failed
  * chunk's row loses its Retry and Cancel: the drain they named is gone, and a Cancel there would drop later changes.
  */
-function dropPending() {
+function dropPending(only = null) {
     const pending = state.pending;
-    const dropped = [...pending.files.values()];
-    pending.files.clear();
+    const dropped = [...pending.files].filter(([key]) => !only || only.has(key));
+    dropped.forEach(([key]) => pending.files.delete(key));
     pending.stopped = false;
     pending.drops += 1;
     state.writeQueue.entries.forEach(row => { if (row.cancel === cancelPending) { row.retry = null; row.cancel = null; } });
     renderWriteQueue();
-    dropped.forEach(entry => settle(entry, 'failed'));
+    dropped.forEach(([, entry]) => settle(entry, 'failed'));
     return dropped.length;
 }
 
@@ -109,10 +109,13 @@ function cancelPending() {
  * ask (its reply reaches the records kept of a folder left, takeReply).
  */
 export function leaveThen(go, stay = () => {}, to = null) {
-    const n = [...state.pending.files.values()].filter(entry => !(to && entry.folder && samePath(entry.folder, to))).length;
+    if (state.leavePrompt) return stay();   // a question about the photo is open: this route waits its turn (edits.js)
+    const counted = new Set([...state.pending.files]
+        .filter(([, entry]) => !(to && entry.folder && samePath(entry.folder, to))).map(([key]) => key));
+    const n = counted.size;
     if (n && !confirm(`Tag changes for ${photosWord(n)} are not written yet. Leave without writing them?`)) return stay();
     return leavePhotoThen(() => {
-        if (n) dropPending();
+        if (n) dropPending(counted);   // only what was asked about: the changes for the folder gone to stay
         go();
     }, { onStay: stay });
 }

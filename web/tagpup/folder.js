@@ -227,7 +227,10 @@ export function scanFolder(forceRefresh = false, { keepTyped = false, asked = fa
     // changed and the folder is read again to show it (edits.js photoChangedOnDisk); what was typed stays in its fields,
     // so there is nothing to ask about. `asked`: the caller asked already.
     if (!keepTyped && !asked) {
-        leaveThen(() => scanFolder(forceRefresh, { asked: true }), () => {
+        leaveThen(() => {
+            folderPathInput.value = path;   // the folder asked about, whatever the box says by now
+            scanFolder(forceRefresh, { asked: true });
+        }, () => {
             if (state.scannedFolder) folderPathInput.value = state.scannedFolder;
         }, path);
         return;
