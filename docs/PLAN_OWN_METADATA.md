@@ -55,7 +55,7 @@ PreservedFileName. Bake: XMP-tagpup fields and MWG RegionInfo (stay on ExifTool)
 4. Fuzz: truncation, flipped segment headers, two XMP, two EXIF, zero slack, IPTC without charset, UTF-16 packet, full
    64 KB XMP: refuse or clean, never bytes.
 5. Idempotence: write, read, write: no changed range.
-6. Off by default: `OWN_WRITER = False`; the check tool reports counts; the owner turns it on; shadow mode stays on the first weeks.
+6. Shadow first, then on: the check tool reports counts; built off, turned on by 4d (below; the flag `OWN_WRITER` is gone, `PATCH_IN_PLACE` is the one name); `metadata-check` stays for the first weeks.
 
 ## Build order (each merge about 1,200 lines or fewer, trunk whole)
 
@@ -63,23 +63,30 @@ PreservedFileName. Bake: XMP-tagpup fields and MWG RegionInfo (stay on ExifTool)
   docs/domains/files.md. Confirms the format split and the extended-XMP scope.
 - **M2** XMP packet editor (pure; shared with the clip patcher).
 - **M3** EXIF and IPTC block editors (IPTCDigest, charset).
-- **M4** wire into `in_place.patch_jpeg` behind `OWN_WRITER = False` with shadow comparison; the %TEMP% header copy goes
-  with the flip (below).
+- **M4** wire into `in_place.patch_jpeg` with shadow comparison; the %TEMP% header copy went with the flip (4d, below).
   Merge 4b-1 built `segment_edits.new_header` (no caller). Wiring hazards for 4b-2 (files owner, 2026-11-05):
   (a) `field_values.write`'s `if patched: return ()` must return new_header's stale tuple, even when the patch changes
   no byte; (b) new_header takes the journal's values keyed by field (`EXIF:Orientation`), not the ExifTool params keyed
   by `WRITTEN_AS`; (c) the shadow comparison includes a packet holding tiff:Orientation and an EXIF with an IFD1
   Orientation. 4b-2 wired it (the patch record keeps the fields left stale; a settle and the planner compare against
-  `fields.as_patched`) and deletes nothing: with `OWN_WRITER` off, the %TEMP% header copy
-  (`field_values._exiftool_header`), `in_place.fitted` and `_fitted` are the live patch, and deleting them first would
-  make every JPEG write a rewrite. They go, and `PATCH_IN_PLACE` and `OWN_WRITER` become one, in the commit that turns
-  the own writer on (4d; main session, 2026-11-05).
+  `fields.as_patched`) and deletes nothing: while the flag was off, the %TEMP% header copy
+  (`field_values._exiftool_header`), `in_place.fitted` and `_fitted` were the live patch, and deleting them first would
+  have made every JPEG write a rewrite. They go, and `PATCH_IN_PLACE` and `OWN_WRITER` become one, in the commit that
+  turns the own writer on (4d; main session, 2026-11-05).
+  **4d built (2026-11-16)**: the own writer is the one writer of a patch in place. Deleted: `OWN_WRITER`,
+  `field_values._exiftool_header` (ExifTool's header-copy patch, its `tagpup-patch-*` folder in %TEMP%),
+  `in_place.fitted`/`_fitted`/`EOI` (the fit of ExifTool's segments), and `write()`'s `own_writer` argument; the tests of
+  ExifTool's patch and its fit went with them. `own_writer` was deleted, not kept: its False arm only meant "no patch",
+  which a write given no `saving` already is. `PATCH_IN_PLACE` stays as the one name (True). `metadata-check` stays for
+  the first weeks of shadow mode, its ExifTool side always ExifTool's rewrite. The gate (4d gate on photo_index,
+  `--sample 3000`, 2026-11-16): 166 differences, none the own writer's: 40 on ExifTool's side, 120 MPF offsets by
+  design, 6 Canon rows that are ExifTool's rewrite (#3108 and #3109, found by the gate, closed). A write the own
+  writer does not reach is ExifTool's rewrite: `file_only`, `ensure_document_id` and the bake fields.
   Merge 4c built `metadata-check` (the shadow comparison on copies) and removes nothing: it is the 4d gate's
-  verification tool. 4d's brief decides whether `field_values.write`'s `own_writer` argument and `metadata-check` are
-  deleted with the flip or kept for the first weeks of shadow mode. Its first run on a library is `--sample 50`:
+  verification tool. 4d decided: `own_writer` deleted with the flip, `metadata-check` kept for the first weeks of shadow mode. Its first run on a library is `--sample 50`:
   `KNOWN` holds only tags seen to differ by design, and camera JPEGs (MakerNotes offsets) may add some, grown only from
-  output seen. What the gate does not cover, for 4d's brief: undo (the values file_journal's undo writes), extended
-  XMP, and the bulk edit's paths that do not reach the own writer.
+  output seen. What the gate did not cover (undo, a time shift and a turn, extended XMP, the bulk paths) is pinned by
+  `tests/test_a_photo_written_by_its_own_editors.py` and `tests/test_a_file_holds_what_exiftool_kept.py`.
 - **M5** own whole-file JPEG rewrite beside the photo, with the reserve (XMP already carries ExifTool's padding, 2,425 bytes (`xmp_packet.RESERVE`), in 4,355 of 4,366 wrapped packets, counted 2026-11-03, so the reserve is mostly EXIF, which never has 64 bytes of slack: 0 of 6,373 sampled);
   `_refuse_dropped` arms go for JPEG; MPF files kept length-stable or refused. The 512 B reserve branch is closed.
 - **M6** optional own read for the journal's field reads, dropped: M1 timed a header read at 23 ms against ExifTool at 52 ms for one photo and 28 ms in a batch (warm cache, 2026-11-03).
