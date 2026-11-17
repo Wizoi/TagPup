@@ -9,13 +9,13 @@
 // already written gets it in a later chunk. A chunk that fails gives its files' ops back and stops the drain until Retry
 // or Cancel: it never loops by itself. The map is this page's memory only (closing the page loses what is not sent).
 import { api } from './common/api.js';
-import { pathKey } from './common/paths.js';
+import { pathKey, samePath } from './common/paths.js';
 import { leafOf } from './common/vocabulary.js';
 import { upper } from './hooks.js';
 import { state } from './state.js';
 import { setStatus } from './status.js';
-import { changeCachedPhotos, saveToLocalStorageCache } from './cache.js';
-import { queuePhotoWrite, redrawIfShowing, takeWritten } from './edits.js';
+import { changeCachedPhotos, forgetCachedFolder, saveToLocalStorageCache } from './cache.js';
+import { leavePhotoThen, queuePhotoWrite, redrawIfShowing, takeWritten } from './edits.js';
 import { renderWriteQueue, whereWritten } from './write-queue.js';
 import { updatePeopleDatalist, updateTagsDatalist } from './tags.js';
 
@@ -79,13 +79,18 @@ function resume() {
     drain();
 }
 
-/** Drop every change not sent yet; a chunk out finishes as a normal write, but neither gives back nor says Ready. */
+/**
+ * Drop every change not sent yet; a chunk out finishes as a normal write, but neither gives back nor says Ready. A failed
+ * chunk's row loses its Retry and Cancel: the drain they named is gone, and a Cancel there would drop later changes.
+ */
 function dropPending() {
     const pending = state.pending;
     const dropped = [...pending.files.values()];
     pending.files.clear();
     pending.stopped = false;
     pending.drops += 1;
+    state.writeQueue.entries.forEach(row => { if (row.cancel === cancelPending) { row.retry = null; row.cancel = null; } });
+    renderWriteQueue();
     dropped.forEach(entry => settle(entry, 'failed'));
     return dropped.length;
 }
@@ -97,15 +102,19 @@ function cancelPending() {
 }
 
 /**
- * A library switch or another folder: ask while changes are not sent, and leaving drops them; a chunk already out is a
- * normal write and does not ask (its reply reaches the records kept of a folder left, takeReply).
+ * Leaving with changes waiting, the one place that asks it: another library (`to` null) or another folder opened (`to`
+ * its path; from a library view too). Every question comes before anything is dropped or discarded: the tag changes not
+ * sent for a folder other than `to`, then the open photo's edits (edits.js leavePhotoThen: Save, Discard or Cancel). Only
+ * when both are yes are the changes dropped and `go` run; else `stay`. A chunk already out is a normal write and does not
+ * ask (its reply reaches the records kept of a folder left, takeReply).
  */
-export function leaveTagChangesThen(go, stay) {
-    const n = unsentCount();
-    if (!n) return go();
-    if (!confirm(`Tag changes for ${photosWord(n)} are not written yet. Leave without writing them?`)) return stay();
-    dropPending();
-    return go();
+export function leaveThen(go, stay = () => {}, to = null) {
+    const n = [...state.pending.files.values()].filter(entry => !(to && entry.folder && samePath(entry.folder, to))).length;
+    if (n && !confirm(`Tag changes for ${photosWord(n)} are not written yet. Leave without writing them?`)) return stay();
+    return leavePhotoThen(() => {
+        if (n) dropPending();
+        go();
+    }, { onStay: stay });
 }
 
 /** Closing the page asks while changes are not sent (a drain stopped by a failure has no write waiting). */
@@ -114,6 +123,11 @@ export function wirePending() {
         if (!unsentCount()) return;
         e.preventDefault();
         e.returnValue = '';
+    });
+    // A page left with a chunk out abandons its fetch, written or not: the folders it came from forget the records kept of
+    // them (their stamps may be older than the files), so opened again they are scanned rather than refused a save.
+    window.addEventListener('pagehide', () => {
+        new Set((state.pending.out || []).map(item => item.folder).filter(Boolean)).forEach(forgetCachedFolder);
     });
 }
 
@@ -158,6 +172,7 @@ async function sendChunk(entry) {
     try {
         const drops = state.pending.drops;
         const chunk = takeChunk();
+        state.pending.out = chunk;
         if (!chunk.length) {
             entry.label = 'Tag changes: nothing left to write';
             return true;
@@ -179,14 +194,16 @@ async function sendChunk(entry) {
         }
         return takeReply(chunk, data, entry, drops !== state.pending.drops);
     } finally {
+        state.pending.out = null;
         state.pending.queued = false;
         drain();
     }
 }
 
 /**
- * The reply into the records: each file written takes the stamp and the tags its file holds now, in the folder open or,
- * left since, in the records this browser kept of it; a file gone was skipped and keeps its record. A failed chunk's
+ * The reply into the records: each file written takes the stamp and the tags its file holds now, in any record of it
+ * the page shows and, its folder left since, in the records this browser kept of that folder (whatever the page shows
+ * meanwhile: a library view may show one of its photos); a file gone was skipped and keeps its record. A failed chunk's
  * unwritten files go back to the front of the map and the drain stops, unless the changes were dropped while it was out
  * (`dropped`): then they are not written, and Cancel's message stands.
  */
@@ -213,7 +230,8 @@ function takeReply(chunk, data, entry, dropped) {
             if (photo) {
                 take(photo, item);
                 written.push(photo);
-            } else if (item.folder) {
+            }
+            if (item.folder && !(state.scannedFolder && samePath(item.folder, state.scannedFolder))) {
                 left.set(item.folder, [...(left.get(item.folder) || []), item]);
             }
             settle(item, 'written');
@@ -247,9 +265,7 @@ function takeReply(chunk, data, entry, dropped) {
     if (!data.success) {
         entry.error = data.error || 'not written';
         if (dropped) {
-            // Dropped while out: nothing to Retry or Cancel; the entry stays failed until dismissed.
-            entry.retry = null;
-            entry.cancel = null;
+            // Dropped while out: its row lost Retry and Cancel (dropPending) and stays failed until dismissed.
             setStatus('error', `Tags not written to ${back.length.toLocaleString()} more ${back.length === 1 ? 'photo' : 'photos'}: ${entry.error}`, { transient: false });
             return false;
         }

@@ -7,15 +7,18 @@
  * the 25 already written in a later one; the last click on a tag wins; a write that fails keeps its files'
  * changes for Retry and never loops by itself; a single save clicked meanwhile goes between two writes; Cancel says how
  * many photos it left unwritten, and a write already out neither says Ready over it nor gives its files back; choosing
- * another library or opening another folder asks while changes are not sent, and leaving drops them; a write that
- * finishes after its folder was left reaches the records this browser kept of that folder; photos missing on disk are
- * said once, when the click's change is done.
+ * another library or opening another folder asks while changes are not sent -- the tag question and the open photo's
+ * together, nothing dropped or discarded until both are yes -- and leaving drops them; back from a library view to the
+ * folder whose changes they are asks nothing, and staying leaves the view standing; a write that finishes after its
+ * folder was left reaches the records this browser kept of that folder, even while a view shows one of its photos, and a
+ * page left with a write out forgets them; photos missing on disk are said once, when the click's change is done.
  *
  * The server's bulk-tags replies are held here until the test answers them, oldest first.
  */
 import { test, describe, afterEach } from "node:test";
 import assert from "node:assert/strict";
 import { loadApp, FakeServer, photoRecord, flush, click, openFolder, closeAllApps, pageExports } from "./harness.mjs";
+import { loadViewPage, recordOf } from "./view-page.mjs";
 
 const FOLDER = "D:\\Library\\2020";
 const pathOf = (i) => `${FOLDER}\\IMG_${String(i).padStart(4, "0")}.JPG`;
@@ -23,6 +26,31 @@ const OTHER = "D:\\Library\\2021";
 
 function records(n, tags) {
   return Array.from({ length: n }, (_, i) => photoRecord({ filename: `IMG_${String(i).padStart(4, "0")}.JPG`, path: pathOf(i), tags: [...tags] }));
+}
+
+/** What a scan answers: 30 photos in OTHER, `n` holding `tags` in FOLDER. */
+const scanOf = (n, tags) => (url) => (url.includes(encodeURIComponent(OTHER))
+  ? Array.from({ length: 30 }, (_, i) => photoRecord({ filename: `IMG_9${String(i).padStart(3, "0")}.JPG`, path: `${OTHER}\\IMG_9${String(i).padStart(3, "0")}.JPG` }))
+  : records(n, tags));
+
+/** The page's own answers and questions on `ctx`: replies held for `answer`, alerts kept, confirm says OK unless `stay`. */
+function heldPage(ctx, held) {
+  const page = Object.assign(ctx, { held, alerts: [], confirms: [], stay: false });
+  page.window.alert = (text) => page.alerts.push(String(text));
+  page.window.confirm = (text) => { page.confirms.push(String(text)); return !page.stay; };
+  return page;
+}
+
+/** FOLDER's 50 photos, all selected, in a page that also shows library views (view-page.mjs). */
+async function viewableFolder(t, options = {}) {
+  const held = [];
+  const ctx = await loadViewPage(t, options);
+  ctx.server.first("/api/folder/scan", scanOf(50, [])).first("/api/photos/bulk-tags", () => new Promise((resolve) => held.push(resolve)));
+  await openFolder(ctx, FOLDER);
+  await ctx.settle(60);
+  ctx.document.getElementById("btn-select-all-thumbnails").click();
+  await flush(ctx.window, 4);
+  return heldPage(ctx, held);
 }
 
 /** A folder of `n` photos holding `tags`, all selected; its bulk-tags replies wait for `answer`. */
@@ -34,9 +62,7 @@ async function folderOf(t, n, { tags = [], bulk } = {}) {
     .on("/api/taxonomy/tree", [])
     .on("/api/databases", { databases: ["alpha", "beta"] })
     .on("/api/folder/index-status", { status: "completed", percent: 100, message: "Ready" })
-    .on("/api/folder/scan", (url) => (url.includes(encodeURIComponent(OTHER))
-      ? [photoRecord({ filename: "IMG_9000.JPG", path: `${OTHER}\\IMG_9000.JPG` })]
-      : records(n, tags)))
+    .on("/api/folder/scan", scanOf(n, tags))
     .on("/api/photo-faces", { faces: [], total: 0, unmatched: 0 })
     .on("/api/photos/bulk-tags", bulk || (() => new Promise((resolve) => held.push(resolve))))
     .on("/api/photo/save-metadata", { success: true })
@@ -46,16 +72,30 @@ async function folderOf(t, n, { tags = [], bulk } = {}) {
   await openFolder(ctx, FOLDER);
   ctx.document.getElementById("btn-select-all-thumbnails").click();
   await flush(ctx.window, 4);
-  const page = { ...ctx, held, alerts: [], confirms: [], stay: false };   // the closures below read this object
-  page.window.alert = (text) => page.alerts.push(String(text));
-  page.window.confirm = (text) => { page.confirms.push(String(text)); return !page.stay; };
-  return page;
+  return heldPage({ ...ctx }, held);
 }
 
 const writes = (ctx) => ctx.server.calls.filter((c) => c.url.includes("/api/photos/bulk-tags")).map((c) => c.body);
 const status = (ctx) => ctx.document.getElementById("status-text").textContent;
 const scans = (ctx, folder) => ctx.server.calls.filter((c) => c.url.includes(`/api/folder/scan?path=${encodeURIComponent(folder)}`)).length;
 const pendingOf = (ctx) => pageExports(ctx.window, "web/tagpup/state.js").state.pending;
+const LEAVE = "Tag changes for 25 photos are not written yet. Leave without writing them?";
+const kept = (ctx, folder) => JSON.parse(ctx.window.localStorage.getItem(pageExports(ctx.window, "web/tagpup/cache.js").folderCacheKey(folder)) || "null");
+
+/** Open the first photo and type a tag in its box, not saved. */
+async function typeInOpenPhoto(ctx, text) {
+  ctx.document.dispatchEvent(new ctx.window.KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true, cancelable: true }));
+  await flush(ctx.window, 8);
+  const input = ctx.document.getElementById("input-add-tag");
+  input.value = text;
+  input.dispatchEvent(new ctx.window.Event("input", { bubbles: true }));
+  await flush(ctx.window, 4);
+}
+
+async function choose(ctx, choice) {
+  ctx.document.querySelector(`.unsaved-edits-modal.active [data-choice='${choice}']`).click();
+  await flush(ctx.window, 8);
+}
 
 async function answer(ctx, reply = { success: true }) {
   assert.ok(ctx.held.length, "no write was waiting for an answer");
@@ -326,6 +366,124 @@ describe("choosing another library while changes wait", () => {
     const unload = new ctx.window.Event("beforeunload", { cancelable: true });
     ctx.window.dispatchEvent(unload);
     assert.equal(unload.defaultPrevented, false, "the browser's own Leave site? follows the page's");
+  });
+});
+
+describe("leaving with changes waiting and a photo's edits typed", () => {
+  test("another library: Cancel on the photo's question drops nothing, and the drain goes on", async (t) => {
+    const ctx = await folderOf(t, 50);
+    await addTags(ctx, "Trips/Coast");
+    await typeInOpenPhoto(ctx, "Places/Typed");
+    const select = ctx.document.getElementById("db-select");
+    select.value = "beta";
+    select.dispatchEvent(new ctx.window.Event("change", { bubbles: true }));
+    await flush(ctx.window, 4);
+    assert.ok(ctx.confirms.includes(LEAVE), ctx.confirms.join("|"));
+    await choose(ctx, "cancel");
+    assert.equal(select.value, "alpha");
+    assert.equal(pendingOf(ctx).files.size, 25, "the changes not sent were dropped though the owner stayed");
+    assert.doesNotMatch(status(ctx), /not written/);
+    await answer(ctx);
+    assert.equal(writes(ctx).length, 2, "the drain stopped though the owner stayed");
+    await answer(ctx);
+  });
+
+  test("another folder: staying on the tag question keeps what was typed in the photo", async (t) => {
+    const ctx = await folderOf(t, 50);
+    await addTags(ctx, "Trips/Coast");
+    await typeInOpenPhoto(ctx, "Places/Typed");
+    ctx.stay = true;
+    await openFolder(ctx, OTHER);
+    if (ctx.document.querySelector(".unsaved-edits-modal.active")) await choose(ctx, "discard");
+    assert.ok(ctx.confirms.includes(LEAVE), ctx.confirms.join("|"));
+    assert.equal(ctx.document.getElementById("input-add-tag").value, "Places/Typed", "the typed tag was discarded though the owner stayed");
+    assert.equal(pageExports(ctx.window, "web/tagpup/state.js").state.scannedFolder, FOLDER);
+    await answer(ctx);
+    await answer(ctx);
+  });
+
+  test("a failed write's row left behind cannot Cancel the next folder's changes", async (t) => {
+    const ctx = await folderOf(t, 50);
+    await addTags(ctx, "Trips/Coast");
+    await answer(ctx, { success: false, error: "ExifTool: could not write IMG_0001.JPG" });
+    await openFolder(ctx, OTHER);
+    ctx.document.getElementById("btn-select-all-thumbnails").click();
+    await flush(ctx.window, 4);
+    await addTags(ctx, "Trips/Hills");
+    assert.equal(pendingOf(ctx).files.size, 5);
+    const old = ctx.document.querySelector(".write-queue-entry[data-status='failed']");
+    assert.ok(old, "the failed write's row is gone");
+    assert.equal(old.querySelector(".write-queue-cancel"), null, "the old row offers Cancel of a drain that is gone");
+    assert.equal(old.querySelector(".write-queue-retry"), null, "the old row offers Retry of a drain that is gone");
+    await answer(ctx);
+    assert.equal(writes(ctx).length, 3);
+    assert.deepEqual(Object.keys(writes(ctx)[2].changes).length, 5);
+  });
+});
+
+describe("a library view between a folder and its changes", () => {
+  test("back from the view onto the folder whose changes wait asks nothing and keeps them", async (t) => {
+    const ctx = await viewableFolder(t);
+    await addTags(ctx, "Trips/Coast");
+    ctx.document.getElementById("btn-show-in-library").click();
+    await ctx.settle(100);
+    assert.ok(ctx.state.library, "no view opened");
+    ctx.window.history.back();
+    await ctx.settle(300);
+    assert.equal(ctx.state.library, null);
+    assert.equal(ctx.state.scannedFolder, FOLDER);
+    assert.ok(!ctx.confirms.some((m) => /not written yet/.test(m)), ctx.confirms.join("|"));
+    assert.equal(pendingOf(ctx).files.size, 25, "the folder's own changes were dropped");
+    await answer(ctx);
+    await answer(ctx);
+  });
+
+  test("back onto another folder asks before the view goes: staying leaves the view standing", async (t) => {
+    const ctx = await viewableFolder(t);
+    ctx.document.getElementById("btn-show-in-library").click();
+    await ctx.settle(100);
+    await pageExports(ctx.window, "web/tagpup/library-moves.js").openInOrganize(OTHER);
+    await ctx.settle(200);
+    assert.equal(ctx.state.scannedFolder, OTHER);
+    ctx.document.getElementById("btn-select-all-thumbnails").click();
+    await flush(ctx.window, 4);
+    await addTags(ctx, "Trips/Hills");
+    ctx.window.history.back();
+    await ctx.settle(300);
+    assert.ok(ctx.state.library, "Back onto a view did not open it");
+    ctx.stay = true;
+    ctx.window.history.back();
+    await ctx.settle(300);
+    assert.ok(ctx.confirms.includes("Tag changes for 5 photos are not written yet. Leave without writing them?"), ctx.confirms.join("|"));
+    assert.ok(ctx.state.library, "staying left a page with neither the view nor a folder");
+    assert.equal(pendingOf(ctx).files.size, 5);
+    await answer(ctx);
+    await answer(ctx);
+  });
+
+  test("a write out reaches the folder's kept records while the view shows one of its photos", async (t) => {
+    const ctx = await viewableFolder(t, { onPhoto: (id) => ({ photo: recordOf(id, { path: pathOf(0), filename: "IMG_0000.JPG", tags: [] }) }) });
+    await addTags(ctx, "Trips/Coast");
+    ctx.document.getElementById("btn-show-in-library").click();
+    await ctx.settle(100);
+    ctx.cardById(11).querySelector(".btn-thumbnail-detail").click();
+    await ctx.settle(80);
+    assert.equal(ctx.state.folderPhotos[0].path, pathOf(0), "the view does not show the folder's photo");
+    const stamps = Object.fromEntries(Array.from({ length: 25 }, (_, i) => [pathOf(i), { mtime: 1700000000, size: 2048 }]));
+    await answer(ctx, { success: true, stamps });
+    const record = kept(ctx, FOLDER).photos[0];
+    assert.equal(record.mtime, 1700000000, "the kept record names the file's old stamp: a save from it is refused");
+    assert.deepEqual(record.tags, ["Trips/Coast"]);
+  });
+});
+
+describe("a page left while a write is out", () => {
+  test("forgets the records kept of the write's folder: the fetch is abandoned, so opened again it is scanned", async (t) => {
+    const ctx = await folderOf(t, 50);
+    await addTags(ctx, "Trips/Coast");
+    assert.ok(kept(ctx, FOLDER), "the folder's scan was not kept");
+    ctx.window.dispatchEvent(new ctx.window.Event("pagehide"));
+    assert.equal(kept(ctx, FOLDER), null, "the folder's records keep the stamps from before a write that may have happened");
   });
 });
 

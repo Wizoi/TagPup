@@ -50,6 +50,15 @@ export function changeCachedPhotos(folder, change) {
     }
 }
 
+/** Forget the scan this browser kept of `folder`: opened again, it is scanned. */
+export function forgetCachedFolder(folder) {
+    try {
+        localStorage.removeItem(folderCacheKey(folder));
+    } catch (e) {
+        console.warn('Could not forget the scan kept for a folder:', e);
+    }
+}
+
 /** A photo deleted from a folder that is not the one open any more. */
 export function forgetCachedPhoto(folder, photoPath) {
     changeCachedPhotos(folder, photos => photos.filter(photo => !samePath(photo.path, photoPath)));
