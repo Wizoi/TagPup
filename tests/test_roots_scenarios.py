@@ -714,7 +714,7 @@ class AFolderTheLibraryDoesNotHold(unittest.TestCase):
     def test_a_write_there_touches_the_file_and_makes_no_row(self):
         before = stamp(self.photo)
         for route, body in (("/photo/save-metadata", {"path": self.photo, "title": "Lighthouse", "tags": ["Trips/Lighthouse"]}),
-                            ("/photos/bulk-tags", {"paths": [self.photo], "add_tags": ["Trips/Harbour"], "remove_tags": []}),
+                            ("/photos/bulk-tags", {"changes": {self.photo: {"add": ["Trips/Harbour"]}}}),
                             ("/photo/rotate", {"path": self.photo, "direction": "left"})):
             reply = self.post(route, body)
             self.assertEqual(200, reply.status_code, (route, reply.data))

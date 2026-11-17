@@ -70,8 +70,7 @@ class TestTheFileIsTheStartingPoint(unittest.TestCase):
         self.photo = make_photo(os.path.join(self.lib.photos, "a.jpg"))
 
     def test_bulk_add_keeps_the_keywords_already_in_the_file(self):
-        status, reply = self.lib.post("/api/photos/bulk-tags", {
-            "paths": [self.photo], "add_tags": ["Sunset"], "remove_tags": []})
+        status, reply = self.lib.post("/api/photos/bulk-tags", {"changes": {self.photo: {"add": ["Sunset"]}}})
         self.assertEqual(status, 200, reply)
         self.assertEqual(sorted(tags_in(self.photo)), sorted(EXISTING + ["Sunset"]))
         self.assertEqual({paths.key(self.photo): sorted(EXISTING + ["Sunset"])},
@@ -79,8 +78,7 @@ class TestTheFileIsTheStartingPoint(unittest.TestCase):
                          "a write that succeeds says what each photo holds")
 
     def test_bulk_remove_takes_away_only_that_tag(self):
-        status, reply = self.lib.post("/api/photos/bulk-tags", {
-            "paths": [self.photo], "add_tags": [], "remove_tags": ["Beach"]})
+        status, reply = self.lib.post("/api/photos/bulk-tags", {"changes": {self.photo: {"remove": ["Beach"]}}})
         self.assertEqual(status, 200, reply)
         self.assertEqual(tags_in(self.photo), ["Holiday/Summer"])
 
@@ -95,8 +93,7 @@ class TestTheFileIsTheStartingPoint(unittest.TestCase):
         # The cache says the photo holds nothing (it was edited elsewhere since).
         self.lib.folders().put(self.lib.photos, {
             paths.key(self.photo): {"path": os.path.abspath(self.photo), "tags": [], "raw_metadata": {}}})
-        status, reply = self.lib.post("/api/photos/bulk-tags", {
-            "paths": [self.photo], "add_tags": ["Sunset"], "remove_tags": []})
+        status, reply = self.lib.post("/api/photos/bulk-tags", {"changes": {self.photo: {"add": ["Sunset"]}}})
         self.assertEqual(status, 200, reply)
         self.assertEqual(sorted(tags_in(self.photo)), sorted(EXISTING + ["Sunset"]))
 
@@ -119,8 +116,8 @@ class TestAWriteStoppedPartWay(unittest.TestCase):
         another write's under way (file_changes.removed_scratch, rule 3; DECISIONS 2026-10-29)."""
         with open(self.second + "_exiftool_tmp", "wb") as handle:    # in the way of the second photo's write
             handle.write(b"left by another write")
-        status, reply = self.lib.post("/api/photos/bulk-tags", {
-            "paths": [self.first, self.second, self.third], "add_tags": ["Sunset"], "remove_tags": []})
+        status, reply = self.lib.post("/api/photos/bulk-tags", {"changes": {photo: {"add": ["Sunset"]}
+                                                                            for photo in [self.first, self.second, self.third]}})
         self.assertEqual(500, status, reply)
         self.assertFalse(reply["success"])
         self.assertEqual([paths.key(self.first)], self.written(reply))
@@ -158,8 +155,8 @@ class TestAWriteStoppedPartWay(unittest.TestCase):
 
     def test_a_photo_whose_file_is_gone_is_listed_and_the_photos_after_it_are_written(self):
         os.remove(self.second)
-        status, reply = self.lib.post("/api/photos/bulk-tags", {
-            "paths": [self.first, self.second, self.third], "add_tags": ["Sunset"], "remove_tags": []})
+        status, reply = self.lib.post("/api/photos/bulk-tags", {"changes": {photo: {"add": ["Sunset"]}
+                                                                            for photo in [self.first, self.second, self.third]}})
         self.assertEqual(200, status, reply)
         self.assertEqual(sorted([paths.key(self.first), paths.key(self.third)]), sorted(self.written(reply)))
         self.assertEqual(1, reply["skipped_missing"])
@@ -169,8 +166,8 @@ class TestAWriteStoppedPartWay(unittest.TestCase):
     def test_a_selection_of_only_missing_photos_writes_nothing_and_says_so(self):
         os.remove(self.first)
         os.remove(self.second)
-        status, reply = self.lib.post("/api/photos/bulk-tags", {
-            "paths": [self.first, self.second], "add_tags": ["Sunset"], "remove_tags": []})
+        status, reply = self.lib.post("/api/photos/bulk-tags", {"changes": {photo: {"add": ["Sunset"]}
+                                                                            for photo in [self.first, self.second]}})
         self.assertEqual((200, {}, 2), (status, reply["written"], reply["skipped_missing"]), reply)
 
     def test_a_file_that_cannot_be_read_is_not_taken_for_missing(self):
@@ -202,8 +199,7 @@ class TestASubfolderPhotoIsFoundInTheCache(unittest.TestCase):
         self.assertEqual(sorted(self.cached()["tags"]), ["Beach", "Sunset"])
 
     def test_bulk_tags_update_its_record(self):
-        status, reply = self.lib.post("/api/photos/bulk-tags", {
-            "paths": [self.photo], "add_tags": ["Sunset"], "remove_tags": []})
+        status, reply = self.lib.post("/api/photos/bulk-tags", {"changes": {self.photo: {"add": ["Sunset"]}}})
         self.assertEqual(status, 200, reply)
         self.assertIn("Sunset", self.cached()["tags"])
 

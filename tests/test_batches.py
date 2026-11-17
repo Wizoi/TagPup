@@ -153,7 +153,7 @@ class ASaveBetweenTwoChunks(T.Bulk):
 
     def test_the_folder_views_edit_lets_no_save_in_and_the_save_meets_the_file_it_left(self):
         reply, save, read_at, photos = self.save_between_chunks(lambda photos: self.client.post(
-            "/library/api/photos/bulk-tags", json={"paths": photos, "add_tags": ["Trips/Coast"], "remove_tags": []}))
+            "/library/api/photos/bulk-tags", json={"changes": {photo: {"add": ["Trips/Coast"]} for photo in photos}}))
         self.assertEqual((200, 409, True), (reply.status_code, save.status_code, save.get_json().get("changed_on_disk")))
         self.assertEqual(self.PHOTOS, read_at, "the save waited for the whole edit")
         self.assertEqual([], [n for n, path in enumerate(photos) if "Trips/Coast" not in self.files.tags_of(path)])
@@ -271,7 +271,8 @@ class Cap(T.Bulk):
         chosen = [self.path(each) for each in self.ids[:31]]
         with mock.patch.object(batches, "MAX_BATCH", 30), mock.patch.object(batches, "claim") as claim, \
                 mock.patch.object(names, "read_for_renaming") as read_captions:
-            tagged = self.client.post("/library/api/photos/bulk-tags", json={"paths": chosen, "add_tags": ["Trips/Coast"]})
+            tagged = self.client.post("/library/api/photos/bulk-tags", json={"changes": {photo: {"add": ["Trips/Coast"]}
+                                                                                         for photo in chosen}})
             renamed = photo_actions.smart_rename(self.library, chosen, "Regatta", "{grouping} - {index} - {caption}", "exiftool")
         self.assertEqual((400, "Select up to 30 photos at a time (31 were named)."), (tagged.status_code, tagged.get_json()["error"]))
         self.assertEqual("Select up to 30 photos at a time (31 were named).", renamed.refused)

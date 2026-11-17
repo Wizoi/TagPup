@@ -29,7 +29,7 @@ class Case(InStep):
 
     def bulk_tags(self, paths_, add=(), remove=()):
         reply = self.client.post("/library/api/photos/bulk-tags",
-                                 json={"paths": list(paths_), "add_tags": list(add), "remove_tags": list(remove)})
+                                 json={"changes": {photo: {"add": add, "remove": remove} for photo in paths_}})
         self.assertEqual(200, reply.status_code, reply.get_json())
         return reply.get_json()
 
@@ -93,7 +93,8 @@ class ATakenOffPersonIsNobodyOnTheirFace(Case):
         self.files.fails.add(paths.key(failing))
         with mock.patch("tagpup.services.tagging.logger"):
             self.client.post("/library/api/photos/bulk-tags",
-                             json={"paths": [written, also, failing], "add_tags": [], "remove_tags": [PEOPLE + WREN]})
+                             json={"changes": {photo: {"remove": [PEOPLE + WREN]}
+                                               for photo in [written, also, failing]}})
         self.assertEqual([(None, "manual"), (None, "manual"), (WREN, "manual")], [self.row(f)[:2] for f in (gone, guessed, kept)],
                          "the person is on the photo whose file was not written still")
 

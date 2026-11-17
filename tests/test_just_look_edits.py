@@ -171,8 +171,8 @@ class AnEditWritesTheFileOnly(Base):
     def test_tags_added_and_taken_off_many(self):
         write_into(self.loose[0], Subject=["Old/Tag", "Keep/Me"])
         self.before = library_dump.dump(self.library.path)
-        reply = self.post("/photos/bulk-tags", {"paths": self.loose[:2], "add_tags": ["Trips/Lighthouse"],
-                                               "remove_tags": ["Old/Tag"]})
+        reply = self.post("/photos/bulk-tags", {"changes": {photo: {"add": ["Trips/Lighthouse"], "remove": ["Old/Tag"]}
+                                                            for photo in self.loose[:2]}})
         self.assertEqual(200, reply.status_code, reply.data)
         body = reply.get_json()
         self.assertEqual((2, 0), (body["file_only"], body["with_rows"]))
@@ -183,8 +183,8 @@ class AnEditWritesTheFileOnly(Base):
 
     def test_a_tag_that_may_not_be_set_is_refused_and_nothing_is_written(self):
         before = stamp(self.loose[0])
-        reply = self.post("/photos/bulk-tags", {"paths": self.loose[:1], "add_tags": ["Places|Harbour"],
-                                               "remove_tags": []})
+        reply = self.post("/photos/bulk-tags", {"changes": {photo: {"add": ["Places|Harbour"]}
+                                                            for photo in self.loose[:1]}})
         self.assertEqual(400, reply.status_code, reply.data)
         self.assertEqual(before, stamp(self.loose[0]))
         self.assert_library_unchanged()
@@ -366,8 +366,8 @@ class AFileExifToolCannotRead(Base):
         self.assert_library_unchanged()
 
     def test_a_bulk_tag_write_stops_at_it_with_the_photos_before_it_written(self):
-        reply = self.post("/photos/bulk-tags", {"paths": [self.loose[0], self.zeros, self.loose[1]],
-                                               "add_tags": ["Trips/Lighthouse"], "remove_tags": []})
+        reply = self.post("/photos/bulk-tags", {"changes": {photo: {"add": ["Trips/Lighthouse"]}
+                                                            for photo in [self.loose[0], self.zeros, self.loose[1]]}})
         self.assertEqual(500, reply.status_code, reply.data)
         self.assertEqual([self.loose[0]], list(reply.get_json()["written"]))
         self.assertEqual((["Trips/Lighthouse"], []), (tags_in(self.loose[0]), tags_in(self.loose[1])))
@@ -394,8 +394,8 @@ class AWriteThatFailsForOneFileOfMany(Base):
             return real(et, photo_path, values)
 
         with mock.patch("tagpup.files.field_values.write", second_fails):
-            reply = self.post("/photos/bulk-tags", {"paths": self.loose, "add_tags": ["Trips/Lighthouse"],
-                                                   "remove_tags": []})
+            reply = self.post("/photos/bulk-tags", {"changes": {photo: {"add": ["Trips/Lighthouse"]}
+                                                                for photo in self.loose}})
         self.assertEqual(500, reply.status_code, reply.data)
         body = reply.get_json()
         self.assertEqual([paths.stored(self.loose[0])], list(body["written"]), "an attempt was reported as a write")
@@ -450,8 +450,8 @@ class AFolderTheLibraryHoldsPartOf(Base):
     """Regatta is held; its subfolder Scans is not: 'holds 2 of 3'."""
 
     def test_one_request_writes_each_photo_the_way_its_folder_asks(self):
-        reply = self.post("/photos/bulk-tags", {"paths": [self.held[0], self.scan], "add_tags": ["Trips/Regatta 2"],
-                                               "remove_tags": []})
+        reply = self.post("/photos/bulk-tags", {"changes": {photo: {"add": ["Trips/Regatta 2"]}
+                                                            for photo in [self.held[0], self.scan]}})
         self.assertEqual(200, reply.status_code, reply.data)
         body = reply.get_json()
         self.assertEqual((1, 1), (body["file_only"], body["with_rows"]))
@@ -558,8 +558,8 @@ class TheFolderIsAddedWhileAFileOnlyWriteIsInFlight(Base):
 class AFolderEditedWhileJustLookingIsIndexedAsEdited(Base):
     def test_the_rows_hold_the_tags_captions_and_names(self):
         write_into(self.loose[0], Description="First")
-        self.assertEqual(200, self.post("/photos/bulk-tags", {"paths": self.loose, "add_tags": ["Trips/Lighthouse"],
-                                                             "remove_tags": []}).status_code)
+        self.assertEqual(200, self.post("/photos/bulk-tags", {"changes": {photo: {"add": ["Trips/Lighthouse"]}
+                                                                          for photo in self.loose}}).status_code)
         self.assertEqual(200, self.post("/photo/save-metadata", {
             "path": self.loose[1], "title": "Stairs", "tags": ["Trips/Lighthouse", "People/Rowan Thackeray"]
         }).status_code)
@@ -638,8 +638,9 @@ class AWriteWhosePictureChanged(Base):
 
 class TwoTabs(Base):
     def test_two_edits_from_two_pages_both_land(self):
-        one = self.post("/photos/bulk-tags", {"paths": self.loose, "add_tags": ["Trips/Lighthouse"], "remove_tags": []})
-        other = self.post("/photos/bulk-tags", {"paths": self.loose, "add_tags": ["Trips/Harbour"], "remove_tags": []})
+        one = self.post("/photos/bulk-tags", {"changes": {photo: {"add": ["Trips/Lighthouse"]}
+                                                          for photo in self.loose}})
+        other = self.post("/photos/bulk-tags", {"changes": {photo: {"add": ["Trips/Harbour"]} for photo in self.loose}})
         self.assertEqual((200, 200), (one.status_code, other.status_code))
         self.assertEqual(["Trips/Lighthouse", "Trips/Harbour"], tags_in(self.loose[0]))
         self.assert_library_unchanged()
@@ -651,7 +652,7 @@ class TheLibraryCannotBeReadJustNow(Base):
         before = stamp(self.loose[0])
         with mock.patch("tagpup.store.folders.holds", side_effect=sqlite3.OperationalError("database is locked")):
             reply = self.post("/photo/save-metadata", {"path": self.loose[0], "title": "x", "tags": ["A/B"]})
-            bulk = self.post("/photos/bulk-tags", {"paths": self.loose, "add_tags": ["A/B"], "remove_tags": []})
+            bulk = self.post("/photos/bulk-tags", {"changes": {photo: {"add": ["A/B"]} for photo in self.loose}})
         # Not a 409 sending the owner to add a folder; not a write decided without the answer.
         self.assertEqual((500, 500), (reply.status_code, bulk.status_code), (reply.data, bulk.data))
         self.assertEqual(before, stamp(self.loose[0]))
@@ -695,7 +696,7 @@ class AnotherLibraryHoldingTheFolder(Base):
         finally:
             conn.close()
         before = library_dump.dump(other)
-        reply = self.post("/photos/bulk-tags", {"paths": self.loose, "add_tags": ["Trips/Harbour"], "remove_tags": []})
+        reply = self.post("/photos/bulk-tags", {"changes": {photo: {"add": ["Trips/Harbour"]} for photo in self.loose}})
         self.assertEqual(200, reply.status_code, reply.data)
         self.assertEqual(before, library_dump.dump(other))
         self.assert_library_unchanged()

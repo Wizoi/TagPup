@@ -253,7 +253,7 @@ class AWriteNamesTheStampItWasBuiltFrom(Fresh):
 
     def test_a_bulk_write_reports_each_written_photos_new_stamp(self):
         path, _photo_id = self.make("a.jpg", 15, ["Trips/Coast"])
-        reply = self.post("/photos/bulk-tags", {"paths": [path], "add_tags": ["Activity/Sailing"], "remove_tags": []})
+        reply = self.post("/photos/bulk-tags", {"changes": {path: {"add": ["Activity/Sailing"]}}})
         self.assertEqual(200, reply.status_code, reply.data)
         stamps = reply.get_json()["stamps"]
         self.assertEqual({stamp_of(path)["size"]}, {each["size"] for each in stamps.values()})
@@ -389,7 +389,7 @@ class TheFileIsComparedWithWhatThePageRead(Fresh):
     def test_bulk_tags_never_sends_a_whole_list_and_is_unchanged(self):
         path, _id = self.make("a.jpg", 30, ["Trips/Coast"])
         write_into(path, Subject=["Trips/Coast", "Trips/Lakes"])
-        reply = self.post("/photos/bulk-tags", {"paths": [path], "add_tags": ["Activity/Sailing"], "remove_tags": []})
+        reply = self.post("/photos/bulk-tags", {"changes": {path: {"add": ["Activity/Sailing"]}}})
         self.assertEqual(200, reply.status_code, reply.data)
         self.assertEqual(["Activity/Sailing", "Trips/Coast", "Trips/Lakes"], sorted(tags_in(path)))
 
@@ -450,7 +450,7 @@ class TheServersCacheCarriesTheFilesStamp(Fresh):
         a, _ida = self.make("a.jpg", 40, ["Trips/Coast"])
         b, _idb = self.make("b.jpg", 41, ["Activity/Sailing"])
         scan = self.api("/folder/scan", query_string={"path": self.folder}).get_json()       # the folder is cached
-        reply = self.post("/photos/bulk-tags", {"paths": [a], "add_tags": ["Trips/Lakes"], "remove_tags": []})
+        reply = self.post("/photos/bulk-tags", {"changes": {a: {"add": ["Trips/Lakes"]}}})
         self.assertEqual(200, reply.status_code, reply.data)
         again = self.api("/folder/scan", query_string={"path": self.folder}).get_json()      # served from the cache
         record = [each for each in again if each["path"] == a][0]

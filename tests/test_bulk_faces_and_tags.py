@@ -598,7 +598,7 @@ class TheKeptPool(Bulk):
         with mock.patch.object(store_faces, "fingerprint", wraps=store_faces.fingerprint) as fingerprint, \
                 mock.patch.object(store_faces, "pooled_of", wraps=store_faces.pooled_of) as pooled:
             reply = self.client.post("/library/api/photos/bulk-tags",
-                                     json={"paths": [photo for photo, _face in made], "add_tags": [PEOPLE + WREN]})
+                                     json={"changes": {photo: {"add": [PEOPLE + WREN]} for photo, _face in made}})
         self.assertEqual(200, reply.status_code, reply.get_json())
         self.assertEqual(3, len(reply.get_json()["written"]), reply.get_json())
         self.assertEqual((0, 0), (fingerprint.call_count, pooled.call_count))

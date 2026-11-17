@@ -38,8 +38,7 @@ NOT_A_PATH = frozenset({
     "shift_minutes", "show_matched", "size", "stamp", "text", "threshold", "title", "undo", "upright", "v", "values",
     # ids, names, tags
     "db_name", "face_id", "face_ids", "id", "ids", "job", "library", "name", "new_name", "old_name", "parent_id",
-    "people", "person_id", "person_name", "records", "tag", "tag_id", "tags", "target_tag", "add_tags",
-    "remove_tags", "into", "to", "ticket",
+    "people", "person_id", "person_name", "records", "tag", "tag_id", "tags", "target_tag", "into", "to", "ticket",
 })
 
 #: Read by a route and a path, resolved somewhere else, each with where.
