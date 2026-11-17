@@ -434,17 +434,26 @@ def leave_out_missing(photo_paths):
 ADD_TO_ALL = "add to all selected"
 
 
-@roots_service.canonical_args("photo_paths")
 def change_tags(library, photo_paths, add, remove, exiftool_path, operation=ADD_TO_ALL, stop_at_first_error=True,
                 persons=None, et=None, group=None):
-    """Add the same tags to many photos and take the same tags off them. Adding or
-    removing tags on a selection of photos. See _change_each.
+    """Add the same tags to many photos and take the same tags off them: change_tags_of, each photo given `add` and
+    `remove`. A bulk edit of a selection (tagpup.services.bulk_edit) passes its own `operation` and
+    `stop_at_first_error=False`."""
+    return change_tags_of(library, {path: (add, remove) for path in photo_paths}, exiftool_path, operation=operation,
+                          stop_at_first_error=stop_at_first_error, persons=persons, et=et, group=group)
 
-    `operation` names the change in the journal. A bulk edit of a selection (tagpup.services.bulk_edit) passes its own and
-    `stop_at_first_error=False`: a photo that cannot be read or written is an error and the others are written all the
-    same. `persons` ({paths.key(path): the tags of `add` that are people}): a person the file already names is not
-    added again (_change_each). `et`: an ExifTool session the caller opened (a bulk edit gets its own,
-    with a deadline of its own), used instead of one per write. `group`: as change_each's.
+
+@roots_service.canonical_args("changes")
+def change_tags_of(library, changes, exiftool_path, operation=ADD_TO_ALL, stop_at_first_error=True, persons=None,
+                   et=None, group=None):
+    """Give each photo in `changes` (path -> (tags to add, tags to take off)) its own tags added and taken off, as ONE
+    change of photo files (change_each). The page's bulk tag write (POST /api/photos/bulk-tags) sends each file's own.
+
+    `operation` names the change in the journal. `stop_at_first_error=False` (a bulk edit's): a photo that cannot be
+    read or written is an error and the others are written all the same. `persons` ({paths.key(path): the tags added
+    that are people}): a person the file already names is not added again (_change_each). `et`: an ExifTool session
+    the caller opened (a bulk edit gets its own, with a deadline of its own), used instead of one per write. `group`:
+    as change_each's.
 
     A photo whose file is gone is left out and listed in the result's skips (details[SKIPPED_MISSING] says how many);
     the photos after it are written. Only a read or write ERROR of a present file stops the run
@@ -453,13 +462,15 @@ def change_tags(library, photo_paths, add, remove, exiftool_path, operation=ADD_
     What is added is checked (tagpup.core.validation) and written in its one spelling;
     what is taken off is not: taking a bad tag off must stay possible. One that may not
     be set refuses the whole change, and nothing is written."""
-    problem = validation.first_problem("tag", add) or refuse_under_people(library, add)
+    adds = list(dict.fromkeys(tag for add, _remove in changes.values() for tag in add))
+    problem = validation.first_problem("tag", adds) or refuse_under_people(library, adds)
     if problem:
-        return _refused(len(photo_paths), problem)
-    present, gone = leave_out_missing(photo_paths)
-    add = [vocabulary.normalize(tag) for tag in add]
-    result = (change_each(library, {path: (add, remove) for path in present}, exiftool_path, operation, persons=persons,
-                          et=et, stop_at_first_error=stop_at_first_error, group=group)
+        return _refused(len(changes), problem)
+    present, gone = leave_out_missing(list(changes))
+    result = (change_each(library, {path: ([vocabulary.normalize(tag) for tag in changes[path][0]], changes[path][1])
+                                    for path in present},
+                          exiftool_path, operation, persons=persons, et=et, stop_at_first_error=stop_at_first_error,
+                          group=group)
               if present else _refused(0, None))
     if not result.refused:
         result.attempted += len(gone)

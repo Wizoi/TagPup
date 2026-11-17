@@ -6,6 +6,9 @@ list a 5,000-photo action as 200 lines, nor make the owner undo it 200 times. Ea
 change's summary (POST /api/photos/bulk-tags `group`); History lists the changes of one token as one line, and the
 dialog's Undo posts them newest first through the one per-change undo route, as this test does. The changes are made
 through the route the page posts to, on JPEGs made here whose rows are as the indexer makes them, with the real ExifTool.
+
+A chunk names each photo's own tags to add and take off (`changes`, cut 3a-1): the page's queue keeps what is pending per
+file, so one chunk holds different changes for different photos, each written once in the chunk's one change.
 """
 import os
 import shutil
@@ -18,11 +21,12 @@ import own_home  # noqa: E402
 import photo_rows  # noqa: E402
 import web_client  # noqa: E402
 
+from tagpup.core import paths  # noqa: E402
 from tagpup.core.library import Library  # noqa: E402
 from tagpup.files.exiftool_session import ExifToolSession  # noqa: E402
 from tagpup.services import journal as journal_service  # noqa: E402
 from tagpup.services import tagging  # noqa: E402
-from tagpup.store import db, journal  # noqa: E402
+from tagpup.store import db, file_journal, journal  # noqa: E402
 
 EXIFTOOL = own_home.installed_exiftool()
 BEACH = {"XMP:Subject": ["Beach"], "IPTC:Keywords": ["Beach"]}
@@ -60,6 +64,21 @@ class AChunkedTagWrite(unittest.TestCase):
         self.assertEqual(status, reply.status_code, reply.data)
         made = self.newest()
         return None if made == before else made
+
+    def chunk_of(self, changes, group, status=200, **more):
+        """A chunk of each photo's own changes, as the page's queue posts it: (the id of the change it made, or None when
+        nothing was made; the reply)."""
+        before = self.newest()
+        reply = self.client.post("/library/api/photos/bulk-tags", json={"changes": changes, "group": group, **more})
+        self.assertEqual(status, reply.status_code, reply.data)
+        made = self.newest()
+        return (None if made == before else made), reply.get_json()
+
+    def held(self):
+        """The tags each photo's file holds (XMP:Subject), read back with ExifTool."""
+        with ExifToolSession(executable=EXIFTOOL) as et:
+            found = [each.get("XMP:Subject") for each in et.get_tags(self.photos, tags=["XMP:Subject"])]
+        return [sorted(each if isinstance(each, list) else [] if each is None else [each]) for each in found]
 
     def newest(self):
         found = journal.history(self.library.path, limit=1)
@@ -146,6 +165,56 @@ class AChunkedTagWrite(unittest.TestCase):
         self.assertIsNone(self.chunk(many, "Trips/Coast", "drain-1", status=400))
         self.assertEqual(before, self.newest())
         self.assertEqual([["Beach"]] * 5, self.subjects())
+
+    def test_a_chunk_of_each_photos_own_changes_writes_each_once_and_its_line_undoes_every_file(self):
+        first, reply = self.chunk_of({self.photos[0]: {"add": ["Harbour"]},
+                                      self.photos[1]: {"remove": ["Beach"]},
+                                      self.photos[2]: {"add": ["Quay"], "remove": ["Beach"]},
+                                      self.photos[3]: {"add": [], "remove": []}}, "drain-4")
+        self.assertIsNotNone(first)
+        self.assertEqual([["Beach", "Harbour"], [], ["Quay"], ["Beach"], ["Beach"]], self.held())
+        self.assertEqual({paths.key(self.photos[0]): ["Beach", "Harbour"], paths.key(self.photos[1]): [],
+                          paths.key(self.photos[2]): ["Quay"]},
+                         {paths.key(path): sorted(tags) for path, tags in reply["written"].items()})
+        self.assertEqual(sorted(reply["written"]), sorted(reply["stamps"]), "a stamp for each photo written")
+        # One change, each photo in it once; the photo with nothing to change is not planned.
+        planned = [paths.key(row.path) for row in file_journal.files_of(self.library.path, first)]
+        self.assertEqual(sorted(paths.key(photo) for photo in self.photos[0:3]), sorted(planned))
+        second, _reply = self.chunk_of({self.photos[4]: {"add": ["Harbour"]}}, "drain-4")
+        line = self.lines()[0]
+        self.assertEqual((second, [second, first], 4), (line["id"], [m["id"] for m in line["members"]],
+                                                        line["summary"]["photos"]))
+        for member in line["members"]:
+            undone = self.client.post("/library/api/history/%d/undo" % member["id"], json={"apply": True})
+            self.assertEqual(200, undone.status_code, undone.data)
+        self.assertEqual([["Beach"]] * 5, self.held())
+
+    def test_changes_of_another_shape_or_beside_the_old_body_are_refused_and_nothing_written(self):
+        before = self.newest()
+        one = self.photos[0]
+        for changes in ([one], {}, {one: ["Harbour"]}, {one: {"add": "Harbour"}}, {one: {"tags": ["Harbour"]}},
+                        {one: {"add": [7]}}, {"": {"add": ["Harbour"]}}):
+            made, reply = self.chunk_of(changes, "drain-5", status=400)
+            self.assertIsNone(made, changes)
+            self.assertIn("changes", reply["error"], changes)
+        # The old body's keys beside `changes`: which photos get which tags would be a guess.
+        for key, value in (("paths", [self.photos[1]]), ("add_tags", ["Quay"]), ("remove_tags", ["Beach"])):
+            made, reply = self.chunk_of({one: {"add": ["Harbour"]}}, "drain-5", status=400, **{key: value})
+            self.assertIsNone(made, key)
+            self.assertIn("not both", reply["error"])
+        # A tag that may not be set, on one photo of the chunk, refuses the whole chunk.
+        made, _reply = self.chunk_of({one: {"add": ["Harbour"]}, self.photos[1]: {"add": ["Places|Harbour"]}},
+                                     "drain-5", status=400)
+        self.assertIsNone(made)
+        # More than one chunk's photos under a token: a batch, refused as for the old body.
+        many = [os.path.join(self.folder, "m%02d.jpg" % n) for n in range(26)]
+        for photo in many:
+            shutil.copyfile(self.photos[0], photo)
+        made, reply = self.chunk_of({photo: {"add": ["Harbour"]} for photo in many}, "drain-5", status=400)
+        self.assertIsNone(made)
+        self.assertIn("at most 25 photos", reply["error"])
+        self.assertEqual(before, self.newest())
+        self.assertEqual([["Beach"]] * 5, self.held())
 
 
 if __name__ == "__main__":

@@ -32,8 +32,9 @@ from tagpup.services import photos as photo_actions
 from tagpup.services import roots as roots_service
 from tagpup.web import responses, state
 
-#: The parameters that hold a path or a folder, or a list of them, whichever route reads them.
-KEYS = ("path", "paths", "folder", "folder_path", "folder_paths", "photo_path", "photo_paths")
+#: The parameters that hold a path or a folder, a list of them, or a dict keyed by them (a bulk tag write's `changes`),
+#: whichever route reads them.
+KEYS = ("path", "paths", "folder", "folder_path", "folder_paths", "photo_path", "photo_paths", "changes")
 
 #: Routes that open or add a folder, which a place that is gone is refused for by name, not as an invalid path
 #: the owner never typed.
@@ -99,6 +100,8 @@ def _each(value, make):
         return make(value)
     if isinstance(value, list):
         return [make(each) if isinstance(each, str) else each for each in value]
+    if isinstance(value, dict):
+        return {make(key): each for key, each in value.items()}
     return value
 
 
