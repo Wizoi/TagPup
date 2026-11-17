@@ -51,7 +51,7 @@ PreservedFileName. Bake: XMP-tagpup fields and MWG RegionInfo (stay on ExifTool)
    ExifTool's on a copy: picture bytes equal; every non-target segment equal; EXIF entries other than targets equal with
    MakerNotes offset unchanged; ExifTool `-G -n -struct` read of both equal on the field set plus MakerNotes, ICC, MPF;
    `-validate` adds no warning; Pillow decodes; Windows property system agrees.
-3. WLPG round trip on 20 copies; SmugMug upload of 20 copies to a private gallery (the owner's).
+3. (Dropped by the owner, 2026-11-16: no round trip through outside programs; the gate is the check tool's run.)
 4. Fuzz: truncation, flipped segment headers, two XMP, two EXIF, zero slack, IPTC without charset, UTF-16 packet, full
    64 KB XMP: refuse or clean, never bytes.
 5. Idempotence: write, read, write: no changed range.
