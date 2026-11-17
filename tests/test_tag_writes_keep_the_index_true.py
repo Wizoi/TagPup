@@ -169,7 +169,7 @@ class TestARemovedTagStaysRemoved(IndexCase):
         helper, _ = exiftool_that_writes()
         with patch("tagpup.files.exiftool_session.ExifToolSession", helper):
             self.call("/api/photos/bulk-tags",
-                      {"paths": [stored], "add_tags": [], "remove_tags": ["Cross Country"]})
+                      {"changes": {stored: {"remove": ["Cross Country"]}}})
             self.assertNotIn("Cross Country", self.row(stored)["tags"])
 
             # Renaming "Beach" re-derives this photo's tags from its raw_metadata.
@@ -193,7 +193,7 @@ class TestTheRowKeepsTheFilesNewStat(IndexCase):
         stored = self.photo()
         helper, _ = exiftool_that_writes()
         with patch("tagpup.files.exiftool_session.ExifToolSession", helper):
-            self.call("/api/photos/bulk-tags", {"paths": [stored], "add_tags": ["Relay"], "remove_tags": []})
+            self.call("/api/photos/bulk-tags", {"changes": {stored: {"add": ["Relay"]}}})
         self.assertRowMatchesTheFile(stored)
 
     def test_renaming_a_tag(self):
@@ -212,7 +212,7 @@ class TestBulkWritersTellTheIndex(IndexCase):
         helper, _ = exiftool_that_writes()
         with patch("tagpup.files.exiftool_session.ExifToolSession", helper):
             self.call("/api/photos/bulk-tags",
-                      {"paths": [stored], "add_tags": ["Relay"], "remove_tags": ["Cross Country"]})
+                      {"changes": {stored: {"add": ["Relay"], "remove": ["Cross Country"]}}})
 
         row = self.row(stored)
         # A cold folder cache starts from the file; it used to start from nothing and

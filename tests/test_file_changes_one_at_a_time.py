@@ -61,8 +61,8 @@ class TwoBulkWritesAtOnce(unittest.TestCase):
         for round_ in range(2):
             quay, harbour = "Places/Quay %d" % round_, "Places/Harbour %d" % round_
             first, second = at_once(
-                self.post({"paths": self.photos, "add_tags": [quay], "remove_tags": []}),
-                self.post({"paths": self.photos[1:], "add_tags": [harbour], "remove_tags": []}))
+                self.post({"changes": {photo: {"add": [quay]} for photo in self.photos}}),
+                self.post({"changes": {photo: {"add": [harbour]} for photo in self.photos[1:]}}))
             self.assertEqual(200, first[0], first)
             self.assertEqual(200, second[0], second)
             held = tags_in(self.photos[0])

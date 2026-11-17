@@ -195,7 +195,7 @@ class AClipInTheLibrary(ALibraryHoldingAClip):
         self.assertEqual(200, reply.status_code, reply.get_json())
         self.assertEqual((["Trips/Pier"], ["Trips/Pier"]), self.read_now(self.clip_path), "its XMP holds the tag saved alone")
         self.assertEqual(["Trips/Pier"], self.tags_of(clip))
-        reply = self.post("photos/bulk-tags", {"paths": [self.clip_path], "remove_tags": ["Trips/Pier"]})
+        reply = self.post("photos/bulk-tags", {"changes": {self.clip_path: {"remove": ["Trips/Pier"]}}})
         self.assertEqual(200, reply.status_code, reply.get_json())
         self.assertEqual(([], []), self.read_now(self.clip_path), "its last tag comes off, and nothing is read back")
         self.assertEqual([], self.tags_of(clip))
@@ -251,7 +251,7 @@ class AClipInTheLibrary(ALibraryHoldingAClip):
     def test_a_clip_saved_is_stamped_with_its_new_size_and_the_same_save_again_writes_nothing(self):
         clip, = self.index(self.clip_path)
         size = os.path.getsize(self.clip_path)
-        reply = self.post("photos/bulk-tags", {"paths": [self.clip_path], "add_tags": ["Trips/Coast"]})
+        reply = self.post("photos/bulk-tags", {"changes": {self.clip_path: {"add": ["Trips/Coast"]}}})
         self.assertEqual(200, reply.status_code, reply.get_json())
         self.assertNotEqual(size, os.path.getsize(self.clip_path), "the patch appended an XMP box")
         self.assertEqual([(os.path.getsize(self.clip_path),)], self.vl.rows("SELECT size FROM photos WHERE id = ?", clip),
@@ -279,7 +279,8 @@ class AClipInTheLibrary(ALibraryHoldingAClip):
         photo, clip = self.index(self.photo_path, self.clip_path)
         with open(self.clip_path, "rb"):
             before = self.read_bytes(self.clip_path)
-            reply = self.post("photos/bulk-tags", {"paths": [self.clip_path, self.photo_path], "add_tags": ["Trips/Coast"]})
+            reply = self.post("photos/bulk-tags", {"changes": {photo: {"add": ["Trips/Coast"]}
+                                                               for photo in [self.clip_path, self.photo_path]}})
         body = reply.get_json()
         self.assertIn(in_place.OPEN_ELSEWHERE, body["error"])
         self.assertEqual([paths.key(self.photo_path)], [paths.key(path) for path in body["written"]],

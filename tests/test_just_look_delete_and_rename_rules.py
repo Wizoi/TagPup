@@ -70,8 +70,8 @@ class AFileOnlyWriteDecodesNothing(jl.Base):
         with mock.patch.object(images, "opened", side_effect=AssertionError("decoded in full")):
             self.assertEqual(200, self.post("/photo/save-metadata", {"path": self.loose[0], "title": "x",
                                                                     "tags": ["A/B"]}).status_code)
-            self.assertEqual(200, self.post("/photos/bulk-tags", {"paths": self.loose, "add_tags": ["C/D"],
-                                                                 "remove_tags": []}).status_code)
+            self.assertEqual(200, self.post("/photos/bulk-tags", {"changes": {photo: {"add": ["C/D"]}
+                                                                              for photo in self.loose}}).status_code)
             self.assertEqual(200, self.post("/photo/rotate", {"path": self.loose[1], "direction": "left"}).status_code)
             self.assertEqual(200, self.post("/folder/time-shift", {"folder_path": self.lighthouse,
                                                                   "camera_model": "All Cameras",

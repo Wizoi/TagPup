@@ -101,8 +101,7 @@ class TagPupRefuses(TagPupCase):
         session, et = fake_exiftool([])
         with patch("tagpup.files.exiftool_session.ExifToolSession", session):
             status, reply = self.call("/api/photos/bulk-tags",
-                                      {"paths": [self.photo], "add_tags": ["Places//Harbour"],
-                                       "remove_tags": []})
+                                      {"changes": {self.photo: {"add": ["Places//Harbour"]}}})
         self.assertEqual(status, 400)
         self.assertIn("empty level", reply)
         session.assert_not_called()
@@ -111,8 +110,7 @@ class TagPupRefuses(TagPupCase):
         session, et = fake_exiftool(["Legacy|Keyword"])
         with patch("tagpup.files.exiftool_session.ExifToolSession", session):
             status, reply = self.call("/api/photos/bulk-tags",
-                                      {"paths": [self.photo], "add_tags": [],
-                                       "remove_tags": ["Legacy|Keyword"]})
+                                      {"changes": {self.photo: {"remove": ["Legacy|Keyword"]}}})
         self.assertEqual(status, 200, reply)
 
     def test_creating_a_bad_tag_creates_nothing(self):
@@ -171,8 +169,7 @@ class ANewTagIsWrittenInItsOneSpelling(TagPupCase):
         session, et = fake_exiftool([])
         with patch("tagpup.files.exiftool_session.ExifToolSession", session):
             status, reply = self.call("/api/photos/bulk-tags",
-                                      {"paths": [self.photo], "add_tags": [" Places / Harbour "],
-                                       "remove_tags": []})
+                                      {"changes": {self.photo: {"add": [" Places / Harbour "]}}})
         self.assertEqual(status, 200, reply)
         self.assertEqual(subjects_written(et), ["Places/Harbour"])
 

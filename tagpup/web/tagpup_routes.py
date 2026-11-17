@@ -1204,22 +1204,10 @@ def photo_save_metadata():
 def photos_bulk_tags():
     library = state.require()
     body = request.get_json(silent=True) or {}
-    changes = body.get("changes")
-    if changes is not None:
-        # Each photo's own tags to add and take off. The body of one list for every photo (`paths`, `add_tags`,
-        # `remove_tags`) is the page's until it sends `changes` (plan one-queue-for-tag-changes, cut 3).
-        if "paths" in body or "add_tags" in body or "remove_tags" in body:
-            return responses.error(400, "A bulk tag write names its photos once: send changes, or paths with "
-                                        "add_tags and remove_tags, not both.")
-        changes, why = _tag_changes(changes)
-        if why:
-            return responses.error(400, why)
-    else:
-        photo_paths = body.get("paths", [])
-        if not photo_paths:
-            return responses.error(400, "Missing paths list")
-        add_tags, remove_tags = body.get("add_tags", []), body.get("remove_tags", [])
-        changes = {path: (add_tags, remove_tags) for path in photo_paths}
+    # Each photo's own tags to add and take off (web/tagpup/pending.js); a body without them is refused by the shape.
+    changes, why = _tag_changes(body.get("changes"))
+    if why:
+        return responses.error(400, why)
     try:
         # What is added is checked, not what is removed (tagpup.services.tagging). The
         # page's records are told in the order the files were written.

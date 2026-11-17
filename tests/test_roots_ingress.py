@@ -106,7 +106,7 @@ class TheFolderCache(AfterAMove):
         before = self.scan(self.folder_old)                    # cached, spelled by the place before the move
         self.assertTrue(before)
         self.move()                                            # done in the other process: nothing here knows
-        reply = self.post("/api/photos/bulk-tags", {"paths": self.held, "add_tags": ["Harbour"], "remove_tags": []})
+        reply = self.post("/api/photos/bulk-tags", {"changes": {photo: {"add": ["Harbour"]} for photo in self.held}})
         self.assertEqual(200, reply.status_code, reply.get_data(as_text=True))
         for moved in self.moved:
             self.assertIn("Harbour", keywords(moved))
@@ -204,9 +204,9 @@ class TheFolderRoutesNameTheTwoPlaces(AfterAMove):
 class ThePageIsToldItsPathsAreOld(AfterAMove):
     def test_a_response_to_old_paths_carries_the_roots_name(self):                           # #492
         self.move()
-        old = self.post("/api/photos/bulk-tags", {"paths": [self.held[0]], "add_tags": ["Harbour"], "remove_tags": []})
+        old = self.post("/api/photos/bulk-tags", {"changes": {self.held[0]: {"add": ["Harbour"]}}})
         self.assertEqual("pictures", old.headers.get("X-TagPup-Roots-Moved"))
-        new = self.post("/api/photos/bulk-tags", {"paths": [self.moved[0]], "add_tags": ["Quay"], "remove_tags": []})
+        new = self.post("/api/photos/bulk-tags", {"changes": {self.moved[0]: {"add": ["Quay"]}}})
         self.assertIsNone(new.headers.get("X-TagPup-Roots-Moved"))
         self.assertIsNone(self.get("/api/server").headers.get("X-TagPup-Roots-Moved"))
         self.assertEqual("pictures", self.get("/api/photo-file", query_string={"path": self.held[1]}).headers.get(
@@ -263,8 +263,7 @@ class WhenThePreviousPlaceIsGone(AfterAMove):
         self.assertEqual(200, saved.status_code, saved.get_data(as_text=True))
         self.assertIn("Harbour", keywords(self.moved[0]))
         self.assertEqual(200, self.post("/api/photo/rotate", {"path": self.held[0], "direction": "left"}).status_code)
-        self.assertEqual(200, self.post("/api/photos/bulk-tags", {"paths": [self.held[1]], "add_tags": ["Quay"],
-                                                                  "remove_tags": []}).status_code)
+        self.assertEqual(200, self.post("/api/photos/bulk-tags", {"changes": {self.held[1]: {"add": ["Quay"]}}}).status_code)
         self.assertEqual(200, self.get("/api/photo-file", query_string={"path": self.held[0]}).status_code)
         with mock.patch("tagpup.files.recycle_bin.send_to_recycle_bin", side_effect=lambda p: os.remove(p) or True):
             deleted = self.post("/api/photo/delete", {"path": self.held[0]})
@@ -448,8 +447,9 @@ class AWriteStoppedByARootChange(unittest.TestCase):
         app = web.create_app("tagpup", startup=self.library, runtime=Runtime())
         app.testing = True
         reply = self.stopped(lambda: app.test_client().post(
-            "/photo_index/api/photos/bulk-tags", data=json.dumps({"paths": self.side.real[:3], "add_tags": ["Harbour"],
-                                                                  "remove_tags": []}), content_type="application/json"))
+            "/photo_index/api/photos/bulk-tags",
+            data=json.dumps({"changes": {photo: {"add": ["Harbour"]} for photo in self.side.real[:3]}}),
+            content_type="application/json"))
         body = reply.get_json()
         self.assertEqual(400, reply.status_code)
         self.assertIn(roots_service.STOPPED, body["error"])

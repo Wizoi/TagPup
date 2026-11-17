@@ -66,15 +66,13 @@ class AFailedWrite(unittest.TestCase):
         long_ago = time.time() - 3 * 86400
         os.utime(self.photo, (long_ago, long_ago))
         os.utime(self.photo + "_exiftool_tmp", (long_ago + 60, long_ago + 60))
-        status, reply = self.lib.post("/api/photos/bulk-tags", {
-            "paths": [self.photo], "add_tags": ["Sunset"], "remove_tags": []})
+        status, reply = self.lib.post("/api/photos/bulk-tags", {"changes": {self.photo: {"add": ["Sunset"]}}})
         self.assertEqual(200, status, reply)
         self.assertFalse(os.path.exists(self.photo + "_exiftool_tmp"))
         self.assertIn("Sunset", tags_in(self.photo))
 
     def test_the_bulk_write_route_says_it(self):
-        status, reply = self.lib.post("/api/photos/bulk-tags", {
-            "paths": [self.photo], "add_tags": ["Sunset"], "remove_tags": []})
+        status, reply = self.lib.post("/api/photos/bulk-tags", {"changes": {self.photo: {"add": ["Sunset"]}}})
         self.assertEqual(500, status, reply)
         self.assertIn("' already exists", reply["error"])
         self.assertNotIn("non-zero exit status", reply["error"])

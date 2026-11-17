@@ -60,7 +60,7 @@ class AChunkedTagWrite(unittest.TestCase):
         """A chunk as the page posts it; the id of the change it made (None when it was refused)."""
         before = self.newest()
         reply = self.client.post("/library/api/photos/bulk-tags",
-                                 json={"paths": paths, "add_tags": [tag], "remove_tags": [], "group": group})
+                                 json={"changes": {photo: {"add": [tag]} for photo in paths}, "group": group})
         self.assertEqual(status, reply.status_code, reply.data)
         made = self.newest()
         return None if made == before else made
@@ -189,7 +189,7 @@ class AChunkedTagWrite(unittest.TestCase):
             self.assertEqual(200, undone.status_code, undone.data)
         self.assertEqual([["Beach"]] * 5, self.held())
 
-    def test_changes_of_another_shape_or_beside_the_old_body_are_refused_and_nothing_written(self):
+    def test_changes_of_another_shape_or_the_old_body_are_refused_and_nothing_written(self):
         before = self.newest()
         one = self.photos[0]
         for changes in ([one], {}, {one: ["Harbour"]}, {one: {"add": "Harbour"}}, {one: {"tags": ["Harbour"]}},
@@ -197,16 +197,16 @@ class AChunkedTagWrite(unittest.TestCase):
             made, reply = self.chunk_of(changes, "drain-5", status=400)
             self.assertIsNone(made, changes)
             self.assertIn("changes", reply["error"], changes)
-        # The old body's keys beside `changes`: which photos get which tags would be a guess.
-        for key, value in (("paths", [self.photos[1]]), ("add_tags", ["Quay"]), ("remove_tags", ["Beach"])):
-            made, reply = self.chunk_of({one: {"add": ["Harbour"]}}, "drain-5", status=400, **{key: value})
-            self.assertIsNone(made, key)
-            self.assertIn("not both", reply["error"])
+        # The old body, one list of tags for every photo: a page from before the queue (an install while it was open).
+        reply = self.client.post("/library/api/photos/bulk-tags",
+                                 json={"paths": [one], "add_tags": ["Harbour"], "remove_tags": [], "group": "drain-5"})
+        self.assertEqual(400, reply.status_code, reply.data)
+        self.assertIn("Send changes as", reply.get_json()["error"])
         # A tag that may not be set, on one photo of the chunk, refuses the whole chunk.
         made, _reply = self.chunk_of({one: {"add": ["Harbour"]}, self.photos[1]: {"add": ["Places|Harbour"]}},
                                      "drain-5", status=400)
         self.assertIsNone(made)
-        # More than one chunk's photos under a token: a batch, refused as for the old body.
+        # More than one chunk's photos under a token: a batch, refused.
         many = [os.path.join(self.folder, "m%02d.jpg" % n) for n in range(26)]
         for photo in many:
             shutil.copyfile(self.photos[0], photo)
