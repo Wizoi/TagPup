@@ -6,11 +6,10 @@ route looked at the file twice after the write for what the write had looked at 
 A tag added to a selection (Add to all selected) looks at each file five times: the route's look for a file gone
 before the write, the write's four, none after it. It was seven, two after the write (#3069).
 
-A tag taken off is a patch in place (its segments shrink): ExifTool reads the file twice, before the write and once
-after it, whole, for its row and as the patch's check of its fields at once. It was three: the check read the fields
-once more before the read back whole read them again. A tag added, with the own writer off (field_values.OWN_WRITER,
-the owner's setting), does not fit the photo's segments and is ExifTool's rewrite, checked by its picture's bytes, not
-by a read: three commands, the read, the write and the read back whole, as before. Counts only, never times
+A tag taken off or added is the own writer's patch in place (field_values.PATCH_IN_PLACE, 4d; it was ExifTool's
+rewrite of a tag added, three commands, before, #3070): ExifTool reads the file twice, before the write and once after
+it, whole, for its row and as the patch's check of its fields at once, and writes it never. It was three: the check
+read the fields once more before the read back whole read them again. Counts only, never times
 (docs/DEVELOPMENT.md, "Performance work").
 
 The folded read is the patch's check all the same: a patch whose fields do not read back as written is put back and
@@ -49,11 +48,12 @@ def bytes_of(path):
 
 class Touches:
     """The looks at one file, counted while it is open: os.stat of it (os.path.exists goes through os.stat), ExifTool
-    commands naming it (ExifToolSession.execute) and ExifTool processes started (ExifToolSession.run, not running)."""
+    commands naming it (ExifToolSession.execute), those of them that write it (a new file, `-o`, field_values._command)
+    and ExifTool processes started (ExifToolSession.run, not running)."""
 
     def __init__(self, path):
         self.key = paths.key(path)
-        self.stats = self.commands = self.starts = 0
+        self.stats = self.commands = self.writes = self.starts = 0
         self._inside = threading.local()
 
     def _names_it(self, value):
@@ -81,6 +81,7 @@ class Touches:
         def execute(session, *params, **kwargs):
             if any(touches._names_it(param) for param in params):
                 touches.commands += 1
+                touches.writes += "-o" in params
             return real_execute(session, *params, **kwargs)
 
         def run(session):
@@ -100,7 +101,8 @@ class Touches:
         return False
 
     def counted(self):
-        return {"stats": self.stats, "exiftool commands": self.commands, "exiftool starts": self.starts}
+        return {"stats": self.stats, "exiftool commands": self.commands, "exiftool writes": self.writes,
+                "exiftool starts": self.starts}
 
 
 class ATagAdded(Fresh):
@@ -149,13 +151,13 @@ class ATagAdded(Fresh):
         path, _photo_id, record = self.held("a.jpg", 51)
         counted, patched = self.counted_save(path, record, ["Trips/Coast"])
         self.assertTrue(patched, "a tag taken off is a patch in place")
-        self.assertEqual({"stats": 4, "exiftool commands": 2, "exiftool starts": 1}, counted)
+        self.assertEqual({"stats": 4, "exiftool commands": 2, "exiftool writes": 0, "exiftool starts": 1}, counted)
 
-    def test_one_tag_added_looks_at_its_file_four_times(self):
+    def test_one_tag_added_is_a_patch_that_looks_at_its_file_four_times_and_asks_exiftool_twice(self):
         path, _photo_id, record = self.held("f.jpg", 56)
         counted, patched = self.counted_save(path, record, TWO + ["Trips/Lakes"])
-        self.assertFalse(patched, "with the own writer off, a tag added is ExifTool's rewrite")
-        self.assertEqual({"stats": 4, "exiftool commands": 3, "exiftool starts": 1}, counted)
+        self.assertTrue(patched, "a tag added is the own writer's patch in place")
+        self.assertEqual({"stats": 4, "exiftool commands": 2, "exiftool writes": 0, "exiftool starts": 1}, counted)
 
     def test_fields_that_do_not_read_back_as_written_put_the_file_back(self):
         path, photo_id, record = self.held("b.jpg", 52)
@@ -184,7 +186,7 @@ class ATagAdded(Fresh):
             counted, patched = self.counted_save(path, record, ["Trips/Coast"])
         self.assertTrue(patched)
         self.assertEqual(1, whole.call_count)
-        self.assertEqual({"stats": 4, "exiftool commands": 3, "exiftool starts": 1}, counted,
+        self.assertEqual({"stats": 4, "exiftool commands": 3, "exiftool writes": 0, "exiftool starts": 1}, counted,
                          "the read before the write, the check's own read, and the write's read back of the fields "
                          "it kept (_read_back), as when the read back whole failed before (it is mocked here)")
         self.assertEqual(["Trips/Coast"], self.cached(path)["tags"])

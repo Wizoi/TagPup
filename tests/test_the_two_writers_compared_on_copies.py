@@ -4,8 +4,8 @@ docs/PLAN_OWN_METADATA.md, M4 step 4c).
 
 Photos of the shapes the writers part on agree: simple ones, where a keyword, person or caption added is the own
 writer's patch of the XMP alone and ExifTool's rewrite (a disagreement, counted by its direction, never a difference);
-one with two APP13 segments (both rewrite it); one whose packet the XMP editor refuses (its caption cleared is
-ExifTool's patch and the own writer's rewrite); one whose packet holds tiff:Orientation and whose EXIF holds an IFD1
+one with two APP13 segments (both rewrite it); one whose packet the XMP editor refuses (its caption cleared falls to
+ExifTool's rewrite on the own side too: both rewrite, and agree); one whose packet holds tiff:Orientation and whose EXIF holds an IFD1
 Orientation; one another program wrote last, holding an IPTCDigest (the XMP toolkit differs by design, KNOWN; the
 digest does not); one whose IFD0 is out of order, which ExifTool's write heals and the own patch leaves (the warning was
 the original's: no difference). One whose IPTC block lacks its version datasets and holds an empty caption, which
@@ -32,8 +32,8 @@ or a dataset held empty counted against one absent, fails test_an_iptc_block_lef
 validation compared by its counts, or by its first warning alone, fails
 test_a_copy_with_fewer_of_the_originals_warnings_is_no_difference; no second write of the same values fails
 test_a_second_write_of_the_same_values_that_changes_the_file_is_a_difference; a stale tag compared with
-ExifTool's side and not the original's fails test_simple_photos_agree_and_nothing_of_the_library_is_written; a
-disagreement counted as a difference fails test_a_packet_the_editor_refuses_is_a_disagreement_not_a_difference; shares.read_whole
+ExifTool's side and not the original's, or a disagreement counted as a difference, fails
+test_simple_photos_agree_and_nothing_of_the_library_is_written; shares.read_whole
 reading a photo whose stamp says it is gone fails test_a_photo_gone_part_way_is_counted_and_the_run_goes_on; a photo read in one read
 fails test_a_photo_larger_than_a_piece_is_read_in_pieces; sandbox()
 not taking its lock fails test_a_second_run_is_refused_while_one_holds_the_sandbox; a sandbox a killed run left not
@@ -102,8 +102,8 @@ class TheTwoWritersComparedOnCopies(FilesCase):
         self.assertEqual(ALL, set(found["how"]))
         self.assertEqual({"last keyword taken off": 1, "caption cleared": 1, "Date Taken shifted": 1}, found["skipped"],
                          "c.jpg holds no keyword to take off, no caption, no Date Taken")
-        # A keyword, person or caption added is the own writer's patch of the XMP alone where ExifTool's header writer,
-        # writing every copy, rewrites (XPKeywords takes a new entry in IFD0): counted by its direction, no difference.
+        # A keyword, person or caption added is the own writer's patch of the XMP alone where ExifTool's side
+        # rewrites: counted by its direction, no difference.
         self.assertEqual({"rewrite, own patch": 2, "rewrite, own rewrite": 1}, found["how"]["keyword added"])
         self.assertEqual(3, sum(found["how"]["preserved name set"].values()), "a name with letters outside ASCII kept")
         self.assertIn("keyword added: 3 written, 1 agreed on patch or rewrite", "\n".join(metadata_check.lines(found)))
@@ -120,7 +120,7 @@ class TheTwoWritersComparedOnCopies(FilesCase):
         self.assert_agreed(found, 1)
         self.assertEqual({"rewrite, own rewrite": 1}, found["how"]["keyword added"])
 
-    def test_a_packet_the_editor_refuses_is_a_disagreement_not_a_difference(self):
+    def test_a_packet_the_editor_refuses_falls_to_exiftools_rewrite_on_both_sides(self):
         a = self.photo("a.jpg", tags=("Beach",))
         held = read(a)
         xmp = containers.read(io.BytesIO(held)).of_kind("xmp")[0]
@@ -137,9 +137,10 @@ class TheTwoWritersComparedOnCopies(FilesCase):
         self.assertEqual("Beach", field_of(a, "XMP:Subject"))
         found = self.check()
         self.assert_agreed(found, 1)
-        # The caption cleared: ExifTool's header writer patches it, the own writer, refusing the packet, rewrites.
-        self.assertEqual({"patch, own rewrite": 1}, found["how"]["caption cleared"])
-        self.assertIn("caption cleared: 1 written, 0 agreed on patch or rewrite, 0 held it already (ExifTool patch, own "
+        # The caption cleared: the own writer refuses the packet, so the journaled side falls to ExifTool's rewrite
+        # too; the two agree, and the copies read the same (no difference).
+        self.assertEqual({"rewrite, own rewrite": 1}, found["how"]["caption cleared"])
+        self.assertIn("caption cleared: 1 written, 1 agreed on patch or rewrite, 0 held it already (ExifTool rewrite, own "
                       "rewrite 1)", "\n".join(metadata_check.lines(found)))
 
     def test_a_photo_whose_thumbnail_holds_an_orientation_turns_alike(self):

@@ -11,7 +11,8 @@ Real ExifTool: a file named as ExifTool names its temporary file, in the way of 
 write, is what makes it refuse. AFailedWrite's is written as each test begins: it may be another
 write's under way, and stays (file_changes.removed_scratch, rule 3; DECISIONS 2026-10-29), the
 owner told to try again later; one an interrupted write left long ago is removed and the photo
-written (#2180).
+written (#2180). The scratch file is ExifTool's rewrite's, and no patch in place is made while one is there
+(field_values.write): the save falls to the rewrite, which settles it.
 """
 import logging
 import os

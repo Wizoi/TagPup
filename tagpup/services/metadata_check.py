@@ -12,8 +12,9 @@ not a home. Free space is checked before each photo (MARGIN, and COPIES of its s
 
 Each of OPERATIONS is planned as the app plans it (tagging's, photos' and fields' planners) from the fields the copy holds,
 skipped when the copy holds the plan already, and written twice, each time on a fresh copy in a folder of its own,
-through the one writer (field_values.write, given a `saving` that saves nothing, so a patch in place is tried as a
-journaled write tries it): once by ExifTool's writer, once by the own writer. Then compared, a difference each:
+through the one writer (field_values.write): once by ExifTool's rewrite (given no `saving`, as a write the own writer
+refuses falls to it), once as a journaled write is (given a `saving` that saves nothing: the own writer's patch when
+it fits, else the same rewrite). Then compared, a difference each:
 - every segment but the EXIF, XMP and IPTC ones, in order, and the picture (its first scan to its end): the copy's own;
 - the fields written, as each side reads back (fields.reads_same of fields.as_patched: a copy the own writer left stale
   holds what it held), and ExifTool's whole read of the two, tag for tag (WHOLE_READ: every copy of a tag, each by its
@@ -54,7 +55,7 @@ SANDBOX = "tagpup-metadata-check"
 #: Bytes left free on the sandbox's disk beyond COPIES of a photo's size, else the run stops.
 MARGIN = 1 << 30
 #: Copies of a photo the sandbox holds at once at most: the original, the two sides', and ExifTool's new file beside
-#: the second side's before it is moved over it.
+#: a side's before it is moved over it.
 COPIES = 4
 #: Segments of a JPEG the writers edit (containers' kinds); every other is the photo's own.
 METADATA = frozenset({"exif", "xmp", "xmp-extension", "iptc"})
@@ -94,6 +95,7 @@ KEYWORD, PERSON = "Shadow Check/Lantern Walk \u00e0 Br\u00e9z\u00e9", "Wren Hall
 CAPTION = "Lanterns along the harbour wall \u2014 caf\u00e9 & <quay>"
 PRESERVED = "F\u00eate des lanternes \u2014 0412.jpg"
 SHIFT_MINUTES = 90
+#: (name, whether its write is given a `saving`: tried as a patch in place by the own writer).
 SIDES = (("ExifTool", False), ("own", True))
 TWO_AT_ONCE = "Another metadata-check is running on this PC; wait for it to end."
 #: Seconds the sandbox's removal waits before its one retry, when a file of it was held by another program.
@@ -173,11 +175,12 @@ def _outside(data):
 
 
 def _written(et, path, values, own):
-    """(how the write went: patch, rewrite, unchanged or failed; the fields it left stale; why it failed)."""
+    """(how the write went: patch, rewrite, unchanged or failed; the fields it left stale; why it failed). `own`: the
+    write is a journaled one's, the own writer's patch tried first; else ExifTool's rewrite."""
     how = []
+    saving = (lambda _record, _before: how.append("patch")) if own else None
     try:
-        stale = field_values.write(et, path, values, saving=lambda _record, _before: how.append("patch"),
-                                   scratch_written=lambda: how.append("rewrite"), own_writer=own)
+        stale = field_values.write(et, path, values, saving=saving, scratch_written=lambda: how.append("rewrite"))
     except Exception as error:
         return "failed", (), str(error)
     return (how[0] if how else "unchanged"), tuple(stale), None

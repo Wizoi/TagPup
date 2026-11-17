@@ -9,6 +9,7 @@ has a character cp1252 lacks could not be named to ExifTool at all.
 
 Everything here runs on a JPEG made for the test, never a real photo.
 """
+import contextlib
 import os
 import shutil
 import sys
@@ -109,28 +110,40 @@ class ATextHoldingALineBreakReachesTheFileWhole(kept.BakeCase):
     """pyexiftool gives ExifTool one argument a line: a caption holding a line break was written as its first line and its
     second read as a file name ("File not found"), the save failed half done, and an undo putting one back did the same; a
     region named over two lines was baked over and could not be put back (#1882). ExifToolSession sends such a text as a
-    C string (exiftool_session.CSTR)."""
+    C string (exiftool_session.CSTR). The C string is ExifTool's rewrite's (`kept.rewritten`: a save the own writer
+    refuses or whose change does not fit); the own writer's patch gives ExifTool no argument."""
 
     def held(self, path, names):
         with field_values.session(EXIFTOOL) as et:
             return field_values.read_one(et, path, names)
 
     def test_a_caption_and_a_keyword_are_saved_read_back_equal_and_undone(self):
-        a = self.make_read("a.jpg")
-        after = {field: [CAPTION] for field in fields.caption_fields(CAPTION)}
-        after["XMP:Subject"] = ["Beach", KEYWORD]
-        before = self.held(a, list(after))
-        result = file_changes.write_fields(self.library, "caption", EXIFTOOL, [a], list(after),
-                                           lambda path, held: file_changes.Plan(after=after))
-        self.assertEqual((1, []), (result.changed, result.errors))
-        self.assertEqual(after, self.held(a, list(after)))
-        undone = self.undo(result.details["change"])
-        self.assertEqual((1, []), (undone.changed, undone.errors))
-        self.assertEqual(before, self.held(a, list(after)))
+        # Both writers of a save: the own writer's patch, which writes the XMP copies alone and leaves the EXIF and
+        # IPTC copies holding what they held (fields.XMP_ONLY; DECISIONS 2026-11-03), and ExifTool's rewrite, which
+        # writes every copy, each text a C string. The undo puts back what the photo held, by either.
+        left = {field for leaves in fields.XMP_ONLY.values() for field in leaves}
+        for patched in (True, False):
+            with self.subTest(patched=patched), contextlib.nullcontext() if patched else kept.rewritten():
+                a = self.make_read("patched.jpg" if patched else "rewritten.jpg")
+                after = {field: [CAPTION] for field in fields.caption_fields(CAPTION)}
+                after["XMP:Subject"] = ["Beach", KEYWORD]
+                before = self.held(a, list(after))
+                result = file_changes.write_fields(self.library, "caption", EXIFTOOL, [a], list(after),
+                                                   lambda path, held: file_changes.Plan(after=after))
+                self.assertEqual((1, []), (result.changed, result.errors))
+                held = {field: before[field] if patched and field in left else value for field, value in after.items()}
+                self.assertEqual(held, self.held(a, list(after)))
+                undone = self.undo(result.details["change"])
+                self.assertEqual((1, []), (undone.changed, undone.errors))
+                self.assertEqual(before, self.held(a, list(after)))
 
     def test_a_dollar_reaches_the_file_as_it_is_and_beside_a_line_break_is_refused(self):
         # A C string gives a "$" or "@" a backslash of its own (exiftool_session.NOT_IN_CSTR): 7 live captions hold a "$".
+        # ExifTool's argument, so the rewrite's: the own writer's patch gives ExifTool none, and is not refused.
         a = self.make_read("a.jpg")
+        forced = kept.rewritten()
+        forced.start()
+        self.addCleanup(forced.stop)
         for caption, changed in (("Fare $4 @ the pier", 1), ("Fare $4" + LF + "return", 0)):
             with self.subTest(caption=caption):
                 after = {field: [caption] for field in fields.caption_fields(caption)}

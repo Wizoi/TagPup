@@ -31,6 +31,7 @@ from click.testing import CliRunner
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from face_rows import FACES_WITH_PATHS, VECTORS_WITH_PATHS, add_face, add_vector  # noqa: E402
 from test_file_journal import EXIFTOOL, Crash, FilesCase, crash_at, field_of, keywords_of, write_outside  # noqa: E402
+from test_a_file_holds_what_exiftool_kept import rewritten  # noqa: E402
 
 import tagpup_cli  # noqa: E402
 
@@ -254,8 +255,11 @@ class SmartRenameStaysPut(RenameCase):
 
 
 class ALaterWriteOfTheRenamedPhoto(RenameCase):
-    """Smart Rename, then Save of the renamed photo: a field write, which ExifTool makes beside the file and renames over
-    it, so the file id, size and modified time the rename knows it by are new. The journal has the Save undone first (a
+    """Smart Rename, then Save of the renamed photo: a field write, which ExifTool's rewrite makes beside the file and
+    renames over it (a save the own writer refuses, or whose change does not fit its segments: `rewritten`), so the file
+    id, size and modified time the rename knows it by are new; a save the own writer patches keeps the file id
+    (AnIdentityTheIndexGivesTheRenamedPhotos.test_a_save_between_the_rename_and_the_mint_is_undone_and_then_the_rename
+    is that case). The journal has the Save undone first (a
     newer change of the same file); the rename then is offered in History, rehearsed exact and undone: the photo goes
     back to its old name holding what it held before the Save, its row, faces and vector with it. A file another program
     put under the new name is not the photo: saved, and the Save undone, the rename's undo still refuses it, and it
@@ -287,7 +291,9 @@ class ALaterWriteOfTheRenamedPhoto(RenameCase):
         held = field_of(self.a, "XMP:Subject")
         rename = self.rename()
         known = os.stat(self.new).st_ino
-        saved = self.save()
+        # The Save is the rewrite (its file id new); its undo, back to what fitted before, is the own writer's patch.
+        with rewritten():
+            saved = self.save()
         self.assertNotEqual(known, os.stat(self.new).st_ino, "the Save did not write the file anew")
         self.assertIn("undo it first", str(self.undo(rename).refused))
         self.assertFalse(self.undo(saved).refused)

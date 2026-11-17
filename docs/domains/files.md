@@ -44,9 +44,10 @@ editors) are the evidence those scenario tests cite.
    - One writer of a photo's fields, `field_values.write`; the identity mint writes through it (`ensure_document_id`).
      It writes a file one of two ways: a journaled write of a JPEG whose fields fit is patched in place
      (`in_place.patch_jpeg`, called from nowhere else; `PATCH_IN_PLACE`, True), every other write is ExifTool's rewrite.
-     A patch's new segments are made by ExifTool into a copy of the header or, behind `OWN_WRITER` (False until the
-     owner turns it on), by `segment_edits` (the one caller of the three block editors,
-     `tests/test_the_block_editors_have_one_caller.py`); a clip is patched by `clip_patch`
+     A patch's new segments are made by `segment_edits`, the own writer (the one caller of the three block editors,
+     `tests/test_the_block_editors_have_one_caller.py`; on since 4d, 2026-11-16, ExifTool's header-copy patch deleted).
+     `file_only`, `ensure_document_id` and the bake fields do not reach the own writer (no `saving`, or not in
+     `fields.EDITED_AS`, so `segment_edits` refuses): they are ExifTool's rewrite. A clip is patched by `clip_patch`
      (a clip patch is outside `field_values.write`; Media's Convert reaches Files' packet only through
      `field_values.packet_held` / `packet_given`, `PACKET_UNREAD`, `NotAnswered`: contract row 77).
      It writes every photo beside itself and moves the new file over it only once its picture is the photo's
@@ -248,7 +249,7 @@ xmp:CreateDate, tiff:Orientation, xmpMM:DocumentID and xmpMM:PreservedFileName (
 `edit` sets them and keeps every other byte: a change is paid for out of the padding before `<?xpacket end`, so the
 packet keeps its length, and only `grow=True` lets it grow, laying `RESERVE` (2,425 bytes, ExifTool's padding) afresh.
 The padding is one rule: `containers.XMP_PADDING_LEAST` (one line break) is the least an edit, the container's
-slack (`containers._xmp_slack`) and the in-place patch's fit (`in_place._fitted`) leave of it, and
+slack (`containers._xmp_slack`) and the own writer's packet fit (`segment_edits`) leave of it, and
 `xmp_packet.padding(size)` lays the bytes (lines of 100 spaces) for the editor and the patch alike.
 All three editors answer `containers.Edited(body, length_changed)` or `containers.Refusal(reason)`, one pair.
 An edit is parsed again and read back before it is answered. Scenario test:
@@ -299,7 +300,7 @@ refused. Each was edited in memory (a caption, a keyword added, an Orientation),
 
 ## The EXIF block editor
 
-`tagpup/files/exif_block.py` (M3 of docs/PLAN_OWN_METADATA.md; its one caller `segment_edits`, behind `OWN_WRITER`, False): pure, an EXIF segment's
+`tagpup/files/exif_block.py` (M3 of docs/PLAN_OWN_METADATA.md; its one caller `segment_edits`): pure, an EXIF segment's
 body (`Exif\0\0` and the TIFF block) in and out. It owns nine fields (`FIELDS`): IFD0's ImageDescription, Orientation,
 XPComment and XPKeywords; the Exif IFD's DateTimeOriginal, CreateDate, SubSecTime, SubSecTimeOriginal and
 SubSecTimeDigitized. The block's layout is `containers.exif_tiff`'s, the one walk of its IFDs (IFD0, IFD1 and its
@@ -353,7 +354,7 @@ own header 12, note-relative 9, not an IFD 46, the Canon footer wrong 1 (photo_i
 
 ## The IPTC block editor
 
-`tagpup/files/iptc_block.py` (M3 of docs/PLAN_OWN_METADATA.md; its one caller `segment_edits`, behind `OWN_WRITER`, False): pure, an APP13 segment's
+`tagpup/files/iptc_block.py` (M3 of docs/PLAN_OWN_METADATA.md; its one caller `segment_edits`): pure, an APP13 segment's
 body (`Photoshop 3.0` and its 8BIM resources) in and out. It owns three datasets (`DATASETS`): 2:05 ObjectName (the
 title), 2:25 Keywords and 2:120 Caption-Abstract. The layout is containers.py's, the one statement of it, read by the
 census, the in-place patch and this editor alike: `photoshop_resources`, `resource`, `pad_resource` (the dummy resource
@@ -388,7 +389,7 @@ the fit rates and the version and zero counts below came out the same), the rest
 - **Against ExifTool** (the building worker's 12 copies of sampled headers, an ASCII and a non-cp1252 value each): 22
   of 24 APP13 bodies byte-identical; the 2 that differ by design: for a value outside cp1252 in a block with no 1:90,
   ExifTool writes `?` and no 1:90, TagPup adds 1:90 UTF-8 (and 1:00) and writes the letter.
-- **Decided here, as ExifTool does** (no file changes while `OWN_WRITER` is False): the version datasets 1:00 and 2:00 added to
+- **Decided here, as ExifTool does** (the own writer does as ExifTool's rewrite does): the version datasets 1:00 and 2:00 added to
   a record that lacks one (photo_index: 1,441 of 1,460 blocks with records lack 1:00, 1,109 lack 2:00); zero bytes after
   the last dataset dropped (754 of 1,461); a trailing NUL read off a value (1,041 photo_index captions end in one); a
   value cut by `fields.as_written`, which every write of a value passes today before ExifTool, so the file holds what an
@@ -400,8 +401,8 @@ the fit rates and the version and zero counts below came out the same), the rest
 ## segment_edits: a write's values made into a header's segments
 
 `tagpup/files/segment_edits.py` (M4 of docs/PLAN_OWN_METADATA.md; `in_place.patch_jpeg` calls it
-when `field_values.OWN_WRITER` is True, which it is not yet; `services/metadata_check.py` is the shadow comparison on
-copies): pure, the journal's values of a write ({field: [texts]}) and a JPEG header (its bytes to the
+for every journaled write of a JPEG, since 4d; `services/metadata_check.py` is the shadow comparison on
+copies, its ExifTool side always ExifTool's rewrite, kept for the first weeks): pure, the journal's values of a write ({field: [texts]}) and a JPEG header (its bytes to the
 first scan's header's end, `in_place._header_of`'s) in; `new_header` answers the header with only the EXIF, XMP and IPTC
 bodies changed (every marker and length byte the header's) and the fields it left stale, or None: not a patch, the
 caller rewrites the file, nothing written. It is the one caller of the three editors
@@ -422,6 +423,9 @@ caller rewrites the file, nothing written. It is the one caller of the three edi
   the value would come back), a patch where they all fit, else a rewrite. XMP is given the planner's whole set
   (`tagging.keywords_planner` reads XMP and IPTC), so a photo whose keywords were in IPTC alone (151 in photo_index,
   4 of them with a packet, DECISIONS 2026-11-03) gets them all in XMP; segment_edits never infers a set.
+  Known, by this design: the undo of a caption cleared through the own writer leaves IPTC's cut copy in place (the
+  XMP copy returns, IPTC's does not: it was answered stale), pinned by
+  `test_a_write_records_what_the_file_holds_and_an_undo_finds_it` in `tests/test_a_file_holds_what_exiftool_kept.py`.
 - **Spelling**: a text field takes one text (two: no patch); Orientation a number; an EXIF date only
   `YYYY:MM:DD HH:MM:SS` (a zone: the editor refuses, a rewrite; a Date Taken carries no fraction: 0 rows whose `taken`
   holds one in 59,618 / 2,065 / 1,309, counted 2026-11-05, and the page's picker is to the second); an XMP date in ISO 8601 with the value's own

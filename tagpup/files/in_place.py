@@ -23,15 +23,12 @@ from the journal).
 **A JPEG's patch** (`patch_jpeg`). A photo's EXIF, IPTC (Photoshop APP13) and XMP segments are rewritten at their old
 length, and only the bytes of them that differ are written. The new header -- the photo's segments up to and including
 the first scan's header, its EXIF, IPTC and XMP bodies changed and every other byte its own -- is the caller's
-(`new_header`, field_values.write): TagPup's own writer (tagpup.files.segment_edits, field_values.OWN_WRITER), or,
-until that is turned on, ExifTool's write of the fields into a copy of the header alone, on this PC's disk, whose
-segments are fitted to the old lengths (`fitted`): XMP by the whitespace before its packet's end, EXIF by zero bytes
-after its last data, IPTC by a dummy 8BIM resource (containers.PAD_RESOURCE; zero bytes there break ExifTool's next
-write and Windows' reader). It is not a patch's, and the caller rewrites the whole file, when the file is no JPEG or
-holds two segments of one kind, an extended XMP, or bytes after its last 8BIM resource (`_header_of`, whichever writer),
-or the writer answers no header: ExifTool's when it would make, drop or change any other segment (a photo with no XMP
-yet), a new segment is longer than the old, or an EXIF segment would move (a maker note may point at its own place in
-the file); the own writer's by segment_edits' rules. The photo is opened once, with no sharing on Windows, from the
+(`new_header`, field_values.write): TagPup's own writer (tagpup.files.segment_edits.new_header), which keeps each
+segment at its old length (XMP by the whitespace before its packet's end, EXIF by zero bytes after its last data, IPTC
+by a dummy 8BIM resource, containers.PAD_RESOURCE). It is not a patch's, and the caller rewrites the whole file, when
+the file is no JPEG or holds two segments of one kind, an extended XMP, or bytes after its last 8BIM resource
+(`_header_of`), or the writer answers no header (segment_edits' rules: a change that does not fit, a segment it would
+have to make, a field it does not write, an XMP packet in IFD0). The photo is opened once, with no sharing on Windows, from the
 read of its header to the last byte written, so no other program writes it, nor reads it half written, meanwhile; one
 that holds it open already makes it the rewrite's. Every read and write of it is bounded (shares.bounded, SECONDS).
 
@@ -59,13 +56,12 @@ carries it whole into its copy (field_values.packet_held and packet_given, the p
 2026-11-13, #2938). Nothing is written.
 """
 import base64
-import io
 import logging
 import os
 import threading
 
 from tagpup.core.result import Refused
-from tagpup.files import clip_patch, containers, lock_owners, shares, xmp_packet
+from tagpup.files import clip_patch, containers, lock_owners, shares
 
 logger = logging.getLogger(__name__)
 
@@ -76,9 +72,6 @@ SECONDS = 30.0
 
 #: The segments a patch may rewrite, by containers.Segment.kind.
 PATCHED_KINDS = ("exif", "xmp", "iptc")
-
-#: The end of image marker: a header's copy ends with it, so a program reads it as a JPEG.
-EOI = b"\xff\xd9"
 
 
 class Away(OSError):
@@ -248,59 +241,6 @@ def _header_of(handle):
     handle.seek(0)
     header = handle.read(end)
     return (layout, header) if len(header) == end else None
-
-
-def _fitted(old, new, written):
-    """The segment `new` of the header ExifTool `written`, made the size of the old segment `old` (both containers.
-    Segment of one kind); None when it does not fit."""
-    least = new.size - new.slack
-    if least > old.size:
-        return None
-    segment = written[new.offset:new.end]
-    if new.kind == "xmp":
-        packet_end = segment.rfind(b"<?xpacket end=")
-        meta_end = segment.rfind(b"</x:xmpmeta>", 0, packet_end) + len(b"</x:xmpmeta>")
-        room = packet_end - meta_end - (new.size - old.size)
-        if packet_end < 0 or meta_end < len(b"</x:xmpmeta>") or room < containers.XMP_PADDING_LEAST:
-            return None
-        segment = segment[:meta_end] + xmp_packet.padding(room) + segment[packet_end:]
-    elif new.kind == "exif":
-        if new.offset != old.offset:
-            return None
-        segment = segment[:least] + bytes(old.size - least)
-    else:
-        if new.stray:
-            return None
-        pad = old.size - least
-        if pad and (pad < containers.LEAST_RESOURCE or pad % 2):
-            return None
-        segment = segment[:least] + (containers.pad_resource(pad) if pad else b"")
-    return segment[:2] + (old.size - 2).to_bytes(2, "big") + segment[4:]
-
-
-def fitted(header, written):
-    """The JPEG header `header` (its bytes up to its first scan's header's end) holding the segments ExifTool `written`
-    (the same header, rewritten, then an end of image), each at its old length; None when they do not fit (the module
-    says when). A segment ExifTool wrote otherwise can fit to the photo's own: an EXIF a patch made up to its old length
-    with zero bytes, written again with the values it holds, comes without the zeros, and the fit puts them back (a
-    second save of a photo whose first patch shortened its EXIF)."""
-    old = containers.read(io.BytesIO(header + EOI))
-    new = containers.read(io.BytesIO(written))
-    if not isinstance(new, containers.Jpeg) or new.image_offset is None:
-        return None
-    if [(each.marker, each.kind) for each in old.segments] != [(each.marker, each.kind) for each in new.segments]:
-        return None
-    result = bytearray(header)
-    for was, now in zip(old.segments, new.segments):
-        if written[now.offset:now.end] == header[was.offset:was.end]:
-            continue
-        if was.kind not in PATCHED_KINDS:
-            return None
-        after = _fitted(was, now, written)
-        if after is None:
-            return None
-        result[was.offset:was.end] = after
-    return bytes(result)
 
 
 def _ranges(layout, header, new):

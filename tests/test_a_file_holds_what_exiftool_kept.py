@@ -7,7 +7,10 @@ file's would call a file written before a crash a conflict, record it done holdi
 refused it), plan the same caption again on every edit, and count a write that changed nothing as a change.
 
 Real ExifTool, on JPEGs made here, in a home of the test's own; rows as the indexer stores them (photo_rows.add_read); a crash
-is a BaseException at a step of the write (file_changes.STEPS).
+is a BaseException at a step of the write (file_changes.STEPS). A keyword cut or turned to "?" is IPTC's, a copy only
+ExifTool's rewrite writes since the own writer patches a keyword save into XMP alone (fields.XMP_ONLY, 4d): a test of
+the cut forces the rewrite (`rewritten`, field_values.PATCH_IN_PLACE off), as a save gets it when the own writer
+refuses the photo or its change does not fit; a caption read as a number or a boolean is the patch's as well.
 
 Lifted: test_a_number_compares_as_read (#264), test_a_boolean_compares_as_read (#264 #278), test_settling_compares_as_read
 (#277), test_a_write_records_what_the_file_holds (#273), test_a_crash_reads_back_what_it_wrote (#273 #286),
@@ -52,6 +55,12 @@ LONG = "Places/" + "Harbour" * 13
 L_STROKE = chr(0x141)
 
 
+def rewritten():
+    """Every write ExifTool's rewrite, as a save is that the own writer refuses (a photo with no XMP yet, an XMP packet in
+    its IFD0, #3108) or whose change does not fit its segments: the only writer of IPTC's copy of a keyword added."""
+    return mock.patch.object(field_values, "PATCH_IN_PLACE", False)
+
+
 class ReadFilesCase(FilesCase):
     """Rows as the indexer makes them (tests/photo_rows.py); the case of every test of a write to a photo that was read."""
 
@@ -89,7 +98,7 @@ class KeptCase(ReadFilesCase):
 class WhatTheFileKept(KeptCase):
     def test_a_write_records_what_the_file_holds_and_an_undo_finds_it(self):
         photos = [self.make_read(name) for name in ("a.jpg", "b.jpg", "c.jpg")]
-        with mock.patch.object(field_values, "read", wraps=field_values.read) as read:
+        with rewritten(), mock.patch.object(field_values, "read", wraps=field_values.read) as read:
             result = self.add(photos, [LONG])
         change = result.details["change"]
         self.assertEqual(3, result.changed)
@@ -102,10 +111,13 @@ class WhatTheFileKept(KeptCase):
         self.assertEqual(sorted(["Beach", cut]), sorted(raw["IPTC:Keywords"]))
         self.assertEqual(["Beach", LONG], keywords_of(photos[0]))
 
+        # The undo is a save like another: the own writer's patch of the XMP alone, IPTC's cut copy left as it was
+        # (fields.XMP_ONLY), which no reader of the tags takes while XMP holds a keyword.
         undone = self.undo(change)
         self.assertEqual((3, []), (undone.changed, undone.errors))
         for path in photos:
-            self.assertEqual((["Beach"], ["Beach"], ["Beach"]), (keywords_of(path), self.iptc_of(path), self.indexed(path)))
+            self.assertEqual((["Beach"], ["Beach"], sorted(["Beach", cut])),
+                             (keywords_of(path), self.indexed(path), self.iptc_of(path)))
 
     def test_a_file_changed_outside_since_its_write_is_not_taken_as_the_writes(self):
         photos = [self.make_read(name) for name in ("a.jpg", "b.jpg", "c.jpg")]
@@ -119,25 +131,29 @@ class WhatTheFileKept(KeptCase):
         with mock.patch.object(file_changes, "_reached", side_effect=elsewhere):
             change = self.add(photos, [LONG]).details["change"]
         after = self.after_of(change, first)
+        # The own writer's patch of the XMP alone: the journal's after is what it left (fields.as_patched).
         self.assertEqual(["Beach", LONG], sorted(after["XMP:Subject"]))
-        self.assertEqual(["Beach", LONG], sorted(after["IPTC:Keywords"]))
+        self.assertEqual(["Beach"], sorted(after["IPTC:Keywords"]))
         undone = self.undo(change)
         self.assertEqual(2, undone.changed)
         self.assertIn("photo %d" % self.photo_id(first), [what for what, _why in undone.errors])
         self.assertEqual(["Written Elsewhere"], keywords_of(first))
 
     def test_a_crash_after_the_write_settles_done_whatever_the_file_kept(self):
-        # (what is written, what a read of the file gives for it in the journal, and in which field)
+        # (what is written, what a read of the file gives for it in the journal, and in which field, whether it is the
+        # rewrite's: a keyword's IPTC copy is; a caption read as a number or a boolean is the own writer's patch)
         cases = {
-            "a long keyword": (lambda a: self.add([a], [LONG]), "IPTC:Keywords", LONG[:64]),
-            "a letter IPTC cannot hold": (lambda a: self.add([a], ["Places/" + L_STROKE + "odz"]), "IPTC:Keywords", "Places/?odz"),
-            "a number": (lambda a: self.caption([a], "1.50"), "XMP:Title", "1.5"),
-            "a boolean": (lambda a: self.caption([a], "true"), "XMP:Title", "True"),
+            "a long keyword": (lambda a: self.add([a], [LONG]), "IPTC:Keywords", LONG[:64], True),
+            "a letter IPTC cannot hold": (lambda a: self.add([a], ["Places/" + L_STROKE + "odz"]), "IPTC:Keywords",
+                                          "Places/?odz", True),
+            "a number": (lambda a: self.caption([a], "1.50"), "XMP:Title", "1.5", False),
+            "a boolean": (lambda a: self.caption([a], "true"), "XMP:Title", "True", False),
         }
-        for label, (write, field, kept) in cases.items():
+        for label, (write, field, kept, rewrite) in cases.items():
             with self.subTest(label):
                 a = self.make_read(label.replace(" ", "_") + ".jpg")
-                with mock.patch.object(file_changes, "_reached", side_effect=crash_at("file written")):
+                with mock.patch.object(field_values, "PATCH_IN_PLACE", not rewrite), \
+                        mock.patch.object(file_changes, "_reached", side_effect=crash_at("file written")):
                     with self.assertRaises(Crash):
                         write(a)
                 change = self.last_change()
@@ -160,9 +176,10 @@ class WhatTheFileKept(KeptCase):
 
     def test_a_keyword_iptc_cut_is_no_tag_of_its_own_and_no_later_edit_writes_it_again(self):
         # The cut copy was read as a tag of its own, so every later edit planned it into every field and wrote again a
-        # file already holding what the edit asked for (#278).
+        # file already holding what the edit asked for (#278). The cut is the rewrite's (IPTC's copy).
         a = self.make_read("a.jpg")
-        self.assertEqual(1, self.add([a], [LONG]).changed)
+        with rewritten():
+            self.assertEqual(1, self.add([a], [LONG]).changed)
         self.assertEqual(["Beach", LONG], self.indexed(a))
         written = os.stat(a).st_mtime_ns
         again = self.add([a], ["Beach"])
@@ -173,7 +190,7 @@ class WhatTheFileKept(KeptCase):
 
     def test_a_change_stopped_part_way_reads_back_the_files_it_recorded(self):
         photos = [self.make_read(name) for name in ("a.jpg", "b.jpg", "c.jpg")]
-        with mock.patch.object(file_changes, "_reached", side_effect=crash_at("file recorded", nth=2)):
+        with rewritten(), mock.patch.object(file_changes, "_reached", side_effect=crash_at("file recorded", nth=2)):
             with self.assertRaises(Crash):
                 self.add(photos, [LONG])
         change = self.last_change()
@@ -355,6 +372,29 @@ class ABakeIsWritten(BakeCase):
                     self.assertTrue(et.get_tags([a], tags=["XMP:HasExtendedXMP"])[0].get("XMP:HasExtendedXMP"))
                 self.assertGreater(os.path.getsize(a), 80 * 1024)
 
+    def test_a_tag_added_to_a_photo_whose_bake_spans_extended_xmp_is_rewritten_and_keeps_its_bake(self):
+        # A photo holding an extended XMP segment is never the own writer's to patch (in_place._header_of refuses it):
+        # a tag added, and its undo, are ExifTool's rewrite, which carries the extended XMP whole.
+        a = self.make_read("a.jpg")
+        values = self.values(60)
+        baked = self.bake([a], values)
+        self.assertEqual((1, []), (baked.changed, baked.errors))
+
+        def extended():
+            return containers.read(io.BytesIO(bytes_of(a))).of_kind("xmp-extension")
+        self.assertTrue(extended(), "60 faces no longer span an extended XMP")
+        with mock.patch.object(file_journal, "save_patch", wraps=file_journal.save_patch) as saved:
+            added = self.add([a])
+            self.assertEqual((1, [], 0), (added.changed, added.errors, saved.call_count), "patched, or not written")
+            self.assertEqual(["Beach", "Harbour"], keywords_of(a))
+            self.assertTrue(extended())
+            self.assert_baked(a, values, 60)
+            undone = self.undo(added.details["change"])
+            self.assertEqual((1, [], 0), (undone.changed, undone.errors, saved.call_count))
+        self.assertEqual(["Beach"], keywords_of(a))
+        self.assertTrue(extended())
+        self.assert_baked(a, values, 60)
+
     def test_regions_another_program_wrote_before_settling_are_a_conflict_not_overwritten(self):
         a = self.make_read("a.jpg")
         change = self.crash("file writing", [a], self.values(2))
@@ -512,10 +552,16 @@ class APhotoIsWrittenBesideItselfAndMovedOverIt(KeptCase):
     written" (no write was ever beside its photo), and test_a_move_that_fails because the photo was written in place.
     A move that fails removes the write's own new file and names no path: on the branch's first cut, which left it and
     raised the OS's error, test_a_move_that_fails and test_a_read_only_photo fail.
+
+    Every write here is ExifTool's rewrite (`rewritten`): a save's whenever the own writer refuses the photo or its change
+    does not fit; the own writer's patch never writes a new file beside the photo (test_a_photo_patched_in_place).
     """
 
     def setUp(self):
         super().setUp()
+        forced = rewritten()
+        forced.start()
+        self.addCleanup(forced.stop)
         self.a = self.make_read("a.jpg")
         self.scratch = exiftool_session.scratch_of(self.a)
         self.before = bytes_of(self.a)

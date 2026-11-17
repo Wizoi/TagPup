@@ -46,7 +46,7 @@ import face_rows  # noqa: E402
 import page_fixtures  # noqa: E402
 import photo_rows  # noqa: E402
 import test_stale_record_precondition as S  # noqa: E402
-from test_a_file_holds_what_exiftool_kept import ReadFilesCase, flip_a_picture_byte  # noqa: E402
+from test_a_file_holds_what_exiftool_kept import ReadFilesCase, flip_a_picture_byte, rewritten  # noqa: E402
 from test_file_journal import EXIFTOOL, ExifToolSession, field_of, keywords_of, write_outside  # noqa: E402
 
 from tagpup.files import exiftool_session, names  # noqa: E402
@@ -228,7 +228,9 @@ class TaggingAPhoto(ReadFilesCase):
         """#1410: ExifTool can fail after deleting the original ("Error renaming temporary file after deleting
         original"), and then its temporary file is the photo's only copy: nothing here deletes it. file_changes'
         removed_scratch is asked only when ExifTool refuses for a scratch file already there, and leaves one whose photo
-        is gone (rule 2, DECISIONS 2026-10-29). Stood in for: the one command of b's write does what that failure does."""
+        is gone (rule 2, DECISIONS 2026-10-29). Stood in for: the one command of b's write does what that failure does.
+        ExifTool's rewrite (`rewritten`), as a save is that the own writer refuses or whose change does not fit: its
+        patch runs no ExifTool command."""
         a, b = self.make_read("a.jpg"), self.make_read("b.jpg")
         with open(b, "rb") as handle:
             held = handle.read()
@@ -244,7 +246,7 @@ class TaggingAPhoto(ReadFilesCase):
                     1, b"", b"Error: Error renaming temporary file after deleting original - " + b.encode(), files)
             return real(session, files, *args, **kwargs)
 
-        with mock.patch.object(ExifToolSession, "set_tags", failing_after_deleting):
+        with rewritten(), mock.patch.object(ExifToolSession, "set_tags", failing_after_deleting):
             result = tagging.change_tags(self.library, [a, b], ["Activity/Rowing"], [], EXIFTOOL,
                                          stop_at_first_error=False)
 
@@ -277,12 +279,11 @@ class TaggingAPhoto(ReadFilesCase):
 
         self.assertEqual((True, 1), (result.ok, result.changed), result.message())
         self.assertEqual("2019:06:15 10:30:00", str(field_of(a, "EXIF:DateTimeOriginal")))
-        # Two writes: a save adding a caption and a tag does not fit the photo's segments at their old lengths, so
-        # ExifTool's write of its header copy (the try at a patch in place, tagpup.files.in_place.patch_jpeg) is followed
-        # by its rewrite of the photo. About 20 ms more for a save that does not fit, accepted (main session,
-        # 2026-11-03): the patch writes no picture byte of the ones that do. Still one session and one change.
-        self.assertEqual((1, 2, 2), (len(sessions), len(reads), len(writes)), "sessions, reads, writes of one save")
-        self.assertEqual([False, True], [files == [a] for files, *_rest in writes], "the header copy, then the photo")
+        # One write, ExifTool's rewrite of the photo: the own writer, which runs no ExifTool command, refuses this save
+        # (the photo's EXIF block has no Exif IFD to hold DateTimeOriginal: tagpup.files.segment_edits). Still one
+        # session and one change.
+        self.assertEqual((1, 2, 1), (len(sessions), len(reads), len(writes)), "sessions, reads, writes of one save")
+        self.assertEqual([True], [files == [a] for files, *_rest in writes], "the photo")
         conn = db.connect(db.readonly_uri(self.library.path), uri=True)
         try:
             self.assertEqual(["Rowan Thackeray"], face_rows.people_of(conn, a), "the named face was dropped from the people")
@@ -435,7 +436,8 @@ class ASaveFromThePage(S.Fresh):
 
     def flipping_once(self, path):
         """A stand-in for file_changes._reached that changes a picture byte of the photo's new file the first time it is
-        written (what the owner's PC did, #2377): the write is discarded and made again."""
+        written (what the owner's PC did, #2377): the write is discarded and made again. The new file is ExifTool's
+        rewrite's: a write that is to make one is `rewritten` (the own writer's patch makes none)."""
         scratch, flipped = exiftool_session.scratch_of(path), []
 
         def reached(step):
@@ -446,6 +448,9 @@ class ASaveFromThePage(S.Fresh):
 
     def test_a_save_and_a_turn_made_again_say_how_many_writes_were(self):
         path, photo_id = self.make("IMG_0003.jpg", 5, ["Trips/Coast"])
+        forced = rewritten()
+        forced.start()
+        self.addCleanup(forced.stop)
         with self.flipping_once(path), self.assertLogs(file_changes.logger, "WARNING"):
             saved = self.save(self.record(photo_id), title="A caption")
         self.assertEqual((200, 1), (saved.status_code, saved.get_json()["pictures_refused"]), saved.data)
@@ -465,9 +470,9 @@ class ASaveFromThePage(S.Fresh):
         plain, plain_id = self.make("IMG_0002.jpg", 3, ["Trips/Coast"])
         found["no_rename"] = self.save(self.record(plain_id), title="A caption").get_json()
         again, again_id = self.make("IMG_0003.jpg", 5, ["Trips/Coast"])
-        with self.flipping_once(again), self.assertLogs(file_changes.logger, "WARNING"):
+        with rewritten(), self.flipping_once(again), self.assertLogs(file_changes.logger, "WARNING"):
             found["picture_changed"] = self.save(self.record(again_id), title="A caption").get_json()
-        with self.flipping_once(again), self.assertLogs(file_changes.logger, "WARNING"):
+        with rewritten(), self.flipping_once(again), self.assertLogs(file_changes.logger, "WARNING"):
             found["rotated_picture_changed"] = self.post("/photo/rotate", {"path": again, "direction": "left"}).get_json()
         for each in found.values():
             each.update(mtime=1, size=1)
