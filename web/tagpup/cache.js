@@ -34,19 +34,25 @@ export function saveToLocalStorageCache() {
 }
 
 /**
- * A photo deleted from a folder that is not the one open any more: the scan this browser kept for that folder must not
- * list it (the open folder's is saved as it stands, saveToLocalStorageCache). Nothing is kept for a folder never scanned.
+ * A photo written or deleted while its folder is not the one open any more: the scan this browser kept for that folder
+ * must say so (the open folder's is saved as it stands, saveToLocalStorageCache). `change` is given the kept records and
+ * returns them; nothing is kept for a folder never scanned, and the scan keeps its age.
  */
-export function forgetCachedPhoto(folder, photoPath) {
+export function changeCachedPhotos(folder, change) {
     try {
         const key = folderCacheKey(folder);
         const kept = JSON.parse(localStorage.getItem(key) || 'null');
         if (!kept || !Array.isArray(kept.photos)) return;
-        kept.photos = kept.photos.filter(photo => !samePath(photo.path, photoPath));
+        kept.photos = change(kept.photos);
         localStorage.setItem(key, JSON.stringify(kept));
     } catch (e) {
-        console.warn('Could not take a deleted photo out of the scan kept for its folder:', e);
+        console.warn('Could not change the scan kept for a folder:', e);
     }
+}
+
+/** A photo deleted from a folder that is not the one open any more. */
+export function forgetCachedPhoto(folder, photoPath) {
+    changeCachedPhotos(folder, photos => photos.filter(photo => !samePath(photo.path, photoPath)));
 }
 
 /**

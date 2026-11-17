@@ -120,7 +120,7 @@ function entryRow(entry) {
         buildElement('span', { className: 'write-queue-time', text: entry.at.toLocaleTimeString() }),
     ]);
     const buttons = [];
-    if (entry.status === 'failed') {
+    if (entry.status === 'failed' && entry.retry) {
         const retry = buildElement('button', { className: 'write-queue-retry', text: 'Retry', attrs: { type: 'button' } });
         retry.addEventListener('click', (e) => { e.stopPropagation(); retryEntry(entry); });
         buttons.push(retry);

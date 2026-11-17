@@ -17,6 +17,7 @@ import { forgetSelectionFaces } from './selection-faces.js';
 import { CACHE_TTL_MS, CACHE_VERSION, folderCacheKey, saveToLocalStorageCache } from './cache.js';
 import { updatePeopleDatalist, updateTagsDatalist } from './tags.js';
 import { discardDetailEdits, hasUnsavedEdits, leavePhotoThen, openPhotoWrite } from './edits.js';
+import { leaveTagChangesThen } from './pending.js';
 import { clearPhotoFaces } from './face-boxes.js';
 import { DEFAULT_MEDIA, libraryKinds, libraryPosition } from './library-source.js';
 import { replaceAddress } from './history-entries.js';
@@ -229,6 +230,12 @@ export function scanFolder(forceRefresh = false, { keepTyped = false } = {}) {
     const path = folderPathInput.value.trim();
     if (!path) {
         flagField(folderPathInput, 'Choose or type a folder to scan');
+        return;
+    }
+    // Another folder waits for the tag changes not sent, or drops them (pending.js); a refresh of this one does not ask.
+    const another = !(state.scannedFolder && samePath(path, state.scannedFolder));
+    if (another && !leaveTagChangesThen(() => true, () => false)) {
+        if (state.scannedFolder) folderPathInput.value = state.scannedFolder;
         return;
     }
     // A folder opened leaves the library view that was open (library-view.js).

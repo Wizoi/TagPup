@@ -14,7 +14,7 @@ import { leafOf } from './common/vocabulary.js';
 import { upper } from './hooks.js';
 import { state } from './state.js';
 import { setStatus } from './status.js';
-import { saveToLocalStorageCache } from './cache.js';
+import { changeCachedPhotos, saveToLocalStorageCache } from './cache.js';
 import { queuePhotoWrite, redrawIfShowing, takeWritten } from './edits.js';
 import { renderWriteQueue, whereWritten } from './write-queue.js';
 import { updatePeopleDatalist, updateTagsDatalist } from './tags.js';
@@ -42,9 +42,10 @@ export function pendChanges(list, { people = false } = {}) {
     for (const { path, add = [], remove = [] } of list) {
         const key = pathKey(path);
         let entry = pending.files.get(key);
-        // A file already waiting keeps the token of the action that put it here first (the plan's cut 3 rule).
+        // A file already waiting keeps the token of the action that put it here first (the plan's cut 3 rule), and the
+        // folder it was clicked in, whose records this browser keeps (cache.js) if the folder is left before it is written.
         if (!entry) {
-            entry = { path, add: new Set(), remove: new Set(), token, actions: new Set() };
+            entry = { path, add: new Set(), remove: new Set(), token, actions: new Set(), folder: state.scannedFolder || null };
             pending.files.set(key, entry);
         }
         remove.forEach(tag => { entry.add.delete(tag); entry.remove.add(tag); });
@@ -78,24 +79,33 @@ function resume() {
     drain();
 }
 
-/** Drop every change not sent yet, and say how many photos it leaves unwritten. */
-function cancelPending() {
+/** Drop every change not sent yet; a chunk out finishes as a normal write, but neither gives back nor says Ready. */
+function dropPending() {
     const pending = state.pending;
     const dropped = [...pending.files.values()];
     pending.files.clear();
     pending.stopped = false;
+    pending.drops += 1;
     dropped.forEach(entry => settle(entry, 'failed'));
-    if (dropped.length) {
-        const n = dropped.length;
-        setStatus('error', `${n.toLocaleString()} ${n === 1 ? "photo's" : "photos'"} tag changes were not written.`, { transient: false });
-    }
+    return dropped.length;
 }
 
-/** Library switch: ask while changes are not sent; a chunk already out is a normal write and does not ask. */
+/** Cancel: drop the changes not sent, and say how many photos it leaves unwritten. */
+function cancelPending() {
+    const n = dropPending();
+    if (n) setStatus('error', `${n.toLocaleString()} ${n === 1 ? "photo's" : "photos'"} tag changes were not written.`, { transient: false });
+}
+
+/**
+ * A library switch or another folder: ask while changes are not sent, and leaving drops them; a chunk already out is a
+ * normal write and does not ask (its reply reaches the records kept of a folder left, takeReply).
+ */
 export function leaveTagChangesThen(go, stay) {
     const n = unsentCount();
-    if (!n || confirm(`Tag changes for ${photosWord(n)} are not written yet. Leave without writing them?`)) return go();
-    return stay();
+    if (!n) return go();
+    if (!confirm(`Tag changes for ${photosWord(n)} are not written yet. Leave without writing them?`)) return stay();
+    dropPending();
+    return go();
 }
 
 /** Closing the page asks while changes are not sent (a drain stopped by a failure has no write waiting). */
@@ -119,7 +129,7 @@ function settle(entry, how) {
 /**
  * The next chunk, taken when its turn comes (not when it was queued): files in the order they came, those carrying the
  * first one's token, at most CHUNK. Every op is sent, whatever the page's record holds: the record may be older than the
- * file, and the server skips a file that already holds it all. A file whose clicks netted to nothing is done.
+ * file, and the server skips a file that already holds it all.
  */
 function takeChunk() {
     const files = state.pending.files;
@@ -128,8 +138,7 @@ function takeChunk() {
         if (chunk.length >= CHUNK) break;
         if (chunk.length && entry.token !== chunk[0].token) continue;
         files.delete(key);
-        if (!entry.add.size && !entry.remove.size) settle(entry, 'written');
-        else chunk.push(entry);
+        chunk.push(entry);
     }
     return chunk;
 }
@@ -147,6 +156,7 @@ function chunkLabel(chunk) {
 /** The queue's job: send the next chunk and take its reply; the drain goes on behind whatever was queued meanwhile. */
 async function sendChunk(entry) {
     try {
+        const drops = state.pending.drops;
         const chunk = takeChunk();
         if (!chunk.length) {
             entry.label = 'Tag changes: nothing left to write';
@@ -167,7 +177,7 @@ async function sendChunk(entry) {
         } catch (err) {
             data = { success: false, error: err.message };
         }
-        return takeReply(chunk, data, entry);
+        return takeReply(chunk, data, entry, drops !== state.pending.drops);
     } finally {
         state.pending.queued = false;
         drain();
@@ -175,10 +185,12 @@ async function sendChunk(entry) {
 }
 
 /**
- * The reply into the records: each file written takes the stamp and the tags its file holds now; a file gone was skipped
- * and keeps its record; a failed chunk's unwritten files go back to the front of the map and the drain stops.
+ * The reply into the records: each file written takes the stamp and the tags its file holds now, in the folder open or,
+ * left since, in the records this browser kept of it; a file gone was skipped and keeps its record. A failed chunk's
+ * unwritten files go back to the front of the map and the drain stops, unless the changes were dropped while it was out
+ * (`dropped`): then they are not written, and Cancel's message stands.
  */
-function takeReply(chunk, data, entry) {
+function takeReply(chunk, data, entry, dropped) {
     const byKey = (obj) => new Map(Object.entries(obj || {}).map(([path, v]) => [pathKey(path), v]));
     const stamps = byKey(data.stamps);
     const held = byKey(data.written);
@@ -186,6 +198,12 @@ function takeReply(chunk, data, entry) {
     const photos = new Map(state.folderPhotos.map(p => [pathKey(p.path), p]));
     const back = [];
     const written = [];
+    const left = new Map();   // folder left since -> its items written
+    const take = (photo, item) => {
+        const key = pathKey(item.path);
+        takeWritten(photo, stamps.get(key), held.get(key));
+        applyOps(photo, item, held.get(key));
+    };
     for (const item of chunk) {
         const key = pathKey(item.path);
         if (skipped.has(key)) {
@@ -193,14 +211,29 @@ function takeReply(chunk, data, entry) {
         } else if (data.success || held.has(key)) {
             const photo = photos.get(key);
             if (photo) {
-                takeWritten(photo, stamps.get(key), held.get(key));
-                applyOps(photo, item, held.get(key));
+                take(photo, item);
                 written.push(photo);
+            } else if (item.folder) {
+                left.set(item.folder, [...(left.get(item.folder) || []), item]);
             }
             settle(item, 'written');
         } else {
             back.push(item);
         }
+    }
+    for (const [folder, items] of left) {
+        changeCachedPhotos(folder, (kept) => {
+            const records = new Map(kept.map(p => [pathKey(p.path), p]));
+            items.forEach(item => { const photo = records.get(pathKey(item.path)); if (photo) take(photo, item); });
+            return kept;
+        });
+    }
+    // The map first: a throw in drawing below must not lose the unwritten files' changes nor leave the drain running.
+    if (!data.success && dropped) {
+        back.forEach(item => settle(item, 'failed'));
+    } else if (!data.success) {
+        giveBack(back);
+        state.pending.stopped = true;
     }
     if (written.length) {
         upper.updateSelectedThumbnailsCount();
@@ -212,14 +245,22 @@ function takeReply(chunk, data, entry) {
         written.forEach(photo => redrawIfShowing(photo, data));
     }
     if (!data.success) {
-        giveBack(back);
-        state.pending.stopped = true;
         entry.error = data.error || 'not written';
+        if (dropped) {
+            // Dropped while out: nothing to Retry or Cancel; the entry stays failed until dismissed.
+            entry.retry = null;
+            entry.cancel = null;
+            setStatus('error', `Tags not written to ${back.length.toLocaleString()} more ${back.length === 1 ? 'photo' : 'photos'}: ${entry.error}`, { transient: false });
+            return false;
+        }
         setStatus('error', `Tags not written to ${photosWord(back.length)}`, { transient: false });
         alert(`Tags not written to ${photosWord(back.length)}: ${entry.error}. Retry or Cancel it in the list of writes (bottom right).`);
         return false;
     }
-    const gone = data.skipped_missing || 0;
+    if (dropped) return true;
+    // Photos missing on disk are said once, when each owner action they belong to is done (counted over its chunks).
+    const finished = new Set(chunk.flatMap(item => [...item.actions].filter(action => !action.left.size)));
+    const gone = [...finished].reduce((n, action) => n + action.skipped, 0);
     if (gone) {
         setStatus('ready', `${gone.toLocaleString()} ${gone === 1 ? 'photo is' : 'photos are'} missing on disk and ${gone === 1 ? 'was' : 'were'} left out.${whereWritten(data)}`);
     } else {

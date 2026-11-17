@@ -6,7 +6,10 @@
  * What the owner lives through: a tag added while the first 25 are out reaches the 25 not yet sent in the same write and
  * the 25 already written in a later one; the last click on a tag wins; a write that fails keeps its files'
  * changes for Retry and never loops by itself; a single save clicked meanwhile goes between two writes; Cancel says how
- * many photos it left unwritten; choosing another library asks while changes are not sent.
+ * many photos it left unwritten, and a write already out neither says Ready over it nor gives its files back; choosing
+ * another library or opening another folder asks while changes are not sent, and leaving drops them; a write that
+ * finishes after its folder was left reaches the records this browser kept of that folder; photos missing on disk are
+ * said once, when the click's change is done.
  *
  * The server's bulk-tags replies are held here until the test answers them, oldest first.
  */
@@ -16,6 +19,7 @@ import { loadApp, FakeServer, photoRecord, flush, click, openFolder, closeAllApp
 
 const FOLDER = "D:\\Library\\2020";
 const pathOf = (i) => `${FOLDER}\\IMG_${String(i).padStart(4, "0")}.JPG`;
+const OTHER = "D:\\Library\\2021";
 
 function records(n, tags) {
   return Array.from({ length: n }, (_, i) => photoRecord({ filename: `IMG_${String(i).padStart(4, "0")}.JPG`, path: pathOf(i), tags: [...tags] }));
@@ -30,7 +34,9 @@ async function folderOf(t, n, { tags = [], bulk } = {}) {
     .on("/api/taxonomy/tree", [])
     .on("/api/databases", { databases: ["alpha", "beta"] })
     .on("/api/folder/index-status", { status: "completed", percent: 100, message: "Ready" })
-    .on("/api/folder/scan", () => records(n, tags))
+    .on("/api/folder/scan", (url) => (url.includes(encodeURIComponent(OTHER))
+      ? [photoRecord({ filename: "IMG_9000.JPG", path: `${OTHER}\\IMG_9000.JPG` })]
+      : records(n, tags)))
     .on("/api/photo-faces", { faces: [], total: 0, unmatched: 0 })
     .on("/api/photos/bulk-tags", bulk || (() => new Promise((resolve) => held.push(resolve))))
     .on("/api/photo/save-metadata", { success: true })
@@ -48,6 +54,8 @@ async function folderOf(t, n, { tags = [], bulk } = {}) {
 
 const writes = (ctx) => ctx.server.calls.filter((c) => c.url.includes("/api/photos/bulk-tags")).map((c) => c.body);
 const status = (ctx) => ctx.document.getElementById("status-text").textContent;
+const scans = (ctx, folder) => ctx.server.calls.filter((c) => c.url.includes(`/api/folder/scan?path=${encodeURIComponent(folder)}`)).length;
+const pendingOf = (ctx) => pageExports(ctx.window, "web/tagpup/state.js").state.pending;
 
 async function answer(ctx, reply = { success: true }) {
   assert.ok(ctx.held.length, "no write was waiting for an answer");
@@ -160,6 +168,16 @@ describe("a write that fails part-way", () => {
     assert.equal(writes(ctx).length, 3);
   });
 
+  test("a page that fails to draw the reply has still given the unwritten files' changes back", async (t) => {
+    const ctx = await folderOf(t, 50);
+    await addTags(ctx, "Trips/Coast");
+    pageExports(ctx.window, "web/tagpup/hooks.js").upper.renderThumbnails = () => { throw new Error("drawing failed"); };
+    const written = Object.fromEntries(Array.from({ length: 10 }, (_, i) => [pathOf(i), ["Trips/Coast"]]));
+    await answer(ctx, { success: false, error: "ExifTool: could not write IMG_0010.JPG", written });
+    assert.equal(pendingOf(ctx).files.size, 40, "the 15 files the write never reached lost their changes");
+    assert.equal(pendingOf(ctx).stopped, true, "the drain did not stop");
+  });
+
   test("a network that is gone keeps every change, says so, and Retry sends them", async (t) => {
     let refuse = true;
     const ctx = await folderOf(t, 3, {
@@ -237,6 +255,33 @@ describe("Cancel while a change is being written", () => {
     assert.match(status(ctx), /35 photos' tag changes were not written/);
     await answer(ctx);
     assert.equal(writes(ctx).length, 1, "a cancelled change was written");
+    assert.match(status(ctx), /35 photos' tag changes were not written/, "the write out said Ready over the Cancel");
+  });
+
+  test("the write out failing after Cancel does not give its files back nor offer Retry", async (t) => {
+    const ctx = await folderOf(t, 60);
+    await addTags(ctx, "Trips/Coast");
+    click(ctx.window, ctx.document.querySelector(".write-queue-entry[data-status='writing'] .write-queue-cancel"));
+    await flush(ctx.window, 2);
+    await answer(ctx, { success: false, error: "ExifTool: could not write IMG_0001.JPG" });
+    assert.equal(pendingOf(ctx).files.size, 0, "a cancelled drain took the failed write's files back");
+    assert.equal(pendingOf(ctx).stopped, false);
+    assert.equal(ctx.document.querySelector(".write-queue-retry"), null, "a cancelled drain offers Retry");
+    assert.equal(ctx.alerts.length, 0);
+    assert.match(status(ctx), /Tags not written to 25 more photos/);
+    for (let i = 0; i < 4; i++) await flush(ctx.window, 4);
+    assert.equal(writes(ctx).length, 1);
+  });
+});
+
+describe("photos missing on disk", () => {
+  test("are said once, when the click's change is done, not by each write", async (t) => {
+    const ctx = await folderOf(t, 50);
+    await addTags(ctx, "Trips/Coast");
+    await answer(ctx, { success: true, skipped_missing: 1, skipped: [{ path: pathOf(3), why: "missing, file gone" }] });
+    assert.doesNotMatch(status(ctx), /missing/, "said before the change was done");
+    await answer(ctx);
+    assert.match(status(ctx), /^1 photo is missing on disk and was left out\./);
   });
 });
 
@@ -262,6 +307,55 @@ describe("choosing another library while changes wait", () => {
     await flush(ctx.window, 4);
     assert.ok(ctx.confirms.includes("Tag changes for 25 photos are not written yet. Leave without writing them?"), ctx.confirms.join("|"));
     assert.equal(select.value, "alpha", "the picker still shows the library left");
+    await answer(ctx);
+    assert.equal(writes(ctx).length, 2, "staying lost the changes not yet sent");
+    await answer(ctx);
+  });
+
+  test("leaving drops the changes not sent: once the write out is answered, nothing more is written or asked", async (t) => {
+    const ctx = await folderOf(t, 50);
+    await addTags(ctx, "Trips/Coast");
+    const select = ctx.document.getElementById("db-select");
+    select.value = "beta";
+    select.dispatchEvent(new ctx.window.Event("change", { bubbles: true }));
+    await flush(ctx.window, 4);
+    assert.ok(ctx.confirms.includes("Tag changes for 25 photos are not written yet. Leave without writing them?"), ctx.confirms.join("|"));
+    assert.equal(pendingOf(ctx).files.size, 0, "the changes not sent are still waiting");
+    await answer(ctx);
+    assert.equal(writes(ctx).length, 1, "a change left behind was written");
+    const unload = new ctx.window.Event("beforeunload", { cancelable: true });
+    ctx.window.dispatchEvent(unload);
+    assert.equal(unload.defaultPrevented, false, "the browser's own Leave site? follows the page's");
+  });
+});
+
+describe("opening another folder while changes wait", () => {
+  test("asks; leaving drops the files not sent, and the write out reaches the records kept of the folder left", async (t) => {
+    const ctx = await folderOf(t, 50);
+    await addTags(ctx, "Trips/Coast");
+    await openFolder(ctx, OTHER);
+    assert.ok(ctx.confirms.includes("Tag changes for 25 photos are not written yet. Leave without writing them?"), ctx.confirms.join("|"));
+    const { state } = pageExports(ctx.window, "web/tagpup/state.js");
+    assert.equal(state.scannedFolder, OTHER);
+    const stamps = Object.fromEntries(Array.from({ length: 25 }, (_, i) => [pathOf(i), { mtime: 1700000000, size: 2048 }]));
+    await answer(ctx, { success: true, stamps });
+    assert.equal(writes(ctx).length, 1, "the files not sent were written after the owner left them");
+
+    await openFolder(ctx, FOLDER);
+    assert.equal(scans(ctx, FOLDER), 1, "the folder was scanned again rather than shown as this browser kept it");
+    assert.deepEqual([...state.folderPhotos[0].tags], ["Trips/Coast"], "the kept record does not hold what was written");
+    assert.equal(state.folderPhotos[0].mtime, 1700000000, "the kept record names the file's old stamp: a save is refused");
+    assert.deepEqual([...state.folderPhotos[30].tags], [], "a change dropped on leaving is shown as written");
+  });
+
+  test("staying keeps the folder and its changes", async (t) => {
+    const ctx = await folderOf(t, 50);
+    await addTags(ctx, "Trips/Coast");
+    ctx.stay = true;
+    await openFolder(ctx, OTHER);
+    const { state } = pageExports(ctx.window, "web/tagpup/state.js");
+    assert.equal(state.scannedFolder, FOLDER);
+    assert.equal(ctx.document.getElementById("folder-path-input").value, FOLDER);
     await answer(ctx);
     assert.equal(writes(ctx).length, 2, "staying lost the changes not yet sent");
     await answer(ctx);
