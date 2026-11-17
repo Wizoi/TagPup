@@ -2319,7 +2319,6 @@ body.just-looking #faces-strip {
     box-shadow: var(--card-shadow);
 }
 .write-queue:hover .write-queue-panel,
-.write-queue:focus-within .write-queue-panel,
 .write-queue.open .write-queue-panel { display: block; }
 .write-queue-list { list-style: none; margin: 0; padding: 4px 0; }
 .write-queue-entry {

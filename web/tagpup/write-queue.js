@@ -154,8 +154,17 @@ function parts() {
         list = buildElement('ul', { className: 'write-queue-list', attrs: { 'aria-label': 'Writes to photos' } });
         status.addEventListener('click', () => {
             state.writeQueue.open = !state.writeQueue.open;
+            if (!state.writeQueue.open) status.blur();
             renderWriteQueue();
         });
+        // A click elsewhere or Escape closes the list: it must not stay up over the page.
+        const close = () => {
+            if (!state.writeQueue.open) return;
+            state.writeQueue.open = false;
+            renderWriteQueue();
+        };
+        document.addEventListener('pointerdown', (e) => { if (!writeQueueBox.contains(e.target)) close(); });
+        document.addEventListener('keydown', (e) => { if (e.key === 'Escape') close(); });
         replaceContent(writeQueueBox, status, buildElement('div', { className: 'write-queue-panel' }, [list]));
     }
     return { status, list };
