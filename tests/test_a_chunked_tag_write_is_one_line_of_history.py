@@ -216,6 +216,18 @@ class AChunkedTagWrite(unittest.TestCase):
         self.assertEqual(before, self.newest())
         self.assertEqual([["Beach"]] * 5, self.held())
 
+    def test_one_file_named_twice_under_two_spellings_is_refused_and_nothing_written(self):
+        before = self.newest()
+        one = self.photos[0]
+        other_spelling = one.replace("\\", "/").swapcase()
+        self.assertNotEqual(one, other_spelling)
+        self.assertEqual(paths.key(one), paths.key(other_spelling))
+        made, reply = self.chunk_of({one: {"add": ["Harbour"]}, other_spelling: {"add": ["Quay"]}}, "drain-6", status=400)
+        self.assertIsNone(made)
+        self.assertIn("named once", reply["error"])
+        self.assertEqual(before, self.newest())
+        self.assertEqual([["Beach"]] * 5, self.held())
+
 
 if __name__ == "__main__":
     unittest.main()

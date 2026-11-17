@@ -1261,9 +1261,13 @@ def _tag_changes(changes):
     if not changes:
         return None, "The bulk tag write names no photo. " + shape
     found = {}
+    named = set()
     for path, change in changes.items():
         if not path or not isinstance(change, dict) or set(change) - set(CHANGE_KEYS):
             return None, shape
+        if paths.key(path) in named:
+            return None, "A photo is named once in a request: %s is named twice. " % os.path.basename(path) + shape
+        named.add(paths.key(path))
         lists = tuple(change.get(key, []) for key in CHANGE_KEYS)
         if not all(isinstance(tags, list) and all(isinstance(tag, str) for tag in tags) for tags in lists):
             return None, shape
