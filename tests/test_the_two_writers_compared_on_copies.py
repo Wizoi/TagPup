@@ -340,6 +340,20 @@ class TheTwoWritersComparedOnCopies(FilesCase):
         self.assertEqual(["ExifTool:Warning"], metadata_check._tags_differing(
             original, theirs, row("0 2 1", said[0], "Bad IFD0 directory"), set()))
 
+    def test_a_maker_note_the_rewrite_dropped_and_the_own_writer_kept_is_no_difference(self):
+        # A maker note whose entries ExifTool cannot parse (bad offsets) is dropped by its rewrite, and the original's
+        # tags are gone from its read; the own writer's note is byte for byte the original's. Compared with the
+        # original, as a stale field is: no difference. A maker note tag the own writer changed is one.
+        original = {"MakerNotes:Canon:CanonImageType": "Canon PowerShot", "MakerNotes:Canon:FirmwareVersion": "1.0",
+                    "EXIF:IFD0:Make": "Canon"}
+        theirs = {"EXIF:IFD0:Make": "Canon"}
+        self.assertEqual([], metadata_check._tags_differing(original, theirs, dict(original), set()))
+        changed = dict(original, **{"MakerNotes:Canon:FirmwareVersion": "2.0"})
+        self.assertEqual(["MakerNotes:Canon:FirmwareVersion"],
+                         metadata_check._tags_differing(original, theirs, changed, set()))
+        self.assertEqual(["EXIF:IFD0:Make"], metadata_check._tags_differing(
+            original, theirs, dict(original, **{"EXIF:IFD0:Make": "Other"}), set()))
+
     def test_a_copy_the_second_read_leaves_out_is_a_copy_not_compared_never_silence(self):
         # A copy another program holds a moment answers the whole read and not the read of what ExifTool says of it:
         # its warnings are not "none", the copy could not be compared (ExifTool's, the own writer's or the original).
