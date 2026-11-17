@@ -625,15 +625,18 @@ class ASelectionByPath(Bulk):
     def test_a_file_the_library_has_no_row_of_is_missing_and_left_and_only_such_files_are_nothing_to_delete(self):
         fresh = os.path.join(self.vl.pictures, "2024 A", "copied_in.jpg")        # copied in, not indexed yet
         make_jpeg(fresh, (10, 20, 30), (16, 16))
-        asked = self.check({"paths": [fresh, self.native(self.ids[0])]})
-        self.assertEqual(1, asked["total"])
-        done = self.delete({"paths": [fresh, self.native(self.ids[0])]}, asked["token"])
-        self.assertEqual((1, 2, 1, 1), (done["total"], done["requested"], done["missing"], done["changed"]))
+        chosen = {"paths": [fresh, self.native(self.ids[0]), self.native(self.ids[1])]}
+        asked = self.check(chosen)
+        self.assertEqual((2, 1), (asked["total"], asked["missing"]), "the question is told the file it leaves alone")
+        done = self.delete(chosen, asked["token"])
+        self.assertEqual((2, 3, 1, 2), (done["total"], done["requested"], done["missing"], done["changed"]))
         self.assertTrue(os.path.exists(fresh), "never deleted")
-        self.assertEqual(0, self.check({"paths": [fresh]})["total"])
+        alone = self.check({"paths": [fresh]})
+        self.assertEqual((0, 1), (alone["total"], alone["missing"]))
         refused = self.delete({"paths": [fresh]}, expect=400)
         self.assertEqual("The selection holds no photos.", refused["error"])
-        self.assertEqual([paths.key(self.native(self.ids[0]))], [paths.key(path) for path in self.sent])
+        self.assertEqual(sorted(paths.key(self.native(photo_id)) for photo_id in self.ids[:2]),
+                         sorted(paths.key(path) for path in self.sent))
 
     def test_a_photo_indexed_again_between_the_question_and_the_start_refuses_the_delete_and_nothing_goes(self):
         chosen = {"paths": [self.native(photo_id) for photo_id in self.ids[:3]]}

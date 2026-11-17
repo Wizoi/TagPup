@@ -51,9 +51,12 @@ class RepliesForTheStrip(T.Bulk):
 
     def deletes_by_path(self):
         """Three photos of one folder deleted as Organize names them, by path (selection.read's `paths`): the question
-        and the reply, to the Recycle Bin, and with the Bin full, for good once confirmed. The Bin is the test's; nothing
+        and the reply, to the Recycle Bin, and with the Bin full, for good once confirmed; and two photos with a file copied
+        in and not indexed yet, which the question counts `missing` and the delete leaves. The Bin is the test's; nothing
         reaches the owner's."""
         found, binned = {}, []
+        fresh = os.path.join(self.vl.pictures, "2024 A", "copied_in.jpg")
+        T.make_jpeg(fresh, (10, 20, 30), (16, 16))
 
         def recycle(path):
             binned.append(path)
@@ -62,8 +65,10 @@ class RepliesForTheStrip(T.Bulk):
         recycle_bin.forget_bin()
         self.addCleanup(recycle_bin.forget_bin)
         with mock.patch("tagpup.files.recycle_bin.send_to_recycle_bin", side_effect=recycle):
-            for suffix, numbers, bin_state, confirm in ("", (0, 2, 4), {}, {}), ("_for_good", (6, 8, 10), FULL, {"for_good": True}):
-                chosen = {"paths": [os.path.join(self.vl.pictures, "2024 A", "p%03d.jpg" % n) for n in numbers]}
+            for suffix, numbers, extra, bin_state, confirm in (("", (0, 2, 4), [], {}, {}),
+                                                              ("_for_good", (6, 8, 10), [], FULL, {"for_good": True}),
+                                                              ("_with_missing", (12, 14), [fresh], {}, {})):
+                chosen = {"paths": [os.path.join(self.vl.pictures, "2024 A", "p%03d.jpg" % n) for n in numbers] + extra}
                 recycle_bin.forget_bin()
                 with mock.patch.dict(os.environ, bin_state):
                     asked = self.client.post("/library/api/library/selection/delete-check", json={"selection": chosen})
@@ -78,7 +83,10 @@ class RepliesForTheStrip(T.Bulk):
         self.assertEqual((3, 3), (found["delete_check_for_good"]["for_good"]["count"], found["delete_check_for_good"]["bin_full"]))
         self.assertEqual((3, 0, 0), tuple(found["deleted"][key] for key in ("changed", "for_good", "error_count")))
         self.assertEqual((3, 3, 0), tuple(found["deleted_for_good"][key] for key in ("changed", "for_good", "error_count")))
-        self.assertEqual(3, len(binned), "the first three went to the Bin, the second three for good")
+        self.assertEqual((2, 1), tuple(found["delete_check_with_missing"][key] for key in ("total", "missing")))
+        self.assertEqual((2, 3, 1, 0), tuple(found["deleted_with_missing"][key] for key in ("changed", "requested", "missing", "error_count")))
+        self.assertTrue(os.path.exists(fresh), "the file the library holds no row of is left")
+        self.assertEqual(5, len(binned), "the first three and the last two went to the Bin, the second three for good")
         return found
 
     def test_the_replies_the_strip_reads_are_written_for_the_page_test(self):

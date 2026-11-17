@@ -196,7 +196,8 @@ def where_deleted(library, selection):
     through this PC; all deleted for good only when the start says `for_good`, its token then of that; the file names of the
     first MOST_FOR_GOOD_NAMED; the token covers every one of them), "bin_full" (how many of them are for good only because a
     Recycle Bin is full: the page asks "The Recycle Bin is full: delete permanently instead?"; owner, 2026-11-12)}; the reasons
-    as recycle_bin says them ("on a network share").
+    as recycle_bin says them ("on a network share"), and "missing" (how many it names that the library holds no row of -- a
+    path of a file copied in and not indexed yet, an id nobody has: never deleted, and the question says so).
     Asked once a folder, never once a photo (a Select all of photo_index is 2,672 folders, about 2 s); a UNC path and a mapped
     drive are told by their spelling and the drive's type, without reading the share. Refused, as `resolve` refuses it, over
     batches.MAX_BATCH."""
@@ -227,7 +228,7 @@ def where_deleted(library, selection):
             "through_this_pc": through, "for_good": {"count": len(for_good), "names": names},
             "reasons": [{"reason": reason, "photos": photos} for reason, photos in reasons.most_common()],
             "copy_bytes": copy_bytes, "restores_to": recycle_bin.mirror_root(), "too_long": too_long,
-            "no_room": not_binned.no_room, "bin_full": not_binned.full}
+            "no_room": not_binned.no_room, "bin_full": not_binned.full, "missing": resolved.missing}
 
 
 def _through(counted, sizes, binless):
