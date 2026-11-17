@@ -230,12 +230,12 @@ describe("removing a person from a selection", () => {
     click(ctx.window, chip.querySelector(".selection-summary-chip-remove"));
     await flush(ctx.window, 6);
 
-    // Each file is sent the spelling it holds (pending.js drops a removal its record already lacks).
+    // Each file is sent both spellings (pending.js sends every removal; the file that lacks one ignores it).
     const sent = Object.values(ctx.server.lastBody("/api/photos/bulk-tags").changes).map((c) => c.remove);
     assert.deepEqual(
       sent,
-      [["People/Hazel Brookmire"], ["Hazel Brookmire"]],
-      `only one spelling was removed, so the chip would stay: ${JSON.stringify(sent)}`
+      [["People/Hazel Brookmire", "Hazel Brookmire"], ["People/Hazel Brookmire", "Hazel Brookmire"]],
+      `a spelling was left, so the chip would stay: ${JSON.stringify(sent)}`
     );
   });
 

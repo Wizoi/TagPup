@@ -43,6 +43,13 @@ def in_thread(call):
 
 
 class Chunks(T.Bulk):
+    def test_the_page_sends_the_files_a_write_the_server_takes_as_one_group(self):
+        """web/tagpup/pending.js sends CHUNK files a request under one group token; a request of more is refused."""
+        import re
+        page = open(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "web", "tagpup", "pending.js"),
+                    encoding="utf-8").read()
+        self.assertEqual(batches.CHUNK, int(re.search(r"^const CHUNK = (\d+);", page, re.M).group(1)))
+
     def test_a_writer_that_waits_is_let_in_between_two_chunks(self):
         saved = {}
 

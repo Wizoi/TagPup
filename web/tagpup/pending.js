@@ -2,7 +2,7 @@
 // (docs/plans/one-queue-for-tag-changes.md).
 //
 // A click that adds or takes off tags on many photos puts each file's change here, keyed by the file: the last op on a
-// tag wins, so a removal then an add nets to the add, an add then a removal to nothing. The drain sends CHUNK files a
+// tag wins, so a removal then an add nets to the add, an add then a removal to the removal. The drain sends CHUNK files a
 // request, each request one journaled change carrying its owner action's group token (History shows the action as one
 // line, Undo takes it back whole), in the photo write queue (edits.js queuePhotoWrite) behind any single save queued
 // meanwhile. A tag clicked while a 5,000-photo change drains joins the files not yet sent and rides their chunk; a file
@@ -20,7 +20,7 @@ import { renderWriteQueue, whereWritten } from './write-queue.js';
 import { updatePeopleDatalist, updateTagsDatalist } from './tags.js';
 
 /** Files a request: the server's group of one write (batches.CHUNK, the route's limit with a `group`). */
-export const CHUNK = 25;
+const CHUNK = 25;
 
 const photosWord = (n) => `${n.toLocaleString()} ${n === 1 ? 'photo' : 'photos'}`;
 
@@ -60,7 +60,7 @@ export function pendChanges(list, { people = false } = {}) {
 }
 
 /** The files whose changes are not sent yet. */
-export function unsentCount() {
+function unsentCount() {
     return state.pending.files.size;
 }
 
@@ -79,7 +79,7 @@ function resume() {
 }
 
 /** Drop every change not sent yet, and say how many photos it leaves unwritten. */
-export function cancelPending() {
+function cancelPending() {
     const pending = state.pending;
     const dropped = [...pending.files.values()];
     pending.files.clear();
@@ -118,22 +118,16 @@ function settle(entry, how) {
 
 /**
  * The next chunk, taken when its turn comes (not when it was queued): files in the order they came, those carrying the
- * first one's token, at most CHUNK. An op the page's record already satisfies is dropped; a file left with none is done.
+ * first one's token, at most CHUNK. Every op is sent, whatever the page's record holds: the record may be older than the
+ * file, and the server skips a file that already holds it all. A file whose clicks netted to nothing is done.
  */
 function takeChunk() {
     const files = state.pending.files;
-    const photos = new Map(state.folderPhotos.map(p => [pathKey(p.path), p]));
     const chunk = [];
     for (const [key, entry] of files) {
         if (chunk.length >= CHUNK) break;
         if (chunk.length && entry.token !== chunk[0].token) continue;
         files.delete(key);
-        const photo = photos.get(key);
-        if (photo) {
-            const tags = photo.tags || [];
-            [...entry.add].filter(t => tags.includes(t)).forEach(t => entry.add.delete(t));
-            [...entry.remove].filter(t => !tags.includes(t)).forEach(t => entry.remove.delete(t));
-        }
         if (!entry.add.size && !entry.remove.size) settle(entry, 'written');
         else chunk.push(entry);
     }

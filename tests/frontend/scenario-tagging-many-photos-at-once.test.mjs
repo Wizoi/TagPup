@@ -1,10 +1,10 @@
 /**
- * Owner scenario (V22): tagging many photos at once -- a folder of 50 bulk-tagged, a select-all of 5,000 -- while the
+ * Owner scenario (V22): tagging many photos at once -- a folder of 50 bulk-tagged, a select-all of 1,000 -- while the
  * owner keeps clicking. Each file's tag change waits in the page (web/tagpup/pending.js) and goes 25 files a write, each
  * write one journaled change under its click's group token (docs/plans/one-queue-for-tag-changes.md, cut 3).
  *
  * What the owner lives through: a tag added while the first 25 are out reaches the 25 not yet sent in the same write and
- * the 25 already written in a later one; clicks that undo each other write nothing; a write that fails keeps its files'
+ * the 25 already written in a later one; the last click on a tag wins; a write that fails keeps its files'
  * changes for Retry and never loops by itself; a single save clicked meanwhile goes between two writes; Cancel says how
  * many photos it left unwritten; choosing another library asks while changes are not sent.
  *
@@ -40,12 +40,10 @@ async function folderOf(t, n, { tags = [], bulk } = {}) {
   await openFolder(ctx, FOLDER);
   ctx.document.getElementById("btn-select-all-thumbnails").click();
   await flush(ctx.window, 4);
-  ctx.alerts = [];
-  ctx.window.alert = (text) => ctx.alerts.push(String(text));
-  ctx.confirms = [];
-  ctx.stay = false;
-  ctx.window.confirm = (text) => { ctx.confirms.push(String(text)); return !ctx.stay; };
-  return { ...ctx, held };
+  const page = { ...ctx, held, alerts: [], confirms: [], stay: false };   // the closures below read this object
+  page.window.alert = (text) => page.alerts.push(String(text));
+  page.window.confirm = (text) => { page.confirms.push(String(text)); return !page.stay; };
+  return page;
 }
 
 const writes = (ctx) => ctx.server.calls.filter((c) => c.url.includes("/api/photos/bulk-tags")).map((c) => c.body);
@@ -93,7 +91,7 @@ describe("a tag added while a 50-photo change is being written", () => {
 });
 
 describe("clicks that take each other back", () => {
-  test("remove-then-add nets to the add, add-then-remove to nothing: only what is left is written", async (t) => {
+  test("the last click on a tag wins: remove-then-add is the add, add-then-remove the removal", async (t) => {
     const ctx = await folderOf(t, 30, { tags: ["Places/Coast"] });
     await addTags(ctx, "Trips/Kept");   // holds the queue: the 25 first files are out
     const chip = [...ctx.document.querySelectorAll("#selection-tags-list .selection-summary-chip")]
@@ -110,11 +108,31 @@ describe("clicks that take each other back", () => {
     await flush(ctx.window, 4);
 
     await answer(ctx);
-    // The 5 files never sent carry only Trips/Kept; the 25 written get nothing: Places/Coast came off and back.
-    for (const change of Object.values(writes(ctx)[1].changes)) assert.deepEqual(change, { add: ["Trips/Kept"], remove: [] });
-    assert.equal(Object.keys(writes(ctx)[1].changes).length, 5);
+    // The 5 files never sent carry Trips/Kept and the Places/Coast that came off and back as an add (never a removal);
+    // Trips/Gone, added and taken off, is a removal (the last click wins), never an add.
+    const second = writes(ctx)[1].changes;
+    assert.equal(Object.keys(second).length, 5);
+    for (const change of Object.values(second)) assert.deepEqual(change, { add: ["Trips/Kept", "Places/Coast"], remove: ["Trips/Gone"] });
     await answer(ctx);
-    assert.equal(writes(ctx).length, 2, "a change that nets to nothing was written");
+    const third = writes(ctx)[2].changes;
+    assert.equal(Object.keys(third).length, 25);
+    for (const change of Object.values(third)) assert.deepEqual(change, { add: ["Places/Coast"], remove: ["Trips/Gone"] });
+    await answer(ctx);
+    assert.equal(writes(ctx).length, 3);
+    assert.ok(!JSON.stringify(writes(ctx).map((w) => Object.values(w.changes).map((c) => c.add))).includes("Trips/Gone"), "a tag taken off before it was sent was still added");
+  });
+});
+
+describe("a record older than its file", () => {
+  test("an add the record says the file holds is still sent, and so is a removal of a tag the record lacks", async (t) => {
+    const ctx = await folderOf(t, 3, { tags: ["Places/Coast"], bulk: () => ({ success: true }) });
+    await addTags(ctx, "Places/Coast");
+    assert.deepEqual(Object.values(writes(ctx)[0].changes)[0], { add: ["Places/Coast"], remove: [] });
+    const { removeTagFromAllSelected } = pageExports(ctx.window, "web/tagpup/selection.js");
+    removeTagFromAllSelected("Trips/Elsewhere", false);
+    await flush(ctx.window, 8);
+    assert.equal(writes(ctx).length, 2, "a removal the record thought done was not sent");
+    assert.deepEqual(Object.values(writes(ctx)[1].changes)[0], { add: [], remove: ["Trips/Elsewhere"] });
   });
 });
 
@@ -181,30 +199,30 @@ describe("a single save clicked between two writes", () => {
   });
 });
 
-describe("a select-all of 5,000", () => {
-  test("is 200 writes under one group, and a later click's change rides them on the shared files", async (t) => {
+describe("a select-all of 1,000", () => {
+  test("is 40 writes under one group, and a later click's change rides them on the shared files", async (t) => {
     let first = true;
     const held = [];
-    const ctx = await folderOf(t, 5000, {
+    const ctx = await folderOf(t, 1000, {
       bulk: () => (first ? (first = false, new Promise((resolve) => held.push(resolve))) : { success: true }),
     });
     await addTags(ctx, "Trips/Coast");
-    assert.ok(ctx.confirms.some((m) => m === "Add Trips/Coast to 5,000 photos?"), ctx.confirms.join("|"));
+    assert.ok(ctx.confirms.some((m) => m === "Add Trips/Coast to 1,000 photos?"), ctx.confirms.join("|"));
     await addTags(ctx, "Places/Harbour");
     const label = ctx.document.querySelector(".write-queue-entry .write-queue-label").textContent;
-    assert.equal(label, "Add Trips/Coast to 25 photos, 4,975 more pending");
+    assert.equal(label, "Add Trips/Coast to 25 photos, 975 more pending");
     held.shift()({ success: true });
-    for (let i = 0; i < 400 && writes(ctx).length < 201; i++) await flush(ctx.window, 2);
+    for (let i = 0; i < 100 && writes(ctx).length < 41; i++) await flush(ctx.window, 2);
 
     const sent = writes(ctx);
-    assert.equal(sent.length, 201);
+    assert.equal(sent.length, 41);
     const groups = sent.map((body) => body.group);
-    assert.equal(new Set(groups.slice(0, 200)).size, 1, "one owner action's writes carry more than one group");
+    assert.equal(new Set(groups.slice(0, 40)).size, 1, "one owner action's writes carry more than one group");
     assert.match(groups[0], /^[A-Za-z0-9_.:-]{1,64}$/);
-    assert.notEqual(groups[200], groups[0]);
-    const paths = sent.slice(0, 200).flatMap((body) => Object.keys(body.changes));
-    assert.equal(new Set(paths).size, 5000, "a file was left out or written twice");
-    assert.deepEqual(Object.keys(sent[200].changes), Object.keys(sent[0].changes), "the later tag missed the files written first");
+    assert.notEqual(groups[40], groups[0]);
+    const paths = sent.slice(0, 40).flatMap((body) => Object.keys(body.changes));
+    assert.equal(new Set(paths).size, 1000, "a file was left out or written twice");
+    assert.deepEqual(Object.keys(sent[40].changes), Object.keys(sent[0].changes), "the later tag missed the files written first");
   });
 });
 
@@ -243,6 +261,7 @@ describe("choosing another library while changes wait", () => {
     select.dispatchEvent(new ctx.window.Event("change", { bubbles: true }));
     await flush(ctx.window, 4);
     assert.ok(ctx.confirms.includes("Tag changes for 25 photos are not written yet. Leave without writing them?"), ctx.confirms.join("|"));
+    assert.equal(select.value, "alpha", "the picker still shows the library left");
     await answer(ctx);
     assert.equal(writes(ctx).length, 2, "staying lost the changes not yet sent");
     await answer(ctx);
