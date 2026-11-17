@@ -377,7 +377,8 @@ class ABakeIsWritten(BakeCase):
         # a tag added, and its undo, are ExifTool's rewrite, which carries the extended XMP whole.
         a = self.make_read("a.jpg")
         values = self.values(60)
-        self.assertEqual((1, []), (lambda done: (done.changed, done.errors))(self.bake([a], values)))
+        baked = self.bake([a], values)
+        self.assertEqual((1, []), (baked.changed, baked.errors))
 
         def extended():
             return containers.read(io.BytesIO(bytes_of(a))).of_kind("xmp-extension")
