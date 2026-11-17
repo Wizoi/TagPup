@@ -489,12 +489,14 @@ class APatchInPlace(FilesCase):
         first = self.rows("SELECT MIN(id) FROM change_files WHERE change_id = ?", (change,))[0][0]
         self.assertEqual([first], self.recorded())
         record, before = file_journal.patch_of(self.library.path, first)
-        self.assertEqual(3, len(record["ranges"]), "a range each of the EXIF, IPTC and XMP segments")
+        # The own writer patches a keyword save into the XMP alone, one range, and records the copies it left as they
+        # were (DECISIONS 2026-11-03, A KEYWORD OR CAPTION SAVE WRITES THE XMP COPY ONLY; segment_edits.stale_of).
+        self.assertEqual((1, ["IPTC:Keywords", "EXIF:XPKeywords"]), (len(record["ranges"]), record["stale"]),
+                         "one range, the XMP segment's; IPTC's and EXIF's copies left")
         self.assertEqual({"v", "size", "size_after", "ranges", "stale"}, set(record), "a patch keeps only the bytes it changes, no hash of the"
                          " rest (DECISIONS 2026-11-03, AN IN-PLACE PATCH CHECKS ONLY THE BYTES IT CHANGED)")
-        # Only the bytes that differ, from the first to the last: XPKeywords' UTF-16 to its last differing byte.
-        self.assertEqual("Beach".encode("utf-16-le")[:-1] + b"Beach" + b"Beach", before,
-                         "the record does not hold what its ranges held")
+        # Only the bytes that differ, from the first to the last: the keyword in the XMP packet.
+        self.assertEqual(b"Beach", before, "the record does not hold what its ranges held")
         self.assertEqual(1, self.settle())
         self.assertEqual((("applied", ["done", "done"]), [], ["Shore"]), ((self.status(change), self.states(change)),
                                                                           self.recorded(), keywords_of(a)))

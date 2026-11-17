@@ -32,6 +32,7 @@ import photo_rows  # noqa: E402
 from face_rows import add_face, add_people, give_their_person, people_of  # noqa: E402
 from handler_harness import Library  # noqa: E402
 
+from tagpup.core import vocabulary  # noqa: E402
 from tagpup.files.exiftool_session import ExifToolSession  # noqa: E402
 from tagpup.store import db as tagpup_db  # noqa: E402
 from tagpup.store import derived  # noqa: E402
@@ -118,16 +119,13 @@ class TaxonomyTestBase(unittest.TestCase):
         return json.loads(rows[0][0]) if rows and rows[0][0] else []
 
     def disk_keywords(self, photo_path):
-        """Read hierarchical + flat keywords back out of the actual file."""
+        """The tags the actual file holds, read back as the indexer reads them (vocabulary.extract_tags): XMP's copies
+        while XMP holds any keyword. A keyword save is the own writer's patch of the XMP alone, IPTC's copy left as it
+        was until a rewrite (DECISIONS 2026-11-03, A KEYWORD OR CAPTION SAVE WRITES THE XMP COPY ONLY), so a tag taken
+        off or renamed stays out of what the file is read as, whatever IPTC still holds."""
         with ExifToolSession(executable=EXIFTOOL) as et:
             meta = et.get_metadata([photo_path])[0]
-        out = set()
-        for key in ("XMP:Subject", "IPTC:Keywords", "XMP:HierarchicalSubject"):
-            val = meta.get(key, [])
-            if isinstance(val, str):
-                val = [val]
-            out.update(val or [])
-        return out
+        return set(vocabulary.extract_tags(meta))
 
 
 class TestTaxonomyCreate(TaxonomyTestBase):

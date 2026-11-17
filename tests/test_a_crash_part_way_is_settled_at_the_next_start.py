@@ -42,12 +42,16 @@ from test_file_journal import EXIFTOOL, Crash, FilesCase, crash_at, cut_patch, f
 from tagpup import runtime  # noqa: E402
 from tagpup.core import processes  # noqa: E402
 from tagpup.files import bake, field_values, in_place  # noqa: E402
-from tagpup.services import baking, file_changes, tagging  # noqa: E402
+from tagpup.services import baking, file_changes, photos, tagging  # noqa: E402
 from tagpup.store import checks, db, file_journal, journal, people, schema  # noqa: E402
 
 HOST = socket.gethostname()
 #: A process that has gone: no process has this id.
 GONE = "%s:%d:1" % (HOST, 0x7FFFFFF0)
+#: A photo's Date Taken, and the same an hour later (a Shift Date Taken of 60 minutes).
+TAKEN, SHIFTED = "2024:07:04 10:00:00", "2024:07:04 11:00:00"
+#: The copies of a Date Taken a date write sets (fields.date_taken_fields).
+DATES = ("EXIF:DateTimeOriginal", "EXIF:CreateDate", "XMP:DateTimeOriginal")
 
 
 def start_again(library):
@@ -136,8 +140,10 @@ class ACrashAndTheNextStart(FilesCase):
 
 @requires_exiftool
 class AnInPlacePatchCutShort(FilesCase):
-    """A keyword renamed in a photo by a patch in place (in_place.patch_jpeg: 'Beach' for 'Shore' in its EXIF, IPTC and
-    XMP, three ranges), the process killed at each point of the write (test_file_journal.cut_patch), and the next start: untouched or all old, it is written again; torn by the patch, put back
+    """A keyword renamed in a photo by a patch in place (in_place.patch_jpeg: 'Beach' for 'Shore', in its XMP alone, one
+    range: the own writer leaves IPTC's and EXIF's copies, segment_edits), or its Date Taken shifted (its EXIF and XMP
+    copies, two ranges: the patch torn between them), the process killed at each point of the write
+    (test_file_journal.cut_patch), and the next start: untouched or all old, it is written again; torn by the patch, put back
     and written again; all new, done; another program's write, a conflict never overwritten; unreadable, left `writing`
     with its record and the change let go. Another program's write is told by the ranges and the size alone: a byte of a
     range that is neither old nor new, or another size (no byte outside the ranges is read, DECISIONS 2026-11-03). A
@@ -146,7 +152,17 @@ class AnInPlacePatchCutShort(FilesCase):
 
     def setUp(self):
         super().setUp()
-        self.a = self.make("a.jpg")
+        # Dated in its EXIF and its XMP, as a photo whose Date Taken TagPup has written holds it (fields.date_taken_fields).
+        self.a = self.make("a.jpg", row=False)
+        dates = {field: TAKEN for field in DATES}
+        write_outside(self.a, dates)
+        conn = db.connect(self.library.path)
+        try:
+            photo_rows.add_read(conn, self.a, {"XMP:Subject": ["Beach"], "IPTC:Keywords": ["Beach"],
+                                               "EXIF:XPKeywords": "Beach", **dates})
+            conn.commit()
+        finally:
+            conn.close()
         self.original = self.held()
 
     def held(self):
@@ -158,9 +174,14 @@ class AnInPlacePatchCutShort(FilesCase):
                 mock.patch.object(file_changes, "_reached", side_effect=crash_at(step) if step else None):
             return tagging.replace_tag(self.library, [self.a], "Beach", "Shore", EXIFTOOL)
 
-    def killed(self, cutting=None, step=None):
+    def shift(self, cutting=None, step=None):
+        with cutting if cutting is not None else contextlib.nullcontext(), \
+                mock.patch.object(file_changes, "_reached", side_effect=crash_at(step) if step else None):
+            return photos.shift_date_taken(self.library, [self.a], 60, EXIFTOOL)
+
+    def killed(self, cutting=None, step=None, writing=None):
         with self.assertRaises(Crash):
-            self.replace(cutting, step)
+            (writing or self.replace)(cutting, step)
         change = self.last_change()
         self.assertEqual(["writing"], self.states(change))
         return change, self.rows("SELECT id FROM change_files WHERE change_id = ?", (change,))[0][0]
@@ -184,10 +205,16 @@ class AnInPlacePatchCutShort(FilesCase):
         self.assertEqual((self.original, in_place.OLD), (self.held(), self.against_its_record(file_id)))
         self.assert_written_again(change)
 
+    def assert_shifted_again(self, change):
+        start_again(self.library)
+        self.assertEqual((("applied", ["done"]), [SHIFTED] * len(DATES), None),
+                         ((self.status(change), self.states(change)), [field_of(self.a, field) for field in DATES],
+                          file_journal.patch_of(self.library.path, self.rows("SELECT MAX(id) FROM change_files")[0][0])))
+
     def test_killed_between_two_ranges_what_it_tore_is_put_back_and_written_again(self):
-        change, file_id = self.killed(cut_patch(ranges=1))
+        change, file_id = self.killed(cut_patch(ranges=1), writing=self.shift)
         self.assertEqual(in_place.TORN, self.against_its_record(file_id))
-        self.assert_written_again(change)
+        self.assert_shifted_again(change)
 
     def test_killed_after_its_last_byte_it_is_done_and_not_written_again(self):
         change, file_id = self.killed(cut_patch())
@@ -206,7 +233,7 @@ class AnInPlacePatchCutShort(FilesCase):
                           file_journal.patch_of(self.library.path, file_id)))
 
     def test_unreadable_at_the_next_start_it_stays_writing_with_its_record_and_the_change_is_let_go(self):
-        change, file_id = self.killed(cut_patch(ranges=1))
+        change, file_id = self.killed(cut_patch(ranges=1), writing=self.shift)
         torn = self.held()
         os.chmod(self.a, stat.S_IREAD)
         self.addCleanup(os.chmod, self.a, stat.S_IREAD | stat.S_IWRITE)
@@ -216,7 +243,7 @@ class AnInPlacePatchCutShort(FilesCase):
         self.assertIsNotNone(file_journal.patch_of(self.library.path, file_id), "the only way back was erased")
         self.assertNotEqual("applied", self.status(change))
         os.chmod(self.a, stat.S_IREAD | stat.S_IWRITE)
-        self.assert_written_again(change)
+        self.assert_shifted_again(change)
 
     def test_a_byte_of_a_range_neither_old_nor_new_is_another_programs_a_conflict_never_overwritten(self):
         # Killed once its record was saved; then another program writes a byte where the patch was to write, the file

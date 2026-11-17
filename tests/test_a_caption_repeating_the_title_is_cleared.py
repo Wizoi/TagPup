@@ -180,10 +180,13 @@ class AShelfOfPhotos(CaptionSweep):
         code, said = self.sweep()
         self.assertIn("to read 0", said)
 
-        # One undo puts every copy back.
+        # One undo puts the caption back as the photo shows it: its XMP copy, which the reader takes. The undo is the
+        # own writer's patch, which writes a caption into the XMP alone and leaves IPTC's and EXIF's as the sweep left
+        # them, cleared (DECISIONS 2026-11-03, A KEYWORD OR CAPTION SAVE WRITES THE XMP COPY ONLY; docs/domains/files.md,
+        # "Known, by this design").
         undone = journal_service.undo(self.library, change, apply=True, exiftool_path=EXIFTOOL)
         self.assertTrue(undone.ok, undone.errors)
-        self.assertEqual((TITLE, TITLE, TITLE), self.captions_of(self.same))
+        self.assertEqual((TITLE, None, None), self.captions_of(self.same))
         self.assertEqual("Relay", field_of(self.more, "IPTC:Caption-Abstract"))
 
     def test_each_line_reaches_a_redirected_log_as_it_is_said(self):

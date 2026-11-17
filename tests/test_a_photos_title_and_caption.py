@@ -1,8 +1,12 @@
 """A photo's title and its caption are two values (scenario F1; DECISIONS 2026-11-06, THE TITLE AND THE CAPTION ARE TWO
 VALUES).
 
-The owner types a title in the photo panel: it is saved to the title fields (XMP:Title, IPTC:ObjectName) and never to the
-Description fields, which hold the photo's caption, its extended information. A photo with a Description and no title
+The owner types a title in the photo panel: it is saved to the title fields and never to the Description fields, which
+hold the photo's caption, its extended information. A save is the own writer's patch in place (4d of
+docs/PLAN_OWN_METADATA.md): a title saved writes XMP:Title alone and leaves IPTC:ObjectName as it was, the copy the
+reader takes only while XMP holds none (DECISIONS 2026-11-03, A KEYWORD OR CAPTION SAVE WRITES THE XMP COPY ONLY;
+fields.XMP_ONLY); a title or caption cleared writes every copy (#2433), and an undo writing a caption back writes its XMP
+copy alone, IPTC's left cleared (docs/domains/files.md, "Known, by this design"). A photo with a Description and no title
 shows the Description as its title, and the first save moves it into the title, leaving no copy behind; a caption that
 differs from the title is never written. A cleared title is cleared, and the next save is accepted (#2581: a photo
 titled only in its title fields was refused as changed on disk after its title was cleared). Undo puts the old title
@@ -24,6 +28,11 @@ from tagpup.core import fields  # noqa: E402
 
 TITLE_FIELDS = tuple(fields.title_fields(""))
 CAPTION_FIELDS = tuple(fields.caption_fields(""))
+
+
+def title_held(title, iptc=""):
+    """The title fields a save of `title` leaves: XMP:Title written, IPTC:ObjectName holding what it held (`iptc`)."""
+    return {"XMP:Title": title, "IPTC:ObjectName": iptc}
 
 
 @unittest.skipIf(S.EXIFTOOL is None, "ExifTool not installed")
@@ -67,13 +76,13 @@ class ATitleAndACaption(S.Fresh):
         record = self.record(photo_id)
         self.assertEqual("Pier at noon", record["title"], "the title is shown, not the caption")
         body, after = self.saved(self.save(record, title="Pier at dusk", tags=record["tags"] + ["Trips/Lakes"]))
-        self.assertEqual({**{field: "Pier at dusk" for field in TITLE_FIELDS}, **caption}, self.held(path))
+        self.assertEqual({**title_held("Pier at dusk", iptc="Pier at noon"), **caption}, self.held(path))
         self.assertEqual("Pier at dusk", body["base"]["title"])
         # Two saves in a row: the second goes from the first's reply, and is accepted.
         self.saved(self.post("/photo/save-metadata", {"path": body["new_path"], "title": "Pier at dusk",
                                                       "tags": record["tags"] + ["Trips/Lakes", "Activity/Rowing"],
                                                       **after}))
-        self.assertEqual({**{field: "Pier at dusk" for field in TITLE_FIELDS}, **caption}, self.held(path))
+        self.assertEqual({**title_held("Pier at dusk", iptc="Pier at noon"), **caption}, self.held(path))
         again = self.record(photo_id)
         self.assertEqual(("Pier at dusk", "Pier at dusk"), (again["title"], self.shown_by_the_index(photo_id)),
                          "the page and the index show the same title")
@@ -89,7 +98,7 @@ class ATitleAndACaption(S.Fresh):
         self.assertEqual({**titled, **caption}, self.held(path), "the same title saved with a tag")
         self.saved(self.post("/photo/save-metadata", {"path": body["new_path"], "title": "Pier at dusk",
                                                       "tags": ["Trips/Coast", "Trips/Lakes"], **after}))
-        self.assertEqual({**{field: "Pier at dusk" for field in TITLE_FIELDS}, **caption}, self.held(path),
+        self.assertEqual({**title_held("Pier at dusk", iptc="Pier at noon"), **caption}, self.held(path),
                          "a changed title")
 
     def test_a_description_without_a_title_is_shown_as_the_title_and_the_first_save_moves_it(self):
@@ -99,7 +108,7 @@ class ATitleAndACaption(S.Fresh):
         record = self.record(photo_id)
         self.assertEqual("Harbour at dawn", record["title"])
         body, after = self.saved(self.save(record, tags=record["tags"] + ["Trips/Lakes"]))
-        self.assertEqual({**{field: "Harbour at dawn" for field in TITLE_FIELDS}, **{field: "" for field in moved},
+        self.assertEqual({**title_held("Harbour at dawn"), **{field: "" for field in moved},
                           "EXIF:XPComment": "Taken from the end of the pier"}, self.held(path),
                          "moved into the title, no copy left in the caption; a caption that differs is kept")
         self.assertEqual(("Harbour at dawn", "Harbour at dawn"), (self.record(photo_id)["title"], body["base"]["title"]))
@@ -113,7 +122,7 @@ class ATitleAndACaption(S.Fresh):
         kept = {"EXIF:XPComment": "Taken from the end of the pier"}
         changed, changed_id = self.made("b.jpg", 63, {**moved, **kept})
         self.saved(self.save(self.record(changed_id), title="Harbour at noon"))
-        self.assertEqual({**{field: "Harbour at noon" for field in TITLE_FIELDS}, **kept},
+        self.assertEqual({"XMP:Title": "Harbour at noon", **kept},
                          {field: text for field, text in self.held(changed).items() if text})
         self.assertEqual("Harbour at noon", self.record(changed_id)["title"])
         cleared, cleared_id = self.made("c.jpg", 68, {**moved, **kept})
@@ -123,11 +132,13 @@ class ATitleAndACaption(S.Fresh):
         self.assertEqual(("", ""), (body["base"]["title"], self.record(cleared_id)["title"]), "it stays cleared")
         self.saved(self.post("/photo/save-metadata", {"path": body["new_path"], "title": "",
                                                       "tags": ["Trips/Coast", "Trips/Lakes"], **after}))
-        # Undo of both saves, the latest first, puts the Description back: the page shows it as the title again.
+        # Undo of both saves, the latest first, puts the Description back: the page shows it as the title again. The
+        # undo writes the caption's XMP copy alone, IPTC's left as the save cleared it (fields.XMP_ONLY).
         for change in range(self.last_change(), earlier, -1):
             undone = self.client.post("/library/api/history/%d/undo" % change, json={"apply": True})
             self.assertEqual(200, undone.status_code, undone.data)
-        self.assertEqual({**{field: "" for field in TITLE_FIELDS + CAPTION_FIELDS}, **moved, **kept}, self.held(cleared))
+        self.assertEqual({**{field: "" for field in TITLE_FIELDS + CAPTION_FIELDS}, "XMP:Description": "Harbour at dawn",
+                          **kept}, self.held(cleared))
         self.assertEqual("Harbour at dawn", self.record(cleared_id)["title"])
 
     def last_change(self):
