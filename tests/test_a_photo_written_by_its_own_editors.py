@@ -14,7 +14,10 @@ as ExifTool's write of the same reads (hazard c); a save repeated, or a tag the 
 already as the patch leaves it (fields.as_patched of field_values.left_as_they_were): nothing written, nothing journaled,
 `changed` 0, and the first save's undo puts back the bytes; the writer itself, given it, writes no byte and answers the
 copies it left (hazard a); with the own writer off, a save of a photo whose IPTC differs from its XMP writes every copy,
-as before.
+as before. A photo holding a second XMP packet inside its EXIF (IFD0 tag 0x02BC, as Windows Live Photo Gallery wrote it;
+tests/fixtures/xmp_in_ifd0.json, captured) has a tag added, its Date Taken moved, a turn and every keyword taken off, each
+ExifTool's rewrite, which writes both packets, and read back as asked (#3108); the same photo with that entry under
+another tag is patched in place.
 
 Real JPEGs written by the real ExifTool in a home of the test's own (test_file_journal.FilesCase); nothing of the
 owner's. Breaks that fail these, each tried on a copy of the code: segment_edits.stale_of answering () fails
@@ -30,12 +33,15 @@ through fails test_a_photo_with_two_app13_segments_is_rewritten; fields.EDITED_A
 test_a_turn_reads_as_exiftools_write_of_it_reads; file_changes._holds_already comparing against the plan's after
 (the planner before the fix), or in_place.patch_jpeg answering () when no byte changes, fails
 test_a_save_repeated_or_a_tag_held_added_again_writes_and_journals_nothing; field_values.left_as_they_were answering
-stale_of with the own writer off fails test_with_the_own_writer_off_a_save_writes_every_copy_as_before.
+stale_of with the own writer off fails test_with_the_own_writer_off_a_save_writes_every_copy_as_before;
+segment_edits.new_header patching a photo whose IFD0 holds an XMP packet (the code before #3108) fails
+test_a_photo_holding_an_xmp_packet_in_its_exif_is_rewritten_and_reads_back_as_asked.
 """
 import io
 import json
 import os
 import shutil
+import struct
 import sys
 import unittest
 from unittest import mock
@@ -47,14 +53,21 @@ from test_a_photo_patched_in_place import PRINT_FLAGS, away_at, open_elsewhere, 
 from test_file_journal import (EXIFTOOL, Crash, FilesCase, crash_at, cut_patch, field_of, keywords_of,  # noqa: E402
                                requires_exiftool, write_outside)
 
-from tagpup.core import fields  # noqa: E402
+from tagpup.core import fields, paths  # noqa: E402
 from tagpup.files import containers, field_values, segment_edits, xmp_packet  # noqa: E402
 from tagpup.files.exiftool_session import ExifToolSession  # noqa: E402
-from tagpup.services import file_changes, photos as photo_actions, tagging  # noqa: E402
+from tagpup.services import file_changes, metadata_check, photos as photo_actions, tagging  # noqa: E402
 from tagpup.store import db  # noqa: E402
 
 #: The copies a keyword save patching the XMP alone leaves as they were, in the order segment_edits answers them.
 KEYWORD_COPIES_LEFT = ("IPTC:Keywords", "EXIF:XPKeywords")
+#: The header of a photo_index JPEG whose EXIF's IFD0 holds an XMP packet (0x02BC), captured, its values fictional.
+with open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "fixtures", "xmp_in_ifd0.json"),
+          encoding="utf-8") as _f:
+    XMP_IN_IFD0 = json.load(_f)
+#: Its keywords, in both packets and EXIF XPKeywords.
+IFD0_KEYWORDS = sorted(["People/Classmate/Robin Lark", "Holidays/Summer", "People/Classmate/Ellis Moor",
+                        "People/Wendy Harlow", "Activities/Summer Camps", "People/Classmate/Juniper Cole"])
 
 
 def kinds_written(before, after):
@@ -63,6 +76,34 @@ def kinds_written(before, after):
     differ = [at for at in range(len(before)) if before[at] != after[at]]
     return sorted({next((each.kind for each in layout.segments if each.offset <= at < each.end), "outside")
                    for at in differ})
+
+
+def photo_with_xmp_in_ifd0(path, tag=0x02BC):
+    """A JPEG holding the captured header's EXIF, its IFD0's packet entry under `tag`, then its APP1 packet, as the photo
+    held them (its ICC profile between the two left out), before a picture PIL makes."""
+    from PIL import Image
+
+    tiff = bytearray(XMP_IN_IFD0["tiff_size"])
+    for at, hexed in XMP_IN_IFD0["tiff"]:
+        tiff[at:at + len(hexed) // 2] = bytes.fromhex(hexed)
+    packet, at = XMP_IN_IFD0["ifd0_packet"].encode("utf-8"), XMP_IN_IFD0["ifd0_packet_at"]
+    tiff[at:at + len(packet)] = packet
+    walked = containers.exif_tiff(bytes(tiff))
+    ifd0 = walked.named["ifd0"]
+    at = ifd0.offset + 2 + 12 * [entry[0] for entry in ifd0.entries].index(0x02BC)
+    tiff[at:at + 2] = struct.pack(walked.order + "H", tag)
+    xmp = XMP_IN_IFD0["xmp"].replace("<?xpacket end", " " * XMP_IN_IFD0["xmp_padding"] + "<?xpacket end", 1)
+    picture = io.BytesIO()
+    Image.new("RGB", (16, 12), (90, 110, 130)).save(picture, "JPEG")
+    picture = picture.getvalue()
+    jfif = 4 + int.from_bytes(picture[4:6], "big")
+
+    def app1(body):
+        return b"\xff\xe1" + (len(body) + 2).to_bytes(2, "big") + body
+    with open(path, "wb") as handle:
+        handle.write(picture[:jfif] + app1(containers.EXIF_HEAD + bytes(tiff))
+                     + app1(containers.XMP_HEAD + xmp.encode("utf-8")) + picture[jfif:])
+    return path
 
 
 @requires_exiftool
@@ -329,6 +370,47 @@ class APhotoWrittenByItsOwnEditors(FilesCase):
         undone = self.undo(change)
         self.assertEqual((1, []), (undone.changed, undone.errors))
         self.assertEqual((original, ["Beach"]), (read(a), self.indexed(a)))
+
+    def written_four_times(self, tag):
+        """A photo of the captured header (its packet entry under `tag`) given a tag, its Date Taken an hour later, a turn
+        right and every keyword taken off, one write at a time, each read back through ExifTool as the planners read it:
+        (the patches each saved, the reads)."""
+        a = photo_with_xmp_in_ifd0(os.path.join(self.folder, "a.jpg"), tag)
+        with ExifToolSession(executable=EXIFTOOL) as et:
+            self.seed(a, field_values.read(et, [a], metadata_check.READ)[paths.key(a)])
+        writes = (lambda: self.add([a]),
+                  lambda: photo_actions.shift_date_taken(self.library, [a], 60, EXIFTOOL),
+                  lambda: photo_actions.rotate_photos(self.library, [a], "right", EXIFTOOL),
+                  lambda: tagging.change_tags(self.library, [a], [], IFD0_KEYWORDS + ["Harbour"], EXIFTOOL))
+        patches, reads = [], []
+        for write in writes:
+            with saves_counted() as saved:
+                result = write()
+            self.assertEqual((1, []), (result.changed, result.errors), result.message())
+            patches.append(saved.call_count)
+            reads.append((keywords_of(a), field_of(a, "EXIF:DateTimeOriginal"), field_of(a, "XMP:DateTimeOriginal"),
+                          field_of(a, "EXIF:Orientation"), self.indexed(a)))
+        return patches, reads
+
+    def test_a_photo_holding_an_xmp_packet_in_its_exif_is_rewritten_and_reads_back_as_asked(self):
+        # 3 of 3,000 sampled photo_index JPEGs (#3108). ExifTool's read answers the IFD0 packet's copy of a value the
+        # APP1 packet's patch changed: the date read back unshifted, the keywords taken off read back as held.
+        patches, reads = self.written_four_times(0x02BC)
+        self.assertEqual([0, 0, 0, 0], patches, "a write patched a photo whose IFD0 holds an XMP packet")
+        self.assertEqual(self.as_asked(), reads)
+
+    def test_the_same_photo_without_the_ifd0_packet_is_patched_in_place(self):
+        # The one difference, its IFD0 entry under a tag no reader takes for XMP: the own writer patches it.
+        patches, reads = self.written_four_times(0x02BD)
+        self.assertEqual([1, 1, 1, 1], patches, "a write of a photo with no XMP packet in its IFD0 was not a patch")
+        self.assertEqual(self.as_asked(), reads)
+
+    def as_asked(self):
+        added = sorted(IFD0_KEYWORDS + ["Harbour"])
+        return [(added, "2006:08:19 15:42:07", "2006:08:19 15:42:07Z", 1, added),
+                (added, "2006:08:19 16:42:07", "2006:08:19 16:42:07Z", 1, added),
+                (added, "2006:08:19 16:42:07", "2006:08:19 16:42:07Z", 6, added),
+                ([], "2006:08:19 16:42:07", "2006:08:19 16:42:07Z", 6, [])]
 
     def test_with_the_own_writer_off_a_save_writes_every_copy_as_before(self):
         # The flag off is today's writer, untouched by the planner's rule: a photo whose XMP holds more than its IPTC

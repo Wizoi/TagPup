@@ -612,16 +612,26 @@ class Tiff:
     unfollowed: bool
 
 
-def exif_tiff(tiff):
-    """The `Tiff` of an EXIF block's TIFF bytes, or None when its structure cannot be followed: no TIFF header, an IFD
-    or a value that does not fit in the block, an entry of no TIFF type. The one walk of an EXIF block's IFDs."""
+def tiff_head(tiff):
+    """(struct's byte order, "<" or ">"; the offset of IFD0) of an EXIF block's TIFF bytes, or None when they start with
+    no TIFF header. The one reading of that header."""
     if len(tiff) < 8 or tiff[:2] not in (b"II", b"MM"):
         return None
     order = "<" if tiff[:2] == b"II" else ">"
     if struct.unpack(order + "H", tiff[2:4])[0] != 42:
         return None
+    return order, struct.unpack(order + "I", tiff[4:8])[0]
+
+
+def exif_tiff(tiff):
+    """The `Tiff` of an EXIF block's TIFF bytes, or None when its structure cannot be followed: no TIFF header, an IFD
+    or a value that does not fit in the block, an entry of no TIFF type. The one walk of an EXIF block's IFDs."""
+    head = tiff_head(tiff)
+    if head is None:
+        return None
+    order, first = head
     ifds, named, spans, unfollowed = [], {}, [], False
-    queue, seen = [(struct.unpack(order + "I", tiff[4:8])[0], "ifd0")], set()
+    queue, seen = [(first, "ifd0")], set()
     while queue:
         at, name = queue.pop()
         if at == 0 or at in seen:

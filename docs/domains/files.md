@@ -433,7 +433,9 @@ caller rewrites the file, nothing written. It is the one caller of the three edi
 - **No patch**: an unmapped field; a value it cannot spell; any editor's Refusal or DoesNotFit or `length_changed`
   (never `grow`); a change for a segment the photo lacks (ExifTool makes one: a rewrite), a clear of one it lacks
   changing nothing; a photo holding two segments of a patched kind (two EXIF 4 / 0 / 0, two APP13 0 / 2 / 3 in the census
-  above), refused before this module by `in_place._header_of`, whatever the write changes; a rotation of a photo with no EXIF Orientation, since the IFD0 table is followed by data in every
+  above), refused before this module by `in_place._header_of`, whatever the write changes; a photo whose EXIF IFD0 holds
+  an XMP packet of its own (tag 0x02BC, Windows Live Photo Gallery's; ExifTool's read answers that copy, so a patch of
+  the APP1 packet alone reads back unwritten; #3108), whatever the write changes, IFD0 read only to its tag list; a rotation of a photo with no EXIF Orientation, since the IFD0 table is followed by data in every
   absent case counted (docs above, "The EXIF block editor"), refused by the editor, not by a rule here.
 - **Not verified here**: a patch in a real file against ExifTool's (the shadow comparison is
   `services/metadata_check.py`; its result is not recorded on this page).
