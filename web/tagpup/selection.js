@@ -1,7 +1,6 @@
 // TagPup's page: what the selected photos hold, and tagging them all at once.
 import { api } from './common/api.js';
 import { buildElement, replaceContent } from './common/dom.js';
-import { pathKey, samePath } from './common/paths.js';
 import { leafOf, peopleListHas, photoAlreadyHas, sortedTags, tagProblem } from './common/vocabulary.js';
 import { upper } from './hooks.js';
 import { state } from './state.js';
@@ -10,20 +9,16 @@ import {
     selectedThumbnailsCount, selectionDateGroup, selectionDateLabel, selectionDateValue, selectionEmptyHint,
     selectionFoldersGroup, selectionNote,
     selectionPeopleList, selectionSuggestedPeopleList, selectionSuggestedTagsList,
-    selectionSummaryCount, selectionSummaryScroll, selectionTagsList, statusDot, statusText
+    selectionSummaryCount, selectionSummaryScroll, selectionTagsList
 } from './elements.js';
-import { saveToLocalStorageCache } from './cache.js';
-import { whereWritten } from './write-queue.js';
 import {
     formatFriendlyDateRange, formatFriendlyDateSingle, getFolderDateStats,
     parseExifDateToLocalDate, takenOf
 } from './format.js';
 import {
-    namesAPerson, resolveTagOrPerson, updatePeopleDatalist, updateTagsDatalist
+    namesAPerson, resolveTagOrPerson
 } from './tags.js';
-import { renderFileList } from './folder.js';
-import { renderThumbnails } from './grid.js';
-import { queuePhotoWrite, takeWritten } from './edits.js';
+import { pendTags } from './pending.js';
 import { BULK_CONFIRM_ABOVE, BULK_LIMIT, isSelected, selectionCount, selectionProblem } from './selected.js';
 import { setStatus } from './status.js';
 import { addTypedToSelection } from './bulk-edit.js';
@@ -376,80 +371,6 @@ export function applyTagToAllSelected(tag, isPerson) {
 }
 
 /**
- * One write of tags to many photos, in the photo write queue (edits.js): after every
- * write clicked before it, never beside it.
- *
- * Each click posted at once, so three quick clicks were three writes of the same
- * files at the same time on the server. Each planned from the files as they were
- * before the others, ExifTool refused a file another write had open, and one set of
- * tags was reported written, one failed, and one was gone from the files without a
- * word. In the queue they go in the order clicked, each says how it went -- a failed
- * one in an alert -- and the next goes on either way. `targets` are the photos as
- * they were when it was clicked. Resolves true when written.
- */
-function queueBulkTags({ label, busy, failed, targets, add = [], remove = [], written, datalist = updateTagsDatalist }) {
-    return queuePhotoWrite((entry) => {
-        statusDot.className = 'status-indicator-dot busy';
-        statusText.textContent = busy;
-        return api.json('/api/photos/bulk-tags', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ paths: targets, add_tags: add, remove_tags: remove })
-        })
-        .then(data => {
-            if (!data.success) {
-                // Stopped part-way: the photos before the one that failed are written,
-                // and the page's records must say so.
-                const done = Object.keys(data.written || {});
-                if (done.length) {
-                    targets.filter(path => done.some(d => samePath(d, path))).forEach(path => {
-                        const photo = state.folderPhotos.find(p => p.path === path);
-                        if (photo) written(photo);
-                    });
-                    updateSelectedThumbnailsCount();
-                    renderFileList();
-                    renderThumbnails();
-                    datalist();
-                    saveToLocalStorageCache();
-                }
-                throw new Error(data.error);
-            }
-            // A photo whose file is gone was skipped, nothing written to it: its record stays.
-            const skipped = (data.skipped || []).map(each => each.path);
-            // Each photo written is of the file as it is now: the stamp its next save names.
-            const stamps = new Map(Object.entries(data.stamps || {}).map(([path, stamp]) => [pathKey(path), stamp]));
-            const heldTags = new Map(Object.entries(data.written || {}).map(([path, held]) => [pathKey(path), held]));
-            targets.filter(path => !skipped.some(s => samePath(s, path))).forEach(path => {
-                const photo = state.folderPhotos.find(p => p.path === path);
-                if (photo) {
-                    takeWritten(photo, stamps.get(pathKey(path)), heldTags.get(pathKey(path)));
-                    written(photo);
-                }
-            });
-            updateSelectedThumbnailsCount();
-            renderFileList();
-            renderThumbnails();
-            datalist();
-            saveToLocalStorageCache();
-            statusDot.className = 'status-indicator-dot';
-            statusText.textContent = data.file_only ? `Saved.${whereWritten(data)}` : 'Ready';
-            // Photos whose files are gone were left out by the server.
-            const gone = data.skipped_missing || 0;
-            if (gone) statusText.textContent = `${gone.toLocaleString()} ${gone === 1 ? 'photo is' : 'photos are'} missing on disk and ${gone === 1 ? 'was' : 'were'} left out.${data.file_only ? whereWritten(data) : ''}`;
-            return true;
-        })
-        .catch(err => {
-            console.error(err);
-            statusDot.className = 'status-indicator-dot';
-            statusText.textContent = 'Error';
-            entry.error = err.message;
-            alert(`${failed}: ${err.message}`);
-            return false;
-        });
-    }, label);
-}
-
-/**
  * May a bulk write over `count` photos go ahead? One over BULK_LIMIT is refused with the server's sentence; one
  * over BULK_CONFIRM_ABOVE asks first, naming the write -- "Add Trips/Coast to 3,412 photos?" -- since it runs
  * under the lock of every write to the library's files, with no progress, for as long as it takes (findings #535).
@@ -473,22 +394,7 @@ export function applyTagToPhotos(tag, isPerson, paths) {
     const targets = (paths || []).filter(Boolean);
     if (targets.length === 0) return;
     if (!confirmBulkWrite(`Add ${tag} to`, targets.length)) return;
-    return queueBulkTags({
-        label: `Add ${tag} to ${targets.length} photo(s)`,
-        busy: 'Applying tag...',
-        failed: 'Error applying tag selection',
-        targets,
-        add: [tag],
-        written: photo => {
-            if (!photo.tags.includes(tag)) photo.tags.push(tag);
-            if (isPerson) {
-                // photo.people holds leaf names, not paths.
-                const leaf = leafOf(tag);
-                if (!photo.people) photo.people = [];
-                if (!photo.people.includes(leaf)) photo.people.push(leaf);
-            }
-        },
-    });
+    return pendTags(targets, { add: [tag], people: isPerson });
 }
 
 /**
@@ -503,22 +409,9 @@ export function removeTagFromAllSelected(tagOrTags, isPerson) {
     if (state.selectedThumbnails.length === 0) return;
     const tags = Array.isArray(tagOrTags) ? tagOrTags : [tagOrTags];
     if (tags.length === 0) return;
-    const leaves = tags.map(t => leafOf(t).toLowerCase());
     const targets = state.selectedThumbnails.slice();
     if (!confirmBulkWrite(`Remove ${tags.join(', ')} from`, targets.length)) return;
-    return queueBulkTags({
-        label: `Remove ${tags.join(', ')} from ${targets.length} photo(s)`,
-        busy: 'Removing tag...',
-        failed: 'Error removing tag selection',
-        targets,
-        remove: tags,
-        written: photo => {
-            photo.tags = photo.tags.filter(t => !tags.includes(t));
-            if (isPerson && photo.people) {
-                photo.people = photo.people.filter(p => !leaves.includes(leafOf(p).toLowerCase()));
-            }
-        },
-    });
+    return pendTags(targets, { remove: tags, people: isPerson });
 }
 
 // Bulk Editing operations
@@ -550,25 +443,9 @@ export async function bulkAddPeopleToSelection() {
     }
     if (resolvedPeople.length === 0) return;
 
-    const done = await queueBulkTags({
-        label: `Add ${resolvedPeople.join(', ')} to ${targets.length} photo(s)`,
-        busy: 'Adding people...',
-        failed: 'Error bulk adding people',
-        targets,
-        add: resolvedPeople,
-        written: photo => {
-            if (!photo.people) photo.people = [];
-            resolvedPeople.forEach(p => {
-                if (!photo.tags.includes(p)) photo.tags.push(p);
-                const leaf = leafOf(p);
-                if (!photo.people.includes(leaf)) photo.people.push(leaf);
-            });
-        },
-        datalist: updatePeopleDatalist,
-    });
+    const { failed } = await pendTags(targets, { add: resolvedPeople, people: true });
     // Only the text that was written: what was typed since stays.
-    if (done && bulkAddPeopleInput.value.trim() === val) bulkAddPeopleInput.value = '';
-    return done;
+    if (!failed && bulkAddPeopleInput.value.trim() === val) bulkAddPeopleInput.value = '';
 }
 
 export async function bulkAddTagsToSelection() {
@@ -597,21 +474,9 @@ export async function bulkAddTagsToSelection() {
     }
     if (resolvedTags.length === 0) return;
 
-    const done = await queueBulkTags({
-        label: `Add ${resolvedTags.join(', ')} to ${targets.length} photo(s)`,
-        busy: 'Adding tags...',
-        failed: 'Error bulk adding tags',
-        targets,
-        add: resolvedTags,
-        written: photo => {
-            resolvedTags.forEach(t => {
-                if (!photo.tags.includes(t)) photo.tags.push(t);
-            });
-        },
-    });
+    const { failed } = await pendTags(targets, { add: resolvedTags });
     // Only the text that was written: what was typed since stays.
-    if (done && bulkAddTagsInput.value.trim() === val) bulkAddTagsInput.value = '';
-    return done;
+    if (!failed && bulkAddTagsInput.value.trim() === val) bulkAddTagsInput.value = '';
 }
 
 

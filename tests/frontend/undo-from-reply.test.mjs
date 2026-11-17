@@ -26,17 +26,19 @@ const SUGGESTIONS = {
 function build() {
   const held = [];
   const hold = () => new Promise((resolve) => held.push(resolve));
+  const files = {};   // what each file holds, as the replies said they wrote it: a rescan reads the files
   const server = new FakeServer()
     .on("/api/tags", OFFERED)
     .on("/api/people", [])
     .on("/api/taxonomy/tree", [])
     .on("/api/databases", { databases: ["photo_index"], selected: "photo_index" })
     .on("/api/folder/index-status", { status: "completed", percent: 100, message: "Ready" })
-    .on("/api/folder/scan", () => PHOTOS.map((p) => ({ ...p, tags: [...p.tags], people: [...p.people] })))
+    .on("/api/folder/scan", () => PHOTOS.map((p) => ({ ...p, tags: [...(files[p.path] || p.tags)], people: [...p.people] })))
     .on("/api/photo-faces", { faces: [], total: 0, unmatched: 0 })
     .on("/api/photos/bulk-tags", hold)
     .on("/api/folder/auto-apply", hold)
     .on("/api/folder/suggest-status", SUGGESTIONS);
+  server.files = files;
   return { server, held };
 }
 
@@ -60,6 +62,7 @@ const bulk = (ctx) => ctx.server.calls.filter((c) => c.url.includes("/api/photos
 
 async function answer(ctx, reply) {
   assert.ok(ctx.held.length, "no request was waiting for an answer");
+  Object.assign(ctx.server.files, reply.written || {});
   ctx.held.shift()(reply);
   await flush(ctx.window, 10);
 }

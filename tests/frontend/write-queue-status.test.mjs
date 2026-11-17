@@ -62,11 +62,6 @@ async function answer(ctx, reply) {
   await flush(ctx.window, 8);
 }
 
-async function clickThree(ctx) {
-  for (const name of OFFERED) click(ctx.window, chip(ctx, name));
-  await flush(ctx.window, 8);
-}
-
 function leaving(ctx) {
   const event = new ctx.window.Event("beforeunload", { cancelable: true });
   ctx.window.dispatchEvent(event);
@@ -81,16 +76,18 @@ describe("the status", () => {
     assert.equal(box(ctx).hidden, true);
   });
 
-  test("counts through a queue of three, and says one failed", async (t) => {
+  test("counts through the writes, and says one failed", async (t) => {
     const ctx = await loadSelected(t);
-    await clickThree(ctx);
+    // A tag clicked while a write is out waits as its files' change, and goes as the next write.
+    click(ctx.window, chip(ctx, OFFERED[0]));
+    await flush(ctx.window, 8);
+    click(ctx.window, chip(ctx, OFFERED[1]));
+    await flush(ctx.window, 8);
     assert.equal(box(ctx).hidden, false);
-    assert.equal(said(ctx), "Saving 1 of 3...");
+    assert.equal(said(ctx), "Saving 1 of 1...");
     await answer(ctx, { success: true, written: {} });
-    assert.equal(said(ctx), "Saving 2 of 3...");
+    assert.equal(said(ctx), "Saving 2 of 2...");
     await answer(ctx, { success: false, error: REFUSED, written: {} });
-    assert.equal(said(ctx), "Saving 3 of 3...");
-    await answer(ctx, { success: true, written: {} });
     assert.equal(said(ctx), "1 failed");
     assert.ok(box(ctx).classList.contains("write-queue-failed"), "a failure is not marked");
   });
@@ -108,23 +105,29 @@ describe("the status", () => {
 describe("the list", () => {
   test("names each write, its state, and a failure's reason", async (t) => {
     const ctx = await loadSelected(t);
-    await clickThree(ctx);
+    click(ctx.window, chip(ctx, OFFERED[0]));
+    await flush(ctx.window, 8);
+    click(ctx.window, chip(ctx, OFFERED[1]));
+    await flush(ctx.window, 8);
     const states = () => rows(ctx).map((r) => r.dataset.status);
+    const labels = () => rows(ctx).map((r) => r.querySelector(".write-queue-label").textContent);
+    assert.deepEqual(states(), ["writing"]);
+    assert.deepEqual(labels(), [`Add ${OFFERED[0]} to 2 photos`]);
+    await answer(ctx, { success: true, written: {} });
     // Newest first.
-    assert.deepEqual(states(), ["waiting", "waiting", "writing"]);
-    assert.deepEqual(rows(ctx).map((r) => r.querySelector(".write-queue-label").textContent).reverse(),
-      OFFERED.map((name) => `Add ${name} to 2 photo(s)`));
-    await answer(ctx, { success: true, written: {} });
+    assert.deepEqual(states(), ["writing", "done"]);
+    assert.deepEqual(labels(), [`Add ${OFFERED[1]} to 2 photos`, `Add ${OFFERED[0]} to 2 photos`]);
     await answer(ctx, { success: false, error: REFUSED, written: {} });
-    await answer(ctx, { success: true, written: {} });
-    assert.deepEqual(states(), ["done", "failed", "done"]);
-    const failed = rows(ctx)[1];
+    assert.deepEqual(states(), ["failed", "done"]);
+    const failed = rows(ctx)[0];
     assert.match(failed.querySelector(".write-queue-state").textContent, /Temporary file already exists/);
-    assert.ok(failed.querySelector(".write-queue-retry") && failed.querySelector(".write-queue-dismiss"));
-    assert.equal(rows(ctx)[0].querySelector(".write-queue-retry"), null, "a done write offers Retry");
+    // Dismissing would leave its files waiting: a failed drain is retried or cancelled.
+    assert.ok(failed.querySelector(".write-queue-retry") && failed.querySelector(".write-queue-cancel"));
+    assert.equal(failed.querySelector(".write-queue-dismiss"), null);
+    assert.equal(rows(ctx)[1].querySelector(".write-queue-retry"), null, "a done write offers Retry");
   });
 
-  test("Retry sends the failed write again, and Dismiss takes it off", async (t) => {
+  test("Retry sends the failed write again, and Cancel drops it and says how many", async (t) => {
     const ctx = await loadSelected(t);
     click(ctx.window, chip(ctx, "Harbourside"));
     await flush(ctx.window, 8);
@@ -135,15 +138,21 @@ describe("the list", () => {
     click(ctx.window, rows(ctx)[0].querySelector(".write-queue-retry"));
     await flush(ctx.window, 8);
     assert.equal(sent().length, 2, "Retry sent nothing");
-    assert.deepEqual(sent()[1].body, sent()[0].body);
+    assert.deepEqual(sent()[1].body, sent()[0].body, "Retry is the same change, under the same group");
     assert.equal(said(ctx), "Saving 1 of 1...");
     await answer(ctx, { success: false, error: REFUSED, written: {} });
     assert.equal(said(ctx), "1 failed", "the retried entry is listed once, not twice");
 
-    click(ctx.window, rows(ctx).find((r) => r.dataset.status === "failed").querySelector(".write-queue-dismiss"));
+    click(ctx.window, rows(ctx).find((r) => r.dataset.status === "failed").querySelector(".write-queue-cancel"));
     await flush(ctx.window, 2);
     assert.equal(said(ctx), "All changes saved");
     assert.equal(rows(ctx).filter((r) => r.dataset.status === "failed").length, 0);
+    assert.match(ctx.document.getElementById("status-text").textContent, /2 photos' tag changes were not written/);
+    click(ctx.window, chip(ctx, "Kentridge"));
+    await flush(ctx.window, 8);
+    assert.deepEqual(Object.values(sent().at(-1).body.changes).map((c) => c.add), [["Kentridge"], ["Kentridge"]],
+      "the cancelled tag went with the next write");
+    await answer(ctx, { success: true, written: {} });
   });
 
   test("opens on a click, for a touch screen", async (t) => {
@@ -166,5 +175,13 @@ describe("closing the tab", () => {
     assert.equal(leaving(ctx), true, "did not ask while a write was out");
     await answer(ctx, { success: true, written: {} });
     assert.equal(leaving(ctx), false, "still asked once everything was written");
+  });
+
+  test("asks while a failed write's tag changes wait for Retry", async (t) => {
+    const ctx = await loadSelected(t);
+    click(ctx.window, chip(ctx, "Cross Country"));
+    await flush(ctx.window, 8);
+    await answer(ctx, { success: false, error: REFUSED, written: {} });
+    assert.equal(leaving(ctx), true, "closing would lose the changes a failure gave back, unasked");
   });
 });

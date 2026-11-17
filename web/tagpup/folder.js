@@ -16,7 +16,8 @@ import { clearSelection, keepOnly } from './selected.js';
 import { forgetSelectionFaces } from './selection-faces.js';
 import { CACHE_TTL_MS, CACHE_VERSION, folderCacheKey, saveToLocalStorageCache } from './cache.js';
 import { updatePeopleDatalist, updateTagsDatalist } from './tags.js';
-import { discardDetailEdits, hasUnsavedEdits, leavePhotoThen, openPhotoWrite } from './edits.js';
+import { discardDetailEdits, hasUnsavedEdits, leavePhotoThen } from './edits.js';
+import { leaveThen } from './pending.js';
 import { clearPhotoFaces } from './face-boxes.js';
 import { DEFAULT_MEDIA, libraryKinds, libraryPosition } from './library-source.js';
 import { replaceAddress } from './history-entries.js';
@@ -214,21 +215,24 @@ export function updateCurrentFolderLabel() {
 }
 
 // Scans a folder
-export function scanFolder(forceRefresh = false, { keepTyped = false } = {}) {
-    // Opening a folder, or refreshing this one, repopulates the panel from what
-    // was scanned -- so it asks first, like any other way off the photo. Staying
-    // puts the open folder back in the box rather than leave it naming another.
-    // `keepTyped`: the open photo's file changed and the folder is read again to show it (edits.js
-    // photoChangedOnDisk); what was typed stays in its fields, so there is nothing to ask about.
-    if (!keepTyped && (hasUnsavedEdits() || openPhotoWrite())) {
-        leavePhotoThen(() => scanFolder(forceRefresh), {
-            onStay: () => { if (state.scannedFolder) folderPathInput.value = state.scannedFolder; },
-        });
-        return;
-    }
+export function scanFolder(forceRefresh = false, { keepTyped = false, asked = false } = {}) {
     const path = folderPathInput.value.trim();
     if (!path) {
         flagField(folderPathInput, 'Choose or type a folder to scan');
+        return;
+    }
+    // Opening a folder, or refreshing this one, repopulates the panel from what was scanned -- so it asks first, like
+    // any other way off the photo, and about the tag changes waiting for another folder (pending.js leaveThen). Staying
+    // puts the open folder back in the box rather than leave it naming another. `keepTyped`: the open photo's file
+    // changed and the folder is read again to show it (edits.js photoChangedOnDisk); what was typed stays in its fields,
+    // so there is nothing to ask about. `asked`: the caller asked already.
+    if (!keepTyped && !asked) {
+        leaveThen(() => {
+            folderPathInput.value = path;   // the folder asked about, whatever the box says by now
+            scanFolder(forceRefresh, { asked: true });
+        }, () => {
+            if (state.scannedFolder) folderPathInput.value = state.scannedFolder;
+        }, path);
         return;
     }
     // A folder opened leaves the library view that was open (library-view.js).

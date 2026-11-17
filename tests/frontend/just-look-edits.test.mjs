@@ -151,8 +151,8 @@ describe("tags on many photos", () => {
     await flush(ctx.window, 10);
     const sent = ctx.posts("/api/photos/bulk-tags");
     assert.equal(sent.length, 1, "nothing was sent");
-    assert.deepEqual(sent[0].body.paths.sort(), [A, B]);
-    assert.deepEqual(sent[0].body.add_tags, ["Trips/Lighthouse"]);
+    assert.deepEqual(Object.keys(sent[0].body.changes).sort(), [A, B]);
+    for (const change of Object.values(sent[0].body.changes)) assert.deepEqual(change, { add: ["Trips/Lighthouse"], remove: [] });
     assert.match(ctx.$("status-text").textContent, /Written to the files only: kr-track does not hold this folder/);
     assert.equal(ctx.posts("/api/taxonomy/create").length, 0);
     assert.equal(ctx.document.querySelectorAll(".photo-item-file").length, 2, "a photo left the list");

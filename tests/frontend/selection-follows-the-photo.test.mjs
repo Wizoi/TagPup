@@ -60,7 +60,7 @@ describe("the selection follows its photos", () => {
     click(ctx.window, ctx.document.getElementById("btn-bulk-add-tags"));
     await flush(ctx.window, 8);
     const sent = ctx.server.lastBody("/api/photos/bulk-tags");
-    assert.deepEqual([...sent.paths].sort(), [renamed, `${FOLDER}\\c.jpg`].sort());
+    assert.deepEqual(Object.keys(sent.changes).sort(), [renamed, `${FOLDER}\\c.jpg`].sort());
   });
 
   test("Extend selection to here, with nothing selected, selects that photo", async (t) => {

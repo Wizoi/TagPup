@@ -119,13 +119,27 @@ function entryRow(entry) {
         buildElement('span', { className: 'write-queue-state', text: said }),
         buildElement('span', { className: 'write-queue-time', text: entry.at.toLocaleTimeString() }),
     ]);
-    if (entry.status === 'failed') {
+    const buttons = [];
+    if (entry.status === 'failed' && entry.retry) {
         const retry = buildElement('button', { className: 'write-queue-retry', text: 'Retry', attrs: { type: 'button' } });
-        const dismiss = buildElement('button', { className: 'write-queue-dismiss', text: 'Dismiss', attrs: { type: 'button' } });
         retry.addEventListener('click', (e) => { e.stopPropagation(); retryEntry(entry); });
-        dismiss.addEventListener('click', (e) => { e.stopPropagation(); dismissEntry(entry); });
-        row.appendChild(buildElement('span', { className: 'write-queue-actions' }, [retry, dismiss]));
+        buttons.push(retry);
     }
+    // A drain of tag changes (pending.js) is cancelled, not dismissed: dismissing would leave its files waiting.
+    if (entry.cancel && (entry.status === 'failed' || entry.status === 'writing')) {
+        const cancel = buildElement('button', { className: 'write-queue-cancel', text: 'Cancel', attrs: { type: 'button' } });
+        cancel.addEventListener('click', (e) => {
+            e.stopPropagation();
+            entry.cancel();
+            if (entry.status === 'failed') dismissEntry(entry);
+        });
+        buttons.push(cancel);
+    } else if (entry.status === 'failed') {
+        const dismiss = buildElement('button', { className: 'write-queue-dismiss', text: 'Dismiss', attrs: { type: 'button' } });
+        dismiss.addEventListener('click', (e) => { e.stopPropagation(); dismissEntry(entry); });
+        buttons.push(dismiss);
+    }
+    if (buttons.length) row.appendChild(buildElement('span', { className: 'write-queue-actions' }, buttons));
     return row;
 }
 

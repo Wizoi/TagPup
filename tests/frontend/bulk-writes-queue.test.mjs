@@ -5,8 +5,9 @@
  * at once. On the server they were three writes of the same files at the same time:
  * each planned from the files as they were before the others, ExifTool refused a file
  * another write had open, and one set of tags was written, one "wrote 0 file(s)", and
- * one lost without a word. Now each goes after the one clicked before it, in the order
- * clicked, and a failed one is reported without costing the rest.
+ * one lost without a word. Now they wait as each file's pending change (web/tagpup/pending.js)
+ * and go as one write, after any write queued before them; a failed one is reported and its
+ * tags wait for Retry.
  *
  * The server's bulk-tags replies are held here until the test releases them.
  */
@@ -34,6 +35,7 @@ const SUGGESTIONS = {
 function build() {
   const held = [];
   const hold = () => new Promise((resolve) => held.push(resolve));
+  const files = {};   // what each file holds, as the replies said they wrote it: a rescan reads the files
   const server = new FakeServer()
     .on("/api/tags", OFFERED)
     .on("/api/people", [])
@@ -41,13 +43,14 @@ function build() {
     .on("/api/databases", { databases: ["photo_index"], selected: "photo_index" })
     .on("/api/folder/index-status", { status: "completed", percent: 100, message: "Ready" })
     // Copies: the page adds what it wrote to the records it was given.
-    .on("/api/folder/scan", () => PHOTOS.map((p) => ({ ...p, tags: [...p.tags], people: [...p.people] })))
+    .on("/api/folder/scan", () => PHOTOS.map((p) => ({ ...p, tags: [...(files[p.path] || p.tags)], people: [...p.people] })))
     .on("/api/photo-faces", { faces: [], total: 0, unmatched: 0 })
     .on("/api/photos/bulk-tags", hold)
     .on("/api/folder/auto-apply", hold)
     .on("/api/photo/save-metadata", { success: true })
     .on("/api/taxonomy/create", { success: true })
     .on("/api/folder/suggest-status", SUGGESTIONS);
+  server.files = files;
   return { server, held };
 }
 
@@ -77,6 +80,7 @@ const chip = (ctx, name) => chips(ctx).find((c) => c.textContent.includes(name))
 /** Answer the oldest request waiting, with `reply`. */
 async function answer(ctx, reply) {
   assert.ok(ctx.held.length, "no request was waiting for an answer");
+  Object.assign(ctx.server.files, reply.written || {});
   ctx.held.shift()(reply);
   await flush(ctx.window, 8);
 }
@@ -84,7 +88,7 @@ async function answer(ctx, reply) {
 afterEach(() => closeAllApps());
 
 describe("tags clicked quickly on a selection", () => {
-  test("go to the server one at a time, in the order clicked", async (t) => {
+  test("go to the server as one write carrying the three, after nothing else", async (t) => {
     const ctx = await loadSelected(t);
     const [first, second, third] = OFFERED.map((name) => chip(ctx, name));
     assert.ok(first && second && third, "the suggestions were not offered");
@@ -93,14 +97,13 @@ describe("tags clicked quickly on a selection", () => {
     click(ctx.window, third);
     await flush(ctx.window, 8);
 
-    assert.equal(writes(ctx).length, 1, "a second write was sent before the first was answered");
+    assert.equal(writes(ctx).length, 1);
+    const { changes } = writes(ctx)[0].body;
+    assert.deepEqual(Object.keys(changes), PHOTOS.map((p) => p.path));
+    for (const change of Object.values(changes)) assert.deepEqual(change, { add: OFFERED, remove: [] });
     await answer(ctx, { success: true });
-    assert.equal(writes(ctx).length, 2);
-    await answer(ctx, { success: true });
-    assert.equal(writes(ctx).length, 3);
-    await answer(ctx, { success: true });
+    assert.equal(writes(ctx).length, 1, "the three were written twice");
 
-    assert.deepEqual(writes(ctx).map((c) => c.body.add_tags), OFFERED.map((name) => [name]));
     // The selection's tags show each of the three on both photos.
     const held = [...ctx.document.querySelectorAll("#selection-tags-list .selection-summary-chip")]
       .map((c) => c.textContent);
@@ -110,19 +113,26 @@ describe("tags clicked quickly on a selection", () => {
     assert.deepEqual(ctx.alerts, []);
   });
 
-  test("a failed one is reported, and the ones after it still go", async (t) => {
+  test("a failed write is reported, its tags wait, and Retry sends them", async (t) => {
     const ctx = await loadSelected(t);
-    const [first, second, third] = OFFERED.map((name) => chip(ctx, name));
-    click(ctx.window, first);
-    click(ctx.window, second);
-    click(ctx.window, third);
+    click(ctx.window, chip(ctx, OFFERED[0]));
+    click(ctx.window, chip(ctx, OFFERED[1]));
     await flush(ctx.window, 8);
 
-    await answer(ctx, { success: true });
     await answer(ctx, { success: false, error: "ExifTool: Error: Temporary file already exists: <file>_exiftool_tmp" });
     assert.equal(ctx.alerts.length, 1, "the failure was not reported");
     assert.match(ctx.alerts[0], /Temporary file already exists/);
-    assert.equal(writes(ctx).length, 3, "the write after the failed one was never sent");
+    // A tag clicked now waits with the others: the drain does not go on by itself.
+    click(ctx.window, chip(ctx, OFFERED[2]));
+    await flush(ctx.window, 8);
+    assert.equal(writes(ctx).length, 1, "the drain went on after a failure without Retry");
+
+    click(ctx.window, ctx.document.querySelector(".write-queue-retry"));
+    await flush(ctx.window, 8);
+    assert.equal(writes(ctx).length, 2);
+    for (const change of Object.values(writes(ctx)[1].body.changes)) {
+      assert.deepEqual(change.add.slice().sort(), OFFERED.slice().sort());
+    }
     await answer(ctx, { success: true });
     assert.equal(ctx.held.length, 0);
   });
@@ -171,9 +181,9 @@ describe("Ctrl+Z while a later write is out", () => {
     await answer(ctx, { success: true, written: {} });
     assert.equal(writes(ctx).length, 4);
     const undo = writes(ctx).at(-1).body;
-    assert.deepEqual(undo.remove_tags, ["Harbourside"]);
-    assert.deepEqual(undo.add_tags, []);
-    assert.ok(!undo.remove_tags.includes("Kentridge"), "undo took off the later write's tag");
+    for (const change of Object.values(undo.changes)) {
+      assert.deepEqual(change, { add: [], remove: ["Harbourside"] }, "undo took off more than Apply All added");
+    }
     await answer(ctx, { success: true, written: {} });
   });
 });

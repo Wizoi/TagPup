@@ -26,6 +26,7 @@ import {
 import { setStatus } from './status.js';
 import { isJustLooking } from './looking.js';
 import { hasUnsavedEdits, leavePhotoThen, openPhotoWrite } from './edits.js';
+import { leaveThen } from './pending.js';
 import {
     openFolderView, scanFolder, updateCurrentFolderLabel, updateListStats, updatePhotoPosition, viewCountSaid
 } from './folder.js';
@@ -326,7 +327,7 @@ export function closeLibraryView({ folder = '' } = {}) {
     upper.searchFollows();      // and the search box, if it showed a search, is empty
     if (folder) {
         folderPathInput.value = folder;
-        scanFolder(false);
+        scanFolder(false, { asked: true });   // every caller asked before the view went (pending.js leaveThen)
         return;
     }
     openFolderView();
@@ -345,7 +346,7 @@ export function leaveLibraryView() {
  * whichever pane was last chosen for a folder.
  */
 export function closeViewOntoFolder(folder) {
-    leavePhotoThen(() => {
+    leaveThen(() => {
         if (!state.library) return;
         const url = new URL(window.location.href);
         for (const name of VIEW_PARAMS) url.searchParams.delete(name);
@@ -353,7 +354,7 @@ export function closeViewOntoFolder(folder) {
         pushEntry({}, url);
         closeLibraryView({ folder });
         upper.choosePane('folder');
-    });
+    }, () => {}, folder);
 }
 
 /**
@@ -596,10 +597,17 @@ export function wireLibraryView() {
             if (!photoPlaceMoved(event, { namesWhatIsShown: true, stay: () => stayAfterMove(from, to) })) bestEffortScroll(event.state);
             return;
         }
-        if (hasUnsavedEdits() || openPhotoWrite()) {
-            leavePhotoThen(() => showAddress((event.state && event.state.scrollTop) || 0), { onStay: () => stayAfterMove(from, to) });
+        const scrollTop = (event.state && event.state.scrollTop) || 0;
+        // Back or Forward onto a folder from a view: asked before the view goes, so staying leaves it standing.
+        const folder = !viewSpecFromSearch(window.location.search) && new URLSearchParams(window.location.search).get('path');
+        if (state.library && folder) {
+            leaveThen(() => showAddress(scrollTop), () => stayAfterMove(from, to), folder);
             return;
         }
-        showAddress((event.state && event.state.scrollTop) || 0);
+        if (hasUnsavedEdits() || openPhotoWrite()) {
+            leavePhotoThen(() => showAddress(scrollTop), { onStay: () => stayAfterMove(from, to) });
+            return;
+        }
+        showAddress(scrollTop);
     });
 }

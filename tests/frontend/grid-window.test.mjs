@@ -18,6 +18,14 @@ afterEach(() => closeAllApps());
 
 const FOLDER = "D:\\Library\\2020";
 const N = 400;
+
+/** Every path the bulk writes named, once the drain has sent them all (pending.js: 25 files a write). */
+async function bulkPaths(ctx, count) {
+  const sent = () => ctx.server.calls.filter((c) => c.url.includes("/api/photos/bulk-tags"))
+    .flatMap((c) => Object.keys(c.body.changes));
+  for (let i = 0; i < 200 && sent().length < count; i++) await flush(ctx.window, 2);
+  return sent();
+}
 const STRIDE = 216;
 const GRID_TOP = 100;
 const name = (i) => `IMG_${String(i).padStart(4, "0")}.jpg`;
@@ -157,10 +165,9 @@ describe("selecting photos that have no card", () => {
     ctx.document.getElementById("bulk-add-tags-input").value = "Trips/Lighthouse";
     click(ctx.window, ctx.document.getElementById("btn-bulk-add-tags"));
     await flush(ctx.window, 8);
-    const call = ctx.server.calls.find((c) => c.url.includes("/api/photos/bulk-tags"));
-    assert.ok(call, "the write was sent");
-    assert.equal(call.body.paths.length, N);
-    assert.equal(new Set(call.body.paths).size, N);
+    const sent = await bulkPaths(ctx, N);
+    assert.equal(sent.length, N);
+    assert.equal(new Set(sent).size, N);
   });
 
   test("the context menu names the photo under the cursor, however the card got there", async (t) => {
@@ -419,8 +426,7 @@ describe("the selection belongs to the folder and to what the filter shows", () 
     ctx.document.getElementById("bulk-add-tags-input").value = "Trips/Lighthouse";
     click(ctx.window, ctx.document.getElementById("btn-bulk-add-tags"));
     await flush(ctx.window, 8);
-    const call = ctx.server.calls.find((c) => c.url.includes("/api/photos/bulk-tags"));
-    assert.equal(call.body.paths.length, 100);
+    assert.equal((await bulkPaths(ctx, 100)).length, 100);
   });
 
   test("Invert turns over what the filter shows and leaves the hidden as they were", async (t) => {
