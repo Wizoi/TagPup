@@ -318,13 +318,12 @@ class XmpIsTheCopyRead(FilesCase):
 
     def test_a_photo_a_rename_cannot_write_is_an_error_and_keeps_its_tag_in_its_file_and_row(self):
         # ExifTool's rewrite (a save the own writer refuses or whose change does not fit) refuses the write for a
-        # scratch file in its way, which another write may own (file_changes.removed_scratch); the own writer's patch
-        # makes no scratch file and is not stopped by one.
+        # scratch file in its way, which another write may own (file_changes.removed_scratch); a patch is not made
+        # while one is there, so that rewrite's os.replace cannot land over it.
         a = self.made("a.jpg", {"XMP:Subject": ["Beach"]})
         with open(exiftool_session.scratch_of(a), "wb") as handle:
             handle.write(b"left by another write")
-        with rewritten():
-            result = tagging.replace_tag(self.library, [a], "Beach", "Shore", EXIFTOOL)
+        result = tagging.replace_tag(self.library, [a], "Beach", "Shore", EXIFTOOL)
         self.assertEqual((0, 1), (result.changed, len(result.errors)))
         self.assertEqual((["Beach"], ["Beach"]), (keywords_of(a), self.indexed(a)))
 

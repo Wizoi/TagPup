@@ -294,7 +294,7 @@ def write(et, photo_path, values, saving=None, scratch_written=None):
     field is no patch's, segment_edits). A text holding a line break is sent as ExifToolSession sends it (exiftool_session.CSTR).
 
     `saving(record, before)` is the journal's (tagpup.services.file_changes): given, a JPEG whose fields fit is patched
-    in place by the own writer (the module; PATCH_IN_PLACE), which calls it with its record (tagpup.files.in_place.record) and writes no
+    in place by the own writer (the module; PATCH_IN_PLACE; not while ExifTool's new file is beside the photo), which calls it with its record (tagpup.files.in_place.record) and writes no
     byte until it returns, nor at all when it raises. ExifTool's rewrite never calls it: it leaves the file it held or the
     one it was to hold, whole. A JPEG patch is at most three segments of 64 KB, with its record under
     file_journal.PATCH_CAP, so the journal's PatchTooLarge (a Refused) is not met here; a clip's may be (_clip_written). A patch whose photo's share does not answer raises NotAnswered, the file
@@ -326,7 +326,10 @@ def write(et, photo_path, values, saving=None, scratch_written=None):
     if not params and not clear:
         return ()
     checked = own or any(fields.is_struct(field) for field in values)
-    if PATCH_IN_PLACE and saving is not None:
+    scratch = exiftool_session.scratch_of(photo_path)
+    # ExifTool's new file beside the photo is the one sign another process's rewrite is under way: its os.replace would land
+    # over a patched file (the tag lost), so a patch is made only when none is there, and the rewrite settles that one.
+    if PATCH_IN_PLACE and saving is not None and shares.stamp_of(scratch) is None:
         # The journal's values, by field (fields.EDITED_AS), never ExifTool's params by the name it is written as.
         def new_header(layout, header):
             return segment_edits.new_header(layout, header, values)
@@ -337,7 +340,6 @@ def write(et, photo_path, values, saving=None, scratch_written=None):
                               "the next time" % in_place.SECONDS) from None
         if stale is not None:
             return stale
-    scratch = exiftool_session.scratch_of(photo_path)
     _command(et, photo_path, scratch, params, clear)
     if scratch_written is not None:
         scratch_written()
