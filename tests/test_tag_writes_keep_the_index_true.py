@@ -29,6 +29,7 @@ Rows are seeded the way the indexer writes them -- native paths, and raw_metadat
 the shape real rows have, bare aliases and all -- never through the code under test.
 ExifTool is replaced by a stand-in that changes the file the way a real write does.
 """
+import contextlib
 import json
 import os
 import sys
@@ -42,6 +43,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import photo_rows  # noqa: E402
 from handler_harness import Library  # noqa: E402
 from test_file_journal import EXIFTOOL, FilesCase, field_of, keywords_of, requires_exiftool, write_outside  # noqa: E402
+from test_a_file_holds_what_exiftool_kept import rewritten  # noqa: E402
 
 from tagpup.core.fields import keyword_fields  # noqa: E402
 from tagpup.core.vocabulary import extract_tags  # noqa: E402
@@ -269,13 +271,20 @@ class XmpIsTheCopyRead(FilesCase):
                                                 "raw_metadata": json.loads(raw or "{}")})["title"]
 
     def test_a_keyword_left_only_in_iptc_is_no_tag_and_a_rename_does_not_bring_it_back(self):
-        # What a save that patches XMP alone leaves when it takes a keyword off: IPTC still holds it.
-        a = self.made("a.jpg", {"XMP:Subject": ["Beach"], "IPTC:Keywords": ["Beach", "Cross Country"],
-                                "EXIF:XPKeywords": "Beach;Cross Country"})
-        self.assertEqual(["Beach"], self.indexed(a))
-        result = tagging.replace_tag(self.library, [a], "Beach", "Shore", EXIFTOOL)
-        self.assertEqual((1, []), (result.changed, result.errors))
-        self.assertEqual((["Shore"], ["Shore"], "Shore"), (self.indexed(a), keywords_of(a), field_of(a, "IPTC:Keywords")))
+        # What a save that patches XMP alone leaves when it takes a keyword off: IPTC still holds it. By either writer
+        # of the rename: the own writer's patch writes XMP alone, IPTC keeping what it held, the old name with it
+        # (fields.XMP_ONLY; DECISIONS 2026-11-03); ExifTool's rewrite writes every copy from XMP's.
+        for patched in (True, False):
+            with self.subTest(patched=patched), contextlib.nullcontext() if patched else rewritten():
+                a = self.made("patched.jpg" if patched else "rewritten.jpg", {
+                    "XMP:Subject": ["Beach"], "IPTC:Keywords": ["Beach", "Cross Country"],
+                    "EXIF:XPKeywords": "Beach;Cross Country"})
+                self.assertEqual(["Beach"], self.indexed(a))
+                result = tagging.replace_tag(self.library, [a], "Beach", "Shore", EXIFTOOL)
+                self.assertEqual((1, []), (result.changed, result.errors))
+                iptc = ["Beach", "Cross Country"] if patched else "Shore"
+                self.assertEqual((["Shore"], ["Shore"], iptc),
+                                 (self.indexed(a), keywords_of(a), field_of(a, "IPTC:Keywords")))
 
     def test_the_caption_shown_is_xmps_and_a_save_from_it_is_not_refused(self):
         a = self.made("a.jpg", {"XMP:Description": "Relay at the lake", "IPTC:Caption-Abstract": "Relay at dusk"})
@@ -308,12 +317,14 @@ class XmpIsTheCopyRead(FilesCase):
         self.assertEqual((["Relay"], ["Relay"], before), (keywords_of(b), self.indexed(b), os.stat(b).st_mtime_ns))
 
     def test_a_photo_a_rename_cannot_write_is_an_error_and_keeps_its_tag_in_its_file_and_row(self):
-        # ExifTool refuses the write for a scratch file in its way, which another write may own
-        # (file_changes.removed_scratch).
+        # ExifTool's rewrite (a save the own writer refuses or whose change does not fit) refuses the write for a
+        # scratch file in its way, which another write may own (file_changes.removed_scratch); the own writer's patch
+        # makes no scratch file and is not stopped by one.
         a = self.made("a.jpg", {"XMP:Subject": ["Beach"]})
         with open(exiftool_session.scratch_of(a), "wb") as handle:
             handle.write(b"left by another write")
-        result = tagging.replace_tag(self.library, [a], "Beach", "Shore", EXIFTOOL)
+        with rewritten():
+            result = tagging.replace_tag(self.library, [a], "Beach", "Shore", EXIFTOOL)
         self.assertEqual((0, 1), (result.changed, len(result.errors)))
         self.assertEqual((["Beach"], ["Beach"]), (keywords_of(a), self.indexed(a)))
 

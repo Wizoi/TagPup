@@ -11,7 +11,9 @@ Real ExifTool: a file named as ExifTool names its temporary file, in the way of 
 write, is what makes it refuse. AFailedWrite's is written as each test begins: it may be another
 write's under way, and stays (file_changes.removed_scratch, rule 3; DECISIONS 2026-10-29), the
 owner told to try again later; one an interrupted write left long ago is removed and the photo
-written (#2180).
+written (#2180). The scratch file is ExifTool's rewrite's: a save the own writer patches in place
+(field_values.PATCH_IN_PLACE) makes none and is not refused by one, so the writes here are the rewrite
+(`rewritten`), as a save is that the own writer refuses or whose change does not fit.
 """
 import logging
 import os
@@ -20,6 +22,7 @@ import unittest
 from unittest import mock
 
 from tests.handler_harness import Library
+from tests.test_a_file_holds_what_exiftool_kept import rewritten
 from tests.test_bulk_writes_start_from_the_file import make_photo, tags_in
 from tests.test_taxonomy_lifecycle import EXIFTOOL, requires_exiftool
 
@@ -65,15 +68,17 @@ class AFailedWrite(unittest.TestCase):
         long_ago = time.time() - 3 * 86400
         os.utime(self.photo, (long_ago, long_ago))
         os.utime(self.photo + "_exiftool_tmp", (long_ago + 60, long_ago + 60))
-        status, reply = self.lib.post("/api/photos/bulk-tags", {
-            "paths": [self.photo], "add_tags": ["Sunset"], "remove_tags": []})
+        with rewritten():
+            status, reply = self.lib.post("/api/photos/bulk-tags", {
+                "paths": [self.photo], "add_tags": ["Sunset"], "remove_tags": []})
         self.assertEqual(200, status, reply)
         self.assertFalse(os.path.exists(self.photo + "_exiftool_tmp"))
         self.assertIn("Sunset", tags_in(self.photo))
 
     def test_the_bulk_write_route_says_it(self):
-        status, reply = self.lib.post("/api/photos/bulk-tags", {
-            "paths": [self.photo], "add_tags": ["Sunset"], "remove_tags": []})
+        with rewritten():
+            status, reply = self.lib.post("/api/photos/bulk-tags", {
+                "paths": [self.photo], "add_tags": ["Sunset"], "remove_tags": []})
         self.assertEqual(500, status, reply)
         self.assertIn("' already exists", reply["error"])
         self.assertNotIn("non-zero exit status", reply["error"])
