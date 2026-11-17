@@ -35,6 +35,7 @@ import {
 } from './elements.js';
 import { setStatus } from './status.js';
 import { checkIndexingStatus, updateSuggestButtonState } from './suggestions.js';
+import { paintDeleteSelection } from './bulk-run.js';
 
 /**
  * What needs a row of the library's, held back while just looking: naming a face (it makes a
@@ -176,6 +177,7 @@ export function applyJustLooking() {
         btnAddFolderFromNote.textContent = `Add to ${name}`;
     }
     updateSuggestButtonState();
+    paintDeleteSelection();   // the selection's Delete is inert while just looking: no row to delete by
     redrawFaceBoxes();      // faces are not boxed in a folder the library does not hold
 }
 

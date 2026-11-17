@@ -11,6 +11,7 @@
  */
 import { test, describe, afterEach } from "node:test";
 import assert from "node:assert/strict";
+import fs from "node:fs";
 import { closeAllApps, click } from "./harness.mjs";
 import { loadViewPage, pageErrors } from "./view-page.mjs";
 
@@ -19,6 +20,8 @@ afterEach(() => {
   assert.deepEqual(pageErrors(), [], "the page raised an error");
 });
 
+/** The delete-check reply as tagpup.web.tagpup_routes makes it (tests/test_batch_strip_replies.py). */
+const served = JSON.parse(fs.readFileSync(new URL("./fixtures/batches.json", import.meta.url), "utf8"));
 const range = (n, from = 1) => Array.from({ length: n }, (_, i) => from + i);
 const plain = (value) => JSON.parse(JSON.stringify(value));
 const el = (ctx, id) => ctx.document.getElementById(id);
@@ -112,14 +115,14 @@ describe("Show: a view of photos alone, or videos alone", () => {
     const clipsAlone = { kind: "all", value: null, recursive: false, media: "video" };
     const [edit] = calls(ctx, "/api/library/bulk-edit");
     assert.deepEqual(plain(edit.body.selection), { source: clipsAlone, excluded: [] }, "the tags go on the clips alone");
-    ctx.server.on("/api/library/selection/delete-check", { total: 10, token: "t-ten", folders: 1, through_this_pc: 0, reasons: [], copy_bytes: 0, restores_to: "", no_room: null });
+    ctx.server.on("/api/library/selection/delete-check", { ...served.delete_check, total: 10 });
     ctx.bulk.edit = { op: "delete", total: 10, changed: 10 };
     click(ctx.window, el(ctx, "btn-delete-selection"));
     await ctx.settle(80);
     const [check] = calls(ctx, "/selection/delete-check");
     assert.deepEqual(plain(check.body), { selection: { source: clipsAlone, excluded: [] } }, "the delete is checked of the clips alone");
     const remove = calls(ctx, "/api/library/bulk-edit").at(-1);
-    assert.deepEqual(plain(remove.body), { op: "delete", selection: { source: clipsAlone, excluded: [] }, params: { token: "t-ten" } },
+    assert.deepEqual(plain(remove.body), { op: "delete", selection: { source: clipsAlone, excluded: [] }, params: { token: served.delete_check.token } },
       "and deletes the clips alone");
   });
 

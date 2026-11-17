@@ -1,7 +1,7 @@
 // TagPup's page: the folder list -- choosing, scanning and closing a folder, the list of
 // its photos and the folder view's header, and the sidebar's width.
 import { api } from './common/api.js';
-import { baseName, samePath } from './common/paths.js';
+import { baseName, pathKey, samePath } from './common/paths.js';
 import { pressable } from './common/press.js';
 import { upper } from './hooks.js';
 import { state } from './state.js';
@@ -350,6 +350,39 @@ export function scanFolder(forceRefresh = false, { keepTyped = false, asked = fa
             statusText.textContent = 'Error';
             alert("Error scanning folder: " + err.message);
         });
+}
+
+/**
+ * A Delete of the folder's selection has ended (bulk-run.js): the folder is read again, the one truth of a folder -- the deleted
+ * leave its list, its kept scan and the selection (showScannedFolder, carrySelection keeps what is still listed) -- and the photo
+ * open in the panel, when its file went, closes onto the next the list still holds, as the panel's Delete does. `folder` is the
+ * folder the delete was asked in: once another folder or a view is open nothing is touched (#532). Resolves once the folder is
+ * on screen again, so a clip stopped for the delete plays again only if the scan still lists it; a scan that fails says so
+ * (scanFolder) and the promise stays unresolved: the clip stays stopped.
+ */
+export function folderPhotosDeleted(folder) {
+    if (state.library || !state.scannedFolder || !samePath(state.scannedFolder, folder)) return Promise.resolve(false);
+    const listed = state.folderPhotos.map(photo => photo.path);
+    const open = state.activePhotoPath;
+    return new Promise(resolve => {
+        state.afterScan = () => {
+            const here = !state.library && samePath(state.scannedFolder, folder);
+            if (here && open && !state.activePhotoPath) openNextStillListed(listed, open);
+            resolve(here);
+        };
+        folderPathInput.value = folder;
+        scanFolder(true, { asked: true });
+    });
+}
+
+/** Open the photo after `gone` in `listed` (the list before the scan) that the folder still lists, else the one before it. */
+function openNextStillListed(listed, gone) {
+    const at = listed.findIndex(path => samePath(path, gone));
+    if (at === -1) return;
+    const now = new Map(state.folderPhotos.map(photo => [pathKey(photo.path), photo]));
+    const still = path => now.get(pathKey(path));
+    const next = listed.slice(at + 1).map(still).find(Boolean) || listed.slice(0, at).reverse().map(still).find(Boolean);
+    if (next) upper.selectPhoto(next.path);
 }
 
 export function showScannedFolder(path, data) {

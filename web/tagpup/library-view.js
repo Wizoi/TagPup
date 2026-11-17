@@ -17,7 +17,7 @@ import { baseName, samePath } from './common/paths.js';
 import { upper } from './hooks.js';
 import { state } from './state.js';
 import {
-    btnApplyRename, btnDeleteSelection, btnFolderAutoApply, btnLibraryRefresh, btnPhotoBack, btnRefreshList,
+    btnApplyRename, btnFolderAutoApply, btnLibraryRefresh, btnPhotoBack, btnRefreshList,
     btnToggleRename, btnToggleTimeshift,
     folderPathInput, folderViewHeader, folderViewMain, folderViewStats, folderViewTitle, folderViewTop, indexProgressContainer,
     libraryStrip, libraryStripSource, libraryStripStatus, libraryStripTotal,
@@ -91,7 +91,6 @@ function showChrome() {
     photoSearch.title = SEARCH_OFF;
     btnToggleRename.classList.add('hidden');
     btnToggleTimeshift.classList.add('hidden');
-    btnDeleteSelection.classList.remove('hidden');     // Delete of the selection, a view's (#674)
     btnPhotoBack.classList.remove('hidden');           // a photo opened over the view has a way back to it (view-left.js, #780)
     btnRefreshList.title = 'Ask the library for this view again';
     libraryStrip.classList.remove('hidden');
@@ -104,7 +103,6 @@ function hideChrome() {
     photoSearch.title = '';
     btnToggleRename.classList.remove('hidden');
     btnToggleTimeshift.classList.remove('hidden');
-    btnDeleteSelection.classList.add('hidden');
     btnPhotoBack.classList.add('hidden');
     // A folder's own scan enables it again; with no folder open there is nothing to shift.
     btnToggleTimeshift.disabled = true;

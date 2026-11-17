@@ -42,6 +42,7 @@ import { isVideo, showFileSize, showMedia, stopVideo } from './media.js';
 import { fetchLibraryRecord, forgetPhoto, libraryIdOfPath, refetchCards } from './library-source.js';
 import { backToView, notePhoto, rememberView } from './view-left.js';
 import { showSmartRenameParts } from './rename-one.js';
+import { bulkBusy, busySentence, lockBulkControls } from './bulk-run.js';
 
 // ---- Detected faces ----------------------------------------------------
 // Face recognition already ran for this photo -- the suggester needs it to propose
@@ -830,7 +831,12 @@ export function rotatePhoto(direction) {
 // Move active photo to Windows Recycle Bin and update state
 export function deleteActivePhoto() {
     const path = state.activePhotoPath;
-    if (!path || state.deleting) return;
+    if (!path) return;
+    // One delete at a time on a page: not while the selection's delete (or any bulk edit), or this one, is written.
+    if (bulkBusy()) {
+        alert(busySentence());
+        return;
+    }
 
     const index = state.folderPhotos.findIndex(p => p.path === path);
     if (index === -1) return;
@@ -869,6 +875,7 @@ export function deleteActivePhoto() {
     const video = isVideo(asked);
     if (video) stopVideo();
     holdDeletes(true);
+    lockBulkControls();     // the selection's controls ask the same question (bulk-run.js bulkBusy)
     let stayed = false;     // the delete was cancelled or failed: the clip, if still the one shown, plays again
     const send = (forGood) => api.json('/api/photo/delete', {
         method: 'POST',
@@ -962,6 +969,7 @@ export function deleteActivePhoto() {
     .finally(() => {
         // Answered: the photo shown now (the next one, or this one if it stayed) offers its Delete again.
         holdDeletes(false, state.folderPhotos.find(p => samePath(p.path, state.activePhotoPath)) || null);
+        lockBulkControls();
         if (stayed && video && samePath(state.activePhotoPath, path)) showMedia(asked, '');
     });
 }

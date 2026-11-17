@@ -349,16 +349,18 @@ describe("only one bulk edit at a time", () => {
     assert.match(status(ctx), /^ExifTool stopped answering after 10 of/);
   });
 
-  test("the folder view's own bulk controls are never disabled by it", async (t) => {
+  test("a folder opened while a view's edit is written: its bulk controls are off with the sentence until the edit ends", async (t) => {
     const ctx = await view(t, 400);
     ctx.hold.bulkEdit = true;
     click(ctx.window, ctx.cardById(2).querySelector(".thumbnail-checkbox"));
     await addTag(ctx);
     assert.equal(el(ctx, "btn-bulk-add-tags").disabled, true);
     ctx.module("library-view.js").closeLibraryView();
-    assert.equal(el(ctx, "btn-bulk-add-tags").disabled, false, "a folder's bulk write is another route");
+    assert.equal(el(ctx, "btn-bulk-add-tags").disabled, true, "one write at a time on a page, a folder's too");
+    assert.match(el(ctx, "btn-bulk-add-tags").title, /A bulk edit is being written/);
     ctx.held.splice(0).forEach((each) => each.release());
     await ctx.settle(40);
+    assert.equal(el(ctx, "btn-bulk-add-tags").disabled, false, "the edit ended: on again");
   });
 });
 

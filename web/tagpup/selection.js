@@ -22,6 +22,7 @@ import { pendTags } from './pending.js';
 import { BULK_CONFIRM_ABOVE, isSelected, overBulkLimit, selectionCount, selectionProblem } from './selected.js';
 import { setStatus } from './status.js';
 import { addTypedToSelection } from './bulk-edit.js';
+import { bulkBusy, busySentence, paintDeleteSelection } from './bulk-run.js';
 import { clearTally, selectionTallied } from './tally.js';
 import { drawJumpNote, showPanelFor } from './selection-panel.js';
 import { askSelectionFaces } from './selection-faces.js';
@@ -39,6 +40,7 @@ function updateSelectionNote() {
 
 export function updateSelectedThumbnailsCount() {
     updateSelectionNote();
+    paintDeleteSelection();     // the selection's Delete: in Organize, shown while something is selected
     // A folder's selection is paths; a library view's is photo ids, and the count is the ids' (selected.js).
     const count = selectionCount();
     const shown = state.library ? count.toLocaleString() : String(count);
@@ -371,11 +373,16 @@ export function applyTagToAllSelected(tag, isPerson) {
 }
 
 /**
- * May a bulk write over `count` photos go ahead? One over BULK_LIMIT is refused with the server's sentence; one
+ * May a bulk write over `count` photos go ahead? Not while a delete is written from this page (bulk-run.js bulkBusy:
+ * the photos may be among those going). One over BULK_LIMIT is refused with the server's sentence; one
  * over BULK_CONFIRM_ABOVE asks first, naming the write -- "Add Trips/Coast to 3,412 photos?" -- since it runs
  * under the lock of every write to the library's files, with no progress, for as long as it takes (findings #535).
  */
 export function confirmBulkWrite(what, count) {
+    if (bulkBusy()) {
+        alert(busySentence());
+        return false;
+    }
     const over = overBulkLimit(count);
     if (over) {
         alert(over);
