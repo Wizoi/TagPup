@@ -27,8 +27,8 @@ const SUGGESTIONS = {
 function build() {
   const held = [];
   const hold = () => new Promise((resolve) => held.push(resolve));
-  // What each file holds, as the replies said they wrote it: a rescan reads the files (the page drops a tag change
-  // its record already satisfies, so a scan that forgot a write would hide it).
+  // What each file holds, as the replies said they wrote it: a rescan reads the files, so this scan answers with what
+  // the writes put in them.
   const files = {};
   const server = new FakeServer()
     .on("/api/tags", OFFERED)
