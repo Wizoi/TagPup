@@ -250,7 +250,7 @@ describe("V19: tagging the open photo keeps its faces in place", () => {
     const before = ctx.reads();
     ctx.nextBulk({ success: true, unnamed_faces: [{ id: 9, name: JANE.name }] });
     await ctx.click("btn-undo");
-    assert.deepEqual(ctx.server.lastBody("/api/photos/bulk-tags").paths, [B.path], "the undo did not write B");
+    assert.deepEqual(Object.keys(ctx.server.lastBody("/api/photos/bulk-tags").changes), [B.path], "the undo did not write B");
     assert.equal(ctx.reads(), before, "B's face in the undo's reply read A's faces again");
   });
 

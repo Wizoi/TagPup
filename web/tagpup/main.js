@@ -18,6 +18,7 @@ import {
 } from './elements.js';
 import { fetchKnownTagsAndPeople } from './tags.js';
 import { leavePhotoThen, wireUnsavedEdits } from './edits.js';
+import { leaveTagChangesThen, wirePending } from './pending.js';
 import {
     browseFolder, filterFileList, renderFileList, scanFolder,
     wireChangeDogPark, wireFolderPathInput, wireSidebarResizer
@@ -94,8 +95,9 @@ document.addEventListener('DOMContentLoaded', () => {
     // offer, rather than leave it to the browser's bare "Leave site?"; staying puts
     // the list back on the dog park still open.
     initDatabaseSelector(dbSelect, btnCreateDb, {
-        beforeLeaving: (go, stay) => leavePhotoThen(go, { onStay: stay }),
+        beforeLeaving: (go, stay) => leaveTagChangesThen(() => leavePhotoThen(go, { onStay: stay }), stay),
     });
+    wirePending();
 
     wireChangeDogPark();
 

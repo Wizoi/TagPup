@@ -169,6 +169,10 @@ export const state = {
     // { id, label, status: waiting | writing | done | failed, error, at, retry }.
     // batchTotal and batchSettled count the writes since the queue was last empty.
     writeQueue: { entries: [], nextId: 1, batchTotal: 0, batchSettled: 0, open: false },
+    // The tag changes not yet sent (pending.js): `files` by pathKey, each {path, add, remove, token, actions}, in the
+    // order they came; `queued` while a chunk's write is in the queue, `stopped` after one failed (until Retry or
+    // Cancel); `people` the tags a change named as people, whose leaves the records' `people` follow.
+    pending: { files: new Map(), queued: false, stopped: false, people: new Set() },
 
     // The title showPhoto last put in the field, and for which photo. A refresh shows
     // the same photo again; if the field no longer holds what was put there, somebody

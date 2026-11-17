@@ -203,11 +203,10 @@ describe("removing a person from a selection", () => {
 
     const body = ctx.server.lastBody("/api/photos/bulk-tags");
     assert.ok(body, "the x sent no request at all");
-    assert.deepEqual(
-      body.remove_tags,
-      ["People/Hazel Brookmire"],
-      `the x sent something the photos do not carry: ${JSON.stringify(body.remove_tags)}`
-    );
+    for (const change of Object.values(body.changes)) {
+      assert.deepEqual(change.remove, ["People/Hazel Brookmire"],
+        `the x sent something the photos do not carry: ${JSON.stringify(change.remove)}`);
+    }
   });
 
   test("a person spelled both ways across the selection comes off entirely", async (t) => {
@@ -231,10 +230,11 @@ describe("removing a person from a selection", () => {
     click(ctx.window, chip.querySelector(".selection-summary-chip-remove"));
     await flush(ctx.window, 6);
 
-    const sent = ctx.server.lastBody("/api/photos/bulk-tags").remove_tags;
+    // Each file is sent the spelling it holds (pending.js drops a removal its record already lacks).
+    const sent = Object.values(ctx.server.lastBody("/api/photos/bulk-tags").changes).map((c) => c.remove);
     assert.deepEqual(
-      [...sent].sort(),
-      ["Hazel Brookmire", "People/Hazel Brookmire"],
+      sent,
+      [["People/Hazel Brookmire"], ["Hazel Brookmire"]],
       `only one spelling was removed, so the chip would stay: ${JSON.stringify(sent)}`
     );
   });

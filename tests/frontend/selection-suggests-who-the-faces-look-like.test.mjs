@@ -79,8 +79,8 @@ describe("a shoot just indexed: the selection offers who its faces look like", (
       .find((chip) => chip.textContent.startsWith("Kira Bao")));
     await flush(ctx.window, 6);
     const body = ctx.server.lastBody("/api/photos/bulk-tags");
-    assert.deepEqual(body.paths.sort(), [photos[0].path, photos[1].path].sort());
-    assert.deepEqual(body.add_tags, ["People/Kira Bao"]);
+    assert.deepEqual(Object.keys(body.changes).sort(), [photos[0].path, photos[1].path].sort());
+    for (const change of Object.values(body.changes)) assert.deepEqual(change, { add: ["People/Kira Bao"], remove: [] });
   });
 
   test("a photo a Suggest run and its faces both offer someone counts once", async (t) => {

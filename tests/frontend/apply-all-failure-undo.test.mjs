@@ -27,17 +27,21 @@ const SUGGESTIONS = {
 function build() {
   const held = [];
   const hold = () => new Promise((resolve) => held.push(resolve));
+  // What each file holds, as the replies said they wrote it: a rescan reads the files (the page drops a tag change
+  // its record already satisfies, so a scan that forgot a write would hide it).
+  const files = {};
   const server = new FakeServer()
     .on("/api/tags", OFFERED)
     .on("/api/people", [])
     .on("/api/taxonomy/tree", [])
     .on("/api/databases", { databases: ["photo_index"], selected: "photo_index" })
     .on("/api/folder/index-status", { status: "completed", percent: 100, message: "Ready" })
-    .on("/api/folder/scan", () => PHOTOS.map((p) => ({ ...p, tags: [...p.tags], people: [...p.people] })))
+    .on("/api/folder/scan", () => PHOTOS.map((p) => ({ ...p, tags: [...(files[p.path] || p.tags)], people: [...p.people] })))
     .on("/api/photo-faces", { faces: [], total: 0, unmatched: 0 })
     .on("/api/photos/bulk-tags", hold)
     .on("/api/folder/auto-apply", hold)
     .on("/api/folder/suggest-status", SUGGESTIONS);
+  server.files = files;
   return { server, held };
 }
 
@@ -58,9 +62,11 @@ async function loadSelected(t) {
 
 const applyAll = (ctx) => ctx.document.getElementById("btn-folder-auto-apply");
 const bulk = (ctx) => ctx.server.calls.filter((c) => c.url.includes("/api/photos/bulk-tags"));
+const pathsOf = (body) => Object.keys(body.changes);
 
 async function answer(ctx, reply) {
   assert.ok(ctx.held.length, "no request was waiting for an answer");
+  Object.assign(ctx.server.files, reply.written || {});
   ctx.held.shift()(reply);
   await flush(ctx.window, 10);
 }
@@ -90,10 +96,6 @@ describe("a Retry of an Apply All that failed part-way", () => {
     const ctx = await loadSelected(t);
     const [first, second] = PHOTOS;
     // The first attempt wrote the first photo; the rescan after it shows the file as written.
-    ctx.server.first("/api/folder/scan", () => [
-      { ...first, tags: ["Cross Country"], people: [] },
-      { ...second, tags: [], people: [] },
-    ]);
     applyAll(ctx).click();
     await flush(ctx.window, 8);
     await answer(ctx, {
@@ -113,7 +115,7 @@ describe("a Retry of an Apply All that failed part-way", () => {
 
     ctrlZ(ctx);
     await flush(ctx.window, 10);
-    const reached = bulk(ctx).flatMap((call) => call.body.paths).sort();
+    const reached = bulk(ctx).flatMap((call) => pathsOf(call.body)).sort();
     assert.deepEqual(reached, [first.path, second.path].sort(),
       "Ctrl+Z after the retry did not take back the photo the first attempt wrote");
     await answer(ctx, { success: true, written: {} });
@@ -142,8 +144,9 @@ describe("an Apply All that fails part-way", () => {
     await flush(ctx.window, 10);
     assert.equal(bulk(ctx).length, 1, "Ctrl+Z sent nothing: no undo was recorded");
     const undo = bulk(ctx)[0].body;
-    assert.deepEqual(undo.paths, [PHOTOS[0].path], "undo reached a photo the failed Apply All never wrote");
-    assert.ok(undo.remove_tags.includes("Cross Country"), `undo did not take back the tag written: ${undo.remove_tags}`);
+    assert.deepEqual(pathsOf(undo), [PHOTOS[0].path], "undo reached a photo the failed Apply All never wrote");
+    const removed = undo.changes[PHOTOS[0].path].remove;
+    assert.ok(removed.includes("Cross Country"), `undo did not take back the tag written: ${removed}`);
     await answer(ctx, { success: true, written: {} });
   });
 
@@ -161,7 +164,7 @@ describe("an Apply All that fails part-way", () => {
     ctrlZ(ctx);
     await flush(ctx.window, 10);
     assert.equal(bulk(ctx).length, 1, "the earlier operation was not left to undo");
-    assert.deepEqual(bulk(ctx)[0].body.paths.slice().sort(), PHOTOS.map((p) => p.path).sort());
+    assert.deepEqual(pathsOf(bulk(ctx)[0].body).sort(), PHOTOS.map((p) => p.path).sort());
     await answer(ctx, { success: true, written: {} });
   });
 });

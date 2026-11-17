@@ -258,10 +258,10 @@ describe("a suggestion says how sure it is, and lands where it was asked for", (
     const body = ctx.server.lastBody("/api/photos/bulk-tags");
     assert.ok(body, "clicking the suggestion sent nothing");
     assert.deepEqual(
-      body.paths, [twoPhotos[0].path],
-      `applied to photos that never suggested it: ${JSON.stringify(body.paths)}`
+      Object.keys(body.changes), [twoPhotos[0].path],
+      `applied to photos that never suggested it: ${JSON.stringify(Object.keys(body.changes))}`
     );
-    assert.deepEqual(body.add_tags, ["Anh Tran"]);
+    assert.deepEqual(body.changes[twoPhotos[0].path], { add: ["Anh Tran"], remove: [] });
   });
 });
 
