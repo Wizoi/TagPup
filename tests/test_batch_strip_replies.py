@@ -1,5 +1,6 @@
 """The replies the pages' batch strip reads (web/common/batch-strip.js), made by the real routes and written to
-tests/frontend/fixtures/batches.json for the page's test (tests/frontend/batch-strip.test.mjs) to answer from, so the page is held to
+tests/frontend/fixtures/batches.json for the pages' tests (tests/frontend/batch-strip.test.mjs; a selection's Delete, its question
+and its reply: library-header-strip-toolbar.test.mjs) to answer from, so the page is held to
 what the server sends and not to a reply written by hand (docs/OWNERS.md, contract 22); a reply that differs from
 the file fails, naming the command that writes it again (page_fixtures). Volatile numbers (tickets, change ids, clocks)
 are renumbered, so the file is the same on every run. Fictional names only.
@@ -9,6 +10,7 @@ import os
 import sys
 import threading
 import unittest
+from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -17,11 +19,14 @@ import test_bulk_edits as T  # noqa: E402
 from test_batches import ANOTHER, in_thread, wait_until  # noqa: E402
 
 from tagpup.core import paths  # noqa: E402
-from tagpup.files import exiftool_session  # noqa: E402
+from tagpup.files import exiftool_session, recycle_bin  # noqa: E402
 from tagpup.services import batches  # noqa: E402
 from tagpup.store import db, file_journal  # noqa: E402
 
 FIXTURE = page_fixtures.path_of("batches.json")
+#: Where a copy from a share restores to: the sandbox's Downloads differs run to run, so the file holds a fixed fictional one.
+RESTORES_TO = "C:\\Users\\wren\\Downloads\\TagPup deleted from shares"
+FULL = {"TAGPUP_RECYCLE_BIN": "10,10,0"}     # a Bin of 10 MB holding 10 MB: full
 
 
 def steady(rows):
@@ -43,6 +48,38 @@ def steady(rows):
 class RepliesForTheStrip(T.Bulk):
     def get(self, path):
         return self.client.get(path).get_json()
+
+    def deletes_by_path(self):
+        """Three photos of one folder deleted as Organize names them, by path (selection.read's `paths`): the question
+        and the reply, to the Recycle Bin, and with the Bin full, for good once confirmed. The Bin is the test's; nothing
+        reaches the owner's."""
+        found, binned = {}, []
+
+        def recycle(path):
+            binned.append(path)
+            os.remove(path)
+            return True
+        recycle_bin.forget_bin()
+        self.addCleanup(recycle_bin.forget_bin)
+        with mock.patch("tagpup.files.recycle_bin.send_to_recycle_bin", side_effect=recycle):
+            for suffix, numbers, bin_state, confirm in ("", (0, 2, 4), {}, {}), ("_for_good", (6, 8, 10), FULL, {"for_good": True}):
+                chosen = {"paths": [os.path.join(self.vl.pictures, "2024 A", "p%03d.jpg" % n) for n in numbers]}
+                recycle_bin.forget_bin()
+                with mock.patch.dict(os.environ, bin_state):
+                    asked = self.client.post("/library/api/library/selection/delete-check", json={"selection": chosen})
+                    self.assertEqual(200, asked.status_code, asked.get_json())
+                    asked = asked.get_json()
+                    done = self.post({"op": "delete", "selection": chosen, "params": {"token": asked["token"], **confirm}})
+                self.assertEqual(200, done.status_code, done.get_json())
+                found["delete_check" + suffix] = {**asked, "restores_to": RESTORES_TO}
+                found["deleted" + suffix] = done.get_json()
+        recycle_bin.forget_bin()
+        self.assertEqual((3, 1, 0), tuple(found["delete_check"][key] for key in ("total", "folders", "bin_full")))
+        self.assertEqual((3, 3), (found["delete_check_for_good"]["for_good"]["count"], found["delete_check_for_good"]["bin_full"]))
+        self.assertEqual((3, 0, 0), tuple(found["deleted"][key] for key in ("changed", "for_good", "error_count")))
+        self.assertEqual((3, 3, 0), tuple(found["deleted_for_good"][key] for key in ("changed", "for_good", "error_count")))
+        self.assertEqual(3, len(binned), "the first three went to the Bin, the second three for good")
+        return found
 
     def test_the_replies_the_strip_reads_are_written_for_the_page_test(self):
         found = {}
@@ -119,6 +156,8 @@ class RepliesForTheStrip(T.Bulk):
         found["share_stopped_reply"] = self.tags_edit(add=["Old/Stuff"])
         self.files.on_read = None
         found["share_stopped_reply"]["errors"] = sorted(found["share_stopped_reply"]["errors"], key=lambda each: each["id"])[:2]
+        # Organize's delete of a folder's selection, by path: the question and the reply, to the Bin and for good.
+        found.update(self.deletes_by_path())
 
         self.assertEqual(["running", "queued"], [row["state"] for row in found["running_and_queued"]])
         self.assertEqual(400, found["cancelled_before_it_began"]["status"])
