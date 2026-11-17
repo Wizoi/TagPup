@@ -656,6 +656,8 @@ class ASelectionByPath(Bulk):
             "more than may be named": ({"paths": [one, self.native(self.ids[1]), self.native(self.ids[2])]}, "at most 2 may be named"),
             "not text": ({"paths": [one, self.ids[1]]}, "as text"),
             "not a list": ({"paths": one}, "a list of photos' paths"),
+            "a row's own form": ({"paths": [one, "@pictures/2024 A/p001.jpg"]}, "full paths on this computer"),
+            "a relative path": ({"paths": ["p001.jpg"]}, "full paths on this computer"),
             "a photo twice": ({"paths": [one, one.replace(os.sep, "/").upper()]}, "names a photo twice"),
             "with ids": ({"paths": [one], "ids": [self.ids[1]]}, "one of them, not two"),
             "with a source": ({"paths": [one], "source": {"kind": "all"}}, "one of them, not two"),

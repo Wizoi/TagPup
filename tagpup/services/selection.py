@@ -61,13 +61,17 @@ def _id_list(found, what):
 
 def _path_list(found):
     """`found`, a list of photos' paths, as a tuple in the order named; Refused for anything but text, too many, or one photo
-    named twice (paths.key: a page sends each once, so a second spelling of one is a page's mistake, said, not guessed at)."""
+    named twice (paths.key: a page sends each once, so a second spelling of one is a page's mistake, said, not guessed at),
+    or not a full path on this computer: a row's own form (`@pictures/...`) or a relative one would be read under the server's
+    own folder and count as a photo the library lacks."""
     if not isinstance(found, list):
         raise Refused("paths must be a list of photos' paths.")
     if len(found) > MAX_LISTED:
         raise Refused("paths lists %d photos; at most %d may be named." % (len(found), MAX_LISTED))
     if not all(isinstance(each, str) and each for each in found):
         raise Refused("paths must hold photos' paths, as text.")
+    if not all(paths.is_native_absolute(each) for each in found):
+        raise Refused("paths must be full paths on this computer, as a scan lists them.")
     if len({paths.key(each) for each in found}) != len(found):
         raise Refused("paths names a photo twice: name each once.")
     return tuple(found)
