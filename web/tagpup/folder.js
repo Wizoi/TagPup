@@ -1,7 +1,7 @@
 // TagPup's page: the folder list -- choosing, scanning and closing a folder, the list of
 // its photos and the folder view's header, and the sidebar's width.
 import { api } from './common/api.js';
-import { baseName, samePath } from './common/paths.js';
+import { baseName, pathKey, samePath } from './common/paths.js';
 import { pressable } from './common/press.js';
 import { upper } from './hooks.js';
 import { state } from './state.js';
@@ -11,7 +11,7 @@ import {
     folderViewHeader, folderViewStats, listStats, panelContent, photoList, photoPosition,
     photoSearch, sidebar, sidebarResizer, statusDot, statusText
 } from './elements.js';
-import { flagField } from './status.js';
+import { flagField, setStatus } from './status.js';
 import { clearSelection, keepOnly } from './selected.js';
 import { forgetSelectionFaces } from './selection-faces.js';
 import { CACHE_TTL_MS, CACHE_VERSION, folderCacheKey, saveToLocalStorageCache } from './cache.js';
@@ -350,6 +350,49 @@ export function scanFolder(forceRefresh = false, { keepTyped = false, asked = fa
             statusText.textContent = 'Error';
             alert("Error scanning folder: " + err.message);
         });
+}
+
+/**
+ * A Delete of the folder's selection has ended (bulk-run.js): the folder is read again, the one truth of a folder -- the deleted
+ * leave its list, its kept scan and the selection (showScannedFolder, carrySelection keeps what is still listed) -- and the photo
+ * open in the panel, when its file went, closes onto the next the list still holds, as the panel's Delete does. `folder` is the
+ * folder the delete was asked in: once another folder or a view is open nothing is touched (#532). Resolves once the folder is
+ * on screen again, so a clip stopped for the delete plays again only if the scan still lists it; a scan that fails says so
+ * (scanFolder) and the promise stays unresolved: the clip stays stopped. `said` ({kind, sentence}, bulk-run.js) is how the delete
+ * ended: the scan says Ready as it lands, so it is said again then, of this folder only (as the sidebar's Refresh does).
+ */
+export function folderPhotosDeleted(folder, said) {
+    if (state.library || !state.scannedFolder || !samePath(state.scannedFolder, folder)) return Promise.resolve(false);
+    const listed = state.folderPhotos.map(photo => photo.path);
+    const open = state.activePhotoPath;
+    return new Promise(resolve => {
+        state.afterScan = () => {
+            const here = !state.library && samePath(state.scannedFolder, folder);
+            if (here && open && !state.activePhotoPath) openNextStillListed(listed, open);
+            if (here && said) setStatus(said.kind, said.sentence, { transient: false });
+            resolve(here);
+        };
+        folderPathInput.value = folder;
+        scanFolder(true, { asked: true });
+    });
+}
+
+/** Open the photo the folder still lists that comes after `gone` in `listed` (the list before the scan), else the one before it. */
+function openNextStillListed(listed, gone) {
+    const now = new Map(state.folderPhotos.map(photo => [pathKey(photo.path), photo]));
+    const still = path => now.get(pathKey(path));
+    const at = listed.findIndex(path => samePath(path, gone));
+    const next = nextOf(listed.map(still).filter(Boolean), listed.slice(0, at).filter(still).length);
+    if (next) upper.selectPhoto(next.path);
+}
+
+/**
+ * The photo to open when the open one has left the list: `at` is where it was in `list`, which no longer holds it. The next one,
+ * else the one before it; undefined when the list is empty. The one rule of the panel's Delete (a view's order or a folder's list,
+ * photo.js deleteActivePhoto) and the selection's (openNextStillListed): here, with the list the panel walks (updatePhotoPosition).
+ */
+export function nextOf(list, at) {
+    return at < list.length ? list[at] : list[at - 1];
 }
 
 export function showScannedFolder(path, data) {

@@ -192,11 +192,17 @@ describe("#674: Delete of a view's selection", () => {
     await ctx.settle(80);
   };
 
-  test("the button is a view's: shown in every view, not in Organize", async (t) => {
+  test("the button: shown in every view; in Organize, shown when something is selected", async (t) => {
     const ctx = await view(t);
-    assert.ok(!el(ctx, "btn-delete-selection").classList.contains("hidden"));
+    assert.ok(!el(ctx, "btn-delete-selection").classList.contains("hidden"), "a view, nothing selected");
     const organize = await loadViewPage(t, { search: "" });
-    assert.ok(organize.document.getElementById("btn-delete-selection").classList.contains("hidden"));
+    const button = organize.document.getElementById("btn-delete-selection");
+    assert.ok(button.classList.contains("hidden"), "no folder open");
+    await openFolder(organize, "D:\\Library\\2020");
+    await organize.settle(60);
+    assert.ok(button.classList.contains("hidden"), "a folder, nothing selected");
+    click(organize.window, organize.document.querySelector("#thumbnails-grid .thumbnail-checkbox"));
+    assert.ok(!button.classList.contains("hidden"), "a folder, a photo selected");
   });
 
   test("3 photos across folders: asked where they go, then the question names them and the Recycle Bin, then one request by id", async (t) => {

@@ -2795,9 +2795,11 @@ body.just-looking #faces-strip {
     font-size: 13px;
 }
 
-/* While a bulk edit runs, the controls that would start another say so and do nothing. */
+/* While a bulk edit runs, the controls that would start another say so and do nothing; so does the selection's Delete
+   in a folder looked at without adding it (bulk-run.js paintDeleteSelection). */
 .selection-summary-chip-remove[aria-disabled="true"],
-.selection-summary-chip-apply[aria-disabled="true"] {
+.selection-summary-chip-apply[aria-disabled="true"],
+#btn-delete-selection[aria-disabled="true"] {
     opacity: 0.4;
     cursor: not-allowed;
 }
