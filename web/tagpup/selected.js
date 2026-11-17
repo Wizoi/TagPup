@@ -28,6 +28,11 @@ export const BULK_LIMIT = 5000;
 /** The most ids, or excluded ids, a request may list (tagpup.services.selection.MAX_LISTED). */
 export const LIST_LIMIT = 20000;
 
+/** The sentence a bulk write over BULK_LIMIT photos is refused with before any request (the server's), or '' when it is not over. */
+export function overBulkLimit(count) {
+    return count > BULK_LIMIT ? `Select up to ${BULK_LIMIT.toLocaleString()} photos at a time (${count.toLocaleString()} are selected).` : '';
+}
+
 /** The records of the folder's selected photos and clips (state.folderPhotos), in the folder's order. */
 export function selectedRecords() {
     return state.folderPhotos.filter(photo => state.selectedKeys.has(pathKey(photo.path)));
@@ -239,9 +244,7 @@ function planRequest({ job = true } = {}) {
     if (!lib) return { how: null, sentence: 'No library view is open.' };
     const count = selectionCount();
     if (count <= 0) return { how: null, sentence: '' };
-    if (job && count > BULK_LIMIT) {
-        return { how: null, sentence: `Select up to ${BULK_LIMIT.toLocaleString()} photos at a time (${count.toLocaleString()} are selected).` };
-    }
+    if (job && overBulkLimit(count)) return { how: null, sentence: overBulkLimit(count) };
     const sel = lib.sel;
     // The other way round is exact only when the page holds the whole order.
     const whole = lib.complete && lib.ids.length === lib.total;

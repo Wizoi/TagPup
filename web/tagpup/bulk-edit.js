@@ -1,38 +1,65 @@
 // TagPup's page: the edits of a library view's selection -- Add tag, Add person, the pills' Remove and Apply, Delete -- each
 // asked of the owner by name and count, and written in one request (bulk-run.js) with the selection BY ID (selected.js). The folder
-// view's bulk writes are selection.js's and are not touched: a path, 5,000 of them, one request.
+// view's bulk tag writes are selection.js's and are not touched: a path, 5,000 of them, one request. A folder's Delete is this
+// one, the same job as a view's, its selection named BY PATH (the server finds the rows, selection.resolve).
 //
 // What is asked is what is sent: the selection is read BEFORE the question and the request carries that, whatever is clicked while a
 // question or a placement dialog is open. A limit of the request (more than 5,000 photos, or a selection too scattered to name) is said
 // in a sentence before anything is asked of the server. Smart Rename and Shift Date Taken are Organize's, not a view's (#669).
 import { api } from './common/api.js';
+import { samePath } from './common/paths.js';
 import { tagProblem } from './common/vocabulary.js';
 import { state } from './state.js';
 import { bulkAddPeopleInput, bulkAddTagsInput } from './elements.js';
 import { setStatus } from './status.js';
 import { resolveTagOrPerson, updatePeopleDatalist, updateTagsDatalist } from './tags.js';
-import { isIdSelected, selectionCount, selectionKinds, selectionRequest } from './selected.js';
+import { isPhotoSelected, overBulkLimit, selectedRecords, selectionCount, selectionKinds, selectionRequest } from './selected.js';
 import { BUSY_SENTENCE, bulkBusy, runBulk } from './bulk-run.js';
 import { confirmSentence, deleteQuestion, describeDelete, describeTags, forGoodQuestion, itemsOf } from './bulk-words.js';
 import { isVideo, showMedia, stopVideo } from './media.js';
+import { leavePhotoThen } from './edits.js';
+import { pendingAmong } from './pending.js';
+
+const NOTHING_SELECTED = 'Select some photos first — nothing is selected';
+/** A delete of the panel's photo is out (photo.js deleteActivePhoto, `state.deleting`): a selection's waits for it. */
+const ONE_DELETE_OUT = 'A photo is being deleted; wait for it to finish.';
 
 /**
  * The selection, as a request, how many photos and clips it is and of which kind (`kinds`, what its sentences say); or null, the
- * owner told why not (nothing is asked of the server).
+ * owner told why not (nothing is asked of the server). `folder`: a folder's selection too (Organize, no library view; only a
+ * Delete takes one), as `{paths}` -- the paths as the folder's records spell them -- with the folder it is of (`folder`).
  */
-function readSelection() {
-    if (!state.library) return null;
+function readSelection({ folder = false } = {}) {
+    if (!state.library && !folder) return null;
     if (bulkBusy()) {
         alert(BUSY_SENTENCE);
         return null;
     }
+    if (!state.library) return readFolderSelection();
     const asked = selectionRequest();
     if (!asked.ok) {
-        if (asked.sentence === 'Nothing is selected.') setStatus('error', 'Select some photos first — nothing is selected', { transient: false });
+        if (asked.sentence === 'Nothing is selected.') setStatus('error', NOTHING_SELECTED, { transient: false });
         else alert(asked.sentence);
         return null;
     }
     return { selection: asked.body, count: selectionCount(), kinds: selectionKinds() };
+}
+
+/** readSelection's folder arm: the paths selected, at most BULK_LIMIT, their kinds from the folder's records. */
+function readFolderSelection() {
+    const count = state.selectedThumbnails.length;
+    if (!count) {
+        setStatus('error', NOTHING_SELECTED, { transient: false });
+        return null;
+    }
+    const over = overBulkLimit(count);
+    if (over) {
+        alert(over);
+        return null;
+    }
+    const videos = selectedRecords().filter(isVideo).length;
+    return { selection: { paths: state.selectedThumbnails.slice() }, count, kinds: { photos: Math.max(0, count - videos), videos },
+        folder: state.scannedFolder };
 }
 
 /** The question before a write: it names the edit, the count and how long it takes. */
@@ -109,18 +136,42 @@ export async function editByPill({ kind, name, remove, person = null }) {
     }
 }
 
-/** The clip the panel shows, when the selection about to be deleted holds it; else null. */
-function panelClipDeleted() {
-    const lib = state.library;
-    const open = lib && lib.activeId !== null ? state.folderPhotos.find(photo => photo.id === lib.activeId) : null;
-    return isVideo(open) && isIdSelected(open.id) ? open : null;
+/** The record the panel shows, a folder's or a library view's; else null. */
+function openRecord() {
+    const path = state.activePhotoPath;
+    return path ? state.folderPhotos.find(photo => samePath(photo.path, path)) || null : null;
 }
 
-/** The clip stopped for a delete is the panel's still, once the view's order is read again: it was not deleted, and plays again. */
+/** The clip the panel shows, when the selection about to be deleted holds it; else null. */
+function panelClipDeleted() {
+    const open = openRecord();
+    return isVideo(open) && isPhotoSelected(open) ? open : null;
+}
+
+/**
+ * The clip stopped for a delete is the panel's still once the photos are read again (a view's order, a folder's scan): it was
+ * not deleted, and plays again. Deleted, the read has closed the panel or opened another photo.
+ */
 function playAgainIfKept(clip) {
-    const lib = state.library;
-    if (!lib || lib.activeId !== clip.id) return;
-    showMedia(state.folderPhotos.find(photo => photo.id === clip.id) || clip, '');
+    const open = openRecord();
+    if (open && samePath(open.path, clip.path)) showMedia(open, '');
+}
+
+/**
+ * A folder's Delete, before anything is asked of the server: refused with a sentence while tag changes of a selected photo are
+ * not written (pending.js), and the open photo's typed edits, when it is selected, asked about first (Save or Discard goes on,
+ * Cancel stops the delete). Resolves whether the delete goes on.
+ */
+function folderMayDelete(picked) {
+    const waiting = pendingAmong(picked.selection.paths);
+    if (waiting) {
+        alert(`Tag changes for ${waiting.toLocaleString()} of these photos are not written yet: wait for them, or cancel them in the `
+            + 'list of writes, then delete.');
+        return Promise.resolve(false);
+    }
+    const open = openRecord();
+    if (!open || !isPhotoSelected(open)) return Promise.resolve(true);
+    return new Promise(resolve => leavePhotoThen(() => resolve(true), { onStay: () => resolve(false) }));
 }
 
 /**
@@ -136,15 +187,23 @@ function playAgainIfKept(clip) {
  * this PC's (#694), and the question says so and where they restore to. A clip the panel plays that is being deleted is stopped first
  * (the server reads it a range at a time, and a range read as its file is deleted leaves the file there), and plays again if it
  * stayed; a clip opened while the delete is out is asked of the server, which refuses the one whose file it is deleting
- * (/api/video-file, 409: media.js says its sentence). Rapid clicks ask once (`state.bulk.asking`). Resolves true when the edit
+ * (/api/video-file, 409: media.js says its sentence). Rapid clicks ask once (`state.bulk.asking`); while the panel's own Delete is
+ * out (`state.deleting`) it is refused with a sentence. In a folder (Organize) the same, by path, after folderMayDelete; the question
+ * says the selected files the library holds no row of (the server's `missing`), left where they are. Resolves true when the edit
  * was written.
  */
 export async function deleteSelection() {
     if (state.bulk.asking) return false;
-    const picked = state.library ? readSelection() : null;
+    if (state.deleting) {
+        alert(ONE_DELETE_OUT);
+        return false;
+    }
+    const inFolder = !state.library;
+    const picked = readSelection({ folder: true });
     if (!picked) return false;
     state.bulk.asking = true;
     try {
+        if (inFolder && !(await folderMayDelete(picked))) return false;
         setStatus('busy', `Looking where the files of ${itemsOf(picked.count, picked.kinds)} are...`);
         let where;
         try {
@@ -168,10 +227,11 @@ export async function deleteSelection() {
         // The server's count of the photos, which the token is of: the question names exactly what would be deleted.
         const count = Number.isFinite(where.total) ? where.total : picked.count;
         if (count === 0) {
-            setStatus('ready', 'Nothing to delete: none of these photos is in the library any more.', { transient: false });
+            setStatus('ready', inFolder ? 'Nothing to delete: none of these photos is in the library (not indexed yet); they are left where they are.'
+                : 'Nothing to delete: none of these photos is in the library any more.', { transient: false });
             return false;
         }
-        if (!confirm(deleteQuestion(where, count, picked.kinds))) return false;
+        if (!confirm(deleteQuestion(where, count, picked.kinds, inFolder ? picked.count : null))) return false;
         // Files whose drive's Recycle Bin would not keep them are named, and deleted for good only on OK; the token is of that
         // answer, so a start that did not ask is refused by the server.
         const forGood = (where.for_good && where.for_good.count) || 0;

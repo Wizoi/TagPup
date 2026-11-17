@@ -89,10 +89,14 @@ export function bigClip(size) {
 /**
  * The question before a Delete: how many, where the files go -- the Recycle Bin, or, for photos in places with none (a network
  * share, a removable drive), through this PC (#694): copied to it, the copies to its Recycle Bin, then the originals deleted, and a
- * copy restored goes to the folder under Downloads, not back to the share -- how long, and that the rows go too.
+ * copy restored goes to the folder under Downloads, not back to the share -- how long, and that the rows go too. `selected`, a
+ * folder's (Organize names its photos by path): how many were selected, of which the server's `missing` have no row in the
+ * library (copied in, not indexed yet) and are left where they are, said after the count.
  */
-export function deleteQuestion(where, count, kinds = null) {
-    const head = `Delete ${itemsOf(count, kinds)}?`;
+export function deleteQuestion(where, count, kinds = null, selected = null) {
+    const missing = selected === null ? 0 : Math.min((where && where.missing) || 0, selected);
+    const head = `Delete ${itemsOf(count, kinds)}?` + (!missing ? '' : ` ${missing.toLocaleString()} of the ${selected.toLocaleString()} `
+        + `selected ${missing === 1 ? 'is' : 'are'} not in the library (not indexed yet) and ${missing === 1 ? 'is left where it is' : 'are left where they are'}.`);
     const rows = count === 1 ? ' Its row leaves the library, with its faces.' : ' Their rows leave the library, with their faces.';
     const through = Math.min((where && where.through_this_pc) || 0, count);
     const seconds = count / DELETE_PER_SECOND + (through ? ((where && where.copy_bytes) || 0) / COPY_BYTES_PER_SECOND : 0);

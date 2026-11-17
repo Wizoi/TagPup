@@ -65,6 +65,16 @@ function unsentCount() {
     return state.pending.files.size;
 }
 
+/**
+ * How many of `paths` have tag changes not written yet: waiting here, or in the chunk out (a Delete of them waits for them:
+ * bulk-edit.js deleteSelection, else a chunk would write, or give back the ops of, a file that is gone).
+ */
+export function pendingAmong(paths) {
+    const pending = state.pending;
+    const out = new Set((pending.out || []).map(entry => pathKey(entry.path)));
+    return paths.filter(path => pending.files.has(pathKey(path)) || out.has(pathKey(path))).length;
+}
+
 /** Queue the next chunk, unless one is queued, the drain is stopped by a failure, or nothing waits. */
 function drain() {
     const pending = state.pending;
