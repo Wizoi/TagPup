@@ -19,7 +19,7 @@ import {
     namesAPerson, resolveTagOrPerson
 } from './tags.js';
 import { pendTags } from './pending.js';
-import { BULK_CONFIRM_ABOVE, BULK_LIMIT, isSelected, selectionCount, selectionProblem } from './selected.js';
+import { BULK_CONFIRM_ABOVE, isSelected, overBulkLimit, selectionCount, selectionProblem } from './selected.js';
 import { setStatus } from './status.js';
 import { addTypedToSelection } from './bulk-edit.js';
 import { clearTally, selectionTallied } from './tally.js';
@@ -376,8 +376,9 @@ export function applyTagToAllSelected(tag, isPerson) {
  * under the lock of every write to the library's files, with no progress, for as long as it takes (findings #535).
  */
 export function confirmBulkWrite(what, count) {
-    if (count > BULK_LIMIT) {
-        alert(`Select up to ${BULK_LIMIT.toLocaleString()} photos at a time (${count.toLocaleString()} are selected).`);
+    const over = overBulkLimit(count);
+    if (over) {
+        alert(over);
         return false;
     }
     if (count > BULK_CONFIRM_ABOVE) return confirm(`${what} ${count.toLocaleString()} photos?`);
