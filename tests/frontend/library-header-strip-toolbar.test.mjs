@@ -7,6 +7,7 @@ import { test, describe, afterEach } from "node:test";
 import assert from "node:assert/strict";
 import { closeAllApps, click, openFolder, photoRecord, CLIP_WRITES } from "./harness.mjs";
 import { loadViewPage, pageErrors, speedUp, recordOf } from "./view-page.mjs";
+import fs from "node:fs";
 
 afterEach(() => {
   closeAllApps();
@@ -15,6 +16,11 @@ afterEach(() => {
 
 const el = (ctx, id) => ctx.document.getElementById(id);
 const stripSentence = (ctx) => ctx.document.querySelector(".batch-strip-sentence").textContent;
+/** A Delete's question and reply as the real routes make them (tests/test_batch_strip_replies.py: three photos of one
+ * folder, to the Recycle Bin and, the Bin full, for good); a test changes only what its scenario is about. */
+const served = JSON.parse(fs.readFileSync(new URL("./fixtures/batches.json", import.meta.url), "utf8"));
+const TOKEN = served.delete_check.token;
+const FOR_GOOD_TOKEN = served.delete_check_for_good.token;
 
 describe("#668: the button beside Library is Organize", () => {
   test("it says Organize, and its tooltip says what Organize is for: one folder on disk", async (t) => {
@@ -166,7 +172,7 @@ describe("#674: Delete of a view's selection", () => {
   const plain = (value) => JSON.parse(JSON.stringify(value));
   const pick = (ctx, id) => click(ctx.window, ctx.cardById(id).querySelector(".thumbnail-checkbox"));
   const calls = (ctx, part) => ctx.server.calls.filter((call) => call.url.includes(part));
-  const BIN = { total: 3, token: "t-three", folders: 1, through_this_pc: 0, reasons: [], copy_bytes: 0, restores_to: "C:\\Users\\wren\\Downloads\\TagPup deleted from shares", no_room: null };
+  const BIN = served.delete_check;
 
   async function view(t, n = 40, { where = BIN, ...options } = {}) {
     const ctx = await loadViewPage(t, { search: "?view=all", ids: range(n), ...options });
@@ -178,7 +184,7 @@ describe("#674: Delete of a view's selection", () => {
     ctx.answer = true;
     ctx.window.confirm = (text) => { ctx.questions.push(text); return typeof ctx.answer === "function" ? ctx.answer(text) : ctx.answer; };
     ctx.window.alert = (text) => ctx.alerts.push(text);
-    ctx.bulk.edit = { op: "delete", total: 3, changed: 3 };
+    ctx.bulk.edit = { ...served.deleted };
     return ctx;
   }
   const remove = async (ctx) => {
@@ -200,7 +206,7 @@ describe("#674: Delete of a view's selection", () => {
     assert.deepEqual(plain(calls(ctx, "/selection/delete-check")[0].body), { selection: { ids: [2, 5, 9] } });
     assert.deepEqual(ctx.questions, ["Delete 3 photos? The files go to the Recycle Bin, where they can be restored. Their rows leave the library, with their faces. It takes less than a minute; TagPup is busy until it is done, and saving a photo elsewhere waits for the photos being deleted at that moment. It cannot be undone in TagPup."]);
     const [start] = calls(ctx, "/api/library/bulk-edit");
-    assert.deepEqual(plain(start.body), { op: "delete", selection: { ids: [2, 5, 9] }, params: { token: "t-three" } },
+    assert.deepEqual(plain(start.body), { op: "delete", selection: { ids: [2, 5, 9] }, params: { token: TOKEN } },
       "the token of the photos the question named");
     assert.ok(!calls(ctx, "/api/photo/delete").length, "never the one-photo route, once a photo");
     assert.match(stripSentence(ctx), /^Deleted 3 photos to the Recycle Bin;/);
@@ -213,7 +219,7 @@ describe("#674: Delete of a view's selection", () => {
     assert.match(ctx.questions[0], /^Delete 3 photos\? 1 of them is where there is no Recycle Bin \(1 on a network share\): it is copied to this PC \(4 MB\), the copy goes to this PC's Recycle Bin, and then the original is deleted\. Restored from the Recycle Bin, a copy goes to C:\\Users\\wren\\Downloads\\TagPup deleted from shares, not back to where it was\. The other 2 go to the Recycle Bin\./);
     assert.doesNotMatch(ctx.questions[0], /PERMANENTLY|permanently/);
     assert.match(ctx.questions[0], /It takes at least about 1 minute \(copies from a share/, "a floor, not a promise, for copies from a share (#705)");
-    assert.deepEqual(plain(calls(ctx, "/api/library/bulk-edit")[0].body.params), { token: "t-three" });
+    assert.deepEqual(plain(calls(ctx, "/api/library/bulk-edit")[0].body.params), { token: TOKEN });
     const all = await view(t, 40, { where: { ...BIN, total: 1, through_this_pc: 1, reasons: [{ reason: "on a removable drive", photos: 1 }], copy_bytes: 1000 } });
     pick(all, 4);
     await remove(all);
@@ -224,14 +230,14 @@ describe("#674: Delete of a view's selection", () => {
     const clips = { onIds: () => ({ source: {}, total: 40, ids: range(40), videos: [5, 9], complete: true }),
       cardExtra: (id) => ({ media: [5, 9].includes(id) ? "video" : "photo" }) };
     const ctx = await view(t, 40, { where: { ...BIN, total: 2 }, ...clips });
-    ctx.bulk.edit = { op: "delete", total: 2, changed: 2 };
+    ctx.bulk.edit = { ...served.deleted, total: 2, requested: 2, changed: 2 };
     for (const id of [5, 9]) pick(ctx, id);
     await remove(ctx);
     assert.match(ctx.questions[0], /^Delete 2 videos\? The files go to the Recycle Bin/);
     assert.match(stripSentence(ctx), /^Deleted 2 videos to the Recycle Bin;/);
 
     const mixed = await view(t, 40, clips);
-    mixed.bulk.edit = { op: "delete", total: 3, changed: 2, error_count: 1, errors: [{ id: 2, name: "IMG_2.jpg", why: "the file is in use" }] };
+    mixed.bulk.edit = { ...served.deleted, changed: 2, error_count: 1, errors: [{ id: 2, name: "IMG_2.jpg", why: "the file is in use" }] };
     for (const id of [2, 5, 9]) pick(mixed, id);
     await remove(mixed);
     assert.match(mixed.questions[0], /^Delete 1 photo, 2 videos\?/);
@@ -327,7 +333,7 @@ describe("#674: Delete of a view's selection", () => {
   test("the photo open in the details panel was deleted: the panel closes onto the grid when the edit is done", async (t) => {
     let ids = range(40);
     const ctx = await view(t, 40, { onIds: () => ({ source: {}, total: ids.length, ids, videos: [], complete: true }), onPhoto: (id) => ({ photo: recordOf(id) }) });
-    ctx.bulk.edit = { op: "delete", total: 1, changed: 1 };
+    ctx.bulk.edit = { ...served.deleted, total: 1, requested: 1, changed: 1 };
     pick(ctx, 5);
     ctx.module("photo.js").openLibraryPhoto(5);
     await ctx.settle(100);
@@ -343,11 +349,11 @@ describe("#674: Delete of a view's selection", () => {
 
   // Files on a drive whose Recycle Bin would not keep them (DECISIONS 2026-11-08, 'FOR GOOD'): the delete-check counts them and
   // names the first five (selection.where_deleted); the page warns, naming them, and starts with for_good only on OK.
-  const FOR_GOOD = (count, names) => ({ ...BIN, token: "t-three-for-good", for_good: { count, names } });
+  const FOR_GOOD = (count, names) => ({ ...served.delete_check_for_good, bin_full: 0, for_good: { count, names } });
 
   test("some its drive's Bin would not keep: a second question names them, and OK alone starts the delete for good", async (t) => {
     const ctx = await view(t, 40, { where: FOR_GOOD(1, ["Harbour_Swim_Long.mp4"]) });
-    ctx.bulk.edit = { op: "delete", total: 3, changed: 3, for_good: 1 };
+    ctx.bulk.edit = { ...served.deleted_for_good, for_good: 1 };
     for (const id of [2, 5, 9]) pick(ctx, id);
     await remove(ctx);
     assert.equal(ctx.questions.length, 2, "the delete was asked, then the warning");
@@ -358,7 +364,7 @@ describe("#674: Delete of a view's selection", () => {
       "a video over 2 GiB is told as a reason: no copy of it is made through this PC (cut C)");
     assert.match(ctx.questions[1], /Cancel deletes nothing\.$/);
     const [start] = calls(ctx, "/api/library/bulk-edit");
-    assert.deepEqual(plain(start.body.params), { token: "t-three-for-good", for_good: true },
+    assert.deepEqual(plain(start.body.params), { token: FOR_GOOD_TOKEN, for_good: true },
       "the token of the question that warned, and the owner's OK");
     assert.match(stripSentence(ctx), /^Deleted 3 photos to the Recycle Bin, 1 of them for good;/);
   });
@@ -366,7 +372,7 @@ describe("#674: Delete of a view's selection", () => {
   test("this PC's Recycle Bin is full: both questions say so, and OK starts the delete for good with the question's token", async (t) => {
     // Owner, 2026-11-12: the share's files whose copies the full Bin would not keep are asked of, not refused (`bin_full`).
     const ctx = await view(t, 40, { where: { ...FOR_GOOD(3, ["Pier_A.jpg", "Pier_B.jpg", "Pier_C.jpg"]), bin_full: 2 } });
-    ctx.bulk.edit = { op: "delete", total: 3, changed: 3, for_good: 3 };
+    ctx.bulk.edit = { ...served.deleted_for_good };
     for (const id of [2, 5, 9]) pick(ctx, id);
     await remove(ctx);
     assert.equal(ctx.questions.length, 2);
@@ -376,13 +382,13 @@ describe("#674: Delete of a view's selection", () => {
     assert.match(ctx.questions[1], /The other 1 would not be kept by any Recycle Bin/);
     assert.ok(ctx.questions[1].includes("  Pier_B.jpg"));
     assert.match(ctx.questions[1], /OK deletes them permanently; Cancel deletes nothing\.$/);
-    assert.deepEqual(plain(calls(ctx, "/api/library/bulk-edit")[0].body.params), { token: "t-three-for-good", for_good: true });
+    assert.deepEqual(plain(calls(ctx, "/api/library/bulk-edit")[0].body.params), { token: FOR_GOOD_TOKEN, for_good: true });
   });
 
   test("a Bin with room for some: the first question says how many are deleted for good and that the rest go to the Bin", async (t) => {
     // The server weighs the files one after another, as the start deletes them (selection.where_deleted): 3 fit, 2 do not.
     const ctx = await view(t, 40, { where: { ...FOR_GOOD(2, ["Shore_D.jpg", "Shore_E.jpg"]), total: 5, bin_full: 2 } });
-    ctx.bulk.edit = { op: "delete", total: 5, changed: 5, for_good: 2 };
+    ctx.bulk.edit = { ...served.deleted_for_good, total: 5, requested: 5, changed: 5, for_good: 2 };
     for (const id of [2, 5, 9, 11, 14]) pick(ctx, id);
     await remove(ctx);
     assert.match(ctx.questions[0], /^Delete 5 photos\?/);
@@ -400,7 +406,7 @@ describe("#674: Delete of a view's selection", () => {
     assert.match(ctx.questions[0], /you are asked next, by name/);
     assert.doesNotMatch(ctx.questions[0], /The other 2 go to the Recycle Bin/, "the share's one is copied, the clip is neither");
     const alone = await view(t, 40, { where: FOR_GOOD(1, ["Harbour_Swim_Long.mp4"]) });
-    alone.bulk.edit = { op: "delete", total: 1, changed: 1, for_good: 1 };
+    alone.bulk.edit = { ...served.deleted_for_good, total: 1, requested: 1, changed: 1, for_good: 1 };
     pick(alone, 2);
     await remove(alone);
     assert.match(alone.questions[0], /^Delete 3 photos\? 1 of them is deleted for good.* The other 2 go to the Recycle Bin, where they can be restored\./);
@@ -408,11 +414,11 @@ describe("#674: Delete of a view's selection", () => {
 
   test("the file the warning named was not removed (its delete failed): the strip says none went for good, from the reply", async (t) => {
     const ctx = await view(t, 40, { where: FOR_GOOD(1, ["Harbour_Swim_Long.mp4"]) });
-    ctx.bulk.edit = { op: "delete", total: 3, changed: 2, for_good: 0, error_count: 1,
+    ctx.bulk.edit = { ...served.deleted_for_good, changed: 2, for_good: 0, error_count: 1,
       errors: [{ id: 5, name: "Harbour_Swim_Long.mp4", why: "The file is in use" }] };
     for (const id of [2, 5, 9]) pick(ctx, id);
     await remove(ctx);
-    assert.deepEqual(plain(calls(ctx, "/api/library/bulk-edit")[0].body.params), { token: "t-three-for-good", for_good: true });
+    assert.deepEqual(plain(calls(ctx, "/api/library/bulk-edit")[0].body.params), { token: FOR_GOOD_TOKEN, for_good: true });
     assert.match(stripSentence(ctx), /^Deleted 2 photos to the Recycle Bin;/, "a write says what it changed, not what it asked");
     assert.doesNotMatch(stripSentence(ctx), /for good/);
   });
@@ -445,7 +451,7 @@ describe("#674: Delete of a view's selection", () => {
     for (const id of [2, 5, 9]) pick(ctx, id);
     await remove(ctx);
     assert.equal(ctx.questions.length, 1);
-    assert.deepEqual(plain(calls(ctx, "/api/library/bulk-edit")[0].body.params), { token: "t-three-for-good" });
+    assert.deepEqual(plain(calls(ctx, "/api/library/bulk-edit")[0].body.params), { token: FOR_GOOD_TOKEN });
   });
 
   // A clip open in the panel among the photos deleted: the server reads it a range at a time while it plays, and a range read as its
@@ -461,7 +467,7 @@ describe("#674: Delete of a view's selection", () => {
         window.HTMLMediaElement.prototype.load = () => {};
       },
     });
-    ctx.bulk.edit = { op: "delete", total: 2, changed: 2 };
+    ctx.bulk.edit = { ...served.deleted, total: 2, requested: 2, changed: 2 };
     for (const id of [2, CLIP]) pick(ctx, id);
     ctx.module("photo.js").openLibraryPhoto(CLIP);
     await ctx.settle(100);
@@ -521,7 +527,7 @@ describe("#674: Delete of a view's selection", () => {
 
     let ids = range(40);
     const kept = await viewWithClipOpen(t, () => ids);
-    kept.bulk.edit = { op: "delete", total: 2, changed: 1, error_count: 1, errors: [{ id: CLIP, name: "Pier_Jump.mp4", why: "The file is in use" }] };
+    kept.bulk.edit = { ...served.deleted, total: 2, requested: 2, changed: 1, error_count: 1, errors: [{ id: CLIP, name: "Pier_Jump.mp4", why: "The file is in use" }] };
     ids = ids.filter((id) => id !== 2);     // the photo went; the clip, its error said, stayed
     await remove(kept);
     await kept.until(() => src(kept) !== "");
@@ -543,12 +549,12 @@ describe("#691-#693: a Delete deletes exactly what its question named", () => {
     ctx.server.on("/api/library/selection/delete-check", () => (typeof ctx.where === "function" ? ctx.where() : ctx.where));
     ctx.questions = [];
     ctx.window.confirm = (text) => { ctx.questions.push(text); return true; };
-    ctx.bulk.edit = { op: "delete", total: 3, changed: 3 };
+    ctx.bulk.edit = { ...served.deleted };
     return ctx;
   }
 
   test("the question names the server's count, which its token is of, not the page's", async (t) => {
-    const ctx = await view(t, { total: 4, token: "four", folders: 1, through_this_pc: 0, reasons: [], copy_bytes: 0, no_room: null });
+    const ctx = await view(t, { ...served.delete_check, total: 4, token: "four" });
     el(ctx, "btn-select-all-thumbnails").click();
     click(ctx.window, el(ctx, "btn-delete-selection"));
     await ctx.settle(80);
@@ -557,7 +563,7 @@ describe("#691-#693: a Delete deletes exactly what its question named", () => {
   });
 
   test("the server refuses a delete whose selection changed: its sentence is shown and nothing was deleted", async (t) => {
-    const ctx = await view(t, { total: 3, token: "three", folders: 1, through_this_pc: 0, reasons: [], copy_bytes: 0, no_room: null });
+    const ctx = await view(t, served.delete_check);
     ctx.server.first("/api/library/bulk-edit", { error: "The selection changed since you were asked (photos came into it or left it): nothing was deleted. Ask again: click Delete once more." }, { status: 409 });
     for (const id of [2, 5, 9]) pick(ctx, id);
     click(ctx.window, el(ctx, "btn-delete-selection"));
@@ -568,7 +574,7 @@ describe("#691-#693: a Delete deletes exactly what its question named", () => {
 
   test("asked again, the question is asked afresh: where the files are, the question, a new token", async (t) => {
     let n = 0;
-    const ctx = await view(t, () => ({ total: 3, token: `token-${++n}`, folders: 1, through_this_pc: 0, reasons: [], copy_bytes: 0, no_room: null }));
+    const ctx = await view(t, () => ({ ...served.delete_check, token: `token-${++n}` }));
     for (const id of [2, 5, 9]) pick(ctx, id);
     click(ctx.window, el(ctx, "btn-delete-selection"));
     await ctx.settle(60);
@@ -595,7 +601,7 @@ describe("#704, #705: the question's paths and pace for photos that go through t
     await ctx.settle(80);
     return ctx.questions[0];
   }
-  const WHERE = { token: "t", folders: 1, reasons: [{ reason: "on a network share", photos: 3 }], restores_to: "D:\\Downloads\\TagPup deleted from shares", no_room: null, too_long: 0 };
+  const WHERE = { ...served.delete_check, reasons: [{ reason: "on a network share", photos: 3 }] };
 
   test("photos with paths too long to copy are counted in the question as left", async (t) => {
     const asked = await ask(t, { ...WHERE, total: 3, through_this_pc: 3, copy_bytes: 3000, too_long: 2 });
