@@ -1,5 +1,5 @@
-"""A photo's fields saved by TagPup's own writer (field_values.OWN_WRITER on: tagpup.files.segment_edits.new_header into
-in_place.patch_jpeg), in the flows the owner lives in (scenarios F1 and D3; docs/PLAN_OWN_METADATA.md, M4 and its hazards
+"""A photo's fields saved by TagPup's own writer (field_values.PATCH_IN_PLACE: tagpup.files.segment_edits.new_header into
+in_place.patch_jpeg, the one patch writer since 4d), in the flows the owner lives in (scenarios F1 and D3; docs/PLAN_OWN_METADATA.md, M4 and its hazards
 a, b and c).
 
 Three keywords added one at a time are three patches of the XMP alone, IPTC and EXIF left as they were and recorded so
@@ -13,8 +13,7 @@ the photo held; a rotation of a photo whose packet holds tiff:Orientation and wh
 as ExifTool's write of the same reads (hazard c); a save repeated, or a tag the photo holds added again, is holding it
 already as the patch leaves it (fields.as_patched of field_values.left_as_they_were): nothing written, nothing journaled,
 `changed` 0, and the first save's undo puts back the bytes; the writer itself, given it, writes no byte and answers the
-copies it left (hazard a); with the own writer off, a save of a photo whose IPTC differs from its XMP writes every copy,
-as before. A photo holding a second XMP packet inside its EXIF (IFD0 tag 0x02BC, as Windows Live Photo Gallery wrote it;
+copies it left (hazard a). A photo holding a second XMP packet inside its EXIF (IFD0 tag 0x02BC, as Windows Live Photo Gallery wrote it;
 tests/fixtures/xmp_in_ifd0.json, captured) has a tag added, its Date Taken moved, a turn and every keyword taken off, each
 ExifTool's rewrite, which writes both packets, and read back as asked (#3108); the same photo with that entry under
 another tag is patched in place.
@@ -32,8 +31,7 @@ journal's after (the read back then corrects it, warning) fails test_an_undo_put
 through fails test_a_photo_with_two_app13_segments_is_rewritten; fields.EDITED_AS without tiff:Orientation fails
 test_a_turn_reads_as_exiftools_write_of_it_reads; file_changes._holds_already comparing against the plan's after
 (the planner before the fix), or in_place.patch_jpeg answering () when no byte changes, fails
-test_a_save_repeated_or_a_tag_held_added_again_writes_and_journals_nothing; field_values.left_as_they_were answering
-stale_of with the own writer off fails test_with_the_own_writer_off_a_save_writes_every_copy_as_before;
+test_a_save_repeated_or_a_tag_held_added_again_writes_and_journals_nothing;
 segment_edits.new_header patching a photo whose IFD0 holds an XMP packet (the code before #3108) fails
 test_a_photo_holding_an_xmp_packet_in_its_exif_is_rewritten_and_reads_back_as_asked.
 """
@@ -108,12 +106,6 @@ def photo_with_xmp_in_ifd0(path, tag=0x02BC):
 
 @requires_exiftool
 class APhotoWrittenByItsOwnEditors(FilesCase):
-    def setUp(self):
-        super().setUp()
-        own = mock.patch.object(field_values, "OWN_WRITER", True)
-        own.start()
-        self.addCleanup(own.stop)
-
     def seed(self, path, values):
         """The row of a photo the test made by hand, as the indexer leaves it."""
         conn = db.connect(self.library.path)
@@ -411,18 +403,6 @@ class APhotoWrittenByItsOwnEditors(FilesCase):
                 (added, "2006:08:19 16:42:07", "2006:08:19 16:42:07Z", 1, added),
                 (added, "2006:08:19 16:42:07", "2006:08:19 16:42:07Z", 6, added),
                 ([], "2006:08:19 16:42:07", "2006:08:19 16:42:07Z", 6, [])]
-
-    def test_with_the_own_writer_off_a_save_writes_every_copy_as_before(self):
-        # The flag off is today's writer, untouched by the planner's rule: a photo whose XMP holds more than its IPTC
-        # (another program wrote it) saved with its XMP set is written, every copy, and journaled.
-        with mock.patch.object(field_values, "OWN_WRITER", False):
-            a = self.make("a.jpg")
-            write_outside(a, {"XMP:Subject": ["Beach", "Harbour"]})
-            result = tagging.save_photo(self.library, a, "", ["Beach", "Harbour"], None, EXIFTOOL, "")
-        self.assertEqual((1, []), (result.changed, result.errors), result.message())
-        self.assertEqual((["Beach", "Harbour"], ["Beach", "Harbour"], "Beach;Harbour"),
-                         (keywords_of(a), field_of(a, "IPTC:Keywords"), field_of(a, "EXIF:XPKeywords")))
-        self.assertEqual(["Beach", "Harbour"], self.after(result.details["change"], "IPTC:Keywords"))
 
 
 if __name__ == "__main__":
