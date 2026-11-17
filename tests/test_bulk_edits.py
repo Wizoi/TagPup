@@ -16,14 +16,16 @@ from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import photo_rows  # noqa: E402
+import roots_library as rl  # noqa: E402
 import web_client  # noqa: E402
 from fake_exiftool import Files  # noqa: E402
-from view_library import ViewLibrary  # noqa: E402
+from view_library import ViewLibrary, make_jpeg  # noqa: E402
 
 from tagpup.core import paths  # noqa: E402
 from tagpup.files import shares  # noqa: E402
 from tagpup.services import activity, batches, bulk_edit, file_changes  # noqa: E402
-from tagpup.services import journal  # noqa: E402
+from tagpup.services import journal, selection  # noqa: E402
 from tagpup.store import db, job_runs  # noqa: E402
 from test_file_journal import Crash as StoppedAt, crash_at  # noqa: E402
 from tagpup.web import tagpup_routes  # noqa: E402
@@ -559,6 +561,134 @@ class RunsAnOlderVersionRecorded(Bulk):
         from tagpup.jobs import naming_faces
         self.old_run("running", {"op": "tags", "job": 6, "total": 60, "done": 25, "changed": 25, "state": "running"})
         self.assertEqual([], naming_faces.other_work(self.library))
+
+
+class ASelectionByPath(Bulk):
+    """A folder opened in Organize names its photos by path, as its scan holds them: a delete of them is the library view's
+    delete (the question, its token, the Bin, the chunks), the paths looked up on the server in the library's rows
+    (selection.resolve through store.roots.photo_ids_at). The library holds a root, as the live ones do: its rows are
+    `@pictures/...` and the page sends this PC's absolute paths. The Recycle Bin is the test's (nothing reaches the owner's).
+    Scenario V7 (the selection a bulk edit reads)."""
+
+    def setUp(self):
+        super().setUp()
+        rl.convert_to_root(self.vl.path, self.vl.pictures)
+        self.sent = []
+        self.on_recycle = None
+        patcher = mock.patch("tagpup.files.recycle_bin.send_to_recycle_bin", side_effect=self.recycle)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def recycle(self, path):
+        self.sent.append(path)
+        if self.on_recycle:
+            self.on_recycle(len(self.sent))
+        os.remove(path)
+        return True
+
+    def native(self, photo_id):
+        """The photo's path as the page has it (this PC's, absolute), not as its row holds it."""
+        return os.path.join(self.vl.pictures, "2024 %s" % "AB"[self.ids.index(photo_id) % 2], "p%03d.jpg" % self.ids.index(photo_id))
+
+    def check(self, chosen, expect=200):
+        reply = self.client.post("/library/api/library/selection/delete-check", json={"selection": chosen})
+        self.assertEqual(expect, reply.status_code, reply.get_json())
+        return reply.get_json()
+
+    def delete(self, chosen, token=None, expect=200):
+        """Delete as the page does: asked first, then started with the answer's token."""
+        token = token or self.check(chosen)["token"]
+        reply = self.post({"op": "delete", "selection": chosen, "params": {"token": token}})
+        self.assertEqual(expect, reply.status_code, reply.get_json())
+        return reply.get_json()
+
+    def held(self, ids):
+        found = {row[0] for row in self.vl.rows("SELECT id FROM photos")}
+        return [photo_id for photo_id in ids if photo_id in found]
+
+    def test_the_photos_at_the_paths_in_any_spelling_go_to_the_bin_with_their_rows_and_no_other(self):
+        chosen = self.ids[:3]
+        self.assertTrue(self.path(chosen[0]).startswith(paths.ROOT_MARK), "rows are the root's, as on the live libraries")
+        natives = [self.native(photo_id) for photo_id in chosen]
+        spelled = [natives[0], natives[1].replace(os.sep, "/").upper(), natives[2].lower()]
+        tallied = self.client.post("/library/api/library/selection/tally", json={"selection": {"paths": spelled}}).get_json()
+        self.assertEqual(3, tallied["total"], "the panel's tally reads the same photos")
+        asked = self.check({"paths": spelled})
+        self.assertEqual((3, asked["token"]), (asked["total"], selection.token_of(chosen)), "the token is of the ids the paths are")
+        done = self.delete({"paths": spelled}, asked["token"])
+        self.assertEqual((3, 3, 3, 0, 0), (done["total"], done["requested"], done["changed"], done["missing"], done["error_count"]))
+        self.assertEqual([], self.held(chosen), "the rows went with the files")
+        self.assertFalse([path for path in natives if os.path.exists(path)])
+        self.assertEqual(sorted(map(paths.key, natives)), sorted(map(paths.key, self.sent)))
+        self.assertEqual(self.ids[3:], self.held(self.ids[3:]), "nothing else is touched")
+
+    def test_a_file_the_library_has_no_row_of_is_missing_and_left_and_only_such_files_are_nothing_to_delete(self):
+        fresh = os.path.join(self.vl.pictures, "2024 A", "copied_in.jpg")        # copied in, not indexed yet
+        make_jpeg(fresh, (10, 20, 30), (16, 16))
+        asked = self.check({"paths": [fresh, self.native(self.ids[0])]})
+        self.assertEqual(1, asked["total"])
+        done = self.delete({"paths": [fresh, self.native(self.ids[0])]}, asked["token"])
+        self.assertEqual((1, 2, 1, 1), (done["total"], done["requested"], done["missing"], done["changed"]))
+        self.assertTrue(os.path.exists(fresh), "never deleted")
+        self.assertEqual(0, self.check({"paths": [fresh]})["total"])
+        refused = self.delete({"paths": [fresh]}, expect=400)
+        self.assertEqual("The selection holds no photos.", refused["error"])
+        self.assertEqual([paths.key(self.native(self.ids[0]))], [paths.key(path) for path in self.sent])
+
+    def test_a_photo_indexed_again_between_the_question_and_the_start_refuses_the_delete_and_nothing_goes(self):
+        chosen = {"paths": [self.native(photo_id) for photo_id in self.ids[:3]]}
+        asked = self.check(chosen)
+        # Its row gone and made again by the index (a sync that lost it and found it): the same path, a new photo.
+        self.vl.conn.execute("DELETE FROM photos WHERE id = ?", (self.ids[1],))
+        self.vl.conn.commit()
+        again = db.write_with_connection(self.vl.path, lambda conn: photo_rows.add_read(conn, self.native(self.ids[1]), {}),
+                                         label="test: indexed again")
+        self.assertNotEqual(self.ids[1], again)
+        refused = self.delete(chosen, asked["token"], expect=409)
+        self.assertEqual(bulk_edit.CHANGED, refused["error"])
+        self.assertEqual([], self.sent, "nothing deleted")
+        self.assertEqual(0, batches.running_here(), "nothing begun")
+        self.assertEqual(3, self.delete(chosen)["changed"], "asked again, it deletes the photos the paths are now")
+
+    def test_what_names_no_photos_by_path_is_a_400_with_its_sentence_and_nothing_goes(self):
+        one = self.native(self.ids[0])
+        refused = {
+            "more than may be named": ({"paths": [one, self.native(self.ids[1]), self.native(self.ids[2])]}, "at most 2 may be named"),
+            "not text": ({"paths": [one, self.ids[1]]}, "as text"),
+            "not a list": ({"paths": one}, "a list of photos' paths"),
+            "a photo twice": ({"paths": [one, one.replace(os.sep, "/").upper()]}, "names a photo twice"),
+            "with ids": ({"paths": [one], "ids": [self.ids[1]]}, "one of them, not two"),
+            "with a source": ({"paths": [one], "source": {"kind": "all"}}, "one of them, not two"),
+            "with excluded": ({"paths": [one], "excluded": [self.ids[1]]}, "goes with a source"),
+        }
+        with mock.patch.object(selection, "MAX_LISTED", 2):
+            for what, (chosen, sentence) in refused.items():
+                with self.subTest(what):
+                    self.assertIn(sentence, self.check(chosen, expect=400)["error"])
+                    self.assertIn(sentence, self.delete(chosen, "0" * 64, expect=400)["error"])
+        with mock.patch.object(batches, "MAX_BATCH", 2):
+            over = {"paths": [self.native(photo_id) for photo_id in self.ids[:3]]}
+            self.assertIn("Select up to 2 photos at a time (3 are selected)", self.check(over, expect=400)["error"])
+        self.assertEqual(([], self.ids), (self.sent, self.held(self.ids)))
+
+    def test_a_photo_on_a_share_that_does_not_answer_is_an_error_and_the_others_go(self):
+        away, real = paths.key(self.native(self.ids[1])), shares.stamp_of
+        with mock.patch.object(shares, "stamp_of", lambda path: shares.UNANSWERED if paths.key(path) == away else real(path)):
+            done = self.delete({"paths": [self.native(photo_id) for photo_id in self.ids[:3]]})
+        self.assertEqual((2, 1), (done["changed"], done["error_count"]))
+        self.assertEqual((self.ids[1], "p001.jpg", file_changes.AWAY_WHY), tuple(done["errors"][0][key] for key in ("id", "name", "why")))
+        self.assertEqual([self.ids[1]], self.held(self.ids[:3]))
+
+    def test_cancel_part_way_stops_after_the_chunk_and_the_rest_stay(self):
+        def cancel(n):
+            if n == 10:
+                ticket = self.client.get("/api/activity/batches").get_json()["batches"][0]["ticket"]
+                self.app.test_client().post("/api/activity/batches/cancel", json={"library": self.library.name, "ticket": ticket})
+        self.on_recycle = cancel
+        done = self.delete({"paths": [self.native(photo_id) for photo_id in self.ids]})
+        self.assertEqual((batches.CHUNK, self.PHOTOS - batches.CHUNK), (done["changed"], done["error_count"]))
+        self.assertIn("stopped as asked", done["errors"][0]["why"])
+        self.assertEqual(self.ids[batches.CHUNK:], self.held(self.ids), "the first chunk went, the rest are kept")
 
 
 if __name__ == "__main__":
