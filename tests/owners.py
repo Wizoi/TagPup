@@ -206,7 +206,7 @@ _SCENARIO_FILES = {
     "V4": "test_one_gpu_at_a_time test_one_gpu_jobs",
     "V5": "test_selection_scenarios test_photos_with_no_tag",
     "V6": "test_models_released_when_idle",
-    "V7": "test_selection_scenarios test_a_view_of_photos_or_videos_alone scenario-a-view-of-photos-or-videos-alone",
+    "V7": "test_selection_scenarios test_bulk_edits test_a_view_of_photos_or_videos_alone scenario-a-view-of-photos-or-videos-alone",
     "V8": "test_library_views_scenarios",
     "V9": "test_suggest_then_apply_all",
     "V11": "test_switching_a_librarys_face_model",
