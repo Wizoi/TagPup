@@ -372,6 +372,28 @@ class ABakeIsWritten(BakeCase):
                     self.assertTrue(et.get_tags([a], tags=["XMP:HasExtendedXMP"])[0].get("XMP:HasExtendedXMP"))
                 self.assertGreater(os.path.getsize(a), 80 * 1024)
 
+    def test_a_tag_added_to_a_photo_whose_bake_spans_extended_xmp_is_rewritten_and_keeps_its_bake(self):
+        # A photo holding an extended XMP segment is never the own writer's to patch (in_place._header_of refuses it):
+        # a tag added, and its undo, are ExifTool's rewrite, which carries the extended XMP whole.
+        a = self.make_read("a.jpg")
+        values = self.values(60)
+        self.assertEqual((1, []), (lambda done: (done.changed, done.errors))(self.bake([a], values)))
+
+        def extended():
+            return containers.read(io.BytesIO(bytes_of(a))).of_kind("xmp-extension")
+        self.assertTrue(extended(), "60 faces no longer span an extended XMP")
+        with mock.patch.object(file_journal, "save_patch", wraps=file_journal.save_patch) as saved:
+            added = self.add([a])
+            self.assertEqual((1, [], 0), (added.changed, added.errors, saved.call_count), "patched, or not written")
+            self.assertEqual(["Beach", "Harbour"], keywords_of(a))
+            self.assertTrue(extended())
+            self.assert_baked(a, values, 60)
+            undone = self.undo(added.details["change"])
+            self.assertEqual((1, [], 0), (undone.changed, undone.errors, saved.call_count))
+        self.assertEqual(["Beach"], keywords_of(a))
+        self.assertTrue(extended())
+        self.assert_baked(a, values, 60)
+
     def test_regions_another_program_wrote_before_settling_are_a_conflict_not_overwritten(self):
         a = self.make_read("a.jpg")
         change = self.crash("file writing", [a], self.values(2))
