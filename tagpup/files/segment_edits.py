@@ -11,8 +11,10 @@ Windows Tags (fields.CLIP_OUTSIDE_XMP) are no XMP: clip_patch frees them or give
 
 `new_header(layout, header, values)` is (the header with only its edited segments' bodies changed, the fields left
 stale), or None when the write is not a patch -- a field the own writer does not write, a value it cannot spell, a
-segment an editor refuses or that the change does not fit, a change for a segment the photo lacks -- and the caller
-writes the file whole, as ExifTool does, nothing written here. Every marker and length byte is the header's; a segment
+segment an editor refuses or that the change does not fit, a change for a segment the photo lacks, a photo whose IFD0
+holds an XMP packet of its own (tag 0x02BC, ApplicationNotes: Windows Live Photo Gallery writes one beside the APP1
+packet, and ExifTool's read answers its copy, so a patch of the APP1 packet alone would read back as not written; #3108)
+-- and the caller writes the file whole, as ExifTool does, updating both packets; nothing written here. Every marker and length byte is the header's; a segment
 never grows (no `grow`).
 
 What it writes (DECISIONS 2026-11-03, A KEYWORD OR CAPTION SAVE WRITES THE XMP COPY ONLY):
@@ -48,6 +50,8 @@ _BAGS = frozenset(name for name, (_uri, _local, form) in xmp_packet.PROPERTIES.i
 _ORIENTATIONS = frozenset({"Orientation", "tiff:Orientation"})
 _XMP_DATES = frozenset({"exif:DateTimeOriginal", "xmp:CreateDate"})
 #: A date as ExifTool reads one, XMP's included: its fraction and zone, when it has them, kept.
+#: The IFD0 tag of an XMP packet inside the EXIF (ApplicationNotes).
+_XMP_IN_IFD0 = 0x02BC
 _READ_DATE = re.compile(r"(\d{4}):(\d\d):(\d\d) (\d\d:\d\d:\d\d)(\.\d+)?([+-]\d\d:\d\d|Z)?\Z", re.ASCII)
 
 
@@ -158,11 +162,26 @@ def _edited(kind, segment, header, wanted):
     return start, segment.end, result.body
 
 
+def _xmp_in_ifd0(layout, header):
+    """Whether the IFD0 of the photo's EXIF segment holds an XMP packet (_XMP_IN_IFD0); read only as far as IFD0's tag
+    list, whatever the write changes. False with no EXIF segment, and for one whose TIFF header or IFD0 table cannot be
+    read: the editors decide those as before."""
+    (segment,) = layout.of_kind("exif") or (None,)
+    if segment is None:
+        return False
+    tiff = header[segment.offset + 4 + len(containers.EXIF_HEAD):segment.end]
+    head = containers.tiff_head(tiff)
+    found = head and containers.ifd(tiff, head[1], head[0])
+    return bool(found) and any(entry[0] == _XMP_IN_IFD0 for entry in found[0])
+
+
 def new_header(layout, header, values):
     """(`header` with `values` written into its segments, the fields of `values` left stale), or None for a write that
     is not a patch. `layout` is the containers.Jpeg of `header`, the bytes up to its first scan's header's end, as
     `in_place._header_of` answers them: it refuses a header holding two segments of a patched kind, so none comes here."""
     try:
+        if _xmp_in_ifd0(layout, header):
+            raise _NotAPatch("IFD0 holds an XMP packet (0x02BC): a patch of the APP1 packet alone would leave it stale.")
         stale = stale_of(values)
         by_kind = _changes({field: texts for field, texts in values.items() if field not in stale})
         written = bytearray(header)
