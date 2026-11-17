@@ -33,7 +33,7 @@ import {
     updateSaveButton
 } from './edits.js';
 import {
-    countSaid, markOpenRow, renderFileList, scanFolder, showFolderView, updateListStats, updatePhotoPosition,
+    countSaid, markOpenRow, nextOf, renderFileList, scanFolder, showFolderView, updateListStats, updatePhotoPosition,
 } from './folder.js';
 import { removeFromSelection } from './selected.js';
 import { applyPhotoStale, holdDeletes } from './stale.js';
@@ -910,7 +910,7 @@ export function deleteActivePhoto() {
             lib.activeId = null;
             removeFromSelection([path]);
             forgetPhoto(gone.id);
-            const nextId = lib.ids[at] !== undefined ? lib.ids[at] : lib.ids[at - 1];
+            const nextId = nextOf(lib.ids, at);
             if (nextId === undefined) backToView();
             else openLibraryPhoto(nextId);
             statusDot.className = 'status-indicator-dot';
@@ -949,7 +949,7 @@ export function deleteActivePhoto() {
                 showFolderView();
             } else if (wasOpen) {
                 // Another photo opened meanwhile stays open.
-                const nextPhoto = state.folderPhotos[at] || state.folderPhotos[at - 1];
+                const nextPhoto = nextOf(state.folderPhotos, at);
                 selectPhoto(nextPhoto.path);
             }
 

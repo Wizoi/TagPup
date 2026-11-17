@@ -488,6 +488,7 @@ function syncFolderThenScan(folder) {
     ).then(([kind, sentence]) => {
         state.folderRefresh = null;
         btnRefreshList.disabled = false;
+        lockBulkControls();     // unless a delete began while the sync was out: it holds the Refresh (bulk-run.js)
         if (state.library || !samePath(state.scannedFolder, folder)) {
             // A view opened meanwhile leaves the line it was given; it does not keep saying it is checking.
             if (state.library && statusText.textContent === 'Checking this folder...') setStatus('ready', 'Ready');

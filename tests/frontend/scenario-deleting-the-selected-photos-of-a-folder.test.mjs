@@ -6,8 +6,10 @@
  * photo open among them closes onto the next one still listed. A photo the delete left (a share that did not answer, a file
  * not indexed yet) stays listed and selected; a write that stopped part-way (a 500) is followed the same; a clip played among
  * them stops first and plays again only if it stayed. Another folder or a view opened while it runs is left alone (#532). Rapid
- * clicks ask once; one delete at a time on a page, the panel's one-photo Delete included (bulk-run.js bulkBusy); in a folder
- * looked at without adding it (Just look) the button is shown inert with its sentence and a click sends nothing.
+ * clicks ask once; one delete at a time on a page, the panel's one-photo Delete included (bulk-run.js bulkBusy), and a delete
+ * the panel's began while this one was being asked says why nothing was deleted; the sidebar's Refresh is off while it runs;
+ * the status line says how it ended once the folder is read again. In a folder looked at without adding it (Just look) the
+ * button is shown inert with its sentence and a click sends nothing.
  *
  * The replies of the delete come from tests/frontend/fixtures/batches.json, written from the real routes
  * (tests/test_batch_strip_replies.py). The folder is invented; the real library is photographs of real people, many of them minors.
@@ -44,6 +46,9 @@ const names = (paths) => [...paths].map((path) => path.split("\\").pop());
 const button = (ctx) => el(ctx, "btn-delete-selection");
 const BIN_SENTENCE = "A bulk edit is being written (see the strip at the top). Wait for it to finish.";
 const ONE_DELETE_OUT = "A photo is being deleted; wait for it to finish.";
+const statusLine = (ctx) => el(ctx, "status-text").textContent;
+const stripSaid = (ctx) => ctx.document.querySelector(".batch-strip-sentence").textContent;
+const refresh = (ctx) => el(ctx, "btn-refresh-list");
 
 /**
  * The page in Organize on FOLDER. The server's files are `ctx.files` (what a scan lists); a delete takes `ctx.deletes` off them
@@ -125,6 +130,8 @@ describe("I13: deleting the selected photos of a folder", () => {
       .map((key) => ctx.window.localStorage.getItem(key)).join("");
     assert.ok(!kept.includes("IMG_0001.jpg") && kept.includes("IMG_0004.jpg"), "the kept scan is the new one");
     assert.ok(button(ctx).classList.contains("hidden"), "nothing selected: the button is not shown");
+    assert.match(stripSaid(ctx), /^Deleted 3 photos/);
+    assert.equal(statusLine(ctx), stripSaid(ctx), "the status line says how it ended, not Ready");
   });
 
   test("a file not indexed yet is said in the question and left; a photo on a share that did not answer stays listed and selected", async (t) => {
@@ -154,7 +161,9 @@ describe("I13: deleting the selected photos of a folder", () => {
     assert.equal(scansOf(ctx, FOLDER).length, before + 1);
     assert.deepEqual(listed(ctx), ["IMG_0002.jpg", "IMG_0003.jpg", "IMG_0004.jpg", "CLIP_0005.mp4"]);
     assert.deepEqual(names(ctx.state.selectedThumbnails), ["IMG_0002.jpg"]);
-    assert.match(ctx.document.querySelector(".batch-strip-sentence").textContent, /The library stopped answering\./, "the strip says why");
+    assert.match(stripSaid(ctx), /The library stopped answering\./, "the strip says why");
+    await ctx.settle(60);
+    assert.equal(statusLine(ctx), "The library stopped answering.", "and the status line, once the folder is read again");
   });
 
   test("a clip playing among them stops before the request; deleted, it is not played again", async (t) => {
@@ -216,6 +225,8 @@ describe("I13: deleting the selected photos of a folder", () => {
     await ctx.settle(120);
     assert.equal(calls(ctx, "/api/folder/scan").length, scans, "no folder is read for a delete asked in another");
     assert.ok(ctx.state.library, "the view stays open");
+    assert.equal(refresh(ctx).disabled, false);
+    assert.equal(refresh(ctx).title, "Ask the library for this view again", "the view's Refresh, not the folder's put back");
   });
 
   test("four clicks while the first is out: one check, one question, one delete", async (t) => {
@@ -291,6 +302,30 @@ describe("I13: deleting the selected photos of a folder", () => {
     assert.equal(button(ctx).disabled, false, "the panel's delete answered: the selection's Delete is back");
   });
 
+  test("the panel's Delete clicked while the selection's check is out: the selection's, confirmed, says why it deletes nothing", async (t) => {
+    const ctx = await organize(t);
+    await openPhoto(ctx, "IMG_0004.jpg");
+    pick(ctx, "IMG_0001.jpg");
+    let answerCheck;
+    ctx.server.first("/api/library/selection/delete-check", () => new Promise((resolve) => { answerCheck = () => resolve(ctx.where); }));
+    let answerPanel;
+    ctx.server.first("/api/photo/delete", () => new Promise((resolve) => { answerPanel = () => resolve({ success: true }); }));
+    click(ctx.window, button(ctx));
+    await ctx.until(() => typeof answerCheck === "function");
+    click(ctx.window, el(ctx, "btn-delete-photo"));
+    await ctx.until(() => typeof answerPanel === "function");
+    assert.deepEqual(ctx.alerts, [], "the panel's Delete went ahead: nothing of this page was busy");
+    answerCheck();
+    await ctx.settle(80);
+    assert.equal(ctx.questions.length, 2, "the panel's question and the selection's");
+    assert.equal(calls(ctx, "/api/library/bulk-edit").length, 0, "one delete at a time");
+    assert.deepEqual(ctx.alerts, [ONE_DELETE_OUT], "said, not silently dropped");
+    assert.equal(statusLine(ctx), ONE_DELETE_OUT);
+    answerPanel();
+    await ctx.settle(80);
+    assert.equal(button(ctx).disabled, false, "the panel's delete answered: the selection's Delete is back");
+  });
+
   test("in a folder: hidden with nothing selected, shown by a selection, off with the busy sentence while a delete runs", async (t) => {
     const ctx = await organize(t);
     assert.ok(button(ctx).classList.contains("hidden"), "nothing selected");
@@ -302,10 +337,14 @@ describe("I13: deleting the selected photos of a folder", () => {
     await ctx.until(() => typeof ctx.finish === "function");
     assert.equal(button(ctx).disabled, true);
     assert.equal(button(ctx).title, BIN_SENTENCE);
+    assert.equal(refresh(ctx).disabled, true, "the sidebar's Refresh is off: its scan would replace the delete's");
+    assert.equal(refresh(ctx).title, BIN_SENTENCE);
     ctx.finish();
     await ctx.until(() => listed(ctx).length === 4);
     await ctx.settle(60);
     assert.ok(button(ctx).classList.contains("hidden"), "the one selected went: nothing selected");
     assert.equal(button(ctx).disabled, false);
+    assert.equal(refresh(ctx).disabled, false);
+    assert.equal(refresh(ctx).title, "Refresh files list");
   });
 });

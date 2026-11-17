@@ -12,7 +12,7 @@ import { api } from './common/api.js';
 import { samePath } from './common/paths.js';
 import { upper } from './hooks.js';
 import { state } from './state.js';
-import { btnBulkAddPeople, btnBulkAddTags, btnDeleteSelection, folderSelectionSidebar } from './elements.js';
+import { btnBulkAddPeople, btnBulkAddTags, btnDeleteSelection, btnRefreshList, folderSelectionSidebar } from './elements.js';
 import { setStatus } from './status.js';
 import { forgetFolderCaches } from './cache.js';
 import { hasUnsavedEdits } from './edits.js';
@@ -41,6 +41,11 @@ const ONE_DELETE_OUT = 'A photo is being deleted; wait for it to finish.';
 /** Why a bulk control does nothing now: what is being written (bulkBusy). */
 export function busySentence() {
     return state.bulk.running ? BUSY_SENTENCE : ONE_DELETE_OUT;
+}
+
+/** Is this title one lockBulkControls put on a held control (so not the control's own)? */
+function heldTitle(title) {
+    return title === BUSY_SENTENCE || title === ONE_DELETE_OUT;
 }
 
 /** Why the selection's Delete does nothing in a folder the library does not hold (Just look): it has no row to delete by. */
@@ -74,14 +79,16 @@ export function paintDeleteSelection() {
 /**
  * While a delete or an edit is written, the controls that would start another are disabled with a tooltip saying why (the server
  * would refuse the second: this says so first), in a library view and in a folder alike; a folder's own tag writes ask the same
- * question when clicked (selection.js confirmBulkWrite).
+ * question when clicked (selection.js confirmBulkWrite). The sidebar's Refresh too: its scan would take the place of a folder
+ * Delete's follow (folder.js folderPhotosDeleted, one `state.afterScan`). A title the page gives a held control meanwhile (a view
+ * opened: library-view.js showChrome) is the one put back.
  */
 export function lockBulkControls() {
     const lock = bulkBusy();
-    for (const button of [btnBulkAddPeople, btnBulkAddTags]) {
+    for (const button of [btnBulkAddPeople, btnBulkAddTags, btnRefreshList]) {
         if (!button) continue;
         if (lock) {
-            if (button.dataset.bulkTitle === undefined) button.dataset.bulkTitle = button.title || '';
+            if (button.dataset.bulkTitle === undefined || !heldTitle(button.title)) button.dataset.bulkTitle = button.title || '';
             button.disabled = true;
             button.title = busySentence();
         } else if (button.dataset.bulkTitle !== undefined) {
@@ -108,14 +115,15 @@ export function lockBulkControls() {
  * What the page shows of photos an edit wrote: the counts, the cards, the open photo (unless it has edits of its own), the selection's
  * tally. A Delete's photos are gone: the view's order is read again instead (library-view.js photosDeleted), which drops them from the
  * view and the selection, and closes the open photo if it was one of them. A folder's Delete (`folder`, the folder it was asked in)
- * reads that folder again when it is still the one open (folder.js folderPhotosDeleted); the folders kept in this browser are
- * forgotten first, so another folder opened meanwhile is read afresh when it is next opened (#532). Returns the re-read's promise.
+ * reads that folder again when it is still the one open (folder.js folderPhotosDeleted), and says `said` (how it ended, {kind,
+ * sentence}) again once the list is on screen; the folders kept in this browser are forgotten first, so another folder opened
+ * meanwhile is read afresh when it is next opened (#532). Returns the re-read's promise.
  */
-function refreshAfterWrites(op, folder) {
+function refreshAfterWrites(op, folder, said) {
     forgetFolderCaches();
     state.tally.key = '';          // what the photos carry has changed: the selection is counted again
     upper.navigatorCountsChanged({ now: true });
-    if (folder) return folderPhotosDeleted(folder);
+    if (folder) return folderPhotosDeleted(folder, said);
     if (!state.library) return undefined;
     if (op === 'delete') return upper.photosDeleted();
     refreshHeldCards();
@@ -142,7 +150,14 @@ function failed(sentence) {
  */
 export async function runBulk({ op, selection, params, desc, picked, folder }) {
     const bulk = state.bulk;
-    if (bulkBusy()) return { ok: false, why: busySentence() };
+    if (bulkBusy()) {
+        // Free when the selection was read, busy now: the panel's Delete began while this edit's check or question was out
+        // (bulk-edit.js). Nothing is sent, and that is said, as every refusal is.
+        const why = busySentence();
+        setStatus('error', why, { transient: false });
+        alert(why);
+        return { ok: false, why };
+    }
     bulk.running = true;
     lockBulkControls();
     setStatus('busy', `${desc.verb} ${desc.what} ${desc.prep} ${itemsOf(picked, desc.kinds)}...`, { transient: false });
@@ -160,7 +175,7 @@ export async function runBulk({ op, selection, params, desc, picked, folder }) {
         const why = (body && body.error) || `TagPup answered ${res.status}`;
         failed(why);
         // A refusal before anything was written changes nothing; the error of a write that stopped part-way may have.
-        const reread = res.status >= 500 ? refreshAfterWrites(op, folder) : undefined;
+        const reread = res.status >= 500 ? refreshAfterWrites(op, folder, { kind: 'error', sentence: why }) : undefined;
         return { ok: false, why, reread };
     }
     bulk.running = false;
@@ -175,7 +190,8 @@ export async function runBulk({ op, selection, params, desc, picked, folder }) {
     const ended = stopped || endedSentence(doneWords(desc, body.changed || 0, body.for_good || 0), body) + wider;
     const errors = body.error_count || 0;
     showEnded({ text: ended, problem: errors > 0, errors: stopped ? [] : body.errors, errorCount: stopped ? 0 : errors });
-    setStatus(errors > 0 ? 'error' : 'ready', ended, { transient: false });
-    const reread = body.changed || body.unchanged || body.skipped_missing ? refreshAfterWrites(op, folder) : undefined;
+    const said = { kind: errors > 0 ? 'error' : 'ready', sentence: ended };
+    setStatus(said.kind, said.sentence, { transient: false });
+    const reread = body.changed || body.unchanged || body.skipped_missing ? refreshAfterWrites(op, folder, said) : undefined;
     return { ok: true, total: body.total, reread };
 }
