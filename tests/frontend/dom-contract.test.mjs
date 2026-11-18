@@ -16,7 +16,7 @@ import { test, describe } from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
-import { REPO_ROOT, PAGES, pageSource } from "./harness.mjs";
+import { REPO_ROOT, PAGES, htmlOf, pageSource } from "./harness.mjs";
 
 /** Ids created by the script itself rather than declared in the markup. */
 const DYNAMIC_IDS = new Set([]);
@@ -25,7 +25,7 @@ const DYNAMIC_IDS = new Set([]);
 function readApp(name) {
   return {
     js: pageSource(name),
-    html: fs.readFileSync(path.join(REPO_ROOT, PAGES[name].dir, "index.html"), "utf8"),
+    html: fs.readFileSync(path.join(REPO_ROOT, PAGES[name].dir, htmlOf(PAGES[name])), "utf8"),
   };
 }
 
@@ -56,7 +56,7 @@ for (const [name, app] of Object.entries(PAGES)) {
       assert.deepEqual(
         dangling,
         [],
-        `${app.dir}'s modules look up ${dangling.length} element(s) that ${app.dir}/index.html ` +
+        `${app.dir}'s modules look up ${dangling.length} element(s) that ${app.dir}/${htmlOf(app)} ` +
           `does not define: ${dangling.join(", ")}. Either the markup was removed and the ` +
           `script was not, or the feature was never finished -- delete the dead lookup, or ` +
           `add the element.`
@@ -64,10 +64,11 @@ for (const [name, app] of Object.entries(PAGES)) {
     });
 
     test("the check is actually looking at something", () => {
-      // A regex that stopped matching would make the guard above pass silently.
+      // A regex that stopped matching would make the guard above pass silently. The phone's shell is small.
       const { js, html } = readApp(name);
-      assert.ok(referencedIds(js).length > 20, "no getElementById calls parsed");
-      assert.ok(declaredIds(html).size > 20, "no ids parsed from the markup");
+      const least = name === "phone" ? 4 : 20;
+      assert.ok(referencedIds(js).length > least, "no getElementById calls parsed");
+      assert.ok(declaredIds(html).size > least, "no ids parsed from the markup");
     });
   });
 }

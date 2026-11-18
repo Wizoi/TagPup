@@ -38,7 +38,7 @@ const VOCABULARY_JS = fs.readFileSync(path.join(REPO_ROOT, "web", "common", "voc
 const VOCABULARY = ["leafOf", "rootOf", "normalizeTag", "ordering"];
 
 /** Helpers that split something that is not a tag: api.js reading the library out of the URL. */
-const NOT_TAGS = ["libraryIn"];
+const NOT_TAGS = ["libraryIn", "pageFileIn"];
 
 /** Each module of a page, its lines, as the browser loads them. */
 function modulesOf(app) {

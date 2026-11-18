@@ -4,7 +4,9 @@
 
 Writes web/common/icons/tagpup.ico and tagtuner.ico (16 to 256 pixels). They are
 committed; run this again only to change them. scripts/install_app.py puts them beside
-the launchers and gives the shortcuts it makes these icons.
+the launchers and gives the shortcuts it makes these icons. It also writes TagPup's at
+the two sizes Chrome on Android asks a home-screen page for, beside the phone's page
+(web/tagpup/mobile-icon-192.png and -512.png, named by web/tagpup/manifest.webmanifest).
 """
 import os
 
@@ -15,6 +17,8 @@ FOLDER = os.path.join(ROOT, "web", "common", "icons")
 COLOURS = {"tagpup": (232, 131, 58), "tagtuner": (42, 157, 143)}
 SIZES = [(16, 16), (24, 24), (32, 32), (48, 48), (64, 64), (128, 128), (256, 256)]
 SCALE = 4   # drawn large and scaled down, for smooth edges
+PHONE = os.path.join(ROOT, "web", "tagpup")
+PHONE_SIZES = (192, 512)
 
 
 def draw(colour):
@@ -34,14 +38,22 @@ def draw(colour):
     pen.ellipse(box(104, 120, 204, 204), fill=white)
     for x0, y0 in ((86, 88), (118, 58), (160, 58), (192, 88)):
         pen.ellipse(box(x0, y0, x0 + 34, y0 + 44), fill=white)
-    return image.resize((256, 256), Image.LANCZOS)
+    return image
+
+
+def scaled(colour, size):
+    return draw(colour).resize((size, size), Image.LANCZOS)
 
 
 def main():
     os.makedirs(FOLDER, exist_ok=True)
     for name, colour in COLOURS.items():
         path = os.path.join(FOLDER, name + ".ico")
-        draw(colour + (255,)).save(path, sizes=SIZES)
+        scaled(colour + (255,), 256).save(path, sizes=SIZES)
+        print(path)
+    for size in PHONE_SIZES:
+        path = os.path.join(PHONE, "mobile-icon-%d.png" % size)
+        scaled(COLOURS["tagpup"] + (255,), size).save(path, optimize=True)
         print(path)
 
 

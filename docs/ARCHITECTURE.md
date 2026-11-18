@@ -355,6 +355,16 @@ same transaction (`store/derived.py`, `people.tree_edit`).
   settings and history dialogs.
 - `web/activity/` is the Activity page; `web/tagpup/` and `web/tuner/` have a `main.js` that only wires the
   page, plus one module per feature, and their mutable state in one `state` object.
+- `web/common/theme.css` is the one place the dark theme's tokens live (colours, fonts and the card
+  shadow, as `:root` variables): TagPup's and TagTuner's `style.css` and the phone's `mobile.css` each import it, none holds a copy.
+- The phone's page is `web/tagpup/mobile.html` beside TagPup's `index.html`, at `/<library>/mobile.html`
+  (docs/plans/phone-viewer.md): `mobile.js` only wires it, `mobile-state.js` holds its state, `mobile-screens.js` makes
+  each screen a history step (Back goes up a screen), `mobile-library.js` is its list of libraries; it imports
+  `api.js`, `library.js` and `roots-banner.js` as they are, so another library is another page and an update shows
+  the same banner. `tagpup/web/app.py` `PHONE_FILES` serves its html, css, manifest and icons (TagPup's alone);
+  its modules are served as every page module is. It has no gear, no link to TagTuner and no `/api/apps` (through
+  Tailscale Serve the other app's address cannot be built from the request), and as of cut 1 no browsing,
+  photo or editing screens.
 - No build step. Tests import the modules (`node --test tests/frontend/*.test.mjs`), jsdom loads a page's
   modules in import order for whole flows (`tests/frontend/harness.mjs`).
 

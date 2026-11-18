@@ -1,0 +1,42 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+    <meta name="theme-color" content="#0f172a">
+    <title>TagPup</title>
+    <link rel="manifest" href="manifest.webmanifest">
+    <link rel="icon" type="image/png" sizes="192x192" href="mobile-icon-192.png">
+    <link rel="stylesheet" href="mobile.css">
+    <link rel="stylesheet" href="common/roots-banner.css">
+    <link rel="stylesheet" href="common/dark-select.css">
+</head>
+<body>
+    <div id="roots-banner" class="roots-banner hidden" role="alert">
+        <strong>This computer does not know where this library keeps its photos.</strong>
+        <span class="roots-banner-message"></span>
+    </div>
+
+    <header class="bar">
+        <button type="button" id="bar-back" class="bar-back hidden" aria-label="Back">&#8592;</button>
+        <h1 id="bar-title" class="bar-title">TagPup</h1>
+        <button type="button" id="bar-library" class="bar-library">Libraries</button>
+    </header>
+
+    <main>
+        <section class="screen hidden" data-screen="browse">
+            <p class="screen-note">Browsing this library's photos comes here.</p>
+        </section>
+
+        <section class="screen hidden" data-screen="library" data-title="Libraries">
+            <div id="library-list" class="library-list"></div>
+            <div id="library-problem" class="problem hidden" role="alert">
+                <p>Could not load the libraries.</p>
+                <button type="button" id="library-retry" class="problem-retry">Try again</button>
+            </div>
+        </section>
+    </main>
+
+    <script type="module" src="mobile.js"></script>
+</body>
+</html>

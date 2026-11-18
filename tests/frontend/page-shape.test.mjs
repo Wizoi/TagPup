@@ -9,10 +9,12 @@ import { test, describe } from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
-import { REPO_ROOT, pageModules } from "./harness.mjs";
+import { REPO_ROOT, COMMON_DIR, pageModules } from "./harness.mjs";
 
 const LIMIT = 1000;
 const PAGES = { tagpup: path.join(REPO_ROOT, "web", "tagpup"), tuner: path.join(REPO_ROOT, "web", "tuner") };
+/** The stylesheets that import the one theme (web/common/theme.css), each [its page's folder, its name]. */
+const THEMED = [["tagpup", "style.css"], ["tagpup", "mobile.css"], ["tuner", "style.css"]];
 
 /** A function's text without its name and spelling of export, async or spacing: what is left is what it does. */
 export function bodyOf(text, name) {
@@ -33,11 +35,12 @@ const KNOWN_PAIRS = [
   ["startNamingFacesInFolder", "startNamingFaces", "each page's one call of the shared dialog (web/common/name-faces.js)"],
 ];
 
-/** Each top-level function of a page's own modules, by name, as written. */
-function functionsOf(pageDir) {
+/** Each top-level function of a page's own modules, by name, as written; `html` the page's file, `leftOut` modules not counted. */
+function functionsOf(pageDir, html = "index.html", leftOut = new Set()) {
   const found = new Map();
-  for (const module of pageModules(pageDir)) {
+  for (const module of pageModules(pageDir, COMMON_DIR, html)) {
     if (path.dirname(module.file) !== pageDir) continue; // web/common/ is shared by design
+    if (leftOut.has(module.file)) continue;
     const lines = fs.readFileSync(module.file, "utf8").split("\n");
     for (let i = 0; i < lines.length; i++) {
       const start = lines[i].match(/^(?:export\s+)?(?:async\s+)?function\s*\*?\s*([\w$]+)/);
@@ -71,6 +74,17 @@ describe("the pages' shape", () => {
     assert.deepEqual(twice, []);
   });
 
+  test("the phone's page writes none of the desktop pages' functions again; a shared one belongs in web/common/", () => {
+    // Its own modules only: one it imports from the desktop page (vgrid.js, from cut 2) is the desktop's, not a copy.
+    const desktop = new Set(pageModules(PAGES.tagpup).map((m) => m.file));
+    const phone = functionsOf(PAGES.tagpup, "mobile.html", desktop);
+    assert.ok(phone.size > 0, "no function of the phone's page was read; this checks nothing");
+    for (const [page, functions] of [["tagpup", functionsOf(PAGES.tagpup)], ["tuner", functionsOf(PAGES.tuner)]]) {
+      const twice = copiesBetween(phone, functions).map(([a, b]) => `${a}: ${phone.get(a).where} and ${b}: ${functions.get(b).where}`);
+      assert.deepEqual(twice, [], `copied from ${page}'s page`);
+    }
+  });
+
   test("the check finds a copy, reformatted or under another name", () => {
     // Worthless if it matches nothing. #146: TagPup's baseName and TagTuner's basename were one function twice.
     const make = (name, text) => new Map([[name, { text, where: name }]]);
@@ -84,5 +98,16 @@ describe("the pages' shape", () => {
   test("a function that calls itself is still the same function under another name", () => {
     const make = (name) => new Map([[name, { text: `function ${name}(n) { return n ? ${name}(n - 1) : 0; }`, where: name }]]);
     assert.deepEqual(copiesBetween(make("countDown"), make("down")), [["countDown", "down"]]);
+  });
+
+  test("the theme's colours and fonts are defined once, in web/common/theme.css, and each page's stylesheet imports it first", () => {
+    const css = (...parts) => fs.readFileSync(path.join(REPO_ROOT, "web", ...parts), "utf8").replace(/\/\*[\s\S]*?\*\//g, "");
+    const roots = (text) => (text.match(/:root\s*\{/g) || []).length;
+    assert.equal(roots(css("common", "theme.css")), 1, "web/common/theme.css defines no tokens");
+    for (const [folder, sheet] of THEMED) {
+      const text = css(folder, sheet);
+      assert.equal(roots(text), 0, `web/${folder}/${sheet} defines tokens of its own`);
+      assert.match(text.trimStart(), /^@import url\("common\/theme\.css"\);/, `web/${folder}/${sheet} does not import the theme first`);
+    }
   });
 });

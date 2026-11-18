@@ -6,7 +6,7 @@
  * is `beforeLeaving(go, stay)`, which TagTuner, having no edits to lose, leaves as
  * going at once. TagPup's Change button, which closes the open folder, is TagPup's.
  */
-import { api, libraryIn } from './api.js';
+import { api, libraryIn, pageFileIn } from './api.js';
 import { ruleProblem } from './validate.js';
 import { enhanceSelect } from './library-picker.js';
 
@@ -33,12 +33,38 @@ export function rememberLibrary(name) {
  */
 export const VIEW_PARAMS = Object.freeze(['view', 'value', 'recursive', 'order', 'media']);
 
-/** The page's address for another library: its folder (?path) goes with it, a view of this library does not. */
-export function goToLibrary(name) {
+/**
+ * The same page's address for another library: the desktop's or the phone's (/<name>/mobile.html), with its folder
+ * (?path); a view of this library does not go with it.
+ */
+export function libraryAddress(name) {
     const params = new URLSearchParams(window.location.search);
     for (const own of VIEW_PARAMS) params.delete(own);
     const search = params.toString();
-    window.location.href = '/' + name + '/' + (search ? '?' + search : '');
+    return '/' + name + '/' + pageFileIn(window.location.pathname) + (search ? '?' + search : '');
+}
+
+/** Go to the same page on another library: another library is another page, never this one reset. */
+export function goToLibrary(name) {
+    window.location.href = libraryAddress(name);
+}
+
+/** The library this page's URL names, or '' for none; one named is remembered as the one opened last. */
+export function libraryOfThePage() {
+    const name = libraryIn(window.location.pathname);
+    if (name) rememberLibrary(name);
+    return name;
+}
+
+/**
+ * Where a page whose URL names no library goes: the library this browser opened last, while `listed` (the names
+ * /api/databases gives) still holds it; otherwise '' and it is forgotten, and the page asks for one.
+ */
+export function rememberedAndListed(listed) {
+    const remembered = rememberedLibrary();
+    if (remembered && listed.includes(remembered)) return remembered;
+    rememberLibrary(null);
+    return '';
 }
 
 /**
@@ -53,9 +79,7 @@ export function initDatabaseSelector(select, createButton, { beforeLeaving = (go
     // The list that opens is the page's own, not the browser's (library-picker.js, #909).
     const picker = enhanceSelect(select);
 
-    const activeDb = libraryIn(window.location.pathname);
-
-    if (activeDb) rememberLibrary(activeDb);
+    const activeDb = libraryOfThePage();
 
     api.json('/api/databases')
         .then(data => {
@@ -63,12 +87,11 @@ export function initDatabaseSelector(select, createButton, { beforeLeaving = (go
             if (!activeDb) {
                 // Nothing in the URL: the library this browser opened last, if it
                 // is still there; otherwise the picker, empty, asking for one.
-                const remembered = rememberedLibrary();
-                if (remembered && data.databases.includes(remembered)) {
+                const remembered = rememberedAndListed(data.databases);
+                if (remembered) {
                     goToLibrary(remembered);
                     return;
                 }
-                rememberLibrary(null);
                 const ask = document.createElement('option');
                 ask.value = '';
                 ask.textContent = 'Choose a library\u2026';
