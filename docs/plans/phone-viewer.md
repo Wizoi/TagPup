@@ -131,8 +131,8 @@ writer. A photo added or changed afterwards needs no command. One-offs: none. Mi
    desktop tests still pass unchanged, which proves the move). Scenario tests: add and remove a person and a keyword, a
    title save, a Date Taken save, a 409 from a changed file, a save lost to a dropped connection, a clip that will not
    play, an update during an edit.
-4. **Optional, the owner's call**: roles (a viewer who cannot write) per the Tailscale plan; add-to-home-screen icon and
-   manifest; a server cache for resized photos; offline reading.
+4. **Optional, the owner's call**: roles (a viewer who cannot write) per the Tailscale plan, only if family is given the
+   address; a server cache for resized photos; offline reading.
 
 Total new about 1,450 lines over three merges plus the moved lines (not new). Each merge removes a concept it replaces or
 says why (the two moves remove two copies the second page would otherwise have needed).
@@ -146,10 +146,16 @@ desktop), no rule written twice (tag rules, the write chain and swipe are import
 concept that could collapse, no branch without an instance, scenario tests owned and mapped (`tests/owners.py`), no open
 `data` or `wrong` finding.
 
-## Questions for the owner
+## Answered by the owner (2026-11-17)
 
-1. Is this the owner's phone only, or will family use it? If family, role cuts 1-2 of the Tailscale plan come before cut 3,
-   or the phone page is read-only until they do.
-2. Should the phone be able to remove a keyword or person at all (the safest first version adds only and edits text), or is
-   remove with an Undo toast wanted?
-3. Which phone (iPhone or Android) and its browser, so cut 0's look is on the real one.
+1. **The owner's own phone only** for now. The server's lack of roles is accepted for this; the role cuts stay optional
+   (cut 4) and are needed only if family is ever given the address.
+2. **Tags are worked with on the phone: add and remove**, people and keywords alike. Remove asks no confirmation but shows
+   an Undo toast for five seconds (the removal is held, not sent, until the toast ends or the page leaves), so a stray
+   touch is never a write.
+3. **Android**, Chrome. Consequences built into the cuts: the hardware/gesture Back goes up one screen (each screen is a
+   history entry: `pushState` for Grid, Photo and the sheet, so Back from a photo returns to the grid, not out of the
+   page); the add-to-home-screen icon and manifest (Chrome installs a web page as an app) is cheap and moves from cut 4 to
+   cut 1; the soft keyboard must not cover the add box (the sheet scrolls the input into view); date and time use the native
+   Chrome pickers; pull-to-refresh on the grid is the browser's, so the page's own "retry" is a button; text size follows
+   Android's font scale (rem units, no fixed pixel type). The look at today's page in cut 0 is made in Chrome on that phone.
