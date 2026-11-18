@@ -85,8 +85,9 @@ be sent to a phone.
   people; the keyword list wraps and scrolls inside the sheet; names are leaves, tags paths (`leafOf`, `rootOf`); a clip the browser cannot play
   shows its poster and "Play this on the PC" (Convert is the PC's).
 - Rapid taps: a second tap on a card or on Save while the first is in flight does nothing visible twice (the write chain).
-- Switching library mid-folder: the page resets its ids and state; a reply for the old library is dropped (`api.js` scopes by
-  library URL).
+- Switching library mid-folder: another library is a whole-page navigation to `/<name>/mobile.html` (`goToLibrary`), as
+  on the desktop page, so nothing of the old library is carried over or reset and no reply for it can land; an in-page
+  reset has no live instance and is not built.
 - An update while working: the existing "Reload this page" banner (`roots-banner.js`) appears; unsent edits stay in the
   sheet until the reload; the page is not reloaded for the owner.
 - Large text and small screens (320 to 430 px wide, portrait and landscape): no horizontal scroll; 44 px minimum tap
@@ -119,7 +120,7 @@ writer. A photo added or changed afterwards needs no command. One-offs: none. Mi
    `https://staleorange.tail66259a.ts.net:8090` -> 8090 (TagPup; the bare address goes to 8080, TagTuner) and
    `TAGPUP_ALLOWED_HOSTS` is set, so the phone opens TagPup at the `:8090` address. What remains is the owner's look at
    today's page in Chrome on the phone, written down before cut 2.
-1. **Integration (~250)**: serve `mobile.html` and `mobile.css`; `theme.css` split out of `style.css` (moved, not
+1. **Integration (~250). Built 2026-11-17** (scenario I14, `tests/frontend/scenario-opening-the-phone-page.test.mjs`): serve `mobile.html` and `mobile.css`; `theme.css` split out of `style.css` (moved, not
    copied); the `PAGES` entry and an entry-module name in `tests/frontend/harness.mjs` (it requires `main.js` today);
    the `OPEN` list in `tests/test_every_route_answers_this_pc_or_says_why.py`; `tests/test_web_app.py` for the new page;
    dom-contract and dark-select tests cover the new page; the shell: library picker, the update banner, the empty screen.
