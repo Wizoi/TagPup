@@ -1,27 +1,7 @@
 /* style.css - Standalone TagPup GUI styling */
 
-:root {
-    --bg-primary: #090d16;
-    --bg-secondary: #0f172a;
-    --bg-tertiary: #1e293b;
-    --border-color: rgba(255, 255, 255, 0.08);
-    --text-primary: #f8fafc;
-    --text-secondary: #94a3b8;
-    --text-muted: #64748b;
-    
-    --accent: #6366f1;
-    --accent-hover: #4f46e5;
-    --accent-glow: rgba(99, 102, 241, 0.15);
-    
-    --badge-unmatched: #f59e0b;
-    --badge-unmatched-bg: rgba(245, 158, 11, 0.15);
-    --badge-matched: #10b981;
-    --badge-matched-bg: rgba(16, 185, 129, 0.15);
-    
-    --card-shadow: 0 4px 20px -2px rgba(0, 0, 0, 0.4);
-    --font-heading: 'Outfit', sans-serif;
-    --font-body: 'Plus Jakarta Sans', sans-serif;
-}
+/* The dark theme's colours and fonts, shared with the phone's page (web/common/theme.css). */
+@import url("common/theme.css");
 
 * {
     box-sizing: border-box;
