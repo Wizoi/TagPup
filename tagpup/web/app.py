@@ -53,6 +53,17 @@ PAGE_FILES = {
 SCRIPT_TYPE = "application/javascript; charset=utf-8"
 STYLE_TYPE = PAGE_FILES["style.css"]
 
+#: The phone's page beside TagPup's (docs/plans/phone-viewer.md): its html and style, the manifest that lets the phone
+#: keep it on its home screen, and that manifest's icons. TagPup's alone, and never cached, as the page's own files.
+#: Its modules are mobile*.js, served as every page module is.
+PHONE_FILES = {
+    "mobile.html": PAGE_FILES["index.html"],
+    "mobile.css": STYLE_TYPE,
+    "manifest.webmanifest": "application/manifest+json",
+    "mobile-icon-192.png": "image/png",
+    "mobile-icon-512.png": "image/png",
+}
+
 #: What a module's name may be: a page's modules and the shared ones are all named so,
 #: and nothing else in their folders -- nor anything above them -- can be asked for.
 #: The router's pattern, so the two cannot drift (#165).
@@ -148,8 +159,9 @@ def app_urls():
 def _page_routes(app):
     """The page's index.html and style.css, its modules (/<name>.js) and the shared
     ones (/common/<name>.js), and the shared modules' stylesheets (/common/<name>.css:
-    the gear's and the tag editor's). The page asks for them relative to itself, so
-    each is asked for under the library's URL like every other request."""
+    the gear's and the tag editor's); TagPup's also the phone's page (PHONE_FILES).
+    The page asks for them relative to itself, so each is asked for under the
+    library's URL like every other request."""
     def send(folder, name, content_type):
         path = os.path.join(folder, name)
         if not os.path.isfile(path):
@@ -172,6 +184,10 @@ def _page_routes(app):
     app.add_url_rule("/", "index", lambda: send(page, "index.html", PAGE_FILES["index.html"]))
     app.add_url_rule("/index.html", "index_html", lambda: send(page, "index.html", PAGE_FILES["index.html"]))
     app.add_url_rule("/style.css", "style", lambda: send(page, "style.css", PAGE_FILES["style.css"]))
+    if app.config["APP_KIND"] == "tagpup":
+        for name, content_type in PHONE_FILES.items():
+            endpoint = "phone_" + name.replace(".", "_").replace("-", "_")
+            app.add_url_rule("/" + name, endpoint, lambda name=name, content_type=content_type: send(page, name, content_type))
     app.add_url_rule("/<name>.js", "script", lambda name: module(page, name))
     app.add_url_rule("/%s/<name>.js" % COMMON, "common_script", lambda name: module(app.config["COMMON"], name))
     app.add_url_rule("/%s/<name>.css" % COMMON, "common_style", lambda name: stylesheet(app.config["COMMON"], name))

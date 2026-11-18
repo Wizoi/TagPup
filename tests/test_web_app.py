@@ -9,12 +9,14 @@ read through its prefix; the folder-index flow stayed with test_database_context
 web/libraries.py's `os.path.exists` check in resolve() fails the 404 tests below.
 """
 import gc
+import json
 import os
 import sys
 import tempfile
 import unittest
 import uuid
 from unittest import mock
+from urllib.parse import urljoin
 
 from werkzeug.test import Client
 
@@ -171,6 +173,57 @@ class ThePage(unittest.TestCase):
             for name in ("api", "library", "paths", "vocabulary"):
                 self.assertEqual(200, app.test_client().get("/library/common/%s.js" % name).status_code, name)
             self.assertEqual(200, app.test_client().get("/library/style.css").status_code)
+
+
+class ThePhonesPage(unittest.TestCase):
+    """The phone's page beside TagPup's (docs/plans/phone-viewer.md): mobile.html, its style, and the manifest that
+    lets the phone keep it on its home screen, each under the library's URL as the desktop page is."""
+
+    FILES = {"mobile.html": "text/html", "mobile.css": "text/css", "manifest.webmanifest": "application/manifest+json",
+             "mobile-icon-192.png": "image/png", "mobile-icon-512.png": "image/png"}
+
+    def setUp(self):
+        self.app, _home = web_client.app_for(self, "tagpup")
+        self.client = self.app.test_client()
+
+    def test_each_file_is_served_uncached_as_what_it_is(self):
+        for name, mimetype in self.FILES.items():
+            reply = self.client.get("/library/" + name)
+            self.assertEqual(200, reply.status_code, name)
+            self.assertEqual(mimetype, reply.mimetype, name)
+            self.assertIn("no-store", reply.headers["Cache-Control"], name)
+            with open(os.path.join(tagpup_config.CODE_ROOT, "web", "tagpup", name), "rb") as handle:
+                self.assertEqual(handle.read(), reply.data, name)
+        self.assertEqual(200, self.client.get("/library/mobile.js").status_code)
+
+    def test_tagtuner_serves_no_phone_page(self):
+        app, _home = web_client.app_for(self, "tuner")
+        for name in self.FILES:
+            self.assertEqual(404, app.test_client().get("/library/" + name).status_code, name)
+
+    def test_a_bare_phone_page_is_sent_to_the_startup_librarys_phone_page(self):
+        for name in ("mobile.html", "mobile.css", "manifest.webmanifest"):
+            reply = self.client.get("/" + name)
+            self.assertEqual((302, "/library/" + name), (reply.status_code, reply.headers["Location"]), name)
+
+    def test_the_manifest_is_a_page_file_and_not_a_library_name(self):
+        app, _home = web_client.app_for(self, "tagpup", startup=None)
+        reply = app.test_client().get("/manifest.webmanifest")
+        self.assertEqual(200, reply.status_code, reply.data[:80])
+        self.assertEqual("application/manifest+json", reply.mimetype)
+
+    def test_the_manifest_keeps_the_phone_on_the_library_it_was_added_from(self):
+        """Its addresses are relative, so a page added to the home screen from /<library>/ opens that library's page,
+        and each icon it names is there."""
+        url = "/library/manifest.webmanifest"
+        manifest = json.loads(self.client.get(url).data)
+        self.assertEqual("/library/mobile.html", urljoin(url, manifest["start_url"]))
+        self.assertEqual("/library/", urljoin(url, manifest["scope"]))
+        self.assertEqual(200, self.client.get(urljoin(url, manifest["start_url"])).status_code)
+        self.assertEqual(["192x192", "512x512"], [icon["sizes"] for icon in manifest["icons"]])
+        for icon in manifest["icons"]:
+            reply = self.client.get(urljoin(url, icon["src"]))
+            self.assertEqual((200, "image/png"), (reply.status_code, reply.mimetype), icon["src"])
 
 
 class ThePagesModules(unittest.TestCase):

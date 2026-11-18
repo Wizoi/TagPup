@@ -15,6 +15,8 @@ import web_client  # noqa: E402
 
 WEB = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "web")
 PAGES = ("tagpup", "tuner", "activity")
+#: Each page's markup, (folder, file): the phone's page beside TagPup's (docs/plans/phone-viewer.md).
+MARKUP = (("tagpup", "index.html"), ("tagpup", "mobile.html"), ("tuner", "index.html"), ("activity", "index.html"))
 COMMON = "dark-select.css"
 
 
@@ -25,9 +27,9 @@ def read(*parts):
 
 class DarkSelects(unittest.TestCase):
     def test_every_page_links_the_one_rule(self):
-        for page in PAGES:
-            links = re.findall(r'<link[^>]*rel="stylesheet"[^>]*href="([^"]+)"', read(page, "index.html"))
-            self.assertIn("common/" + COMMON, links, "%s does not link web/common/%s" % (page, COMMON))
+        for folder, html in MARKUP:
+            links = re.findall(r'<link[^>]*rel="stylesheet"[^>]*href="([^"]+)"', read(folder, html))
+            self.assertIn("common/" + COMMON, links, "%s/%s does not link web/common/%s" % (folder, html, COMMON))
 
     def test_the_rule_is_for_every_select_and_its_options_are_the_selects_colour(self):
         css = read("common", COMMON)
@@ -50,11 +52,11 @@ class DarkSelects(unittest.TestCase):
                                       "%s/%s styles an option" % (folder, name))
 
     def test_no_select_opts_out_of_the_rule_in_its_markup(self):
-        for page in PAGES:
-            for tag in re.findall(r"<select\b[^>]*>", read(page, "index.html")):
+        for folder, html in MARKUP:
+            for tag in re.findall(r"<select\b[^>]*>", read(folder, html)):
                 style = re.search(r'style="([^"]*)"', tag)
                 self.assertNotRegex(style.group(1) if style else "", r"color-scheme|appearance",
-                                    "%s: %s" % (page, tag))
+                                    "%s/%s: %s" % (folder, html, tag))
 
     def test_the_rule_is_served_to_each_page(self):
         for kind, url in (("tagpup", "/library/common/%s"), ("tuner", "/library/common/%s"), ("tagpup", "/activity/common/%s")):

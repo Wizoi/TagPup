@@ -37,13 +37,18 @@ export const VIEW_PARAMS = Object.freeze(['view', 'value', 'recursive', 'order',
  * The same page's address for another library: the desktop's or the phone's (/<name>/mobile.html), with its folder
  * (?path); a view of this library does not go with it.
  */
-export function goToLibrary(name) {
+export function libraryAddress(name) {
     const params = new URLSearchParams(window.location.search);
     for (const own of VIEW_PARAMS) params.delete(own);
     const search = params.toString();
     const last = String(window.location.pathname || '').split('/').pop();
     const page = last.includes('.') ? last : '';
-    window.location.href = '/' + name + '/' + page + (search ? '?' + search : '');
+    return '/' + name + '/' + page + (search ? '?' + search : '');
+}
+
+/** Go to the same page on another library: another library is another page, never this one reset. */
+export function goToLibrary(name) {
+    window.location.href = libraryAddress(name);
 }
 
 /** The library this page's URL names, or '' for none; one named is remembered as the one opened last. */

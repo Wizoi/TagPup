@@ -32,11 +32,12 @@ logger = logging.getLogger(__name__)
 
 #: A URL's first part that is a page's own file, or nothing, rather than a library.
 PAGE_FILES = frozenset({"index.html", "style.css", "main.js", "favicon.ico", ""})
-PAGE_SUFFIXES = (".css", ".js", ".html", ".png", ".jpg", ".jpeg", ".ico")
+PAGE_SUFFIXES = (".css", ".js", ".html", ".png", ".jpg", ".jpeg", ".ico", ".webmanifest")
 
 #: The page paths a request without a library is sent to the startup library for: the
-#: page, its style, its modules and the shared ones and their stylesheets (tagpup.web.app).
-PAGE_PATHS = ("/", "/index.html", "/style.css")
+#: page, its style, its modules and the shared ones and their stylesheets, and the phone's
+#: page, style and manifest (tagpup.web.app).
+PAGE_PATHS = ("/", "/index.html", "/style.css", "/mobile.html", "/mobile.css", "/manifest.webmanifest")
 
 #: What a page module's or shared stylesheet's name may be, said once: tagpup.web.app
 #: serves by it, PAGE_MODULE routes by it, and tests/test_page_module_names.py holds the

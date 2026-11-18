@@ -12,13 +12,13 @@ import { test, describe, afterEach } from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
-import { REPO_ROOT, APPS, loadApp, FakeServer, pageModules, closeAllApps } from "./harness.mjs";
+import { REPO_ROOT, APPS, COMMON_DIR, loadApp, FakeServer, pageModules, closeAllApps } from "./harness.mjs";
 
 afterEach(() => closeAllApps());
 
-/** The page's own modules (not web/common/), each with its name and source. */
-function ownModules(pageDir) {
-  return pageModules(pageDir)
+/** The page's own modules (not web/common/), each with its name and source; `html` the page's file. */
+function ownModules(pageDir, html = "index.html") {
+  return pageModules(pageDir, COMMON_DIR, html)
     .filter((m) => path.dirname(m.file) === pageDir)
     .map((m) => ({ name: path.basename(m.file), source: fs.readFileSync(m.file, "utf8") }));
 }
@@ -88,3 +88,29 @@ describe(`${app}'s page as modules`, () => {
   });
 });
 }
+
+describe("the phone's page as modules (web/tagpup/mobile.html)", () => {
+  const PAGE_DIR = path.join(REPO_ROOT, "web", "tagpup");
+  const own = () => ownModules(PAGE_DIR, "mobile.html");
+
+  test("its state is one object, mobile-state.js: no module keeps a `let` of its own", () => {
+    const offenders = [];
+    for (const { name, source } of own()) {
+      codeOf(source).split(/\r?\n/).forEach((line, i) => {
+        if (/^(?:export\s+)?(?:let|var)\s/.test(line)) offenders.push(`${name}:${i + 1}: ${line.trim()}`);
+      });
+    }
+    assert.ok(own().some((m) => m.name === "mobile-state.js"), "the phone's state is not where this guard looks");
+    assert.deepEqual(offenders, []);
+  });
+
+  test("mobile.js only wires the page, and starts it last", () => {
+    const main = own().find((m) => m.name === "mobile.js");
+    const code = codeOf(main.source);
+    assert.deepEqual([...code.matchAll(/^\s*(?:async\s+)?function\s+([\w$]+)/gm)].map((m) => m[1]), [],
+      "a function in mobile.js belongs in the module of its feature");
+    const lines = code.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+    assert.deepEqual(lines.slice(-3), ["state.library = libraryOfThePage();", "startScreens();", "});"],
+      "the page starts after everything is wired");
+  });
+});

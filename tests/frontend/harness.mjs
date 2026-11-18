@@ -28,6 +28,7 @@ export const APPS = {
 export const PAGES = {
   ...APPS,
   activity: { dir: "web/activity", page: "activity" },
+  phone: { dir: "web/tagpup", html: "mobile.html", defaultDb: "photo_index" },
 };
 
 /** The file a page starts from: its html. */

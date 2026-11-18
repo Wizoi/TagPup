@@ -1,0 +1,145 @@
+/* The phone's page (web/tagpup/mobile.html; docs/plans/phone-viewer.md): touch first, type in rem so the phone's
+   large-text setting scales it, a tap target at least 44 px, inputs at 16 px or more so the browser does not zoom
+   into them, and the screen's safe area kept clear. No hover rules: a phone has no pointer that rests. */
+
+/* The dark theme's colours, the desktop page's (web/common/theme.css). */
+@import url("common/theme.css");
+
+* {
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0;
+}
+
+html {
+    -webkit-text-size-adjust: 100%;
+    text-size-adjust: 100%;
+}
+
+body {
+    background-color: var(--bg-primary);
+    color: var(--text-primary);
+    /* The phone's own font (Roboto on Android): nothing is fetched for it. */
+    font-family: system-ui, -apple-system, Roboto, "Segoe UI", sans-serif;
+    font-size: 1rem;
+    line-height: 1.4;
+    min-height: 100vh;
+    padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
+}
+
+.hidden {
+    display: none !important;
+}
+
+button,
+input,
+select,
+textarea {
+    font: inherit;
+    font-size: max(16px, 1rem);
+    color: inherit;
+}
+
+button {
+    min-height: max(44px, 2.75rem);
+    min-width: max(44px, 2.75rem);
+    cursor: pointer;
+    -webkit-tap-highlight-color: transparent;
+}
+
+.bar {
+    position: sticky;
+    top: 0;
+    z-index: 1;
+    display: flex;
+    align-items: center;
+    gap: 0.25rem;
+    padding: 0.25rem 0.5rem;
+    background-color: var(--bg-secondary);
+    border-bottom: 1px solid var(--border-color);
+}
+
+.bar button {
+    background: transparent;
+    border: none;
+    border-radius: 0.5rem;
+    padding: 0 0.75rem;
+}
+
+.bar button:active {
+    background-color: var(--bg-tertiary);
+}
+
+.bar-back {
+    font-size: max(16px, 1.25rem);
+}
+
+.bar-title {
+    flex: 1;
+    min-width: 0;
+    padding: 0 0.25rem;
+    font-size: 1.125rem;
+    font-weight: 600;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.bar-library {
+    color: var(--text-secondary);
+}
+
+.screen {
+    padding: 1rem;
+}
+
+.screen-note {
+    color: var(--text-secondary);
+}
+
+.library-list {
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+}
+
+.library-choice {
+    width: 100%;
+    padding: 0.75rem 1rem;
+    text-align: left;
+    font-size: max(16px, 1.125rem);
+    overflow-wrap: anywhere;
+    background-color: var(--bg-secondary);
+    border: 1px solid var(--border-color);
+    border-radius: 0.75rem;
+}
+
+.library-choice.current {
+    border-color: var(--accent);
+    background-color: var(--accent-glow);
+}
+
+.library-choice:active {
+    background-color: var(--bg-tertiary);
+}
+
+.problem {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.75rem;
+    margin-top: 1rem;
+    color: var(--text-secondary);
+}
+
+.problem-retry {
+    padding: 0 1rem;
+    color: var(--text-primary);
+    background-color: var(--accent);
+    border: none;
+    border-radius: 0.5rem;
+}
+
+.problem-retry:active {
+    background-color: var(--accent-hover);
+}
