@@ -26,7 +26,7 @@ import { test, describe } from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
-import { REPO_ROOT, APPS, loadApp, FakeServer, flush, pageModules } from "./harness.mjs";
+import { REPO_ROOT, PAGES, htmlOf, loadApp, FakeServer, flush, pageModules } from "./harness.mjs";
 
 const APP_JS = path.join(REPO_ROOT, "web", "tagpup", "main.js");
 const SOURCE = fs.readFileSync(APP_JS, "utf8");
@@ -40,9 +40,9 @@ const VOCABULARY = ["leafOf", "rootOf", "normalizeTag", "ordering"];
 /** Helpers that split something that is not a tag: api.js reading the library out of the URL. */
 const NOT_TAGS = ["libraryIn", "pageFileIn"];
 
-/** Each module of a page, its lines, as the browser loads them. */
-function modulesOf(app) {
-  return pageModules(path.join(REPO_ROOT, APPS[app].dir)).map((m) => ({
+/** Each module of a page (harness.mjs PAGES: the phone's mobile.html too), its lines, as the browser loads them. */
+function modulesOf(page) {
+  return pageModules(path.join(REPO_ROOT, PAGES[page].dir), undefined, htmlOf(PAGES[page])).map((m) => ({
     name: path.relative(REPO_ROOT, m.file).split(path.sep).join("/"),
     lines: fs.readFileSync(m.file, "utf8").split(/\r?\n/),
   }));
@@ -90,6 +90,14 @@ describe("the tag vocabulary is used, not reinvented", () => {
     assert.deepEqual(offenders, [], "split by hand instead of leafOf:\n" + offenders.join("\n"));
   });
 
+  test("every other page keeps it too: the phone's, Activity", () => {
+    // The phone's page will hold tag names (its edit sheet, docs/plans/phone-viewer.md cut 3); a page added to PAGES is read.
+    const others = Object.keys(PAGES).filter((page) => page !== "tagpup" && page !== "tagtuner");
+    assert.ok(others.includes("phone"), "the phone's page is not where this guard looks");
+    const offenders = others.flatMap((page) => handSplits(page));
+    assert.deepEqual(offenders, [], "split by hand instead of leafOf:\n" + offenders.join("\n"));
+  });
+
   test("the helpers themselves are allowed to", () => {
     // The check above is worthless if it matches nothing anywhere.
     assert.ok(
@@ -100,7 +108,7 @@ describe("the tag vocabulary is used, not reinvented", () => {
   });
 
   test("every helper the guard exempts actually exists", () => {
-    const everything = [...modulesOf("tagpup"), ...modulesOf("tagtuner")]
+    const everything = Object.keys(PAGES).flatMap((page) => modulesOf(page))
       .map((m) => m.lines.join("\n")).join("\n");
     for (const name of [...VOCABULARY, ...NOT_TAGS]) {
       assert.ok(
