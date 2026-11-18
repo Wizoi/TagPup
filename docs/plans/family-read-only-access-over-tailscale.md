@@ -57,7 +57,7 @@ library setting).
    the table. The apps behave as today when no header arrives.
 2. Data: the setting that lists the owner's and the viewers' logins, through its journaled change, with the Settings page
    field for it (about 150 lines).
-3. The owner: install Tailscale on the PC and the phone, `tailscale serve --bg 8080`, add the family. Nothing to merge.
+3. The owner: install Tailscale on the PC and the phone, `tailscale serve --bg 8090` (TagPup is 8090; 8080 is TagTuner, corrected 2026-11-17), add the family. Nothing to merge.
 
 Each cut stays under the 1,200-line budget. A phone's layout is not part of this plan: whether the pages are usable at phone
 width is a separate question, to be looked at in a real browser first.
