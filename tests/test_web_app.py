@@ -11,6 +11,7 @@ web/libraries.py's `os.path.exists` check in resolve() fails the 404 tests below
 import gc
 import json
 import os
+import re
 import sys
 import tempfile
 import unittest
@@ -212,13 +213,31 @@ class ThePhonesPage(unittest.TestCase):
         self.assertEqual(200, reply.status_code, reply.data[:80])
         self.assertEqual("application/manifest+json", reply.mimetype)
 
+    def test_the_manifest_and_the_page_wear_the_themes_colours(self):
+        """background_color and theme_color are the theme's --bg-primary and --bg-secondary (web/common/theme.css), and
+        mobile.html's theme-color meta is the second: one palette, so the app's frame is not a different dark."""
+        web = os.path.join(tagpup_config.CODE_ROOT, "web")
+        with open(os.path.join(web, "common", "theme.css"), encoding="utf-8") as handle:
+            css = handle.read()
+        with open(os.path.join(web, "tagpup", "mobile.html"), encoding="utf-8") as handle:
+            html = handle.read()
+        primary = re.search(r"--bg-primary:\s*(#[0-9a-fA-F]+)", css).group(1)
+        secondary = re.search(r"--bg-secondary:\s*(#[0-9a-fA-F]+)", css).group(1)
+        manifest = json.loads(self.client.get("/library/manifest.webmanifest").data)
+        self.assertEqual((primary, secondary), (manifest["background_color"], manifest["theme_color"]))
+        meta = re.search(r'<meta name="theme-color" content="([^"]+)"', html).group(1)
+        self.assertEqual(secondary, meta)
+
     def test_the_manifest_keeps_the_phone_on_the_library_it_was_added_from(self):
-        """Its addresses are relative, so a page added to the home screen from /<library>/ opens that library's page,
-        and each icon it names is there."""
+        """Its start address is relative, so a page added to the home screen from /<library>/ opens that library's page;
+        the scope is the site, so every library's phone page (the picker goes to another) stays in the app; each icon
+        it names is there."""
         url = "/library/manifest.webmanifest"
         manifest = json.loads(self.client.get(url).data)
         self.assertEqual("/library/mobile.html", urljoin(url, manifest["start_url"]))
-        self.assertEqual("/library/", urljoin(url, manifest["scope"]))
+        self.assertEqual("/", urljoin(url, manifest["scope"]))
+        for other in ("/library/mobile.html", "/another/mobile.html"):
+            self.assertTrue(other.startswith(urljoin(url, manifest["scope"])), other)
         self.assertEqual(200, self.client.get(urljoin(url, manifest["start_url"])).status_code)
         self.assertEqual(["192x192", "512x512"], [icon["sizes"] for icon in manifest["icons"]])
         for icon in manifest["icons"]:

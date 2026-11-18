@@ -2,7 +2,7 @@
   "name": "TagPup",
   "short_name": "TagPup",
   "start_url": "mobile.html",
-  "scope": "./",
+  "scope": "/",
   "display": "standalone",
   "background_color": "#090d16",
   "theme_color": "#0f172a",

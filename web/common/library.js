@@ -6,7 +6,7 @@
  * is `beforeLeaving(go, stay)`, which TagTuner, having no edits to lose, leaves as
  * going at once. TagPup's Change button, which closes the open folder, is TagPup's.
  */
-import { api, libraryIn } from './api.js';
+import { api, libraryIn, pageFileIn } from './api.js';
 import { ruleProblem } from './validate.js';
 import { enhanceSelect } from './library-picker.js';
 
@@ -41,9 +41,7 @@ export function libraryAddress(name) {
     const params = new URLSearchParams(window.location.search);
     for (const own of VIEW_PARAMS) params.delete(own);
     const search = params.toString();
-    const last = String(window.location.pathname || '').split('/').pop();
-    const page = last.includes('.') ? last : '';
-    return '/' + name + '/' + page + (search ? '?' + search : '');
+    return '/' + name + '/' + pageFileIn(window.location.pathname) + (search ? '?' + search : '');
 }
 
 /** Go to the same page on another library: another library is another page, never this one reset. */

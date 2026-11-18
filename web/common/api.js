@@ -68,6 +68,12 @@ export function libraryIn(pathname) {
     return '';
 }
 
+/** The page file a URL path ends in (mobile.html), or '' for none: its last part, when it has a dot. */
+export function pageFileIn(pathname) {
+    const last = String(pathname || '').split('/').pop();
+    return last.includes('.') ? last : '';
+}
+
 /** The library this page is open on, or '' at the site's root. */
 function pageLibrary() {
     return libraryIn(location.pathname);
