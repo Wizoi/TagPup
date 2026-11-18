@@ -11,6 +11,7 @@ import { api } from './common/api.js';
 import { buildElement, replaceContent } from './common/dom.js';
 import { goToLibrary, rememberedAndListed } from './common/library.js';
 import { state } from './mobile-state.js';
+import { upAScreen } from './mobile-screens.js';
 
 function libraryChoice(name) {
     const current = name === state.library;
@@ -19,7 +20,7 @@ function libraryChoice(name) {
         text: name,
         attrs: { type: 'button', 'aria-current': current ? 'page' : null },
     });
-    choice.addEventListener('click', () => (current ? window.history.back() : goToLibrary(name)));
+    choice.addEventListener('click', () => (current ? upAScreen() : goToLibrary(name)));
     return choice;
 }
 

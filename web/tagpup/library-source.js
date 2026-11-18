@@ -450,9 +450,10 @@ export function addressTooLong(spec) {
 
 /**
  * The request for a view's ids: a GET of its address's words, or a POST of a union or a search, which may be longer than an
- * address (#696).
+ * address (#696). `lib` is a view or any object of its names (kind, value, recursive, order, media): the phone's page asks
+ * with its own.
  */
-function idsRequest(lib, signal) {
+export function idsRequest(lib, signal) {
     if (lib.kind !== 'any_of' && lib.kind !== 'search') return [idsUrl(lib), { signal }];
     const body = { kind: lib.kind, value: JSON.parse(lib.kind === 'search' ? searchText(lib.value) : unionText(lib.value)) };
     if (lib.order && lib.order !== DEFAULT_ORDER) body.order = lib.order;

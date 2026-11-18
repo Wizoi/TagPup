@@ -25,7 +25,39 @@
 
     <main>
         <section class="screen hidden" data-screen="browse">
-            <p class="screen-note">Browsing this library's photos comes here.</p>
+            <div id="browse-top">
+                <form id="browse-search" class="browse-search" role="search">
+                    <input type="search" id="browse-words" class="browse-words" placeholder="Words" aria-label="Words to search for"
+                        autocomplete="off" enterkeyhint="search">
+                    <button type="submit" class="browse-search-go">Search</button>
+                </form>
+                <p id="browse-link-problem" class="problem hidden" role="alert"></p>
+                <div class="browse-sections">
+                    <button type="button" class="browse-section" data-section="folders">Folders</button>
+                    <button type="button" class="browse-section" data-section="keywords">Keywords</button>
+                    <button type="button" class="browse-section" data-section="people">People</button>
+                    <button type="button" class="browse-section" data-section="dates">Dates</button>
+                </div>
+            </div>
+            <div id="browse-level" class="hidden">
+                <button type="button" id="browse-up" class="browse-up"><span aria-hidden="true">&#8592;</span> <span id="browse-path"></span></button>
+                <button type="button" id="browse-show" class="browse-show hidden">Show these photos</button>
+                <p id="browse-note" class="screen-note hidden"></p>
+                <div id="browse-problem" class="problem hidden" role="alert">
+                    <p id="browse-problem-text"></p>
+                    <button type="button" id="browse-retry" class="problem-retry">Try again</button>
+                </div>
+                <div id="browse-rows" class="browse-rows"></div>
+            </div>
+        </section>
+
+        <section class="screen hidden" data-screen="grid" data-title="Photos">
+            <h2 id="grid-heading" class="grid-heading"></h2>
+            <p id="grid-count" class="grid-count"></p>
+            <div id="grid-problem" class="problem hidden" role="alert">
+                <p id="grid-problem-text"></p>
+                <button type="button" id="grid-retry" class="problem-retry">Try again</button>
+            </div>
         </section>
 
         <section class="screen hidden" data-screen="library" data-title="Libraries">

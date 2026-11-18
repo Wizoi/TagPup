@@ -3,7 +3,11 @@
  * gesture, the bar's arrow) goes up a screen and leaves the page only from the first one.
  *
  * The screen shown is kept in history.state: a reload (pulling the page down) opens the screen it was on, and the
- * entries before it are still there to go back to.
+ * entries before it are still there to go back to. An entry holds a place on its screen too (a level of Browse, the
+ * Grid's view), so a drill-down level is a step of its own.
+ *
+ * A page opened afresh on a library puts the list of libraries under Browse: Back at the top of Browse opens the list,
+ * not off the page, and that bottom step (`first`) has no Back of its own.
  */
 import { state } from './mobile-state.js';
 
@@ -26,39 +30,69 @@ function screenIn(entry) {
     return name && sectionOf(name) ? name : state.home;
 }
 
-/** Show the screen `name`, its title in the bar and Back unless it is the first screen. */
-export function showScreen(name) {
+/** The place a history entry holds on its screen, or null. */
+function placeIn(entry) {
+    return entry && entry.screen === screenIn(entry) && entry.place !== undefined ? entry.place : null;
+}
+
+/** Are these the same place: the same level, the same view (each is built by one function, its keys in one order)? */
+function samePlace(a, b) {
+    return JSON.stringify(a ?? null) === JSON.stringify(b ?? null);
+}
+
+/** Is this history entry the page's first step: no Back above it. */
+function isFirst() {
+    return Boolean(window.history.state && window.history.state.first);
+}
+
+/** Show the screen `name` at `place`, its title in the bar and Back unless it is the first step or the first screen's top. */
+export function showScreen(name, place = null) {
     for (const section of document.querySelectorAll('[data-screen]')) {
         section.classList.toggle('hidden', section.dataset.screen !== name);
     }
     state.screen = name;
+    state.place = place ?? null;
     const section = sectionOf(name);
     document.getElementById('bar-title').textContent = (section && section.dataset.title) || state.library || 'TagPup';
-    document.getElementById('bar-back').classList.toggle('hidden', name === state.home);
+    document.getElementById('bar-back').classList.toggle('hidden', isFirst() || (name === state.home && state.place === null));
     for (const fn of onShow.get(name) || []) fn();
 }
 
-/** Open the screen `name` as a new step in history; nothing when it is already shown. */
-export function openScreen(name) {
-    if (state.screen === name) return;
-    window.history.pushState({ screen: name }, '');
-    showScreen(name);
+/** Open the screen `name` at `place` as a new step in history; nothing when it is already shown there (a second tap). */
+export function openScreen(name, place = null) {
+    if (state.screen === name && samePlace(state.place, place)) return;
+    window.history.pushState({ screen: name, place: place ?? null }, '');
+    showScreen(name, place);
+}
+
+/** Up a step: Back, or from the page's first step (the list under Browse), Browse opened again. */
+export function upAScreen() {
+    if (isFirst()) openScreen(state.home);
+    else window.history.back();
 }
 
 /** Back goes up a screen: the browser's own Back and the bar's. */
 export function wireScreens() {
-    window.addEventListener('popstate', (event) => showScreen(screenIn(event.state)));
-    document.getElementById('bar-back').addEventListener('click', () => window.history.back());
+    window.addEventListener('popstate', (event) => showScreen(screenIn(event.state), placeIn(event.state)));
+    document.getElementById('bar-back').addEventListener('click', upAScreen);
 }
 
 /**
- * Show the first screen, or the one a reload left: a page on a library opens on browsing it, one on none on the list
- * of libraries.
+ * Show the first screen, or the one a reload left: a page on a library opens on browsing it (the list of libraries the
+ * step under it), or on the photos of the view its address names (`state.linked`), a step above Browse; one on none
+ * opens on the list of libraries.
  */
 export function startScreens() {
     state.home = state.library ? 'browse' : 'library';
     const entry = window.history.state;
+    if (!entry && state.library) {
+        window.history.replaceState({ screen: 'library', place: null, first: true }, '');
+        window.history.pushState({ screen: 'browse', place: null }, '');
+        if (state.linked) window.history.pushState({ screen: 'grid', place: state.linked }, '');
+        showScreen(state.linked ? 'grid' : 'browse', state.linked);
+        return;
+    }
     const kept = state.library ? screenIn(entry) : state.home;
-    if (!entry || entry.screen !== kept) window.history.replaceState({ screen: kept }, '');
-    showScreen(kept);
+    if (!entry || entry.screen !== kept) window.history.replaceState({ screen: kept, place: null }, '');
+    showScreen(kept, placeIn(window.history.state));
 }

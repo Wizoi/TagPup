@@ -90,6 +90,7 @@ SCENARIOS = {
     "V18": ("views", "Somebody works the main page by the keyboard alone: Tab reaches every control the mouse does, in reading order, nothing unseen (a closed dialog), the file list one stop, an opened dialog holds the focus and gives it back."),
     "V21": ("views", "Somebody presses Refresh on an open folder: it is synced first and its list read again once, the status line saying what was found and whether the full check that removes a gone file started, ran already, or could not; three presses during a slow answer send one, another folder opened meanwhile drops the answer, a sync that fails or is refused still reads the list and says so, and unsaved edits are asked about before anything is sent."),
     "V22": ("views", "Somebody tags many photos at once, a folder of 50 or a select-all, while clicking on: each file's tag change waits in the page and goes 25 files a write under one group token, a tag added meanwhile rides the write of the files not yet sent and reaches the written ones in a later write, clicks on one tag leave the last one, a write that fails keeps its files' changes for Retry and never loops by itself, a single save clicked meanwhile goes between two writes, Cancel says how many photos it left unwritten, and choosing another library asks while changes are not sent; staying keeps them."),
+    "V23": ("views", "On the phone page somebody walks Folders, Keywords, People or Dates down one level at a time and Back up one at a time, to the list of libraries at the top and never off the page; Show these photos and a search of words open the grid on that view (a folder with its subfolders); a section that could not be read says so with Try again, a slow reply never draws over a newer one, two quick taps open one level, an empty search does nothing, and an address naming a view opens its photos."),
     "I1": ("apps", "Switching library in the middle of a folder shows no card of the first."),
     "I2": ("apps", "A write through a server update is waited out and not repeated."),
     "I3": ("apps", "An update by a launch and by an install hands one server over to the next without killing its work."),
@@ -222,6 +223,7 @@ _SCENARIO_FILES = {
     "V20": "scenario-taking-tags-off-the-open-photo",
     "V21": "scenario-refreshing-a-folder",
     "V22": "scenario-tagging-many-photos-at-once",
+    "V23": "scenario-browsing-on-the-phone",
 }
 
 #: owner -> kind -> the unit, migration and guard files, a .mjs without its ".test.mjs".
