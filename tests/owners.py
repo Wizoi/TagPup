@@ -103,6 +103,7 @@ SCENARIOS = {
     "I11": ("apps", "On a machine without ffmpeg (or with one that does not run) the server and the CLI's index runs start nothing and say what to install; an install says so and leaves the old server running."),
     "I12": ("apps", "Refresh on a folder syncs it through the library's walk, and a file it finds gone starts the whole sync once, which removes it or follows its move; pressed again while that walks, a share that does not answer, another process's run and a server with no runner each sync or start nothing more and say why in Run now's words."),
     "I13": ("apps", "In Organize somebody selects photos and clips of a folder and clicks Delete: the library view's delete, by path, asked once by the server's count; the folder is read again, the deleted leave the list and the selection and the open photo among them closes onto the next; one a share or an error left stays, a clip stopped for it plays again only if it stayed, another folder or view opened meanwhile is untouched, one delete at a time on the page, and in Just look the button is inert with its sentence."),
+    "I14": ("apps", "On a phone the owner opens TagPup's phone page: an address naming no library opens the one this browser opened last while the server lists it, else the list; Back goes up a screen; another library is the phone's page on it; a server updated meanwhile says so in the banner; a list that could not be read says so with Try again; a slow first reply never draws over a newer one."),
 }
 
 #: scenario id -> its scenario files; a file listed under more than one runs more than one scenario (the first is its owner's).
@@ -182,6 +183,7 @@ _SCENARIO_FILES = {
     "I11": "test_ffmpeg_is_a_prerequisite",
     "I12": "test_a_folders_refresh_syncs_it",
     "I13": "scenario-deleting-the-selected-photos-of-a-folder",
+    "I14": "scenario-opening-the-phone-page",
     "P1": "test_people_by_id_at_once",
     "P2": (
         "test_a_cropped_picture_gets_new_faces test_bulk_faces_and_tags test_cluster_faces_on_a_crowded_library test_clustering_meets_naming "
