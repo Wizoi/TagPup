@@ -13,8 +13,8 @@ import { REPO_ROOT, pageModules } from "./harness.mjs";
 
 const LIMIT = 1000;
 const PAGES = { tagpup: path.join(REPO_ROOT, "web", "tagpup"), tuner: path.join(REPO_ROOT, "web", "tuner") };
-/** TagPup's stylesheets, each importing the one theme (web/common/theme.css). */
-const THEMED = ["style.css"];
+/** The stylesheets that import the one theme (web/common/theme.css), each [its page's folder, its name]. */
+const THEMED = [["tagpup", "style.css"], ["tuner", "style.css"]];
 
 /** A function's text without its name and spelling of export, async or spacing: what is left is what it does. */
 export function bodyOf(text, name) {
@@ -88,14 +88,14 @@ describe("the pages' shape", () => {
     assert.deepEqual(copiesBetween(make("countDown"), make("down")), [["countDown", "down"]]);
   });
 
-  test("the theme's colours and fonts are defined once, in web/common/theme.css, and each TagPup stylesheet imports it first", () => {
+  test("the theme's colours and fonts are defined once, in web/common/theme.css, and each page's stylesheet imports it first", () => {
     const css = (...parts) => fs.readFileSync(path.join(REPO_ROOT, "web", ...parts), "utf8").replace(/\/\*[\s\S]*?\*\//g, "");
     const roots = (text) => (text.match(/:root\s*\{/g) || []).length;
     assert.equal(roots(css("common", "theme.css")), 1, "web/common/theme.css defines no tokens");
-    for (const sheet of THEMED) {
-      const text = css("tagpup", sheet);
-      assert.equal(roots(text), 0, `web/tagpup/${sheet} defines tokens of its own`);
-      assert.match(text.trimStart(), /^@import url\("common\/theme\.css"\);/, `web/tagpup/${sheet} does not import the theme first`);
+    for (const [folder, sheet] of THEMED) {
+      const text = css(folder, sheet);
+      assert.equal(roots(text), 0, `web/${folder}/${sheet} defines tokens of its own`);
+      assert.match(text.trimStart(), /^@import url\("common\/theme\.css"\);/, `web/${folder}/${sheet} does not import the theme first`);
     }
   });
 });
