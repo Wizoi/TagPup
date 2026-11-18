@@ -22,12 +22,18 @@ export const APPS = {
   tagtuner: { dir: "web/tuner", defaultDb: "photo_index" },
 };
 
-/** Every page: the two apps' pages, each on a library, and the Activity page, on none
- *  (it covers every library: tagpup.web.activity_routes). */
+/** Every page: the two apps' pages, each on a library, the Activity page, on none (it covers every library:
+ *  tagpup.web.activity_routes). `html` is a page's file when it is not index.html: the phone's page, mobile.html
+ *  beside TagPup's index.html (docs/plans/phone-viewer.md). */
 export const PAGES = {
   ...APPS,
   activity: { dir: "web/activity", page: "activity" },
 };
+
+/** The file a page starts from: its html. */
+export function htmlOf(app) {
+  return app.html || "index.html";
+}
 
 // ---- A page's modules, as one script ----------------------------------------------
 //
@@ -128,10 +134,10 @@ function readModule(file, url) {
 
 /**
  * A page's modules in the order the browser runs them, each read and taken apart.
- * `pageDir` is the page's folder; `commonDir` is what the server serves at common/.
+ * `pageDir` is the page's folder; `commonDir` is what the server serves at common/; `htmlFile` the page's html.
  */
-export function pageModules(pageDir, commonDir = COMMON_DIR) {
-  const html = fs.readFileSync(path.join(pageDir, "index.html"), "utf8");
+export function pageModules(pageDir, commonDir = COMMON_DIR, htmlFile = "index.html") {
+  const html = fs.readFileSync(path.join(pageDir, htmlFile), "utf8");
   const ordered = [];
   const state = new Map(); // url -> "visiting" | module
   const visit = (url, from) => {
@@ -152,7 +158,7 @@ export function pageModules(pageDir, commonDir = COMMON_DIR) {
     ordered.push(module);
     return module;
   };
-  visit(new URL(entryModule(html), PAGE_URL).href, "index.html");
+  visit(new URL(entryModule(html), PAGE_URL).href, htmlFile);
 
   const owner = new Map();
   for (const module of ordered) {
@@ -206,8 +212,8 @@ function codeOf(body) {
 }
 
 /** A page's modules as the one strict script the page's window evaluates. */
-export function pageScript(pageDir, commonDir = COMMON_DIR) {
-  const modules = pageModules(pageDir, commonDir);
+export function pageScript(pageDir, commonDir = COMMON_DIR, htmlFile = "index.html") {
+  const modules = pageModules(pageDir, commonDir, htmlFile);
   const slot = new Map(modules.map((m, i) => [m.url, `__module${i}`]));
   const parts = modules.map((m) => {
     const imports = m.imports
@@ -238,7 +244,8 @@ export function pageExports(window, file) {
 
 /** Every line of a page's modules, for tests that read the page's source. */
 export function pageSource(appName) {
-  return pageModules(path.join(REPO_ROOT, PAGES[appName].dir)).map((m) => m.body).join("\n");
+  const app = PAGES[appName];
+  return pageModules(path.join(REPO_ROOT, app.dir), COMMON_DIR, htmlOf(app)).map((m) => m.body).join("\n");
 }
 
 /**
@@ -486,7 +493,7 @@ export function closeAllApps() {
  * `before(window)` runs once the window exists and before the app does: where a test
  * puts what the browser remembers (localStorage) from an earlier visit.
  *
- * @param {"tagpup"|"tagtuner"} appName
+ * @param {"tagpup"|"tagtuner"|"activity"|"phone"} appName
  * @param {{url?: string, server?: FakeServer, t?: object, before?: function}} options
  */
 export async function loadApp(appName, { url, server = new FakeServer(), t, before } = {}) {
@@ -494,8 +501,8 @@ export async function loadApp(appName, { url, server = new FakeServer(), t, befo
   if (!app) throw new Error(`unknown app: ${appName}`);
 
   const appDir = path.join(REPO_ROOT, app.dir);
-  const html = fs.readFileSync(path.join(appDir, "index.html"), "utf8");
-  const script = pageScript(appDir);
+  const html = fs.readFileSync(path.join(appDir, htmlOf(app)), "utf8");
+  const script = pageScript(appDir, COMMON_DIR, htmlOf(app));
 
   // Silence expected console noise from the app; surface real jsdom errors.
   const virtualConsole = new VirtualConsole();
@@ -504,7 +511,7 @@ export async function loadApp(appName, { url, server = new FakeServer(), t, befo
   virtualConsole.on("error", (...args) => consoleErrors.push(args.join(" ")));
 
   const dom = new JSDOM(html, {
-    url: url || `http://localhost:8090/${app.page || app.defaultDb}/`,
+    url: url || `http://localhost:8090/${app.page || app.defaultDb}/${app.html || ""}`,
     runScripts: "outside-only",
     pretendToBeVisual: true,
     virtualConsole,
