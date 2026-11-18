@@ -302,6 +302,16 @@ function navMonthRows(each, level) {
     return rows;
 }
 
+// ---- A section's index -----------------------------------------------------------------------
+
+/** The index of a section of GET /api/library/navigator?section=, from its reply. */
+export function indexSection(section, body) {
+    if (section === 'folders') return indexFolders(body.folders);
+    if (section === 'keywords') return indexKeywords(body.keywords, body.untagged);
+    if (section === 'people') return indexPeople(body.people, body.groups, body.unfiled);
+    return indexDates(body);
+}
+
 // ---- Rows ------------------------------------------------------------------------------------
 
 function navCapped(rows, cap, total) {

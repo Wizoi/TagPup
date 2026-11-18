@@ -33,8 +33,8 @@ import {
 import { openLibraryView } from './library-view.js';
 import { DEFAULT_ORDER, MAX_MEMBERS, addressTooLong } from './library-source.js';
 import {
-    compress, indexDates, indexFolders, indexKeywords, indexPeople, membersOf, peopleGroupIds, rowTree, sectionOf, sectionRows,
-    selectedRows, specOfMembers, withRowsUnder
+    compress, indexSection, membersOf, peopleGroupIds, rowTree, sectionOf, sectionRows, selectedRows, specOfMembers,
+    withRowsUnder
 } from './navigator-model.js';
 import { paintRows, rowElement, tabKeyTarget, treeKeyAction } from './navigator-tree.js';
 
@@ -43,19 +43,19 @@ const NAV_ORDER = ['folders', 'keywords', 'people', 'dates'];
 const NAV_SECTIONS = {
     folders: {
         label: 'Folders', tree: true, noun: 'folders', loading: 'Loading the folders...',
-        empty: 'The library holds no photos in any folder yet.', build: body => indexFolders(body.folders),
+        empty: 'The library holds no photos in any folder yet.',
     },
     keywords: {
         label: 'Keywords', tree: true, noun: 'keywords', loading: 'Loading the keywords...',
-        empty: 'The library has no keywords yet.', build: body => indexKeywords(body.keywords, body.untagged),
+        empty: 'The library has no keywords yet.',
     },
     people: {
         label: 'People', tree: true, noun: 'people', loading: 'Loading the people...',
-        empty: 'No photo names a person yet.', build: body => indexPeople(body.people, body.groups, body.unfiled),
+        empty: 'No photo names a person yet.',
     },
     dates: {
         label: 'Dates', tree: true, noun: 'dates', loading: 'Loading the dates...',
-        empty: 'No photo has a date yet.', build: body => indexDates(body),
+        empty: 'No photo has a date yet.',
     },
 };
 
@@ -165,7 +165,7 @@ function loadSection(name, quiet) {
                 failure.fromServer = true;
                 throw failure;
             }
-            sec.index = cfg.build(body || {});
+            sec.index = indexSection(name, body || {});
             sec.status = 'ready';
             sec.message = '';
             if (!sec.opened) {
