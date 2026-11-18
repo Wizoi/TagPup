@@ -115,10 +115,10 @@ writer. A photo added or changed afterwards needs no command. One-offs: none. Mi
 
 ## Cuts (each leaves the trunk whole, under about 1,200 lines; a worker's brief is one concern)
 
-0. **The owner, no code**: Tailscale up on the phone, `tailscale serve --bg 8090` (replacing the 8080 one), set
-   `TAGPUP_ALLOWED_HOSTS`, install (ask first). Then open today's page on the phone and write down what breaks first; that
-   list is read before cut 2 (the Tailscale plan asked for this look and it has not been done). Correct the port in the
-   Tailscale plan.
+0. **The owner, no code. Done 2026-11-17**: Tailscale is up on the phone; `tailscale serve` already has
+   `https://staleorange.tail66259a.ts.net:8090` -> 8090 (TagPup; the bare address goes to 8080, TagTuner) and
+   `TAGPUP_ALLOWED_HOSTS` is set, so the phone opens TagPup at the `:8090` address. What remains is the owner's look at
+   today's page in Chrome on the phone, written down before cut 2.
 1. **Integration (~250)**: serve `mobile.html` and `mobile.css`; `theme.css` split out of `style.css` (moved, not
    copied); the `PAGES` entry and an entry-module name in `tests/frontend/harness.mjs` (it requires `main.js` today);
    the `OPEN` list in `tests/test_every_route_answers_this_pc_or_says_why.py`; `tests/test_web_app.py` for the new page;
