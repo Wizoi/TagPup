@@ -265,4 +265,132 @@ describe("browsing a library on the phone", () => {
     assert.match(el(ctx, "browse-link-problem").textContent, /does not know/);
     assert.equal(asked(ctx, "/api/library/ids"), 0);
   });
+
+  test("a second tap on a row of a level already left opens nothing more, even on another row", async (t) => {
+    const ctx = await loadApp("phone", { t, server: library(), url: PAGE });
+    await tap(ctx, section(ctx, "folders"));
+    await tap(ctx, row(ctx, "Pictures"));
+    const start = ctx.window.history.length;
+    const [first, second] = [row(ctx, "2019"), row(ctx, "2020")];
+
+    click(ctx.window, first);
+    click(ctx.window, second); // the level under Pictures is already gone
+    await flush(ctx.window);
+
+    assert.deepEqual(labels(ctx), ["Rowan's Meet", "Spring Day"], "the level of the first tap, not the second row's");
+    assert.equal(ctx.window.history.length, start + 1);
+  });
+
+  test("opening the screen already shown, at the same place, is not a second step", async (t) => {
+    const ctx = await loadApp("phone", { t, server: library(), url: PAGE });
+    const { openScreen } = pageExports(ctx.window, "web/tagpup/mobile-screens.js");
+    await tap(ctx, section(ctx, "folders"));
+    const start = ctx.window.history.length;
+
+    openScreen("browse", ["folders", "p"]);
+    openScreen("browse", ["folders", "p"]);
+
+    assert.equal(ctx.window.history.length, start + 1);
+  });
+
+  test("people filed in groups: down through a subgroup to a person, and a person's photos are asked by their tag path", async (t) => {
+    const people = {
+      groups: [
+        { tag: "People/Family", name: "Family", parent: null, count: 9 },
+        { tag: "People/Family/Cousins", name: "Cousins", parent: "People/Family", count: 4 },
+      ],
+      people: [
+        { name: "Wren Alder", count: 4, group: "People/Family/Cousins", person_id: 11, person: { tag: "People/Family/Cousins/Wren Alder" } },
+        { name: "Sam Birch", count: 5, group: "People/Family", person_id: 12, person: { tag: "People/Family/Sam Birch" } },
+      ],
+      unfiled: 0,
+    };
+    const server = library().on("/api/library/navigator?section=people", people);
+    const ctx = await loadApp("phone", { t, server, url: PAGE });
+    const asView = () => JSON.parse(JSON.stringify(pageState(ctx).view));
+
+    await tap(ctx, section(ctx, "people"));
+    assert.deepEqual(labels(ctx), ["Family"]);
+    await tap(ctx, row(ctx, "Family"));
+    assert.deepEqual(labels(ctx), ["Cousins", "Sam Birch"], "the subgroup before the people");
+    await tap(ctx, el(ctx, "browse-show"));
+    assert.equal(asView().kind, "any_of");
+    assert.deepEqual(asView().value, [
+      { kind: "person", value: "People/Family/Cousins/Wren Alder", recursive: false },
+      { kind: "person", value: "People/Family/Sam Birch", recursive: false },
+    ], "a group shows its people, each by tag path");
+
+    await back(ctx);
+    await tap(ctx, row(ctx, "Cousins"));
+    assert.deepEqual(labels(ctx), ["Wren Alder"]);
+    assert.equal(el(ctx, "browse-path").textContent, "People › Family › Cousins");
+    await tap(ctx, el(ctx, "browse-show"));
+    assert.equal(asView().kind, "person");
+    assert.equal(asView().value, "People/Family/Cousins/Wren Alder", "never the leaf alone");
+
+    await back(ctx);
+    await tap(ctx, row(ctx, "Wren Alder"));
+    assert.deepEqual(shown(ctx), ["grid"], "a person has nothing under: a tap opens their photos");
+    assert.equal(asView().value, "People/Family/Cousins/Wren Alder");
+    assert.ok(ctx.server.urls().at(-1).includes(encodeURIComponent("People/Family/Cousins/Wren Alder")));
+  });
+
+  test("dates: a year's months and its Other; odd years apart under Other years, drilled to their months", async (t) => {
+    const dates = {
+      years: [
+        { year: 2021, count: 5, months: [{ month: "2021-03", count: 3 }], other: 2 },
+        { year: 1850, count: 4, months: [{ month: "1850-06", count: 3 }], other: 1, implausible: true },
+      ],
+      undated: 0,
+    };
+    const server = library().on("/api/library/navigator?section=dates", dates);
+    const ctx = await loadApp("phone", { t, server, url: PAGE });
+    const asView = () => JSON.parse(JSON.stringify(pageState(ctx).view));
+
+    await tap(ctx, section(ctx, "dates"));
+    assert.deepEqual(labels(ctx), ["2021", "Other years (1)"]);
+    await tap(ctx, row(ctx, "2021"));
+    assert.deepEqual(labels(ctx), ["March", "Other"], "a year's months, and its photos naming no month");
+    await tap(ctx, row(ctx, "Other"));
+    assert.deepEqual([asView().kind, asView().value], ["year_other", "2021"]);
+
+    await back(ctx);
+    await back(ctx);
+    await tap(ctx, row(ctx, "Other years (1)"));
+    assert.deepEqual(labels(ctx), ["1850"]);
+    await tap(ctx, row(ctx, "1850"));
+    assert.deepEqual(labels(ctx), ["June", "Other"], "level three: the odd year's months");
+    assert.equal(el(ctx, "browse-path").textContent, "Dates › Other years (1) › 1850");
+    await tap(ctx, row(ctx, "June"));
+    assert.deepEqual([asView().kind, asView().value], ["month", "1850-06"]);
+  });
+
+  test("a reload at a level shows that level again; a level gone from the library says so", async (t) => {
+    const first = await loadApp("phone", { t, server: library(), url: PAGE });
+    await tap(first, section(first, "folders"));
+    await tap(first, row(first, "Pictures"));
+    await tap(first, row(first, "2019"));
+    const kept = JSON.parse(JSON.stringify(first.window.history.state));
+    assert.equal(kept.screen, "browse");
+    assert.equal(kept.place[0], "folders", "history holds [section, row ids...]");
+    assert.equal(kept.place.length, 3);
+
+    const reload = (server) => loadApp("phone", {
+      t, server, url: PAGE, before: (window) => window.history.replaceState(kept, ""),
+    });
+    const again = await reload(library());
+    assert.deepEqual(shown(again), ["browse"]);
+    assert.deepEqual(labels(again), ["Rowan's Meet", "Spring Day"], "the level, after the section is read again");
+    assert.equal(el(again, "browse-path").textContent, "Folders › Pictures › 2019");
+
+    const changed = new FakeServer()
+      .on("/api/databases", { databases: ["alpha", "beta"] })
+      .on("/api/library/navigator?section=folders", { folders: [{ path: ROOT, name: "Pictures", parent: null, direct: 1, recursive: 1 }] })
+      .on("/api/library/ids", IDS);
+    const gone = await reload(changed);
+    assert.deepEqual(labels(gone), []);
+    assert.equal(el(gone, "browse-note").textContent, "This is no longer in the library.");
+    assert.ok(!el(gone, "browse-note").classList.contains("hidden"));
+    assert.ok(el(gone, "browse-show").classList.contains("hidden"), "no photos offered of a level that is not there");
+  });
 });

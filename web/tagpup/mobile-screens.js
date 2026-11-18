@@ -36,7 +36,7 @@ function placeIn(entry) {
 }
 
 /** Are these the same place: the same level, the same view (each is built by one function, its keys in one order)? */
-function samePlace(a, b) {
+export function samePlace(a, b) {
     return JSON.stringify(a ?? null) === JSON.stringify(b ?? null);
 }
 

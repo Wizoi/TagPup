@@ -16,7 +16,7 @@ import { DEFAULT_MEDIA, DEFAULT_ORDER, MAX_WORDS, searchAsksSomething, searchVal
     from './library-source.js';
 import { compress, indexSection, rowTree, sectionRows, specOfMembers, withRowsUnder } from './navigator-model.js';
 import { state } from './mobile-state.js';
-import { openScreen, upAScreen } from './mobile-screens.js';
+import { openScreen, samePlace, upAScreen } from './mobile-screens.js';
 
 /** The four sections: what each is called, and what an empty one says. */
 const SECTIONS = {
@@ -117,7 +117,7 @@ function rowButton(row, place, tree) {
     ]);
     button.addEventListener('click', () => {
         // A tap on a level no longer shown (a second tap while the first opened the next) does nothing.
-        if (state.screen !== 'browse' || JSON.stringify(state.place) !== JSON.stringify(place)) return;
+        if (state.screen !== 'browse' || !samePlace(state.place, place)) return;
         if (row.expandable) openScreen('browse', [...place, row.id]);
         else showPhotos(photosOf(tree, [row.id]));
     });
