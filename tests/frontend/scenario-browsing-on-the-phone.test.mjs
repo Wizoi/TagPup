@@ -158,6 +158,8 @@ describe("browsing a library on the phone", () => {
     held[0]({ folders: [{ path: "D:\\Elsewhere", name: "Elsewhere", parent: null, direct: 1, recursive: 1 }] });
     await flush(ctx.window);
     assert.deepEqual(labels(ctx), ["Pictures"], "the older reply is dropped");
+    await tap(ctx, row(ctx, "Pictures"));
+    assert.deepEqual(labels(ctx), ["2019", "2020"], "and the level under is the newer reply's");
   });
 
   test("two quick taps on a row open one level", async (t) => {
