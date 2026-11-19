@@ -10,6 +10,7 @@ The index runs here on the test's own thread (IndexQueue.run_pending, its worker
 from inside the index, while it runs: no thread, no sleep.
 """
 import os
+import sqlite3
 import sys
 import unittest
 from unittest import mock
@@ -186,6 +187,17 @@ class RemovingAFolder:
         self.assertEqual((403, False), (reply.status_code, body["success"]), body)
         self.assertIn("could not list the folders in", body["error"])
         self.assertTrue(body["error"].endswith(": Access is denied"), body["error"])
+
+    def test_a_removal_the_library_cannot_take_says_why_in_a_sentence_the_page_reads(self):
+        """A CLI sync --apply holds the library's write lock past the busy timeout: the removal raises. The page reads the
+        reply as JSON; Flask's HTML 500 was "Unexpected token '<'" (#3199). The app answers any /api/ failure with the
+        exception's sentence, as the running server does (not in testing mode, so it does not let it out)."""
+        self.app.config["PROPAGATE_EXCEPTIONS"] = False
+        locked = sqlite3.OperationalError("database is locked")
+        with mock.patch("tagpup.services.faces.remove_folder", side_effect=locked):
+            status, body = self.remove(self.meet)
+        self.assertEqual((500, {"success": False, "error": "database is locked"}), (status, body))
+        self.assertEqual(3, self.held())
 
 
 class FromTagPup(RemovingAFolder, _Library):

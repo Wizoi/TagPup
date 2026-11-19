@@ -253,10 +253,11 @@ class TestBrowseFolder(TagPupAPITestBase):
             self.assertEqual(self.get("/api/browse-folder")["path"], "")
 
     def test_picker_failure_is_reported_not_swallowed(self):
+        """The app's one /api/ failure answer (tagpup.web.app), not the route's own, as the running server gives it."""
+        self.lib.client.application.config["PROPAGATE_EXCEPTIONS"] = False
         with patch("subprocess.run", side_effect=OSError("no display")):
-            with self.assertRaises(Failed) as ctx:
-                self.get("/api/browse-folder")
-        self.assertEqual(ctx.exception.code, 500)
+            reply = self.lib.client.get("/api/browse-folder")
+        self.assertEqual((500, {"success": False, "error": "no display"}), (reply.status_code, reply.get_json()))
 
 
 class TestFaceRoutes(TagPupAPITestBase):

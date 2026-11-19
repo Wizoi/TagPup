@@ -212,14 +212,10 @@ def tags_merge():
     before they reached photos."""
     library = state.require()
     body = request.get_json(silent=True) or {}
-    try:
-        result = tags_service.merge(
-            library, body.get("from"), body.get("into") or body.get("to"),
-            state.exiftool(library), retire=bool(body.get("retire")),
-            apply=bool(body.get("apply")))
-    except Exception as e:
-        logger.error("Error merging tag %r: %s", body.get("from"), e)
-        _refuse(500, str(e))
+    result = tags_service.merge(
+        library, body.get("from"), body.get("into") or body.get("to"),
+        state.exiftool(library), retire=bool(body.get("retire")),
+        apply=bool(body.get("apply")))
     if result.refused:
         return responses.refused(result)
     reply = dict(result.details)
@@ -495,10 +491,7 @@ def faces_restore():
 
 @routes.get("/api/browse-folder")
 def browse_folder():
-    try:
-        return jsonify({"path": desktop.ask_for_folder()})
-    except Exception as e:
-        _refuse(500, str(e))
+    return jsonify({"path": desktop.ask_for_folder()})
 
 
 # ---- Roots: where this machine keeps each root of the library ----------------------------------
