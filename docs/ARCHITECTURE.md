@@ -341,6 +341,7 @@ and hands the strip its result sentence (`showEnded`: counts, the first 50 error
 asked after N of M ... change K in History"); a batch that leaves the list with no such sentence ends in one made from its last row. A list
 that cannot be read is said ("cannot tell how far the write has got"), never taken for a finished write. The Activity page keeps its own rows.
 The photo write queue (`web/tagpup/write-queue.js`: a single save's Retry and Dismiss) is not a batch and stays.
+Leaving a photo waits for its own writes (`edits.js` `leavePhotoThen`): one move waits at a time, the last asked (`state.heldMove`), so presses made meanwhile move once; a wait past 300 ms says so over the photo (`web/tagpup/move-waits.js`), and Escape or its Stay here lets the move go.
 
 **A photo's tags and people** flow one way: the file's keywords are read into `photos.keywords`; `photo_tags`
 and `photo_people` are derived from them, the faces and the tree whenever any of the three changes, in the

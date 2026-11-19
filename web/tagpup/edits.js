@@ -13,6 +13,7 @@ import {
     btnSaveDetails, inputAddPerson, inputAddTag, inputPhotoTitle, peopleDatalist, tagsDatalist
 } from './elements.js';
 import { setStatus } from './status.js';
+import { MOVE_WAIT_SHOWN_AFTER_MS, hideMoveWaiting, showMoveWaiting } from './move-waits.js';
 import { saveToLocalStorageCache } from './cache.js';
 import { dismissEntry, markEntry, pendingWrites, pictureCheckSaid, queueEntry, whereWritten } from './write-queue.js';
 import {
@@ -489,16 +490,29 @@ export function splitTyped(text) {
  * May the panel move off this photo? Asks when it holds unsaved edits.
  *
  * Resolves true to go ahead: nothing was pending, it was saved, or it was
- * discarded. False means stay -- Cancel, or a save that failed. A save already
- * under way is waited for rather than asked about.
+ * discarded. False means stay -- Cancel, a save that failed, or the waiting move
+ * let go (letHeldMoveGo). A save already under way is waited for rather than
+ * asked about, and a wait longer than a moment says so over the photo (move-waits.js).
  */
-export async function confirmLeavingPhoto() {
+async function confirmLeavingPhoto(held) {
     // Every write of this photo, not just the one running when this began: one
     // queued behind it may be about to write the very text the question below
     // would offer to discard. Not the bulk writes: they write no typed text.
-    while (openPhotoWrite()) await openPhotoWrite();
+    if (openPhotoWrite()) {
+        const name = baseName(state.activePhotoPath);
+        const shown = window.setTimeout(() => {
+            if (!held.gone) held.note = showMoveWaiting(name, letHeldMoveGo);
+        }, MOVE_WAIT_SHOWN_AFTER_MS);
+        try {
+            while (openPhotoWrite() && !held.gone) await openPhotoWrite();
+        } finally {
+            window.clearTimeout(shown);
+            hideMoveWaiting(held.note);
+            held.note = null;
+        }
+    }
+    if (held.gone) return false;
     if (!hasUnsavedEdits()) return true;
-    if (state.leavePrompt) return false;   // already asking; this route waits its turn
 
     const photo = state.folderPhotos.find(p => samePath(p.path, state.activePhotoPath));
     const name = (photo && photo.filename) || baseName(state.activePhotoPath);
@@ -521,19 +535,65 @@ export async function confirmLeavingPhoto() {
 /**
  * Run a move off the photo, asking first if that would drop unsaved edits.
  *
- * Returns true when the move ran now; otherwise it runs once the question is
- * answered, if the answer allows it.
+ * Returns true when the move ran now; otherwise it runs once the photo's writes are
+ * done and the question is answered, if the answer allows it.
+ *
+ * One move waits at a time (state.heldMove), the last one asked: arrow presses made
+ * while a save was out each moved on once it was written, skipping photos (owner,
+ * 2026-11-19). A move asked while one waits for the writes takes its place, and the one
+ * replaced is told it stayed (its onStay, as Cancel tells it); one asked while the
+ * question about the photo is open stays, as it always has.
  */
 export function leavePhotoThen(move, { onStay } = {}) {
+    const waiting = state.heldMove;
+    if (waiting && state.leavePrompt) {
+        if (onStay) onStay();
+        return false;
+    }
+    if (waiting) {
+        const replaced = waiting.onStay;
+        Object.assign(waiting, { move, onStay });
+        if (replaced) replaced();
+        return false;
+    }
     if (!hasUnsavedEdits() && !openPhotoWrite()) {
         move();
         return true;
     }
-    confirmLeavingPhoto().then(ok => {
-        if (ok) move();
-        else if (onStay) onStay();
-    });
+    const held = { move, onStay, gone: false, note: null };
+    state.heldMove = held;
+    moveWhenLeft(held);
     return false;
+}
+
+/** The held move, once the photo may be left: run, or told it stayed. Let go (letHeldMoveGo), it is neither. */
+async function moveWhenLeft(held) {
+    let ok = false;
+    try {
+        ok = await confirmLeavingPhoto(held);
+    } finally {
+        // A move asked after this one was let go holds the slot now, with its own wait.
+        if (state.heldMove === held) state.heldMove = null;
+    }
+    if (held.gone) return;
+    if (ok) held.move();
+    else if (held.onStay) held.onStay();
+}
+
+/**
+ * Let the move waiting for the photo's writes go (Escape, or the note's Stay here): the
+ * writes go on, the photo stays, and the move is told it stayed. False when no move waits
+ * for the writes (the question about the photo, when open, keeps its own Escape).
+ */
+export function letHeldMoveGo() {
+    const held = state.heldMove;
+    if (!held || state.leavePrompt) return false;
+    state.heldMove = null;
+    held.gone = true;
+    hideMoveWaiting(held.note);
+    held.note = null;
+    if (held.onStay) held.onStay();
+    return true;
 }
 
 /**

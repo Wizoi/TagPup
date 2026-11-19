@@ -2812,6 +2812,25 @@ body.just-looking #faces-strip {
     position: relative;
 }
 
+/* A move off the photo waiting for its save (move-waits.js): over the photo only, above the face layer. */
+.move-waiting {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    z-index: 6;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    max-width: 90%;
+    padding: 12px 16px;
+    border-radius: 8px;
+    background: rgba(13, 17, 23, 0.9);
+    color: var(--text-primary, #e6edf3);
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.5);
+    font-size: 14px;
+}
+
 .face-layer {
     position: absolute;
     pointer-events: none;
