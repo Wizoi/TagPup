@@ -515,7 +515,8 @@ export function carryTagsForward() {
     const path = state.activePhotoPath;
     if (!path) return;
     const photo = state.folderPhotos.find(p => p.path === path);
-    if (!photo) return;
+    // Read-only while other tag changes wait for it (stale.js offerWrites makes the button inert; the key is answered here).
+    if (!photo || pendingOf(photo)) return;
 
     // The photo before is taken at the press; what it carries, at the write's turn, as it shows then (a tag its pill took
     // off is not copied, whether that removal is written by then or not).

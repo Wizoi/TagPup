@@ -241,4 +241,18 @@ describe("V20: a tag taken off is gone wherever the page shows or copies the pho
     assert.deepEqual(ctx.file(B), ["Harbourside", "Kentridge"]);
     assert.deepEqual(ctx.file(A), ["Harbourside", "Kentridge"]);
   });
+
+  test("Ctrl+D on a photo read-only under another change waiting for it does nothing (#3204)", async (t) => {
+    const ctx = await open(t);
+    await ctx.takeOff("Cross Country");
+    // A bulk click's change for B, waiting behind the removal out: B's panel is read-only until it is written.
+    pageExports(ctx.window, "web/tagpup/pending.js").pendTags([B.path], { add: ["Places/Beach"] });
+    await flush(ctx.window, 4);
+    await ctx.select(B);
+    assert.ok(!ctx.editable(), "the photo with a change waiting was editable");
+    await ctx.carry();
+    while (ctx.unanswered()) await ctx.answer();
+    assert.deepEqual(ctx.saves(), [], "Ctrl+D wrote a photo whose panel is read-only");
+    assert.deepEqual(ctx.file(B), ["Places/Beach"]);
+  });
 });
