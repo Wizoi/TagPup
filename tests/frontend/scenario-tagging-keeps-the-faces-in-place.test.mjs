@@ -161,9 +161,11 @@ describe("V19: tagging the open photo keeps its faces in place", () => {
   test("a person taken off whose reply unnames their face reads the faces again (#908)", async (t) => {
     const ctx = await open(t, { faces: () => reply([named(1)]), tags: ["People/Jane Doe"] });
     const before = ctx.reads();
-    ctx.nextSave(unnamed(1, JANE));
+    // A pill's removal is written as the page's tag changes are (pending.js), and its reply says the faces it unnamed.
+    ctx.nextBulk(unnamed(1, JANE));
     await ctx.pill("Jane Doe");
-    assert.deepEqual(ctx.server.lastBody("/api/photo/save-metadata").tags, [], "the person was not taken off");
+    assert.deepEqual(Object.values(ctx.server.lastBody("/api/photos/bulk-tags").changes), [{ add: [], remove: ["People/Jane Doe"] }],
+      "the person was not taken off");
     assert.equal(ctx.reads(), before + 1, "the faces were not read again after their person went");
   });
 
@@ -176,9 +178,10 @@ describe("V19: tagging the open photo keeps its faces in place", () => {
     await flush(ctx.window, 12);
     assert.match(ctx.summary(), /all identified/);
     const before = ctx.reads();
-    ctx.nextSave(unnamed(2, ALEX));
+    ctx.nextBulk(unnamed(2, ALEX));
     await ctx.pill("Alex Roe");
-    assert.deepEqual(ctx.server.lastBody("/api/photo/save-metadata").tags, [], "the person was not taken off");
+    assert.deepEqual(Object.values(ctx.server.lastBody("/api/photos/bulk-tags").changes), [{ add: [], remove: [ALEX.tag] }],
+      "the person was not taken off");
     assert.equal(ctx.reads(), before + 1, "the faces were not read again after their person went");
     assert.doesNotMatch(ctx.summary(), /all identified/, "the strip still said the unnamed face was named");
     assert.equal(ctx.card(2).classList.contains("unmatched"), true);

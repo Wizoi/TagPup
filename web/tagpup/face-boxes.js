@@ -684,8 +684,8 @@ async function nameOne({ face, path, photo, person, rawName, name, shown, showAs
 }
 
 /**
- * The tags the server says to take off `path` (`untag`, by the photo's path as it spells it), off the photo through
- * the page's own save. True when there was nothing to take off or it was taken off.
+ * The tags the server says to take off `path` (`untag`, by the photo's path as it spells it), off the photo as its pills
+ * take them (pending.js removePhotoTags). True when there was nothing to take off or it was taken off.
  */
 async function takeTagsOff(path, answer) {
     const entry = Object.entries(answer.untag || {}).find(([where]) => samePath(where, path));

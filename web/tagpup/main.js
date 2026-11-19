@@ -18,7 +18,7 @@ import {
 } from './elements.js';
 import { fetchKnownTagsAndPeople } from './tags.js';
 import { wireUnsavedEdits } from './edits.js';
-import { leaveThen, wirePending } from './pending.js';
+import { leaveThen, removePhotoTags, wirePending } from './pending.js';
 import {
     browseFolder, filterFileList, renderFileList, scanFolder,
     wireChangeDogPark, wireFolderPathInput, wireSidebarResizer
@@ -48,7 +48,6 @@ import {
     reloadChangedPhoto, saveSingleAddPerson, saveSingleAddTag, saveSingleTitle, selectPhoto,
     updateCarryForwardState, wireZoom
 } from './photo.js';
-import { removePhotoTags } from './tags-off.js';
 import { wireDateTakenModal } from './date-taken.js';
 import {
     renderThumbnails, selectAllThumbnails, selectNoneThumbnails, wireGridContextMenu,

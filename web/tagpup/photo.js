@@ -26,7 +26,7 @@ import { pictureCheckSaid, whereWritten } from './write-queue.js';
 import { forgetCachedPhoto, saveToLocalStorageCache } from './cache.js';
 import { fileSizeSaid, takenOf, takenSaid } from './format.js';
 import { namesAPerson, normalizeTag } from './tags.js';
-import { goingOffOf, removePhotoTags } from './tags-off.js';
+import { deleteWaits, pendingOf, removePhotoTags, shownTags } from './pending.js';
 import {
     leavePhotoThen, photoChangedOnDisk, queueWriteOf, redrawIfShowing, saveDetailEdits,
     updateSaveButton
@@ -341,7 +341,7 @@ function readPreviousOf(lib, id) {
     if (index <= 0) return;
     fetchLibraryRecord(lib.ids[index - 1]).then(record => {
         if (!record || lib !== state.library || lib.activeId !== id) return;
-        lib.previous = { of: id, tags: (record.tags || []).slice(), from: record.filename || baseName(record.path) };
+        lib.previous = { of: id, record, from: record.filename || baseName(record.path) };
         updateCarryForwardState();
     }).catch(err => console.error('Could not read the photo before this one:', err));
 }
@@ -428,8 +428,8 @@ export function showPhoto(path) {
 
     // Fetch photo data from local array
     const photo = state.folderPhotos.find(p => p.path === path);
-    // A photo whose file is gone is shown as the library holds it and cannot be edited (stale.js); any other is editable.
-    applyPhotoStale(photo);
+    // A photo whose file is gone, or with tag changes waiting, cannot be edited (stale.js); any other is editable.
+    applyPhotoStale(photo, pendingOf(photo));
     if (!photo) return;
 
     // Render values. A photo whose file is gone has no picture to ask for; a video is played in the image's place (media.js).
@@ -445,7 +445,7 @@ export function showPhoto(path) {
     showSmartRenameParts(path);
     updateSaveButton();
 
-    renderTags(photo.tags);
+    renderTags();
     upper.renderSuggestionsPanel(photo.path);
 }
 
@@ -461,39 +461,45 @@ export function showCamera(photo) {
 }
 
 /**
- * The tags on whichever photo sits before this one in the list.
+ * Whichever photo sits before this one in the list: `{ record, from }`, or null.
  *
  * "Before" is list order rather than a history of what you visited, because that
  * is what matches the way a shoot is worked: down the folder, in order. Reaching
  * backwards from the first photo yields nothing rather than wrapping around.
  */
-export function previousPhotoTags() {
+function previousPhoto() {
     // The photo before this one in a library view is not in the page: readPreviousOf read it when this one was shown.
     const lib = state.library;
     if (lib) {
         const held = lib.previous;
-        return held && held.of === lib.activeId ? { tags: held.tags.slice(), from: held.from } : { tags: [], from: null };
+        return held && held.of === lib.activeId ? held : null;
     }
     const items = Array.from(photoList.querySelectorAll('.photo-item-file'));
     const index = items.findIndex(
         el => el.getAttribute('data-path') === state.activePhotoPath
     );
-    if (index <= 0) return { tags: [], from: null };
+    if (index <= 0) return null;
     const prevPath = items[index - 1].getAttribute('data-path');
     const prev = state.folderPhotos.find(p => p.path === prevPath);
-    if (!prev) return { tags: [], from: null };
-    return {
-        tags: (prev.tags || []).slice(),
-        from: prev.filename || baseName(prevPath),
-    };
+    return prev ? { record: prev, from: prev.filename || baseName(prevPath) } : null;
 }
 
-/** Is there anything to copy forward onto the current photo? */
+/** What `photo` (`{ record, from }`, previousPhoto) would carry over: the tags it shows (pending.js shownTags). */
+function carriedFrom(before) {
+    return before ? { tags: shownTags(before.record), from: before.from } : { tags: [], from: null };
+}
+
+/** The tags the photo before this one shows. */
+export function previousPhotoTags() {
+    return carriedFrom(previousPhoto());
+}
+
+/** Is there anything to copy forward onto the current photo? Both as shown: a tag taken off and not written yet is gone. */
 export function carryForwardCandidates() {
     const { tags, from } = previousPhotoTags();
     const photo = state.folderPhotos.find(p => p.path === state.activePhotoPath);
     if (!photo) return { missing: [], from };
-    const have = new Set(photo.tags || []);
+    const have = new Set(shownTags(photo));
     return { missing: tags.filter(t => !have.has(t)), from };
 }
 
@@ -509,9 +515,13 @@ export function carryTagsForward() {
     const path = state.activePhotoPath;
     if (!path) return;
     const photo = state.folderPhotos.find(p => p.path === path);
-    if (!photo) return;
+    // Read-only while other tag changes wait for it (stale.js offerWrites makes the button inert; the key is answered here).
+    if (!photo || pendingOf(photo)) return;
 
-    const { tags: carried, from } = previousPhotoTags();
+    // The photo before is taken at the press; what it carries, at the write's turn, as it shows then (a tag its pill took
+    // off is not copied, whether that removal is written by then or not).
+    const before = previousPhoto();
+    const from = before && before.from;
     const nothingToCarry = () => setStatus('ready', from
         ? `Nothing to carry over from ${from}`
         : 'No previous photo to carry tags from');
@@ -523,14 +533,14 @@ export function carryTagsForward() {
     return queueWriteOf(path, async () => {
         // What is missing now, not when the key was pressed: a write queued
         // ahead of this one may have added some of it, or removed others.
-        const before = (photo.tags || []).slice();
-        const have = new Set(before);
-        const missing = carried.filter(t => !have.has(t));
+        const held = (photo.tags || []).slice();
+        const have = new Set(shownTags(photo));
+        const missing = carriedFrom(before).tags.filter(t => !have.has(t));
         if (!missing.length) {
             nothingToCarry();
             return true;
         }
-        const updatedTags = Array.from(new Set([...before, ...missing]));
+        const updatedTags = Array.from(new Set([...held, ...missing]));
         setStatus('busy', `Copying ${missing.length} tag(s) from ${from}...`);
         let saved;
         try {
@@ -543,7 +553,7 @@ export function carryTagsForward() {
         photo.tags = updatedTags;
         upper.recordUndo({
             label: `carry ${missing.length} tag(s) from ${from}`,
-            photos: [{ path: photo.path, before, after: updatedTags }],
+            photos: [{ path: photo.path, before: held, after: updatedTags }],
         });
         redrawIfShowing(photo, saved);
         renderFileList();
@@ -598,10 +608,11 @@ export function wireZoom() {
 }
 
 /**
- * The photo's tags and people as pills. The pills are alphabetical (sortedTags); the photo's own
- * list is not touched, so a save sends the tags in the order the file holds them.
+ * The open photo's tags and people as pills: the tags it shows (pending.js shownTags: a tag taken off and not written yet
+ * is not drawn, whatever a write queued before it answers meanwhile). The pills are alphabetical (sortedTags); the photo's
+ * own list is not touched, so a save sends the tags in the order the file holds them.
  */
-export function renderTags(tags) {
+export function renderTags() {
     // A pill with the focus keeps it through a redraw (a write's reply), by its tag: it was lost to the page.
     const focused = document.activeElement;
     const keep = focused && focused.classList && focused.classList.contains('tag-pill')
@@ -611,9 +622,7 @@ export function renderTags(tags) {
 
     const photo = state.folderPhotos.find(p => p.path === state.activePhotoPath);
     const photoPeople = (photo && photo.people) ? photo.people : [];
-    // A tag taken off and not written yet is not drawn, whatever a write queued before it answers meanwhile.
-    const marks = goingOffOf(photo);
-    if (marks && tags) tags = tags.filter(tag => !marks.has(normalizeTag(tag)));
+    const tags = photo ? shownTags(photo) : null;
     
     const peopleTags = [];
     const nonPeopleTags = [];
@@ -826,6 +835,8 @@ export function deleteActivePhoto() {
 
     const index = state.folderPhotos.findIndex(p => p.path === path);
     if (index === -1) return;
+    // Not while a tag change for it waits or is out, the selection's Delete's rule (pending.js).
+    if (deleteWaits([path])) return;
 
     // The record asked about, in hand: by the time the reply comes the folder may be another (findings #532).
     const asked = state.folderPhotos[index];

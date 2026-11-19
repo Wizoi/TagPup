@@ -1,20 +1,25 @@
 /**
  * V20: somebody takes tags off the open photo by its pills (owner, 2026-11-15: "when i remove, it seems to delay things until
  * that one tag is removed, can those be queued sort of how clicking on faces are queued"). The pill goes at the click, before
- * the file's write is answered (1-4 s on a share), and the write waits its turn behind the photo's others; pills clicked
- * quickly all go at once, those clicked while a write is out written together, and the file ends holding none of them; a removal and an add queued around it neither undo the other,
- * nor a title saved meanwhile; a write that fails puts back exactly the tags it took, says so, and a removal queued behind it
- * still goes; another photo chosen meanwhile shows only its own tags, and the first photo, opened again, its tags as written;
- * a pill taken off by the keyboard leaves the focus on the next pill, or on the add box when it was the last. The status line
- * says 'Deleting tag...' until the last removal is answered.
+ * the file's write is answered (1-4 s on a share): the removal waits in the page's tag changes (web/tagpup/pending.js), first
+ * in line, and is written through /api/photos/bulk-tags in its turn among the photo's other writes. Pills clicked quickly
+ * are written together while a write is out, and the file ends holding none of them; a removal and a save around it neither
+ * undo the other, nor does a title's save already out draw the removed pill again; a write that fails draws its own tags
+ * again, says so, offers no Retry, and the next removal still goes; another photo chosen meanwhile shows only its own tags,
+ * and the first photo, opened again, its tags as written; a pill taken off by the keyboard leaves the focus on the next pill,
+ * or on the add box when it was the last. The panel's own removals never make it read-only (owner's V20 request). A tag
+ * taken off and not written yet is gone wherever the page shows the photo's tags or decides by them (pending.js shownTags):
+ * the list's count, and Ctrl+D on the next photo, which copies what the photo before shows when its turn comes.
  *
- * Every save is held until the test answers it, as the route answers it (its `base`: what the file holds now).
+ * Every write is held until the test answers it, oldest first, as the routes answer it: the server keeps a model of each
+ * file's tags, and a bulk-tags reply's `written` (a save-metadata reply's `base`) is what the file holds after it.
  */
 import { test, describe, afterEach } from "node:test";
 import assert from "node:assert/strict";
 import {
-  loadApp, FakeServer, photoRecord, flush, openFolder, closeAllApps, PEOPLE_ROUTE, peopleRecordsOf,
+  loadApp, FakeServer, photoRecord, flush, openFolder, closeAllApps, pageExports, PEOPLE_ROUTE, peopleRecordsOf,
 } from "./harness.mjs";
+import { loadViewPage, recordOf } from "./view-page.mjs";
 
 const TAXONOMY = [
   { id: 1, tag: "People", name: "People", parent_id: null, has_face: 1 },
@@ -29,8 +34,15 @@ const TAGS = ["Cross Country", "Harbourside", "Kentridge"];
 const A = photoRecord({ filename: "a.jpg" });
 const B = photoRecord({ filename: "b.jpg" });
 
-async function open(t) {
+/** What a write leaves in a file holding `tags`: a bulk-tags change `{add, remove}`. */
+const changed = (tags, { add = [], remove = [] }) => [...tags.filter((t) => !remove.includes(t)), ...add.filter((t) => !tags.includes(t))];
+
+async function open(t, { b = [] } = {}) {
   const held = [];
+  // The files as the server would hold them; a write changes its file when it is answered, in the order it was sent.
+  const files = new Map([[A.path, TAGS.slice()], [B.path, b.slice()]]);
+  // The request just made is the last call the server saw (FakeServer hands a route only its url).
+  const hold = (kind) => () => new Promise((resolve) => held.push({ kind, body: server.calls.at(-1).body, resolve }));
   const server = new FakeServer()
     .on("/api/tags", TAGS)
     .first(PEOPLE_ROUTE, peopleRecordsOf(TAXONOMY))
@@ -39,9 +51,10 @@ async function open(t) {
     .on("/api/databases", { databases: ["photo_index"], selected: "photo_index" })
     .on("/api/folder/suggest-status", { status: "idle" })
     .on("/api/folder/index-status", { status: "completed", percent: 100, message: "Ready" })
-    .on("/api/folder/scan", [{ ...A, tags: TAGS.slice() }, { ...B, tags: [] }])
+    .on("/api/folder/scan", [{ ...A, tags: TAGS.slice() }, { ...B, tags: b.slice() }])
     .on("/api/photo-faces", { faces: [], total: 0, unmatched: 0 })
-    .on("/api/photo/save-metadata", () => new Promise((resolve) => held.push(resolve)));
+    .on("/api/photos/bulk-tags", hold("bulk"))
+    .on("/api/photo/save-metadata", hold("save"));
   const ctx = await loadApp("tagpup", { t, url: "http://localhost:8090/photo_index/", server });
   ctx.window.console.error = () => {};
   ctx.alerts = [];
@@ -49,13 +62,35 @@ async function open(t) {
   await openFolder(ctx, "D:/Library/2020", { settle: 6 });
   const $ = (id) => ctx.document.getElementById(id);
   ctx.$ = $;
+  ctx.file = (photo) => files.get(photo.path).slice().sort();
+  ctx.bulks = () => server.calls.filter((c) => c.url.includes("bulk-tags")).map((c) => c.body);
   ctx.saves = () => server.calls.filter((c) => c.url.includes("save-metadata")).map((c) => c.body);
-  let answered = 0;
-  // Answer the oldest save still held: written, the file then holding what it was sent; or refused with `error`.
+  ctx.order = () => server.calls.filter((c) => /bulk-tags|save-metadata/.test(c.url)).map((c) => (c.url.includes("bulk") ? "bulk" : "save"));
+  // Which photos each write named, in the order sent: "bulk:a,b", "save:b".
+  const named = (path) => (path === A.path ? "a" : "b");
+  ctx.writes = () => server.calls.filter((c) => /bulk-tags|save-metadata/.test(c.url))
+    .map((c) => (c.url.includes("bulk") ? `bulk:${Object.keys(c.body.changes).map(named).join(",")}` : `save:${named(c.body.path)}`));
+  // Answer the oldest write still held: written, the file then holding what the route leaves in it; or refused with `error`.
   ctx.answer = async (error = null) => {
-    const sent = ctx.saves()[answered];
-    answered += 1;
-    held.shift()(error ? { success: false, error } : { success: true, base: { tags: sent.tags.slice(), title: "" } });
+    const { kind, body, resolve } = held.shift();
+    if (error) {
+      resolve({ success: false, error });
+    } else if (kind === "bulk") {
+      const written = {};
+      for (const [path, change] of Object.entries(body.changes)) {
+        files.set(path, changed(files.get(path), change));
+        written[path] = files.get(path).slice();
+      }
+      resolve({ success: true, written });
+    } else {
+      // A save writes what it changed from the record it was made from (`base`) onto what the file holds.
+      const was = body.base ? body.base.tags : files.get(body.path);
+      files.set(body.path, changed(files.get(body.path), {
+        add: body.tags.filter((t) => !was.includes(t)),
+        remove: was.filter((t) => !body.tags.includes(t)),
+      }));
+      resolve({ success: true, base: { tags: files.get(body.path).slice(), title: body.title || "" } });
+    }
     await flush(ctx.window, 12);
   };
   ctx.unanswered = () => held.length;
@@ -67,6 +102,7 @@ async function open(t) {
     await flush(ctx.window, 4);
   };
   ctx.status = () => $("status-text").textContent;
+  ctx.retries = () => pageExports(ctx.window, "web/tagpup/state.js").state.writeQueue.entries.filter((e) => e.status === "failed" && (e.retry || e.cancel)).length;
   ctx.select = async (photo) => {
     ctx.document.querySelector(`li[data-path="${photo.path.replace(/\\/g, "\\\\")}"]`).click();
     await flush(ctx.window, 8);
@@ -74,6 +110,15 @@ async function open(t) {
   ctx.active = () => {
     const row = ctx.document.querySelector(".photo-item-file.active");
     return row && row.getAttribute("data-path");
+  };
+  ctx.editable = () => !$("btn-edit-tags").hasAttribute("inert");
+  ctx.tagCount = (photo) => {
+    const count = ctx.document.querySelector(`li[data-path="${photo.path.replace(/\\/g, "\\\\")}"] .photo-item-tagcount`);
+    return count ? count.textContent : "";
+  };
+  ctx.carry = async () => {
+    ctx.document.dispatchEvent(new ctx.window.KeyboardEvent("keydown", { key: "d", ctrlKey: true, bubbles: true, cancelable: true }));
+    await flush(ctx.window, 8);
   };
   await ctx.select(A);
   return ctx;
@@ -89,28 +134,44 @@ describe("V20: taking tags off the open photo is answered at the click, the writ
     await ctx.takeOff("Cross Country");
     assert.deepEqual(sorted(ctx.pills()), ["Harbourside", "Kentridge"], "the pill waited for the write");
     assert.equal(ctx.unanswered(), 1, "the write was not sent");
-    assert.equal(ctx.status(), "Deleting tag...");
+    assert.ok(ctx.editable(), "the panel's own removal made it read-only");
     await ctx.takeOff("Harbourside");
     assert.deepEqual(ctx.pills(), ["Kentridge"], "the second pill waited behind the first write");
     await ctx.takeOff("Kentridge");
     assert.deepEqual(ctx.pills(), []);
+    assert.equal(ctx.unanswered(), 1, "a second write went beside the first");
     await ctx.answer();
-    assert.equal(ctx.status(), "Deleting tag...", "said Ready after the first of two writes");
+    assert.deepEqual(ctx.pills(), [], "the first write's reply drew the pills taken off since");
     while (ctx.unanswered()) await ctx.answer();
-    assert.equal(ctx.saves().length, 2, "the two pills clicked while the first write was out were not written as one");
-    assert.deepEqual(ctx.saves().at(-1).tags, []);
+    assert.equal(ctx.bulks().length, 2, "the two pills clicked while the first write was out were not written as one");
+    assert.deepEqual(sorted(ctx.bulks()[1].changes[A.path].remove), ["Harbourside", "Kentridge"]);
+    assert.deepEqual(ctx.file(A), []);
     assert.deepEqual(ctx.pills(), []);
     assert.equal(ctx.status(), "Ready");
   });
 
-  test("a removal and an add queued around it: neither undoes the other, either way round", async (t) => {
+  test("a pill taken off while another removal is out, then typed back: written in the order clicked, the tag stays", async (t) => {
+    const ctx = await open(t);
+    await ctx.takeOff("Cross Country");
+    await ctx.takeOff("Harbourside");
+    ctx.$("input-add-tag").value = "Harbourside";
+    ctx.$("btn-add-tag").click();
+    await flush(ctx.window, 8);
+    while (ctx.unanswered()) await ctx.answer();
+    assert.deepEqual(ctx.order(), ["bulk", "bulk", "save"], "the save went ahead of the removal clicked before it");
+    assert.deepEqual(ctx.file(A), ["Harbourside", "Kentridge"], "the removal clicked first undid the tag typed after it");
+    assert.deepEqual(sorted(ctx.pills()), ["Harbourside", "Kentridge"]);
+  });
+
+  test("a removal and a save around it: neither undoes the other, and a title's save already out draws no pill again", async (t) => {
     const ctx = await open(t);
     await ctx.takeOff("Cross Country");
     ctx.$("input-add-tag").value = "Places/Beach";
     ctx.$("btn-add-tag").click();
     await flush(ctx.window, 8);
     while (ctx.unanswered()) await ctx.answer();
-    assert.deepEqual(sorted(ctx.saves().at(-1).tags), ["Harbourside", "Kentridge", "Places/Beach"]);
+    assert.deepEqual(ctx.order(), ["bulk", "save"]);
+    assert.deepEqual(ctx.file(A), ["Harbourside", "Kentridge", "Places/Beach"]);
     assert.deepEqual(sorted(ctx.pills()), ["Harbourside", "Kentridge", "Places/Beach"]);
 
     // A title's save out first: its reply carries the tag the click took off, not drawn again; the removal writes after it.
@@ -122,56 +183,59 @@ describe("V20: taking tags off the open photo is answered at the click, the writ
     await ctx.answer();
     assert.deepEqual(sorted(ctx.pills()), ["Kentridge", "Places/Beach"], "the title's reply drew the pill taken off again");
     while (ctx.unanswered()) await ctx.answer();
-    const last = ctx.saves().at(-1);
-    assert.deepEqual(sorted(last.tags), ["Kentridge", "Places/Beach"]);
-    assert.equal(last.title, "Harbour run");
+    assert.deepEqual(ctx.order(), ["bulk", "save", "save", "bulk"]);
+    assert.equal(ctx.saves().at(-1).title, "Harbour run");
+    assert.deepEqual(ctx.file(A), ["Kentridge", "Places/Beach"]);
+    assert.deepEqual(sorted(ctx.pills()), ["Kentridge", "Places/Beach"]);
   });
 
-  test("a write that fails puts back only its own tag, says so, and the removal queued behind it still goes", async (t) => {
+  test("a write that fails draws its own tag again, says so, offers no Retry, and the next removal still goes", async (t) => {
     const ctx = await open(t);
     await ctx.takeOff("Cross Country");
     await ctx.takeOff("Harbourside");
     await ctx.answer("The share did not answer");
     assert.deepEqual(sorted(ctx.pills()), ["Cross Country", "Kentridge"], "not exactly the failed removal's tag came back");
-    assert.match(ctx.status(), /Cross Country.*The share did not answer/);
-    assert.equal(ctx.alerts.length, 1);
+    assert.deepEqual(ctx.alerts, ["Not taken off Cross Country: The share did not answer"]);
+    const row = pageExports(ctx.window, "web/tagpup/state.js").state.writeQueue.entries.find((e) => e.status === "failed");
+    assert.equal(row && row.error, "The share did not answer", "the list of writes does not say the removal failed");
+    assert.equal(ctx.retries(), 0, "the failed removal offers a Retry or a Cancel");
+    assert.equal(ctx.unanswered(), 1, "the removal clicked behind the failed one did not go");
     while (ctx.unanswered()) await ctx.answer();
-    assert.deepEqual(sorted(ctx.saves().at(-1).tags), ["Cross Country", "Kentridge"]);
-    assert.deepEqual(sorted(ctx.pills()), ["Cross Country", "Kentridge"]);
-    assert.match(ctx.status(), /Cross Country/, "the failure was said over by the next removal");
-    assert.ok(ctx.document.querySelector(".write-queue-retry"), "the failed write offers no Retry");
+    assert.deepEqual(ctx.bulks()[1].changes[A.path], { add: [], remove: ["Harbourside"] }, "the failed tag was sent again");
+    await ctx.takeOff("Kentridge");
+    while (ctx.unanswered()) await ctx.answer();
+    assert.deepEqual(ctx.file(A), ["Cross Country"]);
+    assert.deepEqual(ctx.pills(), ["Cross Country"]);
+    assert.equal(ctx.status(), "Ready");
   });
 
-  test("a removal that fails after an earlier write already wrote it does not put the tag back, nor write it again", async (t) => {
+  test("a failed write of a pill's removal with another change of the photo says the tag is not taken off, and keeps the other for Retry", async (t) => {
     const ctx = await open(t);
-    await ctx.takeOff("Kentridge");
-    ctx.$("input-add-tag").value = "Places/Beach";
-    ctx.$("btn-add-tag").click();
-    await flush(ctx.window, 8);
     await ctx.takeOff("Cross Country");
+    await ctx.takeOff("Harbourside");
+    // A bulk click's change for the open photo, waiting with the pill's removal: one write of both.
+    pageExports(ctx.window, "web/tagpup/pending.js").pendTags([A.path], { add: ["Places/Beach"] });
+    await flush(ctx.window, 4);
     await ctx.answer();
-    await ctx.answer();
-    assert.ok(!ctx.saves()[1].tags.includes("Cross Country"), "the add queued before the click was expected to carry it off");
     await ctx.answer("The share did not answer");
-    assert.ok(!ctx.pills().includes("Cross Country"), "the file no longer holds it, yet its pill came back");
-    assert.doesNotMatch(ctx.status(), /Not taken off Cross Country/);
-    ctx.$("input-add-tag").value = "Kentridge";
-    ctx.$("btn-add-tag").click();
-    await flush(ctx.window, 8);
-    while (ctx.unanswered()) await ctx.answer();
-    assert.ok(!ctx.saves().at(-1).tags.includes("Cross Country"), "the next save wrote the tag back");
+    assert.deepEqual(sorted(ctx.pills()), ["Harbourside", "Kentridge", "Places/Beach"], "the failed removal's tag was not drawn again");
+    assert.deepEqual(ctx.alerts, ["Tags not written to 1 photo: The share did not answer. Not taken off Harbourside. "
+      + "Retry or Cancel it in the list of writes (bottom right)."]);
+    assert.equal(ctx.status(), "Tags not written to 1 photo. Not taken off Harbourside.");
+    assert.equal(ctx.retries(), 1, "the other change lost its Retry");
   });
 
   test("another photo chosen while a removal is out shows its own tags; the first, opened again, its tags as written", async (t) => {
     const ctx = await open(t);
     await ctx.takeOff("Cross Country");
     await ctx.select(B);
-    while (ctx.unanswered()) await ctx.answer();
-    await flush(ctx.window, 8);
-    assert.equal(ctx.active(), B.path);
     assert.deepEqual(ctx.pills(), [], "the first photo's tags drawn on the second");
+    while (ctx.unanswered()) await ctx.answer();
+    assert.equal(ctx.active(), B.path);
+    assert.deepEqual(ctx.pills(), [], "the first photo's reply drew its tags on the second");
     await ctx.select(A);
     assert.deepEqual(sorted(ctx.pills()), ["Harbourside", "Kentridge"]);
+    assert.deepEqual(ctx.file(A), ["Harbourside", "Kentridge"]);
   });
 
   test("a pill taken off by the keyboard leaves the focus on the next pill, the last one on the add box", async (t) => {
@@ -190,6 +254,176 @@ describe("V20: taking tags off the open photo is answered at the click, the writ
     await flush(ctx.window, 4);
     assert.equal(ctx.document.activeElement.id, "input-add-tag");
     while (ctx.unanswered()) await ctx.answer();
-    assert.deepEqual(ctx.saves().at(-1).tags, []);
+    assert.deepEqual(ctx.file(A), []);
+  });
+});
+
+// The one rule (pending.js takeChunk): a write -- a save, a chunk -- never runs against a record missing a change clicked before
+// it, on any photo; so the chunk ahead of a save takes every photo's own removals waiting, in the order clicked, and they go even
+// while a failed write waits for its Retry (#3210).
+describe("V20: pills taken off on several photos, then a tag given back: the writes go in the order clicked", () => {
+  const typeBack = async (ctx, tag) => {
+    ctx.$("input-add-tag").value = tag;
+    ctx.$("btn-add-tag").click();
+    await flush(ctx.window, 8);
+  };
+  const pillsOnTwoPhotos = async (ctx) => {
+    await ctx.takeOff("Cross Country");   // A: written at once, its write out
+    await ctx.select(B);
+    await ctx.takeOff("Kentridge");
+    await ctx.select(A);
+    await ctx.takeOff("Harbourside");
+    await ctx.select(B);
+  };
+
+  test("pill off A, pill off B, pill off A, then B's tag typed back: B keeps it", async (t) => {
+    const ctx = await open(t, { b: ["Kentridge"] });
+    await pillsOnTwoPhotos(ctx);
+    await typeBack(ctx, "Kentridge");
+    while (ctx.unanswered()) await ctx.answer();
+    assert.deepEqual(ctx.writes(), ["bulk:a", "bulk:b,a", "save:b"], "the save went ahead of a removal clicked before it");
+    assert.deepEqual(ctx.file(B), ["Kentridge"], "the tag typed back was lost");
+    assert.deepEqual(ctx.file(A), ["Kentridge"]);
+    assert.deepEqual(ctx.pills(), ["Kentridge"]);
+    assert.equal(ctx.$("input-add-tag").value, "");
+    assert.equal(ctx.status(), "Saved b.jpg");
+  });
+
+  test("the same, B's tag given back by its suggestion: B keeps it, never 'already on this photo'", async (t) => {
+    const ctx = await open(t, { b: ["Kentridge"] });
+    pageExports(ctx.window, "web/tagpup/state.js").state.folderSuggestions[B.path] = { people: [], tags: [{ tag: "Kentridge", score: 0.9 }] };
+    await pillsOnTwoPhotos(ctx);
+    const chip = Array.from(ctx.document.querySelectorAll("#suggestions-section .suggestion-chip")).find((each) => each.textContent.startsWith("Kentridge"));
+    assert.ok(chip, "the tag taken off was not offered again");
+    chip.click();
+    await flush(ctx.window, 8);
+    while (ctx.unanswered()) await ctx.answer();
+    assert.deepEqual(ctx.writes(), ["bulk:a", "bulk:b,a", "save:b"]);
+    assert.deepEqual(ctx.file(B), ["Kentridge"], "the suggestion clicked was lost");
+    assert.notEqual(ctx.status(), "Kentridge is already on this photo");
+  });
+
+  test("while a failed write waits for its Retry, a pill taken off and typed back: the removal goes first, the tag stays", async (t) => {
+    const ctx = await open(t, { b: ["Kentridge"] });
+    pageExports(ctx.window, "web/tagpup/pending.js").pendTags([A.path], { add: ["Places/Beach"] });
+    await flush(ctx.window, 4);
+    await ctx.answer("The share did not answer");
+    assert.equal(ctx.retries(), 1);
+    await ctx.select(B);
+    await ctx.takeOff("Kentridge");
+    await typeBack(ctx, "Kentridge");
+    while (ctx.unanswered()) await ctx.answer();
+    assert.deepEqual(ctx.writes(), ["bulk:a", "bulk:b", "save:b"], "the removal waited for the Retry behind the save");
+    assert.deepEqual(ctx.file(B), ["Kentridge"], "the tag typed back was lost");
+    assert.equal(ctx.retries(), 1, "the failed write's Retry went by itself, or was lost");
+    assert.deepEqual(ctx.file(A), TAGS.slice().sort(), "the failed write went without its Retry");
+  });
+});
+
+describe("V20: a tag taken off is gone wherever the page shows or copies the photo's tags", () => {
+  test("Ctrl+D on the next photo while the removal is out copies the tags shown, not the one taken off", async (t) => {
+    const ctx = await open(t);
+    assert.equal(ctx.tagCount(A), "3");
+    await ctx.takeOff("Cross Country");
+    assert.equal(ctx.tagCount(A), "2", "the list counted the tag taken off");
+    await ctx.select(B);
+    assert.equal(ctx.$("btn-carry-forward").title, "Copy 2 tag(s) from a.jpg  (Ctrl+D)", "the button offered the tag taken off");
+    await ctx.carry();
+    assert.equal(ctx.unanswered(), 1, "the copy did not wait behind the removal");
+    while (ctx.unanswered()) await ctx.answer();
+    assert.deepEqual(ctx.order(), ["bulk", "save"]);
+    assert.deepEqual(sorted(ctx.saves()[0].tags), ["Harbourside", "Kentridge"], "the copy carried the tag the pill took off");
+    assert.equal(ctx.status(), "Copied 2 tag(s) from a.jpg");
+    assert.deepEqual(ctx.file(B), ["Harbourside", "Kentridge"]);
+    assert.deepEqual(ctx.file(A), ["Harbourside", "Kentridge"]);
+  });
+
+  test("Delete while the photo's own removal is out is refused, as the selection's is (#3203)", async (t) => {
+    const ctx = await open(t);
+    ctx.confirms = [];
+    ctx.window.confirm = (text) => { ctx.confirms.push(text); return true; };
+    await ctx.takeOff("Cross Country");
+    ctx.$("btn-delete-photo").click();
+    await flush(ctx.window, 4);
+    assert.deepEqual(ctx.alerts, ["Tag changes for this photo are not written yet: wait for them, or cancel them in the list of writes, then delete."]);
+    assert.deepEqual(ctx.confirms, []);
+    while (ctx.unanswered()) await ctx.answer();
+    assert.deepEqual(ctx.file(A), ["Harbourside", "Kentridge"]);
+  });
+
+  test("Ctrl+D on a photo read-only under another change waiting for it does nothing (#3204)", async (t) => {
+    const ctx = await open(t);
+    await ctx.takeOff("Cross Country");
+    // A bulk click's change for B, waiting behind the removal out: B's panel is read-only until it is written.
+    pageExports(ctx.window, "web/tagpup/pending.js").pendTags([B.path], { add: ["Places/Beach"] });
+    await flush(ctx.window, 4);
+    await ctx.select(B);
+    assert.ok(!ctx.editable(), "the photo with a change waiting was editable");
+    await ctx.carry();
+    while (ctx.unanswered()) await ctx.answer();
+    assert.deepEqual(ctx.saves(), [], "Ctrl+D wrote a photo whose panel is read-only");
+    assert.deepEqual(ctx.file(B), ["Places/Beach"]);
+  });
+});
+
+// A library view holds only the open photo's record, and the one before it (Ctrl+D's), read from the library when the open one
+// is shown: a write's reply reaches whichever of them the page holds (pending.js heldRecords).
+describe("V20: in a library view", () => {
+  async function view(t) {
+    const files = new Map([[11, ["Cross Country", "Harbourside"]], [12, []]]);
+    const ctx = await loadViewPage(t, { search: "?view=all", onPhoto: (id) => ({ photo: recordOf(id, { tags: (files.get(id) || []).slice() }) }) });
+    ctx.out = [];
+    ctx.files = files;
+    ctx.server.first("/api/photos/bulk-tags", () => new Promise((resolve) => ctx.out.push({ body: ctx.server.calls.at(-1).body, resolve })));
+    ctx.answerWrite = async () => {
+      const { body, resolve } = ctx.out.shift();
+      const written = {};
+      for (const [path, change] of Object.entries(body.changes)) {
+        const id = Number(path.match(/IMG_(\d+)/)[1]);
+        files.set(id, changed(files.get(id), change));
+        written[path] = files.get(id).slice();
+      }
+      resolve({ success: true, written });
+      await ctx.settle(40);
+    };
+    ctx.openPhoto = async (id) => {
+      ctx.cardById(id).querySelector(".btn-thumbnail-detail").click();
+      await ctx.settle(80);
+    };
+    ctx.takeOff = async (text) => {
+      Array.from(ctx.document.querySelectorAll(".tag-pill")).find((each) => each.textContent === text).click();
+      await ctx.settle(20);
+    };
+    ctx.saves = () => ctx.server.calls.filter((c) => c.url.includes("save-metadata")).map((c) => c.body);
+    return ctx;
+  }
+
+  test("a pill taken off, the next photo opened, the write answered: Ctrl+D copies the tags the photo before holds now", async (t) => {
+    const ctx = await view(t);
+    await ctx.openPhoto(11);
+    await ctx.takeOff("Cross Country");
+    await ctx.openPhoto(12);
+    assert.equal(ctx.out.length, 1, "the removal was not out while the next photo was opened");
+    await ctx.answerWrite();
+    assert.equal(ctx.document.getElementById("btn-carry-forward").title, "Copy 1 tag(s) from IMG_11.jpg  (Ctrl+D)",
+      "the button offered the tag taken off");
+    ctx.document.dispatchEvent(new ctx.window.KeyboardEvent("keydown", { key: "d", ctrlKey: true, bubbles: true, cancelable: true }));
+    await ctx.settle(80);
+    assert.deepEqual(ctx.saves().map((s) => s.tags), [["Harbourside"]], "Ctrl+D copied the tag the pill took off");
+  });
+
+  test("the selection's Delete while the open photo's removal is out is refused, as a folder's is (#3203)", async (t) => {
+    const ctx = await view(t);
+    ctx.alerts = [];
+    ctx.window.alert = (text) => ctx.alerts.push(text);
+    await ctx.openPhoto(11);
+    await ctx.takeOff("Cross Country");
+    ctx.cardById(11).querySelector(".thumbnail-checkbox").click();
+    ctx.document.getElementById("btn-delete-selection").click();
+    await ctx.settle(40);
+    assert.deepEqual(ctx.alerts, ["Tag changes for 1 photo are not written yet: wait for them, or cancel them in the list of writes, then delete."]);
+    assert.deepEqual(ctx.server.calls.filter((c) => c.url.includes("/selection/delete-check")), [], "the delete was asked of the server");
+    await ctx.answerWrite();
+    assert.deepEqual(ctx.files.get(11), ["Harbourside"]);
   });
 });

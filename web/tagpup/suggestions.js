@@ -15,6 +15,7 @@ import {
 import { setStatus } from './status.js';
 import { saveToLocalStorageCache } from './cache.js';
 import { fetchKnownTagsAndPeople, namesAPerson, resolveTagOrPerson } from './tags.js';
+import { shownTags } from './pending.js';
 import { photoChangedOnDisk, queuePhotoWrite, queueWriteOf, redrawIfShowing } from './edits.js';
 import { postPhotoMetadata } from './common/photo-write.js';
 import { isJustLooking, libraryName } from './looking.js';
@@ -409,7 +410,9 @@ export function renderSuggestionsPanel(photoPath) {
     // Apply All the box sat there repeating the tags it had just written back at
     // you. A suggestion you have taken is not a suggestion; it is a tag, and it is
     // already shown as one a few inches above.
-    const photo = state.folderPhotos.find(p => p.path === photoPath);
+    // As the photo shows its tags (pending.js shownTags): a tag taken off and not written yet is offered again.
+    const record = state.folderPhotos.find(p => p.path === photoPath);
+    const photo = record && { tags: shownTags(record) };
     const outstanding = (list, key) =>
         (list || []).filter(item => !photoAlreadyHas(photo, item[key], namesAPerson, state.people));
 

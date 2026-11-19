@@ -8,6 +8,12 @@
 // meanwhile. A tag clicked while a 5,000-photo change drains joins the files not yet sent and rides their chunk; a file
 // already written gets it in a later chunk. A chunk that fails gives its files' ops back and stops the drain until Retry
 // or Cancel: it never loops by itself. The map is this page's memory only (closing the page loses what is not sent).
+//
+// The open photo's own removals (its pills, a face's person: removePhotoTags) enter the map too, first in line (takeChunk), and
+// are answered at the click, and a write of them that fails puts them back rather than waiting for Retry. Any other change
+// waiting for a photo makes its panel read-only until it is written (pendingOf; stale.js offerWrites). The record follows
+// the reply, not the map; what the page shows of a photo's tags, and decides by, is the record with the map's changes for
+// it applied (shownTags), redrawn whenever the map changes for a photo of the page (pageFollows).
 import { api } from './common/api.js';
 import { pathKey, samePath } from './common/paths.js';
 import { leafOf } from './common/vocabulary.js';
@@ -18,12 +24,15 @@ import { changeCachedPhotos, forgetCachedFolder, saveToLocalStorageCache } from 
 import { leavePhotoThen, queuePhotoWrite, redrawIfShowing } from './edits.js';
 import { takeWritten } from './common/photo-write.js';
 import { renderWriteQueue, whereWritten } from './write-queue.js';
-import { updatePeopleDatalist, updateTagsDatalist } from './tags.js';
+import { namesAPerson, normalizeTag, updatePeopleDatalist, updateTagsDatalist } from './tags.js';
+import { offerWrites } from './stale.js';
 
 /** Files a request: the server's group of one write (batches.CHUNK, the route's limit with a `group`). */
 const CHUNK = 25;
 
 const photosWord = (n) => `${n.toLocaleString()} ${n === 1 ? 'photo' : 'photos'}`;
+
+const STOPPED = 'Tag changes wait for the failed write: Retry or Cancel it (bottom right).';
 
 /** Wait to write `add` and `remove` to each of `paths`; resolves {written, failed, skipped} once every file is settled. */
 export function pendTags(paths, { add = [], remove = [], people = false } = {}) {
@@ -32,13 +41,14 @@ export function pendTags(paths, { add = [], remove = [], people = false } = {}) 
 
 /**
  * Wait to write each `{path, add, remove}` of `list`: one owner action, one group token. `people`: the tags name people,
- * whose leaves the records' `people` follow. Resolves {written, failed, skipped}, counted in files.
+ * whose leaves the records' `people` follow. `panel`: the open photo's own removal (removePhotoTags), first in line.
+ * Resolves {written, failed, skipped}, counted in files.
  */
-export function pendChanges(list, { people = false } = {}) {
+export function pendChanges(list, { people = false, panel = false } = {}) {
     const pending = state.pending;
     let resolve;
     const settled = new Promise(r => { resolve = r; });
-    const action = { left: new Set(), written: 0, failed: 0, skipped: 0, resolve };
+    const action = { left: new Set(), written: 0, failed: 0, skipped: 0, resolve, panel };
     const token = crypto.randomUUID();
     for (const { path, add = [], remove = [] } of list) {
         const key = pathKey(path);
@@ -46,19 +56,90 @@ export function pendChanges(list, { people = false } = {}) {
         // A file already waiting keeps the token of the action that put it here first (the plan's cut 3 rule), and the
         // folder it was clicked in, whose records this browser keeps (cache.js) if the folder is left before it is written.
         if (!entry) {
-            entry = { path, add: new Set(), remove: new Set(), token, actions: new Set(), folder: state.scannedFolder || null };
+            entry = { path, add: new Set(), remove: new Set(), panel: new Set(), token, actions: new Set(), folder: state.scannedFolder || null };
             pending.files.set(key, entry);
         }
         remove.forEach(tag => { entry.add.delete(tag); entry.remove.add(tag); });
         add.forEach(tag => { entry.remove.delete(tag); entry.add.add(tag); });
+        // The panel's tags are those whose last click was the panel's; a click elsewhere on one makes it a change it does not draw.
+        [...add, ...remove].forEach(tag => (panel ? entry.panel.add(tag) : entry.panel.delete(tag)));
         if (people) [...add, ...remove].forEach(tag => pending.people.add(tag));
         entry.actions.add(action);
         action.left.add(key);
     }
     if (!action.left.size) resolve({ written: 0, failed: 0, skipped: 0 });
-    if (pending.stopped) setStatus('error', 'Tag changes wait for the failed write: Retry or Cancel it (bottom right).', { transient: false });
+    if (pending.stopped && !panel) setStatus('error', STOPPED, { transient: false });
+    pageFollows(new Set(list.map(({ path }) => pathKey(path))));
     drain();
     return settled;
+}
+
+/**
+ * Take tags off a photo of the page: the click is answered at once (its pills are no longer drawn) and the write goes first
+ * in line, with any pill clicked before its turn. `tags` as the photo spells them. Resolves true once its file is written,
+ * false when the write fails (the tags are drawn again: the file still holds them) or is dropped.
+ */
+export function removePhotoTags(path, tags) {
+    const photo = path && state.folderPhotos.find(p => samePath(p.path, path));
+    if (!photo) return Promise.resolve(false);
+    tags.filter(namesAPerson).forEach(tag => state.pending.people.add(tag));
+    return pendChanges([{ path: photo.path, remove: tags }], { panel: true }).then(({ written }) => written > 0);
+}
+
+/** The entries of `photo`'s file: waiting in the map, and in the chunk out. */
+function entriesOf(photo) {
+    if (!photo) return [];
+    const key = pathKey(photo.path);
+    return [state.pending.files.get(key), ...(state.pending.out || []).filter(entry => pathKey(entry.path) === key)].filter(Boolean);
+}
+
+/** How many tag changes wait for `photo` that its panel does not draw: any but its own removals. Over 0, it is read-only. */
+export function pendingOf(photo) {
+    return entriesOf(photo).reduce((n, entry) => n + [...entry.add, ...entry.remove].filter(tag => !entry.panel.has(tag)).length, 0);
+}
+
+/**
+ * The tags `photo` shows: its record (what its file held at the last reply) with the changes not written yet applied, the
+ * chunk out's then the map's (the later op wins), compared as tags are (normalizeTag). The one answer for whatever draws a
+ * photo's tags or decides by them: its pills, the list's count, the suggestions not yet on it, Ctrl+D's copy. A write
+ * builds on the record, which is what the file holds.
+ */
+export function shownTags(photo) {
+    let tags = ((photo && photo.tags) || []).slice();
+    for (const entry of entriesOf(photo).reverse()) {
+        const off = new Set([...entry.remove].map(normalizeTag));
+        tags = tags.filter(tag => !off.has(normalizeTag(tag)));
+        const have = new Set(tags.map(normalizeTag));
+        entry.add.forEach(tag => { if (!have.has(normalizeTag(tag))) tags.push(tag); });
+    }
+    return tags;
+}
+
+/**
+ * The records the page holds of photos, the one lookup of them: the folder's (a library view's: the open photo's), and a
+ * library view's photo before the open one, read from the library for Ctrl+D (photo.js readPreviousOf). A reply reaches
+ * each of them (takeReply), and the page follows a change for any of them (pageFollows).
+ */
+function heldRecords() {
+    const previous = state.library && state.library.previous;
+    return previous ? [...state.folderPhotos, previous.record] : state.folderPhotos;
+}
+
+/**
+ * The page follows a change of the map for any of `keys`: the list (its counts are of the tags shown), Ctrl+D's offer,
+ * and the open photo's pills, suggestions, and whether it is read-only.
+ */
+function pageFollows(keys) {
+    if (!heldRecords().some(p => keys.has(pathKey(p.path)))) return;
+    upper.renderFileList();
+    upper.updateCarryForwardState();
+    const path = state.activePhotoPath;
+    if (!path || !keys.has(pathKey(path))) return;
+    const photo = state.folderPhotos.find(p => samePath(p.path, path));
+    if (!photo) return;
+    upper.renderTags();
+    upper.renderSuggestionsPanel(photo.path);
+    offerWrites(photo, pendingOf(photo));
 }
 
 /** The files whose changes are not sent yet. */
@@ -66,20 +147,38 @@ function unsentCount() {
     return state.pending.files.size;
 }
 
-/**
- * How many of `paths` have tag changes not written yet: waiting here, or in the chunk out (a Delete of them waits for them:
- * bulk-edit.js deleteSelection, else a chunk would write, or give back the ops of, a file that is gone).
- */
-export function pendingAmong(paths) {
+/** The files with tag changes not written yet, by key: waiting here, or in the chunk out. */
+function unwritten() {
     const pending = state.pending;
-    const out = new Set((pending.out || []).map(entry => pathKey(entry.path)));
-    return paths.filter(path => pending.files.has(pathKey(path)) || out.has(pathKey(path))).length;
+    return new Set([...pending.files.keys(), ...(pending.out || []).map(entry => pathKey(entry.path))]);
 }
 
-/** Queue the next chunk, unless one is queued, the drain is stopped by a failure, or nothing waits. */
+/**
+ * A Delete of `paths` waits for their tag changes (a folder's selection, bulk-edit.js, and the open photo's, photo.js
+ * deleteActivePhoto): else a chunk would write, or give back the ops of, a file that is gone, and the page would call a
+ * photo deleted on purpose missing. A library view's selection is ids (every photo of the view, with Select all), which
+ * the page cannot match to the files waiting without their cards: it is asked with no `paths`, and waits for every change
+ * (in a view only the open photo's removals and an Undo, written in a moment). Says so and answers true while any is not
+ * written; false when the delete may go on.
+ */
+export function deleteWaits(paths = null) {
+    const keys = unwritten();
+    const waiting = paths ? paths.filter(path => keys.has(pathKey(path))).length : keys.size;
+    if (!waiting) return false;
+    const which = !paths ? photosWord(waiting) : paths.length === 1 ? 'this photo' : `${waiting.toLocaleString()} of these photos`;
+    alert(`Tag changes for ${which} are not written yet: wait for them, or cancel them in the list of writes, then delete.`);
+    return true;
+}
+
+/**
+ * Queue the next chunk, unless one is queued and has not had its turn, nothing waits, or the drain is stopped by a failure
+ * and no photo's own removal waits (those go anyway: takeChunk). A click while a chunk is out queues the next at the click,
+ * so a save clicked after it goes after it (one queue, in the order clicked); the drain's own next chunk is queued when the
+ * one out is answered, behind whatever was queued meanwhile.
+ */
 function drain() {
     const pending = state.pending;
-    if (pending.queued || pending.stopped || !pending.files.size) return;
+    if (pending.queued || !pending.files.size || (pending.stopped && !ownRemovals().length)) return;
     pending.queued = true;
     queuePhotoWrite(sendChunk, 'Write tag changes', () => resume());
 }
@@ -103,6 +202,7 @@ function dropPending(only = null) {
     state.writeQueue.entries.forEach(row => { if (row.cancel === cancelPending) { row.retry = null; row.cancel = null; } });
     renderWriteQueue();
     dropped.forEach(([, entry]) => settle(entry, 'failed'));
+    pageFollows(new Set(dropped.map(([key]) => key)));
     return dropped.length;
 }
 
@@ -145,30 +245,44 @@ export function wirePending() {
     });
 }
 
-function settle(entry, how) {
+function settle(entry, how, which = () => true) {
     const key = pathKey(entry.path);
     for (const action of entry.actions) {
-        if (!action.left.delete(key)) continue;
+        if (!which(action) || !action.left.delete(key)) continue;
         action[how] += 1;
         if (!action.left.size) action.resolve({ written: action.written, failed: action.failed, skipped: action.skipped });
     }
 }
 
 /**
- * The next chunk, taken when its turn comes (not when it was queued): files in the order they came, those carrying the
- * first one's token, at most CHUNK. Every op is sent, whatever the page's record holds: the record may be older than the
- * file, and the server skips a file that already holds it all.
+ * The files whose photo's own removals wait (a pill, a face's person), in the order clicked; while a failed write waits for
+ * its Retry, only those holding nothing else (a file with other changes waits with them; its panel is read-only meanwhile).
+ */
+function ownRemovals() {
+    const pending = state.pending;
+    const ownOnly = (entry) => [...entry.add, ...entry.remove].every(tag => entry.panel.has(tag));
+    return [...pending.files].filter(([, entry]) => entry.panel.size && (!pending.stopped || ownOnly(entry)));
+}
+
+/**
+ * The next chunk, taken when its turn comes (not when it was queued), at most CHUNK files: the one place that says in what
+ * order the changes are written. The rule: a write -- a chunk, or a save or a suggestion queued behind it -- never runs
+ * against a record that is missing a change clicked before it, on any photo. A save is made only on a photo whose waiting
+ * changes are all its own removals (any other makes it read-only: pendingOf), so the chunk queued ahead of it takes every
+ * photo's own removals waiting, in the order clicked, whatever action each was: one write of them, under the first one's
+ * group (the pills taken off while a write was out are one line of History). They go while a failed write waits for its
+ * Retry, as their failure is answered at once (answerPanel). With none waiting, the files of the first action in the map,
+ * which is in the order clicked (a failed chunk's files given back first). Every op is sent, whatever the page's record
+ * holds: the record may be older than the file, and the server skips a file that already holds it all.
  */
 function takeChunk() {
-    const files = state.pending.files;
-    const chunk = [];
-    for (const [key, entry] of files) {
-        if (chunk.length >= CHUNK) break;
-        if (chunk.length && entry.token !== chunk[0].token) continue;
-        files.delete(key);
-        chunk.push(entry);
-    }
-    return chunk;
+    const pending = state.pending;
+    const own = ownRemovals();
+    const first = pending.files.values().next().value;
+    const taken = own.length ? own : pending.stopped ? [] : [...pending.files].filter(([, entry]) => entry.token === first.token);
+    const chunk = taken.slice(0, CHUNK);
+    chunk.forEach(([key]) => pending.files.delete(key));
+    return chunk.map(([, entry]) => entry);
 }
 
 /** What a chunk's entry in the write queue says: "Add Trips/Coast to 25 photos, 4,975 more pending". */
@@ -183,12 +297,15 @@ function chunkLabel(chunk) {
 
 /** The queue's job: send the next chunk and take its reply; the drain goes on behind whatever was queued meanwhile. */
 async function sendChunk(entry) {
+    let chunk = [];
+    state.pending.queued = false;
     try {
         const drops = state.pending.drops;
-        const chunk = takeChunk();
+        chunk = takeChunk();
         state.pending.out = chunk;
         if (!chunk.length) {
-            entry.label = 'Tag changes: nothing left to write';
+            // Queued at a click while the chunk before was out, and that one failed: the changes wait for its Retry.
+            entry.label = state.pending.stopped ? 'Tag changes: waiting for the failed write' : 'Tag changes: nothing left to write';
             return true;
         }
         entry.label = chunkLabel(chunk);
@@ -209,14 +326,14 @@ async function sendChunk(entry) {
         return takeReply(chunk, data, entry, drops !== state.pending.drops);
     } finally {
         state.pending.out = null;
-        state.pending.queued = false;
         drain();
+        pageFollows(new Set(chunk.map(item => pathKey(item.path))));
     }
 }
 
 /**
  * The reply into the records: each file written takes the stamp and the tags its file holds now, in any record of it
- * the page shows and, its folder left since, in the records this browser kept of that folder (whatever the page shows
+ * the page holds (heldRecords) and, its folder left since, in the records this browser kept of that folder (whatever the page shows
  * meanwhile: a library view may show one of its photos); a file gone was skipped and keeps its record. A failed chunk's
  * unwritten files go back to the front of the map and the drain stops, unless the changes were dropped while it was out
  * (`dropped`): then they are not written, and Cancel's message stands.
@@ -226,7 +343,8 @@ function takeReply(chunk, data, entry, dropped) {
     const stamps = byKey(data.stamps);
     const held = byKey(data.written);
     const skipped = new Set((data.skipped || []).map(s => pathKey(s.path)));
-    const photos = new Map(state.folderPhotos.map(p => [pathKey(p.path), p]));
+    const photos = new Map();   // key -> the records the page holds of it
+    heldRecords().forEach(p => photos.set(pathKey(p.path), [...(photos.get(pathKey(p.path)) || []), p]));
     const back = [];
     const written = [];
     const left = new Map();   // folder left since -> its items written
@@ -240,11 +358,10 @@ function takeReply(chunk, data, entry, dropped) {
         if (skipped.has(key)) {
             settle(item, 'skipped');
         } else if (data.success || held.has(key)) {
-            const photo = photos.get(key);
-            if (photo) {
+            (photos.get(key) || []).forEach(photo => {
                 take(photo, item);
                 written.push(photo);
-            }
+            });
             if (item.folder && !(state.scannedFolder && samePath(item.folder, state.scannedFolder))) {
                 left.set(item.folder, [...(left.get(item.folder) || []), item]);
             }
@@ -261,15 +378,17 @@ function takeReply(chunk, data, entry, dropped) {
         });
     }
     // The map first: a throw in drawing below must not lose the unwritten files' changes nor leave the drain running.
+    let kept = back;
+    let putBack = [];
     if (!data.success && dropped) {
         back.forEach(item => settle(item, 'failed'));
     } else if (!data.success) {
-        giveBack(back);
-        state.pending.stopped = true;
+        ({ kept, putBack } = answerPanel(back));
+        giveBack(kept);
+        state.pending.stopped = state.pending.stopped || kept.length > 0;   // stopped already: own removals sent meanwhile
     }
     if (written.length) {
-        upper.updateSelectedThumbnailsCount();
-        upper.renderFileList();
+        upper.updateSelectedThumbnailsCount();   // the list follows in sendChunk's pageFollows
         upper.renderThumbnails();
         updateTagsDatalist();
         if (chunk.some(e => [...e.add, ...e.remove].some(t => state.pending.people.has(t)))) updatePeopleDatalist();
@@ -283,11 +402,25 @@ function takeReply(chunk, data, entry, dropped) {
             setStatus('error', `Tags not written to ${back.length.toLocaleString()} more ${back.length === 1 ? 'photo' : 'photos'}: ${entry.error}`, { transient: false });
             return false;
         }
-        setStatus('error', `Tags not written to ${photosWord(back.length)}`, { transient: false });
-        alert(`Tags not written to ${photosWord(back.length)}: ${entry.error}. Retry or Cancel it in the list of writes (bottom right).`);
+        if (!kept.length) {
+            // Only the open photo's own removals: they are drawn again, and nothing waits for a Retry or a Cancel.
+            entry.retry = null;
+            entry.cancel = null;
+            setStatus('error', `Not taken off ${putBack.join(', ')}: ${entry.error}`, { transient: false });
+            alert(`Not taken off ${putBack.join(', ')}: ${entry.error}`);
+            return false;
+        }
+        // The panel's own removals among them are drawn again now, and are not part of the Retry: said by name.
+        const notOff = putBack.length ? ` Not taken off ${putBack.join(', ')}.` : '';
+        setStatus('error', `Tags not written to ${photosWord(kept.length)}.${notOff}`, { transient: false });
+        alert(`Tags not written to ${photosWord(kept.length)}: ${entry.error}.${notOff} Retry or Cancel it in the list of writes (bottom right).`);
         return false;
     }
     if (dropped) return true;
+    if (state.pending.stopped) {
+        setStatus('error', STOPPED, { transient: false });
+        return true;
+    }
     // Photos missing on disk are said once, when each owner action they belong to is done (counted over its chunks).
     const finished = new Set(chunk.flatMap(item => [...item.actions].filter(action => !action.left.size)));
     const gone = [...finished].reduce((n, action) => n + action.skipped, 0);
@@ -317,6 +450,24 @@ function applyOps(photo, item, heldTags) {
     }
 }
 
+/**
+ * A failed chunk's removals made in a photo's panel are answered now, not kept for Retry: their clicks are told it failed,
+ * and with the ops gone from the map the panel draws the tags again (the file still holds them). The files' other changes
+ * are what is given back (`kept`); `putBack`, the tags drawn again.
+ */
+function answerPanel(items) {
+    const kept = [];
+    const putBack = [];
+    for (const item of items) {
+        item.panel.forEach(tag => { item.add.delete(tag); item.remove.delete(tag); putBack.push(tag); });
+        item.panel.clear();
+        settle(item, 'failed', action => action.panel);
+        if (item.add.size || item.remove.size) kept.push(item);
+        else settle(item, 'failed');
+    }
+    return { kept, putBack };
+}
+
 /** A failed chunk's files back at the front of the map; a newer op on the same file and tag wins, the actions join. */
 function giveBack(items) {
     const files = state.pending.files;
@@ -327,6 +478,7 @@ function giveBack(items) {
         if (newer) {
             newer.add.forEach(t => { item.remove.delete(t); item.add.add(t); });
             newer.remove.forEach(t => { item.add.delete(t); item.remove.add(t); });
+            [...newer.add, ...newer.remove].forEach(t => (newer.panel.has(t) ? item.panel.add(t) : item.panel.delete(t)));
             newer.actions.forEach(a => item.actions.add(a));
             files.delete(key);
         }

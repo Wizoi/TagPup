@@ -55,9 +55,11 @@ async function open(t) {
     target.dispatchEvent(new window.KeyboardEvent("keydown", { key, bubbles: true, cancelable: true }));
     await flush(window, 4);
   };
-  // The save of A under way: a tag taken off by its pill (its write is A's, queued at the click).
+  // The save of A under way: its title saved (its write is A's, queued at the click). A pill's removal is no save of
+  // the photo's: it waits with the page's tag changes (pending.js), which a move does not wait for (V20, V22).
   ctx.startSave = async () => {
-    Array.from(document.querySelectorAll(".tag-pill")).find((each) => each.textContent === "Cross Country").click();
+    document.getElementById("input-photo-title").value = "Harbour run";
+    document.getElementById("btn-save-title").click();
     await flush(window, 4);
     document.activeElement && document.activeElement.blur();
     assert.equal(held.length, 1, "the save was not sent");
@@ -196,9 +198,9 @@ describe("V27: moving on from a photo while its save is out", () => {
     await ctx.key("ArrowDown");
     await ctx.wait(PAST_THE_MOMENT);
     assert.ok(ctx.note());
-    const title = ctx.document.getElementById("input-photo-title");
-    title.focus();
-    await ctx.key("Escape", title);
+    const field = ctx.document.getElementById("input-add-tag");
+    field.focus();
+    await ctx.key("Escape", field);
     assert.ok(ctx.note(), "Escape meant for the field let the move go");
     await ctx.answer();
     await ctx.wait(60);
