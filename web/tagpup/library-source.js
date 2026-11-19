@@ -733,6 +733,13 @@ function sendBatch(lib, indexes) {
         });
 }
 
+/** The badge's words for a card's `stale` (stale.js says what each means), or ''. */
+export function staleText(stale) {
+    if (stale === 'missing') return 'missing';
+    if (stale === 'changed') return 'changed on disk';
+    return '';
+}
+
 /** Keep a card as the page reads it: `filename` is what a folder's record calls its name. */
 function held(card) {
     card.filename = card.name;

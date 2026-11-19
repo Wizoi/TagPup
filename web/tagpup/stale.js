@@ -20,13 +20,8 @@ import { buildElement } from './common/dom.js';
 import { state } from './state.js';
 import { mainImage, photoMissingNote } from './elements.js';
 import { libraryName } from './looking.js';
+import { staleText } from './library-source.js';
 
-/** The badge's words for a card's `stale`, or ''. */
-export function staleText(stale) {
-    if (stale === 'missing') return 'missing';
-    if (stale === 'changed') return 'changed on disk';
-    return '';
-}
 
 /** On a card being built: its badge and mark, when its photo is stale. */
 export function markStale(card, photo) {
