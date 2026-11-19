@@ -9,11 +9,12 @@ library-selection.test.mjs hold the page to the table, so a rule changed on one 
 """
 import json
 import os
+import re
 import sys
 import unittest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from tagpup.services import batches, library_view, selection  # noqa: E402
+from tagpup.services import batches, library_view, photos, selection  # noqa: E402
 from tagpup.store import library_view as store  # noqa: E402
 from tagpup.store import search_index  # noqa: E402
 
@@ -42,6 +43,12 @@ class TheTableIsTheServers(unittest.TestCase):
         for each in TABLE["terms"]:
             with self.subTest(term=each["term"]):
                 self.assertEqual(each["says_something"], bool(search_index.terms(each["term"])))
+
+    def test_the_removal_list_shows_as_many_folders_as_the_server_answers_for(self):
+        root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        with open(os.path.join(root, "web", "common", "folder-manager.js"), encoding="utf-8") as page:
+            shown = int(re.search(r"export const SHOWN_MOST = (\d+);", page.read()).group(1))
+        self.assertEqual(shown, photos.FOLDER_STATES_MOST)
 
 
 if __name__ == "__main__":

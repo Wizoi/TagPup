@@ -8,7 +8,7 @@
  */
 import { test, describe, afterEach } from "node:test";
 import assert from "node:assert/strict";
-import { loadApp, FakeServer, closeAllApps, click, flush } from "./harness.mjs";
+import { loadApp, FakeServer, closeAllApps, click, flush, pageExports } from "./harness.mjs";
 
 const PICTURES = "D:\\Pictures";
 const OLD_MEET = `${PICTURES}\\Old Meet`;
@@ -380,5 +380,54 @@ describe("a folder queued again after it finished", () => {
     assert.ok(!ctx.document.getElementById("index-progress-container").classList.contains("hidden"),
       "the second run of the folder has no progress bar");
     assert.equal(ctx.document.getElementById("index-progress-text").textContent, "Indexing again");
+  });
+});
+
+describe("review of cut 2", () => {
+  test("the folder open in TagPup, added from the gear: the page follows its index and scans it when done", async (t) => {
+    const server = serverFor().on("/api/folder/membership", { held: false });
+    const ctx = await openManager(t, { app: "tagpup", server });
+    pageExports(ctx.window, "web/tagpup/state.js").state.scannedFolder = `${NEW_MEET}\\Heat 1`;   // under a folder the dialog queues
+    await browse(ctx);
+    click(ctx.window, button(ctx.document, "Add"));
+    await flush(ctx.window, 4);
+    assert.ok(server.urls().some((u) => u.includes("/api/folder/index-status")), "index-status was asked of the open folder");
+  });
+
+  test("a look that fails says so in the dialog, not only in the console", async (t) => {
+    const server = serverFor().first("/api/folder/on-disk", { error: "share gone" }, { status: 500 });
+    const { window, document } = await openManager(t, { server });
+    await settle(window, LOOK);
+    assert.match(said(document), /Could not look at the folders/);
+  });
+
+  test("closed during a removal and reopened: the reopened list does not hold the removed folder", async (t) => {
+    const held = later();
+    const server = serverFor().first("/api/folder/remove", () => held.reply);
+    const ctx = await openManager(t, { server });
+    await choose(ctx, OLD_MEET);
+    click(ctx.window, button(ctx.document, "Remove..."));
+    await flush(ctx.window, 2);
+    closeDialog(ctx);
+    await openFromGear(ctx);
+    assert.ok(rowOf(removeRows(ctx.document), OLD_MEET), "fixture: the reopened list was read before the removal");
+    server.first("/api/folder/indexed", { folders: REPLIES.indexed.folders.filter((f) => f.path !== OLD_MEET) });
+    held.answer(REPLIES.remove);
+    await flush(ctx.window, 6);
+    assert.equal(rowOf(removeRows(ctx.document), OLD_MEET), undefined);
+  });
+
+  test("keystrokes while a look is on its way do not ask the same folders again", async (t) => {
+    const held = later();
+    const server = serverFor().first("/api/folder/on-disk", () => held.reply);
+    const { window, document } = await openManager(t, { server });
+    await settle(window, LOOK);
+    const filter = part(document, 1).querySelector(".folder-manager-filter");
+    filter.value = "Season";
+    filter.dispatchEvent(new window.Event("input", { bubbles: true }));
+    await settle(window, LOOK);
+    assert.equal(looks(server).length, 1, "the folders still being looked at are not asked again");
+    held.answer({ folders: askedOf(looks(server)[0]).map((path) => ({ path, state: "there" })) });
+    await flush(window, 4);
   });
 });

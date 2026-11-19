@@ -29,7 +29,7 @@ export const REMOVAL_SAYS = 'The photo files stay where they are. The face work 
     + "library's ignored folders, so an index of the folder above leaves it out.";
 
 const manager = {
-    modal: null, status: null, open: false, token: 0, busy: false, queued: null, removed: null, lookTimer: null,
+    modal: null, status: null, open: false, token: 0, busy: false, queued: null, removed: null, lookTimer: null, asking: new Set(),
     add: { browse: null, parent: null, list: null, selection: null, queue: null, hideIndexed: null,
         folders: [], ticked: new Set() },
     remove: { filter: null, list: null, selection: null, button: null, folders: [], chosen: null, states: new Map() },
@@ -225,19 +225,27 @@ function renderRemoveList() {
 /** Ask whether the rows shown are on disk, a moment after the filter stops changing. */
 function lookSoon(shown) {
     clearTimeout(manager.lookTimer);
-    const unknown = shown.map(f => f.path).filter(path => !manager.remove.states.has(path));
+    // Not those already answered, nor those a look is still on its way for.
+    const unknown = shown.map(f => f.path)
+        .filter(path => !manager.remove.states.has(path) && !manager.asking.has(path));
     if (!unknown.length) return;
     const token = manager.token;
+    const asking = manager.asking;
     manager.lookTimer = setTimeout(() => {
+        unknown.forEach(path => asking.add(path));
         const query = unknown.map(path => 'path=' + encodeURIComponent(path)).join('&');
         api.fetch('/api/folder/on-disk?' + query)
             .then(res => api.answered(res, 'Could not look at the folders.'))
             .then(data => {
+                unknown.forEach(path => asking.delete(path));
                 if (stale(token)) return;
                 (data.folders || []).forEach(f => manager.remove.states.set(f.path, f.state));
                 renderRemoveList();
             })
-            .catch(err => console.error('Could not look at the folders:', err));
+            .catch(err => {
+                unknown.forEach(path => asking.delete(path));
+                if (!stale(token)) say('Could not look at the folders: ' + err.message);
+            });
     }, 250);
 }
 
@@ -270,7 +278,8 @@ function removeChosen() {
     return post('/api/folder/remove', { folder_path: chosen.path }, 'The folder could not be removed.')
         .then(data => {
             if (manager.removed) manager.removed(chosen.path, data);
-            if (stale(token)) return null;
+            // Closed and opened again meanwhile: that opening's list was read before the removal.
+            if (stale(token)) return manager.open ? loadIndexed() : null;
             say(removedSaid(data));
             manager.remove.chosen = null;
             return loadIndexed();
@@ -359,6 +368,7 @@ export function openFolderManager({ queued, removed } = {}) {
     manager.removed = removed || null;
     manager.open = true;
     manager.token += 1;
+    manager.asking = new Set();
     Object.assign(manager.add, { folders: [], ticked: new Set() });
     Object.assign(manager.remove, { folders: [], chosen: null, states: new Map() });
     manager.add.parent.textContent = '';
