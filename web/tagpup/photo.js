@@ -24,9 +24,7 @@ import { setStatus } from './status.js';
 import { isJustLooking, libraryName } from './looking.js';
 import { pictureCheckSaid, whereWritten } from './write-queue.js';
 import { forgetCachedPhoto, saveToLocalStorageCache } from './cache.js';
-import {
-    formatFriendlyDateSingle, getFolderDateStats, parseExifDateToLocalDate, takenOf
-} from './format.js';
+import { takenOf, takenSaid } from './format.js';
 import { namesAPerson, normalizeTag } from './tags.js';
 import { goingOffOf, removePhotoTags } from './tags-off.js';
 import {
@@ -437,10 +435,7 @@ export function showPhoto(path) {
     showMedia(photo, photo.missing ? '' : photoFileUrl(photo, 800));
     detailPath.textContent = photo.path;
     showFileSize(photo);
-    let dateVal = "Unknown";
-    const shownDate = takenOf(photo) && parseExifDateToLocalDate(takenOf(photo));
-    if (shownDate) dateVal = formatFriendlyDateSingle(shownDate, getFolderDateStats());
-    detailDateTaken.textContent = dateVal;
+    detailDateTaken.textContent = takenSaid(takenOf(photo));
     showCamera(photo);
     // The same photo shown again -- a refresh -- keeps a title being typed.
     const typing = state.titleShown.path === path && inputPhotoTitle.value !== state.titleShown.title;

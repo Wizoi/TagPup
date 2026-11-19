@@ -82,3 +82,14 @@ test("a photo's file size stays under its path, none under the date", async (t) 
   assert.equal(page.getElementById("detail-video-size").textContent, "");
   assert.ok(page.getElementById("detail-video-size").classList.contains("hidden"));
 });
+
+test("the Date Taken reads whole, as the photo stores it: no zone moves it, and a photo with none says so", async (t) => {
+  // Midnight, the date the owner checks; 2:30 AM on the day the clocks go forward, which a Date would read as 3:30; a zone after the
+  // seconds, as 106 of the owner's photos carry; and none, as 74 have.
+  for (const [taken, shown] of [["2021:03:27 00:00:00", "3/27/21 12:00 AM"], ["2021:03:14 02:30:00", "3/14/21 2:30 AM"],
+                                ["2019:11:02 17:45:09-07:00", "11/2/19 5:45 PM"], [null, "Unknown"]]) {
+    const page = await openWith(t, { ...PHOTO, taken });
+    assert.equal(page.getElementById("detail-date-taken").textContent, shown, `${taken}`);
+    closeAllApps();
+  }
+});
