@@ -23,6 +23,7 @@ from tagpup.services.search import PhotoIndex
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from face_rows import configured_model, people_of  # noqa: E402
+import photo_rows  # noqa: E402
 
 
 class TheIndexResolvesPeople(unittest.TestCase):
@@ -56,6 +57,7 @@ class TheIndexResolvesPeople(unittest.TestCase):
                 "people": extract_people(tags)}
         self.assertEqual([], meta["people"], "fixture: the reader alone finds nobody")
 
+        photo_rows.added(self.index.conn, path)   # the index adds the folder it is given first
         self.index.build_or_update([[0.1] * 512], [meta])
 
         self.assertEqual({"Rowan Thackeray"}, set(self.stored_people(path)))

@@ -17,7 +17,7 @@ import os
 from tagpup.core import fields, paths
 from tagpup.files import images
 from tagpup.files.metadata import MetadataExtractor
-from tagpup.store import added_folders, db, embeddings, faces_detected, photos
+from tagpup.store import added_folders, db, embeddings, faces_detected, folders, photos
 
 
 def stamp_of(photo_path):
@@ -40,14 +40,26 @@ def add_read(conn, photo_path, fields, people=None):
     """Record the read of `fields` from `photo_path` as the indexer records it, and return its id: the row alone, no
     vector and no look for faces -- what the index still owes work (photo_fingerprints.owed). The picture's size is its
     header's (images.picture_size, as the index reads it); a path no file is at -- most fixtures make none -- records
-    none. The caller commits."""
+    none. A folder the library does not hold yet is added first, as the index adds the folder it is given
+    (libraries.record_added) before it records a row there (record_indexed refuses one in a folder not held). The caller
+    commits."""
     record = as_read(photo_path, fields, people)
     try:
         record["width"], record["height"] = images.picture_size(photo_path)
     except OSError:
         pass
+    added(conn, photo_path)
     photos.record_indexed(conn, photo_path, record)
     return photos.ensure_row(conn, photo_path)
+
+
+def added(conn, photo_path):
+    """Add the folder of `photo_path` (without its subfolders) when the library does not hold it yet: what an index
+    of the folder records before its first row there (libraries.record_added). For a test that records a read through
+    store.photos.record_indexed itself."""
+    folder = os.path.dirname(paths.stored(photo_path))
+    if not folders.holds(conn, folder):
+        added_folders.record(conn, folder, subfolders=False)
 
 
 #: images.opened and images.fingerprint as this module was imported: fingerprint_of's, beyond a test's mock of either.

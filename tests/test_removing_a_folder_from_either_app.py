@@ -20,7 +20,8 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import photo_rows  # noqa: E402
 import web_client  # noqa: E402
-from test_an_index_reads_the_next_photos_ahead import COLOURS, StandIns, photo  # noqa: E402
+from test_an_index_reads_the_next_photos_ahead import COLOURS, StandIns  # noqa: E402
+from test_an_index_reads_the_next_photos_ahead import photo as jpeg  # noqa: E402
 
 import tagpup_cli  # noqa: E402
 
@@ -210,7 +211,7 @@ class AnIndexInTheCli(unittest.TestCase):
         self.meet, self.meet2 = os.path.join(self.season, "Meet 1"), os.path.join(self.season, "Meet 2")
 
     def photos(self, folder, count):
-        return [photo(os.path.join(folder, "p%02d.jpg" % n), COLOURS[n % len(COLOURS)]) for n in range(count)]
+        return [jpeg(os.path.join(folder, "p%02d.jpg" % n), COLOURS[n % len(COLOURS)]) for n in range(count)]
 
     def index(self, folder):
         return CliRunner().invoke(tagpup_cli.cli, ["--db", self.library, "index", folder])

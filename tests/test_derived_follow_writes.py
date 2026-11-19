@@ -145,6 +145,7 @@ class TheIndexRecordsAPhoto(WithALibrary):
             other.close()
         self.conn.execute("BEGIN IMMEDIATE")
         path = self.where("2024", "a.jpg")
+        photo_rows.added(self.conn, path)
         photos.record_indexed(self.conn, path, photo_rows.as_read(path, {"XMP:Subject": ["Trips/Lake"]}), batch=batch)
         self.conn.commit()
         self.assertEqual(["Trips/Lake"], self.tags_of(photos.ensure_row(self.conn, path)))

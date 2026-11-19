@@ -45,6 +45,7 @@ class Plans(unittest.TestCase):
             if number % 50:
                 fields["EXIF:DateTimeOriginal"] = "%d:%02d:%02d 10:%02d:00" % (2015 + number % 8, number % 12 + 1, number % 28 + 1,
                                                                               number % 60)
+            photo_rows.added(vl.conn, path)
             photos.record_indexed(vl.conn, path, photo_rows.as_read(path, fields), known=known, batch=batch)
         vl.conn.commit()
         cls.folder = os.path.join(vl.pictures, "2015", "Event 00")

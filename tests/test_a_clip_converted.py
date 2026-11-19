@@ -35,6 +35,7 @@ from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import photo_rows  # noqa: E402
 import test_a_clip_patched_in_place as patched  # noqa: E402
 import test_xmp_packet_edits_what_it_owns as shapes  # noqa: E402
 from test_a_clip_tagged_through_the_journal import EXIFTOOL, TOOLS, ALibraryHoldingAClip  # noqa: E402
@@ -642,6 +643,7 @@ class TwoLibrariesHoldingTheFolder(AnOldClipInTheLibrary):
     def held_there(self, path):
         """The id of the second library's row of `path`, recorded as its indexer reads it."""
         (record,) = metadata.MetadataExtractor(EXIFTOOL).batch_read([path])
+        photo_rows.added(self.other.conn, record["path"])   # the index adds the folder it is given first
         photos.record_indexed(self.other.conn, record["path"], record)
         photo_id = photos.ensure_row(self.other.conn, record["path"])
         self.other.conn.commit()

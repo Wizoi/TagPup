@@ -51,6 +51,7 @@ class WithABigTree(unittest.TestCase):
         try:
             conn.execute("BEGIN IMMEDIATE")
             batch = derived.Batch(conn)
+            photo_rows.added(conn, os.path.join(self.folder, "-"))
             for n in range(count):
                 path = os.path.join(self.folder, "IMG_%05d.jpg" % n)
                 photos.record_indexed(conn, path, {"tags": [TAGS[n % len(TAGS)]], "raw_metadata": {}}, batch=batch)
@@ -152,6 +153,7 @@ class ADamagedRead(WithABigTree):
         try:
             conn.execute("BEGIN IMMEDIATE")
             batch = derived.Batch(conn)
+            photo_rows.added(conn, os.path.join(self.folder, "-"))
             for n, tags in enumerate((None, "People/Branch 1/Leaf 1", {"a": 1}, 7)):
                 photos.record_indexed(conn, os.path.join(self.folder, "bad%d.jpg" % n),
                                       {"tags": tags, "raw_metadata": {}}, batch=batch)

@@ -378,6 +378,7 @@ class ASyncThatCannotLookAtAFolder(unittest.TestCase):
         conn = db.connect(library.path)
         try:
             for path, read_from in zip(on_drive, made):
+                photo_rows.added(conn, path)
                 store_photos.record_indexed(conn, path, dict(photo_rows.as_read(read_from, {}), path=path))
             conn.commit()
         finally:

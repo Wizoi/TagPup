@@ -44,6 +44,7 @@ class ALibrary(unittest.TestCase):
         """A photo whose keywords are written as given -- a row an older writer made, which a read
         would have trimmed -- through the index's own writer; its id."""
         path = os.path.join(self.pictures, folder, name)
+        photo_rows.added(self.conn, path)
         photos.record_indexed(self.conn, path, {"tags": tags, "raw_metadata": raw or {}})
         return photos.ensure_row(self.conn, path)
 

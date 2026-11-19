@@ -153,6 +153,8 @@ class Batch:
         #: {person: the unit vectors of their decided faces, or None}: what a run of writes naming faces
         #: from their photos' tags has read of each person, once (tagpup.store.face_tags, #841).
         self.decided = {}
+        #: {paths.key(folder): does the library hold it}: what record_indexed asked once for the transaction.
+        self.held = {}
 
     @property
     def tree(self):

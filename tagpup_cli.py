@@ -89,7 +89,7 @@ from tagpup import launcher
 from tagpup.services import journal as library_journal
 from tagpup.services import snapshots as library_snapshots
 from tagpup.services import roots as library_roots
-from tagpup.core.result import SHARE_AWAY, NotFound, Refused
+from tagpup.core.result import SHARE_AWAY, NotFound, NotHeld, Refused
 from tagpup.services import maintenance
 from tagpup.services import metadata_check, segment_census
 from tagpup.services import refresh_rows
@@ -396,14 +396,22 @@ def index(ctx, directories, force_reembed: bool, reset: bool, skip_faces: bool, 
     taxonomy.load()
 
     # Each photo with the stamp its folder's listing gave (images.stamps_under / stamps_in), by paths.key.
-    on_disk = {}
+    # A photo in a folder the library ignores (its Library settings) is not its (tagpup.store.folders.holds), and is
+    # left out as sync and Suggest leave it: a folder removed while a folder above it stays added is ignored, and an
+    # index of the folder above brought it back (record_indexed now refuses it, and would stop the whole run).
+    on_disk, ignored, left_out = {}, settings.ignored, 0
     for directory in directories:
         console.print(f"[bold cyan]Scanning directory:[/bold cyan] {directory}")
         for key, stamp in (image_files.stamps_in(directory) if no_subfolders
                            else image_files.stamps_under(directory)).items():
+            if ignored and library_actions.is_ignored(stamp[0], ignored):
+                left_out += 1
+                continue
             on_disk.setdefault(key, stamp)
     all_images = [stamp[0] for stamp in on_disk.values()]
     console.print(f"Found {len(all_images)} image(s) total.")
+    if left_out:
+        console.print(f"Left out {left_out} image(s) in folders this library ignores (its Library settings).")
 
     if not all_images:
         console.print("[yellow]No supported images found. Exiting.[/yellow]")
@@ -839,6 +847,10 @@ def index(ctx, directories, force_reembed: bool, reset: bool, skip_faces: bool, 
                     batch_vectors.clear()
                     batch_embeddings = []
                     batch_metas = []
+            except NotHeld:
+                # The folder is no longer the library's (removed in an app while this ran): the batch made nothing, and
+                # every photo after it would be refused too. The run stops, saying why.
+                raise
             except Exception as e:
                 logger.error(f"Error indexing {path}: {e}")
                 failed_photos.append(path)
