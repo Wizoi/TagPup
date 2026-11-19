@@ -89,7 +89,7 @@ from tagpup import launcher
 from tagpup.services import journal as library_journal
 from tagpup.services import snapshots as library_snapshots
 from tagpup.services import roots as library_roots
-from tagpup.core.result import SHARE_AWAY, NotFound, Refused
+from tagpup.core.result import SHARE_AWAY, NotFound, NotHeld, Refused
 from tagpup.services import maintenance
 from tagpup.services import metadata_check, segment_census
 from tagpup.services import refresh_rows
@@ -119,6 +119,10 @@ def library_index(runtime, db_path):
 READ_THREADS = 2
 READ_AHEAD = 3
 READ_AHEAD_BYTES = 1 << 30
+
+#: How many photos the index records in one transaction (PhotoIndex.build_or_update), their faces in the next:
+#: what a stop loses at most.
+PHOTO_CHUNK = 100
 
 
 def read_ahead_bytes(width, height, clip=None, faces=None):
@@ -204,7 +208,20 @@ def get_db_path(test_mode=False, cli_db=None):
 
     raise click.UsageError("Say which library: --db <name or path> (a file in the data folder, or a path)")
 
-@click.group()
+class _Commands(click.Group):
+    """The CLI's commands, a folder removed from the library while one runs answered as a sentence: NotHeld (a row
+    asked for in a folder the library no longer holds: removed in an app while an index of it ran) stops the run, and
+    leaves it as click's "Error: <sentence>" on one line, exit 1 -- the server's queue still sees a failure -- not as a
+    traceback whose last line is the sentence."""
+
+    def invoke(self, ctx):
+        try:
+            return super().invoke(ctx)
+        except NotHeld as e:
+            raise click.ClickException(str(e)) from None
+
+
+@click.group(cls=_Commands)
 @click.option("--db", type=str, help="The library to work on: a name in the data folder (e.g. 'my_photos') or a path. Required.")
 @click.option("--test", is_flag=True, help="Use test database paths to avoid cluttering production index.")
 @click.pass_context
@@ -392,14 +409,23 @@ def index(ctx, directories, force_reembed: bool, reset: bool, skip_faces: bool, 
     taxonomy.load()
 
     # Each photo with the stamp its folder's listing gave (images.stamps_under / stamps_in), by paths.key.
-    on_disk = {}
+    # A photo in a folder the library ignores (its Library settings) is not its (tagpup.store.folders.holds), and is
+    # left out as sync and Suggest leave it: a folder removed while a folder above it stays added is ignored, and an
+    # index of the folder above brought it back (record_indexed now refuses it, and would stop the whole run).
+    on_disk, ignored, left_out = {}, settings.ignored, 0
+    in_ignored = library_actions.ignored_photos(ignored)
     for directory in directories:
         console.print(f"[bold cyan]Scanning directory:[/bold cyan] {directory}")
         for key, stamp in (image_files.stamps_in(directory) if no_subfolders
                            else image_files.stamps_under(directory)).items():
+            if ignored and in_ignored(stamp[0]):
+                left_out += 1
+                continue
             on_disk.setdefault(key, stamp)
     all_images = [stamp[0] for stamp in on_disk.values()]
     console.print(f"Found {len(all_images)} image(s) total.")
+    if left_out:
+        console.print(f"Left out {left_out} image(s) in folders this library ignores (its Library settings).")
 
     if not all_images:
         console.print("[yellow]No supported images found. Exiting.[/yellow]")
@@ -811,8 +837,8 @@ def index(ctx, directories, force_reembed: bool, reset: bool, skip_faces: bool, 
                 # The nodes of the tags and people a photo names are made where the batch is recorded
                 # (derived.make_nodes, taxonomy.ensure_node): the one writer of them.
 
-                # Save progress incrementally in batches of 100
-                if len(batch_embeddings) >= 100:
+                # Save progress incrementally in batches of PHOTO_CHUNK
+                if len(batch_embeddings) >= PHOTO_CHUNK:
                     _read_again(photo_index.conn, batch_metas, given, exiftool_path)
                     photo_index.build_or_update(batch_embeddings, batch_metas, dim=len(batch_embeddings[0]))
                     _recorded(batch_metas, touched, handed)
@@ -835,6 +861,10 @@ def index(ctx, directories, force_reembed: bool, reset: bool, skip_faces: bool, 
                     batch_vectors.clear()
                     batch_embeddings = []
                     batch_metas = []
+            except NotHeld:
+                # The folder is no longer the library's (removed in an app while this ran): the batch made nothing, and
+                # every photo after it would be refused too. The run stops, saying why.
+                raise
             except Exception as e:
                 logger.error(f"Error indexing {path}: {e}")
                 failed_photos.append(path)

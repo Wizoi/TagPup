@@ -90,6 +90,7 @@ class CliDatabaseCase(unittest.TestCase):
             stat = os.stat(on_disk)
             metas.append({"path": stored_as, "mtime": stat.st_mtime, "size": stat.st_size,
                           "tags": [], "people": [], "captions": [], "raw_metadata": {}})
+            photo_rows.added(index.conn, stored_as)   # the index adds the folder it is given first
         index.build_or_update([[0.1] * expected_dim()] * len(metas), metas, dim=expected_dim())
         index.close()
 

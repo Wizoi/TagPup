@@ -498,9 +498,7 @@ def ensure_row(conn, photo_path, admit=False, kind="photo"):
     if photo_id is not None:
         return photo_id
     if not admit:
-        folder = os.path.dirname(paths.stored(photo_path))
-        if not folders.holds(conn, folder):
-            raise NotHeld(folder)
+        _refuse_unheld(conn, os.path.dirname(paths.stored(photo_path)), None)
     photo_id = _unread_row(conn, photo_path, kind)
     date_photos(conn, [photo_id])
     derived.refresh_photos(conn, [photo_id])
@@ -523,6 +521,18 @@ def picture_size(conn, photo_path):
     return conn.execute("SELECT width, height FROM photos WHERE " + where + " LIMIT 1", params).fetchone()
 
 
+def _refuse_unheld(conn, folder, batch):
+    """Raise NotHeld unless the library holds `folder` (folders.holds). Asked inside the write transaction, so a
+    removal cannot come between the answer and the row; once for each folder of a `batch` (Batch.held), the answer
+    standing for the transaction."""
+    answers = batch.held if batch is not None else {}
+    key = paths.key(folder)
+    if key not in answers:
+        answers[key] = folders.holds(conn, folder)
+    if not answers[key]:
+        raise NotHeld(folder)
+
+
 def record_indexed(conn, photo_path, row, model=None, known=None, batch=None):
     """Record what indexing read of a photo or a clip: `row` has kind ('photo' when absent), mtime, size, width and
     height (the picture's, in its stored pixels: images.picture_size; none, or a header that gave 0, records NULL, a size
@@ -532,6 +542,10 @@ def record_indexed(conn, photo_path, row, model=None, known=None, batch=None):
     the (key, hash) of the picture it was made of, or none (a row with no fingerprint forgets the photo's), and the
     photo's people are
     rebuilt. A row with no stamp is recorded unread (mtime and size NULL). The caller commits. Returns the row's id.
+
+    A new row only in a folder the library holds (tagpup.store.folders.holds, the rule ensure_row keeps): raises NotHeld,
+    and makes nothing, for a photo in any other folder. An index whose folder was removed while it ran (in an app, while
+    the CLI indexed it) is refused at its next batch, rather than bringing the folder back without its added record.
 
     A photo indexed before is updated in place, under the spelling its row already has.
     faces.photo_id references photos.id ON DELETE CASCADE, so anything that deletes
@@ -549,6 +563,8 @@ def record_indexed(conn, photo_path, row, model=None, known=None, batch=None):
     roots = store_roots.roots_for(conn)
     held = stored_spelling(conn, photo_path)
     stored = held or paths.stored(photo_path)
+    if not held:
+        _refuse_unheld(conn, os.path.dirname(stored), batch)
     row_path = paths.to_row(stored, roots)
     conn.execute(
         "INSERT INTO photos (path, kind, mtime, size, width, height, tags, captions, raw_metadata, document_id)"

@@ -72,6 +72,12 @@ def main():
     print(f"Training folder prepared: {training_dir}")
     print(f"New content folder prepared: {new_dir}")
 
+    # A row is recorded only in a folder the library holds (store.photos.record_indexed): both folders are added
+    # first, as an index adds the folder it is given.
+    from tagpup.core.library import Library
+    from tagpup.services import libraries
+    libraries.record_added(Library(DB_PATH), [training_dir, new_dir], subfolders=False)
+
     # 4. Connect to database to write mock records
     conn = tagpup_db.connect(DB_PATH)
 

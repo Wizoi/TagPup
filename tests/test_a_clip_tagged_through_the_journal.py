@@ -26,6 +26,7 @@ from unittest import mock
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import test_a_clip_patched_in_place as patched  # noqa: E402
+import photo_rows  # noqa: E402
 import web_client  # noqa: E402
 from view_library import ViewLibrary, make_jpeg  # noqa: E402
 
@@ -161,6 +162,7 @@ class ALibraryHoldingAClip(unittest.TestCase):
         """Record each of `photo_paths` as the indexer reads it now; their ids."""
         ids = []
         for record in metadata.MetadataExtractor(EXIFTOOL).batch_read(list(photo_paths)):
+            photo_rows.added(self.vl.conn, record["path"])   # the index adds the folder it is given first
             photos.record_indexed(self.vl.conn, record["path"], record)
             ids.append(photos.ensure_row(self.vl.conn, record["path"]))
         self.vl.conn.commit()

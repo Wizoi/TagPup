@@ -122,7 +122,12 @@ def is_under(path, folder):
     """Is `path` inside `folder` (at any depth)? A folder is not under itself."""
     if not path or not folder:
         return False
-    return key(path).startswith(_as_folder(key(folder)))
+    return keyed_under(key(path), key(folder))
+
+
+def keyed_under(path_key, folder_key):
+    """is_under for two keys already made (key()), for a caller asking of many: none is made again."""
+    return bool(path_key) and bool(folder_key) and path_key.startswith(_as_folder(folder_key))
 
 
 def sql_equals(column, path, roots=None):

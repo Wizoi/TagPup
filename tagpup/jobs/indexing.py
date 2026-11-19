@@ -254,19 +254,40 @@ class IndexQueue:
         Suggest of the folder waits for (tagpup.jobs.suggestions): the index writes the
         vectors and faces it would otherwise make itself. A run that has begun to bake has recorded
         its folders already (the bake follows the last batch), so it is not waited for (#2355)."""
+        return self._job_of(folder, overlapping=False)
+
+    def overlaps(self, folder):
+        """The job whose folders overlap `folder` -- it, a folder above it, or a folder below it, any folder of a batch
+        (`together`) -- running, its bake included, or waiting: {"status": "running" or "queued", "message", "folder"},
+        `folder` the job's folder that overlaps; None when none does. What a removal of the folder is refused for
+        (tagpup.web.folder_routes): the index would be refused at its next batch (store.photos.record_indexed raises
+        NotHeld; the batch makes no rows) and stop, failed, part-way, and its bake would write the files of photos whose
+        rows are gone. It sees only this queue: a CLI index in another process is not here, and a removal landing
+        between a run's end (`_progress` cleared) and its `_queue_what_was_missed` passes it, the re-run then refused
+        the same way. pending() and active() name a batch by its first folder only, so they cannot answer this."""
+        return self._job_of(folder, overlapping=True)
+
+    def _job_of(self, folder, overlapping):
+        """indexing's answer, or with `overlapping` overlaps'."""
         key = paths.key(folder)
 
         def covers(each):
-            return paths.key(each) == key or paths.is_under(key, each)
+            return (paths.key(each) == key or paths.is_under(key, each)
+                    or (overlapping and paths.is_under(each, key)))
         with self._lock:
-            if any(covers(each) for each in self._current_folders) and self._progress is not None:
+            hit = next((each for each in self._current_folders if covers(each)), None)
+            if hit is not None and self._progress is not None:
                 status = self._progress.status
-                if status.get("message", "").startswith((bake_after_index.FOLDER_SAID, bake_after_index.SAID)):
+                if not overlapping and status.get("message", "").startswith(
+                        (bake_after_index.FOLDER_SAID, bake_after_index.SAID)):
                     return None
-                return {"status": "running", "message": status.get("message", ""), "folder": status.get("folder")}
+                return {"status": "running", "message": status.get("message", ""),
+                        "folder": hit if overlapping else status.get("folder")}
             for job in self._pending:
-                if any(covers(each) for each in _folders_of(job)):
-                    return {"status": "queued", "message": "Waiting to be indexed...", "folder": job["folder"]}
+                hit = next((each for each in _folders_of(job) if covers(each)), None)
+                if hit is not None:
+                    return {"status": "queued", "message": "Waiting to be indexed...",
+                            "folder": hit if overlapping else job["folder"]}
         return None
 
     def status(self, folder):

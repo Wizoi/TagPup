@@ -333,6 +333,8 @@ function queueSelectedFolders() {
         // following: no progress, and Remove Folder enabled while it indexed.
         state.lastFinishedFolder = null;
         followQueue();
+        // A folder on the library's ignored list was taken off it to be added (tagpup.services.libraries.add): say so.
+        if (data.note) alert(data.note);
     })
     .catch(err => {
         btnFolderPickerQueue.disabled = false;

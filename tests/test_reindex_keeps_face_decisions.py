@@ -28,6 +28,7 @@ from tagpup.services.search import PhotoIndex
 from tagpup_cli import cli
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import photo_rows  # noqa: E402
 import stand_in_models  # noqa: E402
 from face_rows import add_face, configured_model  # noqa: E402
 
@@ -90,6 +91,7 @@ class FaceDecisionCase(unittest.TestCase):
         index.load()
         meta = fake_meta(self.photo)
         meta["path"] = stored_as
+        photo_rows.added(index.conn, stored_as)   # the index adds the folder it is given first
         index.build_or_update([[0.1] * expected_dim()], [meta], dim=expected_dim())
         ids = {}
         for box, name, source, excluded, reason in CURATED:

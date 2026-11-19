@@ -32,6 +32,8 @@ ALLOWED = {
     "tagpup/services/face_assignment.py": "the bulk door: the faces that carry no name write no photo (Unmatch, Ignore), the rest are the batch's",
     "tagpup/services/identities.py": "clustering gives automatic names, which are guesses with no decider and no tag",
     "tagpup/web/tuner_routes.py": "Restore: a ruled-out face comes back unnamed and unclaimed, which writes no tag",
+    "tagpup/web/folder_routes.py": "Remove a folder: its photos' rows and their faces go together, which names no face and writes "
+                                   "no tag",
     "tagpup/store/face_batches.py": "the batch's own follower: faces written in the transaction that marks the photo's file done",
     "tagpup/store/face_tags.py": "the one-face rule: a photo's keyword just recorded names its only unnamed face as a GUESS (no decider)",
     "tagpup/store/taxonomy.py": "deleting a person with force unnames their faces, journaled (PERSON_DELETED); their tag goes with the node",

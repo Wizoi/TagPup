@@ -31,9 +31,9 @@ from flask import Blueprint, Flask, Response, abort, current_app, g, jsonify, re
 
 from tagpup import config as tagpup_config
 from tagpup.logs import REQUESTS
-from tagpup.web import (activity_routes, face_routes, history_routes, photo_face_routes, libraries, lifecycle as lifecycles,
-                        name_faces_routes, roots_gate, roots_ingress, rules_routes, security, settings_routes, sync_routes, tagpup_routes,
-                        taxonomy_routes, tuner_routes)
+from tagpup.web import (activity_routes, face_routes, folder_routes, history_routes, photo_face_routes, libraries, lifecycle as lifecycles,
+                        name_faces_routes, responses, roots_gate, roots_ingress, rules_routes, security, settings_routes, sync_routes,
+                        tagpup_routes, taxonomy_routes, tuner_routes)
 
 logger = logging.getLogger(__name__)
 requests_log = logging.getLogger(REQUESTS)
@@ -116,6 +116,7 @@ def create_app(kind, startup=None, pages=None, *, runtime, ports=None, lifecycle
     app.after_request(_gzip_big_json)
     app.after_request(_log_slow)
     app.teardown_request(_log_failure)
+    app.register_error_handler(500, _api_failure)
     app.register_blueprint(libraries.picker)
     app.register_blueprint(rules_routes.routes)
     app.register_blueprint(taxonomy_routes.routes)
@@ -126,6 +127,7 @@ def create_app(kind, startup=None, pages=None, *, runtime, ports=None, lifecycle
     app.register_blueprint(activity_routes.routes)
     app.register_blueprint(face_routes.routes)
     app.register_blueprint(name_faces_routes.routes)
+    app.register_blueprint(folder_routes.routes)
     app.register_blueprint(apps)
     app.register_blueprint(ROUTES[kind])
     if kind == "tagpup":
@@ -256,6 +258,18 @@ def _log_slow(response):
         if took >= SLOW_REQUEST_SECONDS:
             requests_log.warning("slow: %s took %.2fs", _as_sent(), took)
     return response
+
+
+def _api_failure(error):
+    """A request to /api/ that failed with no answer of its own -- a service raised (a library whose write lock a CLI
+    run holds past the busy timeout), or a route aborted 500 -- answered with the JSON error both pages read
+    (responses.error), the exception's own sentence: Flask's HTML page read as JSON was "Unexpected token '<'" (#3199).
+    Flask has logged it already, and _log_failure logs it with its traceback. Any other path keeps Flask's page. A 500
+    handler, not one for Exception: an app in testing mode still lets the exception out to the test."""
+    if "/api/" not in request.path:
+        return error
+    raised = error.original_exception
+    return responses.error(500, str(raised) if raised is not None else error.description)
 
 
 def _log_failure(error):
