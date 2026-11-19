@@ -11,9 +11,11 @@
 // the placeholder says so and Refresh view tries again. Cards are kept by id, the last-used ones, at
 // most CARDS_KEPT: the far ones go.
 //
-// Everything the view holds is `state.library` (state.js); this module has no state of its own. A view
-// that is closed or replaced is told apart from the one a reply was asked for by the object itself:
-// a reply for a view that is no longer `state.library` is dropped.
+// Everything a view holds is the view object (newLibrary); this module has no state of its own. What
+// the view asks of the page that shows it is the view's `host`: the desktop page's is DESKTOP (the view
+// is `state.library`, state.js), the phone's is its Grid's (mobile-grid.js). A view that is closed or
+// replaced is told apart from the one a reply was asked for by the object itself: a reply for a view its
+// page no longer shows is dropped.
 import { api } from './common/api.js';
 import { baseName, pathKey } from './common/paths.js';
 import { leafOf } from './common/vocabulary.js';
@@ -475,11 +477,31 @@ function idsUrl(lib) {
 
 // ---- The view's state -----------------------------------------------------------------
 
-/** A view just opened, holding nothing yet. It is `state.library` from then until it is closed. */
-export function newLibrary(spec) {
+/**
+ * What a view asks of the page that shows it (its `host`), the desktop page's here:
+ *   shows(lib)    is this the view the page shows: a reply for one it no longer shows is dropped
+ *   grid()        the grid it is drawn in (vgrid.js), or null
+ *   changed()     its status, count or notice changed: say so
+ *   idsRead()     its ids were read again (the desktop's selection follows them)
+ *   dropped(ids)  these photos left it (the desktop's selection lets them go)
+ */
+const DESKTOP = {
+    shows: lib => lib === state.library,
+    grid: () => state.grid,
+    changed: () => upper.libraryChanged(),
+    idsRead: () => reconcileIdSelection(),       // a photo the view no longer holds is no longer selected
+    dropped: gone => {
+        forgetSelectedIds(gone);
+        upper.updateSelectedThumbnailsCount();   // the selection is the view's total less the excluded: the count moved
+    },
+};
+
+/** A view just opened, holding nothing yet. It is `state.library` from then until it is closed (the phone's: its Grid's). */
+export function newLibrary(spec, host = DESKTOP) {
     state.libraryTokens += 1;
     return {
         token: state.libraryTokens,
+        host,
         kind: spec.kind, value: spec.value ?? null, recursive: Boolean(spec.recursive),
         order: LIBRARY_ORDERS.includes(spec.order) ? spec.order : DEFAULT_ORDER,   // how the ids are ordered (#671)
         media: LIBRARY_MEDIA.includes(spec.media) ? spec.media : DEFAULT_MEDIA,    // what it shows of its source (filter-menu.js)
@@ -525,8 +547,8 @@ export function loadLibraryIds(lib, refreshing = false) {
     lib.controller = controller;
     lib.loading = true;
     if (!refreshing) lib.status = 'loading';
-    upper.libraryChanged();
-    const current = () => lib === state.library && controller === lib.controller;
+    lib.host.changed();
+    const current = () => lib.host.shows(lib) && controller === lib.controller;
     return api.fetch(...idsRequest(lib, controller.signal))
         .then(res => res.json().catch(() => ({})).then(body => ({ ok: res.ok, status: res.status, body })))
         .then(({ ok, status, body }) => {
@@ -546,7 +568,7 @@ export function loadLibraryIds(lib, refreshing = false) {
             lib.status = lib.ids.length === 0 ? 'empty' : 'ready';
             lib.message = lib.ids.length === 0 ? emptySentence(lib) : '';
             lib.notice = '';
-            reconcileIdSelection();       // a photo the view no longer holds is no longer selected
+            lib.host.idsRead();
             return true;
         })
         .catch(err => {
@@ -561,7 +583,7 @@ export function loadLibraryIds(lib, refreshing = false) {
             return false;
         })
         .then(replaced => {
-            if (lib === state.library) upper.libraryChanged();
+            if (lib.host.shows(lib)) lib.host.changed();
             return replaced;
         });
 }
@@ -596,14 +618,21 @@ export function libraryCardKey(record) {
 }
 
 export function libraryIndexOfKey(key) {
-    const lib = state.library;
+    return indexOfCardKey(state.library, key);
+}
+
+/** Where in a view the card of this key is, or -1. */
+export function indexOfCardKey(lib, key) {
     if (!lib || typeof key !== 'string' || key[0] !== '#') return -1;
     return lib.ids.indexOf(Number(key.slice(1)));
 }
 
-/** The card at an index, or a placeholder with the same key (and a request for the window's cards on its way). */
 export function libraryRecordAt(index) {
-    const lib = state.library;
+    return cardAt(state.library, index);
+}
+
+/** A view's card at an index, or a placeholder with the same key (and a request for the window's cards on its way). */
+export function cardAt(lib, index) {
     const id = lib.ids[index];
     const card = lib.cards.get(id);
     if (card) {
@@ -616,21 +645,23 @@ export function libraryRecordAt(index) {
 }
 
 function askForCards(lib) {
-    if (lib.timer || lib.status !== 'ready' || lib !== state.library) return;
+    if (lib.timer || lib.status !== 'ready' || !lib.host.shows(lib)) return;
     lib.rearms = 0;
     lib.baseline = null;
     // The first window of a view is asked for at once; later ones once the window has stood still.
     lib.timer = window.setTimeout(() => checkWindow(lib), lib.batches === 0 ? 0 : FETCH_DELAY_MS);
     // Where the window is, once the draw that missed a card is done (it is mid-draw now).
     window.setTimeout(() => {
-        if (lib.timer && state.grid) lib.baseline = state.grid.extent().first;
+        const grid = lib.host.grid();
+        if (lib.timer && grid) lib.baseline = grid.extent().first;
     }, 0);
 }
 
 function checkWindow(lib) {
     lib.timer = 0;
-    if (lib !== state.library || !state.grid) return;
-    const first = state.grid.extent().first;
+    const grid = lib.host.grid();
+    if (!lib.host.shows(lib) || !grid) return;
+    const first = grid.extent().first;
     if (lib.batches > 0 && lib.baseline !== null && first !== lib.baseline && lib.rearms < MAX_REARMS) {
         // The window moved while we waited: wait for it to stop.
         lib.rearms += 1;
@@ -643,8 +674,9 @@ function checkWindow(lib) {
 
 /** The cards missing around the window, as the window is now: nearest the top first, in batches. */
 function fetchWindow(lib) {
-    if (lib !== state.library || !state.grid) return;
-    const extent = state.grid.extent();
+    const grid = lib.host.grid();
+    if (!lib.host.shows(lib) || !grid) return;
+    const extent = grid.extent();
     const span = Math.max(extent.end - extent.first, 1);
     const from = Math.max(0, extent.first - (span >> 1));
     const to = Math.min(lib.ids.length, extent.end + (span >> 1));
@@ -690,12 +722,12 @@ function sendBatch(lib, indexes) {
             return body;
         }))
         .then(body => {
-            if (lib !== state.library || controller.signal.aborted) return;
+            if (!lib.host.shows(lib) || controller.signal.aborted) return;
             settle();
             cardsArrived(lib, ids, Array.isArray(body.cards) ? body.cards : []);
         })
         .catch(err => {
-            if (err.name === 'AbortError' || lib !== state.library) return;
+            if (err.name === 'AbortError' || !lib.host.shows(lib)) return;
             settle();
             cardsFailed(lib, ids, err);
         });
@@ -728,9 +760,10 @@ function cardsArrived(lib, asked, cards) {
     // A photo the library no longer has when its card is asked for is dropped, quietly.
     const gone = asked.filter(id => !got.has(id));
     if (gone.length) dropPhotos(lib, gone);
-    if (state.grid) {
-        state.grid.patch([...got].map(id => `#${id}`));
-        if (gone.length) state.grid.refresh();
+    const grid = lib.host.grid();
+    if (grid) {
+        grid.patch([...got].map(id => `#${id}`));
+        if (gone.length) grid.refresh();
     }
     if (lib.more) askForCards(lib);
 }
@@ -743,14 +776,15 @@ function cardsFailed(lib, asked, err) {
         lib.tries.set(id, tries);
         if (tries >= MAX_TRIES) fresh.push(`#${id}`);
     }
-    if (fresh.length && state.grid) state.grid.patch(fresh);   // their placeholders say they gave up
+    const grid = lib.host.grid();
+    if (fresh.length && grid) grid.patch(fresh);   // their placeholders say they gave up
     lib.notice = fresh.length ? 'Some photos could not be loaded. Refresh view asks again.' : '';
     // One more try, soon, whether or not anyone scrolls; then the placeholders give up.
     if (asked.some(id => (lib.tries.get(id) || 0) < MAX_TRIES)) {
         window.clearTimeout(lib.retryTimer);
         lib.retryTimer = window.setTimeout(() => askForCards(lib), RETRY_MS);
     }
-    upper.libraryChanged();
+    lib.host.changed();
 }
 
 /** Take photos out of the order and the total: deleted, or no longer in the library. One pass. */
@@ -764,13 +798,12 @@ export function dropPhotos(lib, ids) {
         lib.tries.delete(id);
         lib.videos.delete(id);
     }
-    forgetSelectedIds(gone);
-    upper.updateSelectedThumbnailsCount();   // the selection is the view's total less the excluded: the count moved
+    lib.host.dropped(gone);
     if (lib.ids.length === 0) {
         lib.status = 'empty';
         lib.message = emptySentence(lib);
     }
-    upper.libraryChanged();
+    lib.host.changed();
 }
 
 /** A photo deleted from the page: its card goes and the total drops. */
