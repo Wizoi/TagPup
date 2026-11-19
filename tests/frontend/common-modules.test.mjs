@@ -34,7 +34,7 @@ describe("each shared helper is written once", () => {
     const names = exportedNames().map((e) => e.name);
     for (const name of ["api", "pathKey", "samePath", "leafOf", "rootOf", "samePerson", "photoAlreadyHas",
                         "tagProblem", "nameProblem", "textProblem", "rememberedLibrary", "rememberLibrary",
-                        "goToLibrary", "initDatabaseSelector", "enhanceSelect"]) {
+                        "goToLibrary", "initDatabaseSelector", "enhanceSelect", "photoFileUrl", "videoRoute"]) {
       assert.ok(names.includes(name), `${name} is not exported by web/common/`);
     }
   });

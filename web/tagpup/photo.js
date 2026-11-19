@@ -2,6 +2,7 @@
 // forward, opening, rotating and deleting it.
 import { api } from './common/api.js';
 import { buildElement, replaceContent } from './common/dom.js';
+import { photoFileUrl } from './common/file-addresses.js';
 import { openImageZoom, wireImageZoom } from './common/image-zoom.js';
 import { attachPersonFaces } from './common/person-faces.js';
 import { pressable } from './common/press.js';
@@ -764,18 +765,6 @@ export function openPhotoInDefaultApp() {
 }
 
 // PIL rotation trigger
-/**
- * A photo's image URL, versioned by its mtime.
- *
- * The server caches these for a day. A rotation changes the file but not the URL,
- * so the grid went on showing the old turn -- and so did the photo itself, when
- * returned to later. Carrying the mtime makes a changed file a new URL.
- */
-export function photoFileUrl(photo, size) {
-    return api.image(`/api/photo-file?path=${encodeURIComponent(photo.path)}&size=${size}`
-        + `&v=${encodeURIComponent(photo.mtime || 0)}`);
-}
-
 export function rotatePhoto(direction) {
     const path = state.activePhotoPath;
     if (!path) return;

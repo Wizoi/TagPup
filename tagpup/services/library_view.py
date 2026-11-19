@@ -389,9 +389,10 @@ def _cards(conn, photo_ids, check_disk=False):
         if row is None:
             continue   # deleted since the page was read
         path, mtime, size, taken, kind = row
-        # `media`: 'photo' or 'video' (photos.kind), which the page shows a picture or plays by (/api/video-file).
+        # `media`: 'photo' or 'video' (photos.kind), which the page shows a picture or plays by (/api/video-file);
+        # `mtime`: the row's stamp, which the page versions the file's address by (web/common/file-addresses.js).
         card = {"id": photo_id, "name": os.path.basename(path), "path": path, "taken": taken,
-                "thumb": thumbnails.url(photo_id, mtime), "media": kind}
+                "thumb": thumbnails.url(photo_id, mtime), "mtime": mtime, "media": kind}
         if check_disk and time.monotonic() - started < STAT_BUDGET_SECONDS:
             mark = disk_mark(path, mtime, size)
             if mark:

@@ -2,8 +2,9 @@
  * Owner scenario: on the phone page (web/tagpup/mobile.html, docs/plans/phone-viewer.md, Screens 4) the owner taps a
  * thumbnail of a view and looks at the photo large, swiping left and right through the view, and goes Back to the grid.
  *
- * - The picture is the library's /api/photo-file at 1024 px, versioned by the card's stamp; a clip plays from
- *   /api/video-file with its poster (web/tagpup/mobile-photo.js). A tap opens the file whole in the shared zoom.
+ * - The picture is the library's /api/photo-file at 1024 px, versioned by the card's `mtime`; a clip plays from
+ *   /api/video-file with its poster (web/common/file-addresses.js, the desktop's spelling too). A tap opens the file
+ *   whole in the shared zoom.
  * - A swipe is the shared one (web/common/swipe.js): each lands one photo on, in the step the photo was opened in, so
  *   rapid swipes are as many photos and no extra Back; the first and the last photo go no further.
  * - A photo whose card the grid has not asked yet is read by id; a reply for a photo swiped past is dropped.
@@ -33,11 +34,12 @@ async function settle(ctx, ms = 50) {
   await flush(ctx.window, 6);
 }
 
-/** The card the library sends: its path, its stamp in its thumbnail's address, `media`, as tagpup.services.library_view. */
+/** The card the library sends: its path, its stamp (`mtime`, also in its thumbnail's address), `media`, as tagpup.services.library_view. */
 function cardOf(id, extra = {}) {
+  const mtime = extra.mtime ?? 1718000000.5;
   return {
     id, name: `Rowan's Meet ${id}.jpg`, path: `D:\\Photos\\Rowan's Meet\\Rowan's Meet ${id}.jpg`, taken: "2024:06:01 10:00:00",
-    thumb: `/api/photo-thumb?id=${id}&v=1718000000.5`, media: "photo", ...extra,
+    thumb: `/api/photo-thumb?id=${id}&v=${mtime}`, mtime, media: "photo", ...extra,
   };
 }
 

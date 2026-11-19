@@ -27,6 +27,7 @@
 // clip. Zoom stands down because there is no picture. Its Convert and Make smaller follow the clip shown, Convert offered
 // from the plan read here (clip-convert.js).
 import { api } from './common/api.js';
+import { videoRoute } from './common/file-addresses.js';
 import { clipActionsFollow, offerConvert } from './clip-convert.js';
 import { detailFileSize, detailVideoSize, mainImage, mainVideo, panelContent } from './elements.js';
 import { fileSizeSaid } from './format.js';
@@ -36,11 +37,6 @@ import { state } from './state.js';
 /** Is `photo` a video? Only what the library says: a record without `media` is a photo. */
 export function isVideo(photo) {
     return Boolean(photo) && photo.media === 'video';
-}
-
-/** The route a video is played from (not prefixed with the library: api.url and api.fetch put it there). */
-function videoRoute(photo) {
-    return `/api/video-file?id=${encodeURIComponent(photo.id)}&v=${encodeURIComponent(photo.mtime || 0)}`;
 }
 
 /**

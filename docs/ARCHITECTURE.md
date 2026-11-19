@@ -351,7 +351,8 @@ same transaction (`store/derived.py`, `people.tree_edit`).
 - `web/common/` holds ES modules shared by the pages: `api.js` (library-aware URLs and JSON, with a read
   retried across a server update), `batch-strip.js` (the strip of the batches of photo files), `paths.js`, `vocabulary.js`, `library.js`, `validate.js` (the rules
   `/api/rules` publishes), `dom.js` (elements built from text), `dialog.js`, `press.js` (a pill, chip, card or row the keyboard presses
-  as a click: Tab reaches it, Enter or Space clicks it), and the gear's tag editor,
+  as a click: Tab reaches it, Enter or Space clicks it), `file-addresses.js` (the one spelling of a photo's file and a
+  clip's address, `/api/photo-file` and `/api/video-file`, versioned by the record's or card's `mtime`), and the gear's tag editor,
   settings and history dialogs.
 - `web/activity/` is the Activity page; `web/tagpup/` and `web/tuner/` have a `main.js` that only wires the
   page, plus one module per feature, and their mutable state in one `state` object.

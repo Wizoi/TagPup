@@ -4,13 +4,14 @@
  * swipe (web/common/swipe.js) moves through the view and writes the photo it lands on into the same step, so a reload
  * opens that photo and Back is the Grid with its card in view (mobile-grid.js), however many photos were swiped through.
  *
- * The picture is /api/photo-file at 1024 px; a tap opens the file whole in the shared zoom (web/common/image-zoom.js),
+ * The picture is the photo's file at 1024 px (web/common/file-addresses.js, by the card's `mtime`); a tap opens the file whole in the shared zoom (web/common/image-zoom.js),
  * where the phone's own pinch enlarges it. A clip plays from /api/video-file, its poster shown until it does. Which file
  * is the card the Grid holds, or, for a card not asked yet (a window still loading, a reload), the card read by id; a
  * reply for a photo already swiped past is dropped. A missing file, a share that does not answer, a clip the phone
  * cannot play: a sentence, and the swipe goes on.
  */
 import { api } from './common/api.js';
+import { photoFileUrl, videoRoute } from './common/file-addresses.js';
 import { closeImageZoom, openImageZoom } from './common/image-zoom.js';
 import { enableSwipeNavigation } from './common/swipe.js';
 import { state } from './mobile-state.js';
@@ -23,20 +24,6 @@ function indexIn(lib, place) {
     if (!lib || !place || !Number.isInteger(place.id)) return -1;
     if (Number.isInteger(place.at) && lib.ids[place.at] === place.id) return place.at;
     return lib.ids.indexOf(place.id);
-}
-
-/**
- * The stamp the browser keeps the file's picture by: the row's modified time, which a card carries in its thumbnail's
- * address (tagpup.services.thumbnails.url), so a photo turned on the PC is a new address here too.
- */
-function versionOf(card) {
-    const found = /[?&]v=([^&]*)/.exec(card.thumb || '');
-    return found ? found[1] : '0';
-}
-
-/** The photo's file, upright, at `size` pixels (none: the file whole). */
-function pictureUrl(card, size = 0) {
-    return api.image(`/api/photo-file?path=${encodeURIComponent(card.path)}${size ? `&size=${size}` : ''}&v=${versionOf(card)}`);
 }
 
 /** Say why the photo is not shown, or '' for nothing to say. */
@@ -77,7 +64,7 @@ function draw(card) {
     const picture = byId('photo-picture');
     if (card.media !== 'video') {
         stopClip();
-        picture.src = pictureUrl(card, 1024);
+        picture.src = photoFileUrl(card, 1024);
         picture.classList.remove('hidden');
         return;
     }
@@ -85,7 +72,7 @@ function draw(card) {
     picture.removeAttribute('src');
     const clip = byId('photo-clip');
     clip.classList.remove('hidden');
-    const route = `/api/video-file?id=${card.id}&v=${versionOf(card)}`;
+    const route = videoRoute(card);
     if (clip.dataset.route === route && !clip.error) return;    // the same clip again: it plays on
     clip.dataset.route = route;
     clip.poster = card.thumb ? api.image(card.thumb) : '';
@@ -153,7 +140,7 @@ export function wirePhoto() {
             return;
         }
         if (state.photo && state.photo.media !== 'video') {
-            openImageZoom(pictureUrl(state.photo), { preview: picture.getAttribute('src') || '', opener: picture });
+            openImageZoom(photoFileUrl(state.photo), { preview: picture.getAttribute('src') || '', opener: picture });
         }
     });
     picture.addEventListener('error', () => {
