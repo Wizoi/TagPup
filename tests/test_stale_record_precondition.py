@@ -422,7 +422,7 @@ class ACaptionHeldAsATitleOnly(Fresh):
         path, photo_id = self.make_titled("a.jpg", 41, ["People/Orla Penhallow"])
         record = self.record(photo_id)
         self.assertEqual("Pier at noon", record["title"])
-        # What the page sends for each face named (edits.postPhotoMetadata) and takes from each reply (takeStamp).
+        # What the page sends for each face named (web/common/photo-write.js postPhotoMetadata) and takes from each reply (takeStamp).
         stamp = {"mtime": record["mtime"], "size": record["size"]}
         base = {"tags": record["tags"], "title": record["title"]}
         where, tags = record["path"], list(record["tags"])

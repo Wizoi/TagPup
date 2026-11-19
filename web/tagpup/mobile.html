@@ -74,6 +74,26 @@
             <p id="photo-problem" class="problem hidden" role="alert"></p>
             <h2 id="photo-name" class="photo-name"></h2>
             <p id="photo-at" class="screen-note"></p>
+            <button type="button" id="photo-edit" class="photo-edit">Edit</button>
+            <div id="edit-sheet" class="edit-sheet hidden" role="dialog" aria-label="Edit this photo">
+                <p id="edit-problem" class="edit-problem hidden" role="alert"></p>
+                <h3 class="edit-heading">People</h3>
+                <div id="edit-people" class="edit-chips"></div>
+                <h3 class="edit-heading">Keywords</h3>
+                <div id="edit-keywords" class="edit-chips"></div>
+                <input type="text" id="edit-add" class="edit-input" placeholder="Add a tag or a person" aria-label="Add a tag or a person"
+                    autocomplete="off" enterkeyhint="done">
+                <div id="edit-matches" class="edit-matches"></div>
+                <label class="edit-label">Title <input type="text" id="edit-title" class="edit-input" autocomplete="off"></label>
+                <div id="edit-when" class="edit-when">
+                    <label class="edit-label">Date Taken <input type="date" id="edit-date" class="edit-input"></label>
+                    <input type="time" id="edit-time" class="edit-input" step="1" aria-label="Time taken">
+                </div>
+                <div class="edit-actions">
+                    <button type="button" id="edit-close" class="edit-close">Close</button>
+                    <button type="button" id="edit-save" class="edit-save">Save</button>
+                </div>
+            </div>
         </section>
 
         <section class="screen hidden" data-screen="library" data-title="Libraries">
@@ -84,6 +104,7 @@
             </div>
         </section>
     </main>
+    <div id="edit-toasts" class="edit-toasts" aria-live="polite"></div>
 
     <script type="module" src="mobile.js"></script>
 </body>

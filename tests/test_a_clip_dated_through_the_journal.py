@@ -171,8 +171,8 @@ class AClipDatedThroughTheJournal(tagged.ALibraryHoldingAClip):
         return reply.get_json()["ids"]
 
     def save_date_from_the_panel(self, photo_id, date_taken=SAVED_AS_THE_PAGE_SENDS):
-        """The panel's Save of a Date Taken: the record the page holds, its tags and title sent with it (edits.js
-        postPhotoMetadata)."""
+        """The panel's Save of a Date Taken: the record the page holds, its tags and title sent with it
+        (web/common/photo-write.js postPhotoMetadata)."""
         reply = self.client.get("/library/api/library/photo", query_string={"id": photo_id})
         self.assertEqual(200, reply.status_code, reply.data)
         record = reply.get_json()["photo"]

@@ -14,7 +14,8 @@ import { saveToLocalStorageCache } from './cache.js';
 import {
     exifDateToIso, formatFriendlyDateSingle, getCurrentDateTimeIso, getFolderDateStats, parseExifDateToLocalDate, takenOf
 } from './format.js';
-import { postPhotoMetadata, queueWriteOf } from './edits.js';
+import { photoChangedOnDisk, queueWriteOf } from './edits.js';
+import { postPhotoMetadata } from './common/photo-write.js';
 import { renderFileList } from './folder.js';
 import { isVideo } from './media.js';
 
@@ -68,7 +69,7 @@ export function wireDateTakenModal() {
                 let saved;
                 setStatus('busy', 'Saving date taken...');
                 try {
-                    saved = await postPhotoMetadata(photo, { date_taken: newDateVal });
+                    saved = await postPhotoMetadata(photo, { date_taken: newDateVal }, photoChangedOnDisk);
                 } catch (err) {
                     console.error(err);
                     setStatus('error', 'Error');

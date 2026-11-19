@@ -21,7 +21,8 @@ import { state } from './state.js';
 import { btnClipConvert, btnClipConvertCancel, btnClipShrink, clipConvertNote, mainVideo } from './elements.js';
 import { setStatus } from './status.js';
 import { saveToLocalStorageCache } from './cache.js';
-import { hasUnsavedEdits, photoRenamed, queueWriteOf, stampOf, takeStamp } from './edits.js';
+import { hasUnsavedEdits, photoRenamed, queueWriteOf } from './edits.js';
+import { stampOf, takeStamp } from './common/photo-write.js';
 import { refetchCards } from './library-source.js';
 
 /** How often a live ticket is read (a conversion takes seconds to minutes). */

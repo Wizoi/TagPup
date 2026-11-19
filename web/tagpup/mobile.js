@@ -14,6 +14,7 @@ import { showLibraries, wireLibraries } from './mobile-library.js';
 import { linkedView, showBrowse, wireBrowse } from './mobile-browse.js';
 import { forgetGrid, showGrid, wireGrid } from './mobile-grid.js';
 import { leavePhoto, showPhoto, wirePhoto } from './mobile-photo.js';
+import { leaveEdit, wireEdit } from './mobile-edit.js';
 
 document.addEventListener('DOMContentLoaded', () => {
     wireRootsBanner();
@@ -29,6 +30,8 @@ document.addEventListener('DOMContentLoaded', () => {
     wirePhoto();
     whenShown('photo', showPhoto);
     for (const name of ['library', 'browse', 'grid']) whenShown(name, leavePhoto);
+    wireEdit();
+    for (const name of ['library', 'browse', 'grid', 'photo']) whenShown(name, leaveEdit);    // a swipe shows 'photo' anew
     document.getElementById('bar-library').addEventListener('click', () => openScreen('library'));
 
     // Last: the view and the library the URL names (the library remembered as the one opened last), then the first screen.

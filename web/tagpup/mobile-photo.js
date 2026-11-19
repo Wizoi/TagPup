@@ -6,8 +6,8 @@
  *
  * The picture is the photo's file at 1024 px (web/common/file-addresses.js, by the card's `mtime`); a tap opens the file whole in the shared zoom (web/common/image-zoom.js),
  * where the phone's own pinch enlarges it. A clip plays from /api/video-file, its poster shown until it does. Which file
- * is the card the Grid holds, or, for a card not asked yet (a window still loading, a reload), the card read by id; a
- * reply for a photo already swiped past is dropped. A missing file, a share that does not answer, a clip the phone
+ * is the card the Grid holds, or, for a card not asked yet (a window still loading, a swipe past it, a reload), read
+ * with the cards around it and kept in the view as the Grid's own (#3151); a reply for a photo swiped past is dropped. A missing file, a share that does not answer, a clip the phone
  * cannot play: a sentence, and the swipe goes on. A picture that failed while the server was updated is asked again by
  * api.js once it is back (imagesAfterAnUpdate): loaded, it is shown again and its sentence goes.
  */
@@ -15,6 +15,7 @@ import { api } from './common/api.js';
 import { photoFileUrl, videoRoute } from './common/file-addresses.js';
 import { closeImageZoom, openImageZoom } from './common/image-zoom.js';
 import { enableSwipeNavigation } from './common/swipe.js';
+import { keepCards } from './library-source.js';
 import { state } from './mobile-state.js';
 import { replacePlace, samePlace } from './mobile-screens.js';
 
@@ -41,6 +42,35 @@ function landing(lib, place, delta) {
         next = delta > 0 ? place.at + delta - 1 : place.at + delta;
     }
     return next >= 0 && next < lib.ids.length ? next : -1;
+}
+
+/** Photos either side of the one open read with it: a swipe through photos the Grid has not asked asks once in so many. */
+const AROUND = 25;
+
+/**
+ * The cards of the photo `id`, at `at` in the view `lib` (-1, null: none held, a reload), and of those around it the view
+ * does not hold, kept in it; a read out already that names `id` is waited for, not sent again. Resolves {id: card}.
+ */
+function readAround(lib, id, at) {
+    const out = state.cardsAsked;
+    if (out && out.lib === lib && out.ids.has(id)) return out.reply;
+    const ids = [id];
+    for (let i = Math.max(0, at - AROUND); lib && at >= 0 && i <= Math.min(lib.ids.length - 1, at + AROUND); i += 1) {
+        if (lib.ids[i] !== id && !lib.cards.has(lib.ids[i])) ids.push(lib.ids[i]);
+    }
+    const reply = api.fetch(`/api/library/cards?ids=${ids.join(',')}`)
+        .then((res) => api.answered(res, 'Could not load this photo.'))    // a refusal (500, 503) is a failure, not "gone"
+        .then((body) => {
+            const read = body && Array.isArray(body.cards) ? body.cards.filter((each) => each && ids.includes(each.id)) : [];
+            if (lib) keepCards(lib, read);
+            return new Map(read.map((each) => [each.id, each]));
+        });
+    const done = () => {
+        if (state.cardsAsked && state.cardsAsked.reply === reply) state.cardsAsked = null;
+    };
+    reply.then(done, done);
+    state.cardsAsked = { lib, ids: new Set(ids), reply };
+    return reply;
 }
 
 /** Say why the photo is not shown, or '' for nothing to say. */
@@ -113,11 +143,10 @@ export function showPhoto() {
     byId('photo-name').textContent = '';
     if (!place || !Number.isInteger(place.id)) return;
     const current = () => state.screen === 'photo' && samePlace(state.place, place);    // not swiped past, nor left
-    api.fetch(`/api/library/cards?ids=${place.id}`)
-        .then((res) => api.answered(res, 'Could not load this photo.'))    // a refusal (500, 503) is a failure, not "gone"
-        .then((body) => {
+    readAround(lib, place.id, at)
+        .then((got) => {
             if (!current()) return;
-            const read = body && Array.isArray(body.cards) ? body.cards.find((each) => each && each.id === place.id) : null;
+            const read = got.get(place.id);
             if (read) draw(read);
             else say('This photo is no longer in the library.');
         })
@@ -128,7 +157,7 @@ export function showPhoto() {
 
 /** The next photo of the view (1) or the one before (-1); nothing at its first or last, or with no view held (a reload). */
 export function stepPhoto(delta) {
-    if (state.screen !== 'photo') return;
+    if (state.screen !== 'photo' || state.edit) return;    // the Edit sheet open: Close it first
     const lib = state.photos;
     const next = landing(lib, state.place, delta);
     if (next < 0) return;

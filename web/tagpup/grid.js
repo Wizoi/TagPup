@@ -16,7 +16,8 @@ import { saveToLocalStorageCache } from './cache.js';
 import {
     formatFriendlyDateSingle, getFolderDateStats, parseExifDateToLocalDate, takenOf
 } from './format.js';
-import { baseOf, photoChangedOnDisk, photoRenamed, queueWriteOf, stampOf, takeStamp } from './edits.js';
+import { photoChangedOnDisk, photoRenamed, queueWriteOf } from './edits.js';
+import { baseOf, stampOf, takeStamp } from './common/photo-write.js';
 import { countSaid, renderFileList, visiblePhotos } from './folder.js';
 import { openLibraryPhoto, selectPhoto } from './photo.js';
 import { isVideo } from './media.js';

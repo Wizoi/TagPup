@@ -772,7 +772,11 @@ function trim(lib) {
     }
 }
 
-function cardsArrived(lib, asked, cards) {
+/**
+ * Keep `cards` in the view as the grid's own, and say the ids kept: the grid's windows, and the phone's Photo screen's
+ * ask around the photo open (mobile-photo.js), so a swipe past the windows and Back to the grid ask none of them again.
+ */
+export function keepCards(lib, cards) {
     const got = new Set();
     for (const card of cards) {
         if (!card || !Number.isInteger(card.id)) continue;
@@ -781,6 +785,11 @@ function cardsArrived(lib, asked, cards) {
         got.add(card.id);
     }
     trim(lib);
+    return got;
+}
+
+function cardsArrived(lib, asked, cards) {
+    const got = keepCards(lib, cards);
     // A photo the library no longer has when its card is asked for is dropped, quietly.
     const gone = asked.filter(id => !got.has(id));
     if (gone.length) dropPhotos(lib, gone);

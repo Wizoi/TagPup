@@ -30,9 +30,10 @@ import {
 import { namesAPerson, normalizeTag } from './tags.js';
 import { goingOffOf, removePhotoTags } from './tags-off.js';
 import {
-    leavePhotoThen, postPhotoMetadata, queueWriteOf, redrawIfShowing, saveDetailEdits,
+    leavePhotoThen, photoChangedOnDisk, queueWriteOf, redrawIfShowing, saveDetailEdits,
     updateSaveButton
 } from './edits.js';
+import { postPhotoMetadata } from './common/photo-write.js';
 import {
     countSaid, markOpenRow, nextOf, renderFileList, scanFolder, showFolderView, updateListStats, updatePhotoPosition,
 } from './folder.js';
@@ -537,7 +538,7 @@ export function carryTagsForward() {
         setStatus('busy', `Copying ${missing.length} tag(s) from ${from}...`);
         let saved;
         try {
-            saved = await postPhotoMetadata(photo, { tags: updatedTags });
+            saved = await postPhotoMetadata(photo, { tags: updatedTags }, photoChangedOnDisk);
         } catch (err) {
             console.error(err);
             setStatus('error', 'Could not copy tags: ' + err.message);

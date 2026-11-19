@@ -11,7 +11,8 @@ import { btnSmartRenameOne, inputSmartRenameOne } from './elements.js';
 import { flagField, setStatus } from './status.js';
 import { saveToLocalStorageCache } from './cache.js';
 import { whereWritten } from './write-queue.js';
-import { hasUnsavedEdits, photoRenamed, queueWriteOf, takeStamp } from './edits.js';
+import { hasUnsavedEdits, photoRenamed, queueWriteOf } from './edits.js';
+import { takeStamp } from './common/photo-write.js';
 import { refetchCards } from './library-source.js';
 
 export const SAVE_EDITS_FIRST = 'Save or discard the changes typed on this photo first: then Smart Rename it.';
