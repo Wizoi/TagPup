@@ -612,7 +612,45 @@ body {
     color: var(--text-muted);
 }
 
-/* The path is a button (Tab reaches it) drawn as the text it was. */
+/* The folder's name, the photo's and the copy button on one line (photo-path.js): each name gives way to an ellipsis rather
+   than widening the column, the folder's first, and the button stays whole. */
+.detail-path-line {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    min-width: 0;
+}
+
+.detail-path-line > .one-line {
+    flex: 0 1 auto;
+    min-width: 0;
+}
+
+.detail-path-line > #detail-folder {
+    flex-shrink: 4;
+}
+
+.detail-path-between {
+    flex: none;
+    color: var(--text-muted);
+}
+
+.detail-path-copy {
+    flex: none;
+    background: none;
+    border: none;
+    padding: 0 2px;
+    cursor: pointer;
+    font-size: 13px;
+    opacity: 0.7;
+}
+
+.detail-path-copy:hover,
+.detail-path-copy:focus-visible {
+    opacity: 1;
+}
+
+/* The two names are buttons (Tab reaches them) drawn as text. */
 button.detail-value.clickable {
     background: none;
     border: none;

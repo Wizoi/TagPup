@@ -15,7 +15,7 @@ import { clearPhotoFaces, nameFaceAs, showPhotoFaces } from './face-boxes.js';
 import { state } from './state.js';
 import {
     btnCarryForward,
-    detailCamera, detailCameraItem, detailDateTaken, detailPath, detailPeople, detailsPanel, detailSize, detailTags,
+    detailCamera, detailCameraItem, detailDateTaken, detailPeople, detailsPanel, detailSize, detailTags,
     btnAddAllFaces, emptyState, facesSection, facesStrip, facesSummary, folderViewContent,
     folderViewStats, inputAddPerson, inputAddTag,
     inputPhotoTitle, mainImage, panelContent, photoList, statusDot, statusText
@@ -42,6 +42,7 @@ import { isVideo, showMedia, stopVideo } from './media.js';
 import { fetchLibraryRecord, forgetPhoto, libraryIdOfPath, refetchCards } from './library-source.js';
 import { backToView, notePhoto, rememberView } from './view-left.js';
 import { showSmartRenameParts } from './rename-one.js';
+import { showPhotoPath } from './photo-path.js';
 import { bulkBusy, busySentence, lockBulkControls } from './bulk-run.js';
 
 // ---- Detected faces ----------------------------------------------------
@@ -433,7 +434,7 @@ export function showPhoto(path) {
 
     // Render values. A photo whose file is gone has no picture to ask for; a video is played in the image's place (media.js).
     showMedia(photo, photo.missing ? '' : photoFileUrl(photo, 800));
-    detailPath.textContent = photo.path;
+    showPhotoPath(photo);
     detailSize.textContent = fileSizeSaid(photo.size);
     detailDateTaken.textContent = takenSaid(takenOf(photo));
     showCamera(photo);

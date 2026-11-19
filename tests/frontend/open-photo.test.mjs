@@ -29,7 +29,7 @@ const settle = (window, ms = 40) => new Promise((r) => window.setTimeout(r, ms))
 
 afterEach(() => closeAllApps());
 
-test("clicking the path opens the photo, not Explorer", async (t) => {
+test("clicking the photo's name opens the photo, not Explorer", async (t) => {
   const fake = server();
   const { window, document } = await loadApp("tagpup", { server: fake, t });
   await openFolder({ document, window }, "D:\\Pictures\\Run 2026");
@@ -37,8 +37,8 @@ test("clicking the path opens the photo, not Explorer", async (t) => {
   click(window, document.querySelector(".photo-item-file"));
   await settle(window);
 
-  const link = document.getElementById("detail-path");
-  assert.equal(link.title, "Open in default app");
+  const link = document.getElementById("detail-file-name");
+  assert.equal(link.title, `Open in the default app: ${PHOTO.path}`);
   click(window, link);
   await settle(window);
 

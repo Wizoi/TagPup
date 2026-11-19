@@ -71,7 +71,7 @@ describe("Smart Rename of the open photo", () => {
     await open(ctx, A);
     await renameTo(ctx, "Harbour Day");
     assert.deepEqual(renames(ctx).map((c) => c.body), [{ path: A, grouping: "Harbour Day" }]);
-    assert.equal(ctx.document.getElementById("detail-path").textContent, RENAMED);
+    assert.equal(ctx.document.getElementById("detail-file-name").title, `Open in the default app: ${RENAMED}`);
     assert.ok(row(ctx, RENAMED), "the list has the new name");
     assert.ok(!row(ctx, A), "the list still has the old name");
     assert.ok(ctx.document.querySelector(`.thumbnail-card[data-path="${RENAMED.replace(/\\/g, "\\\\")}"]`), "the grid has it");
@@ -109,7 +109,7 @@ describe("Smart Rename of the open photo", () => {
     click(ctx.window, button);
     await flush(ctx.window, 20);
     assert.deepEqual(renames(ctx).map((c) => c.body.path), [A, RENAMED]);
-    assert.equal(ctx.document.getElementById("detail-path").textContent, RENAMED);
+    assert.equal(ctx.document.getElementById("detail-file-name").title, `Open in the default app: ${RENAMED}`);
     assert.ok(!ctx.document.querySelector('.write-queue-entry[data-status="failed"]'), "a click failed");
     assert.match(ctx.document.getElementById("status-text").textContent, /already has that name/);
   });

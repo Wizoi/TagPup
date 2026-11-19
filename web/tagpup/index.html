@@ -212,7 +212,13 @@
                             <div class="details-grid">
                                 <div class="detail-item">
                                     <span class="detail-label">File Path</span>
-                                    <button type="button" class="detail-value clickable" id="detail-path"></button>
+                                    <!-- The folder's name and the photo's, each a link, and a button that copies the whole path (web/tagpup/photo-path.js). -->
+                                    <div class="detail-path-line">
+                                        <button type="button" class="detail-value clickable one-line" id="detail-folder"></button>
+                                        <span class="detail-path-between" aria-hidden="true">&rsaquo;</span>
+                                        <button type="button" class="detail-value clickable one-line" id="detail-file-name"></button>
+                                        <button type="button" class="detail-path-copy" id="btn-copy-path" title="Copy the full path" aria-label="Copy the full path">&#128203;</button>
+                                    </div>
                                     <!-- Smart Rename of this photo alone: the grouping its name holds, to edit; its number is kept (web/tagpup/rename-one.js). -->
                                     <div class="title-edit-container" data-writes="name">
                                         <input type="text" id="input-smart-rename-one" placeholder="Grouping" title="The grouping of this photo's name: change it and press Smart Rename. The photo keeps its number.">

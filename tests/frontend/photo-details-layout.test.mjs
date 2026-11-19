@@ -1,10 +1,12 @@
 /**
- * Image Details, laid out for the person tagging: the camera and lens read only under the Date Taken in its own box, and the boxes that
- * add a person or a keyword shown by a pencil, closed until it is clicked (web/tagpup/edit-toggles.js).
+ * Image Details, laid out for the person tagging: where the photo is as its folder's name and its own, each a link, with a button
+ * that copies the whole path (web/tagpup/photo-path.js); Date taken, Size and the camera as labelled lines of the second column;
+ * and the boxes that add a person or a keyword shown by a pencil, closed until it is clicked (web/tagpup/edit-toggles.js).
  */
 import { test, afterEach } from "node:test";
 import assert from "node:assert/strict";
 import { loadApp, FakeServer, closeAllApps, openFolder, click, PHOTO_WRITES } from "./harness.mjs";
+import { loadViewPage, recordOf } from "./view-page.mjs";
 
 const PHOTO = { path: "D:\\Pictures\\Run\\a.jpg", filename: "a.jpg", tags: [], people: [], captions: [], title: "", writes: PHOTO_WRITES, camera: "Tidewater TX R6m2", lens: "" };
 
@@ -57,15 +59,76 @@ test("the add boxes of people and keywords are closed until their pencil is clic
   }
 });
 
-async function openWith(t, record) {
+async function openWith(t, record, { before } = {}) {
   const srv = server([record]);
-  const { window, document } = await loadApp("tagpup", { server: srv, t });
+  const { window, document } = await loadApp("tagpup", { server: srv, t, before });
   await openFolder({ document, window }, "D:\\Pictures\\Run");
   await settle(window, 60);
   click(window, document.querySelector(".photo-item-file"));
   await settle(window);
   return document;
 }
+
+// A folder and a name with the characters an address reads otherwise (& # +), and long enough to be cut.
+const LONG_FOLDER = "D:\\Pictures\\Swim & Dive #3 + Relay at the Harbour Pool, the whole afternoon";
+const LONG_NAME = "Lane 4 & 5 #2 + the finish of the long relay, taken from the far end.jpg";
+
+test("where the photo is reads as its folder's name and its own, each whole in its tooltip, and the copy button copies the whole path", async (t) => {
+  const copied = [];
+  const before = (window) => Object.defineProperty(window.navigator, "clipboard", { value: { writeText: async (text) => { copied.push(text); } } });
+  const path = `${LONG_FOLDER}\\${LONG_NAME}`;
+  const page = await openWith(t, { ...PHOTO, path, filename: LONG_NAME }, { before });
+  const folder = page.getElementById("detail-folder"), name = page.getElementById("detail-file-name");
+  assert.equal(folder.textContent, "Swim & Dive #3 + Relay at the Harbour Pool, the whole afternoon");
+  assert.equal(folder.title, `Show this folder in the library: ${LONG_FOLDER}`);
+  assert.equal(name.textContent, LONG_NAME);
+  assert.equal(name.title, `Open in the default app: ${path}`);
+  assert.ok(folder.classList.contains("one-line") && name.classList.contains("one-line"), "a long name is cut with an ellipsis");
+  click(page.defaultView, page.getElementById("btn-copy-path"));
+  await settle(page.defaultView);
+  assert.deepEqual(copied, [path]);
+  assert.match(page.getElementById("status-text").textContent, /Copied the full path/);
+});
+
+test("a browser that will not let the page copy says so, rather than seeming to have copied", async (t) => {
+  const before = (window) => Object.defineProperty(window.navigator, "clipboard", { value: undefined });
+  const page = await openWith(t, PHOTO, { before });
+  click(page.defaultView, page.getElementById("btn-copy-path"));
+  await settle(page.defaultView);
+  assert.match(page.getElementById("status-text").textContent, /Could not copy the path/);
+});
+
+test("the folder's name opens it in the library this page is on, and back to its grid when that is the view the photo came from", async (t) => {
+  // The page on the second of two libraries that hold one folder, a folder whose name an address reads otherwise: the view is
+  // asked of this library, for that folder.
+  const folder = "D:\\Library\\Swim & Dive #3 + Relay";
+  const ctx = await loadViewPage(t, {
+    search: "?view=all", library: "kr-track",
+    onPhoto: (id) => ({ photo: recordOf(id, { path: `${folder}\\IMG_${id}.jpg`, filename: `IMG_${id}.jpg` }) }),
+  });
+  ctx.cardById(13).querySelector(".btn-thumbnail-detail").click();
+  await ctx.settle(100);
+  const asked = ctx.server.urls().length;
+  click(ctx.window, ctx.document.getElementById("detail-folder"));
+  await ctx.settle(100);
+  const views = ctx.server.urls().slice(asked).filter((url) => url.includes("/api/library/ids"));
+  assert.ok(views.length >= 1 && views.every((url) => url.startsWith("/kr-track/api/library/ids")), `${views}`);
+  const params = new URL(views[0], "http://localhost").searchParams;
+  assert.equal(params.get("kind"), "folder");
+  assert.equal(params.get("folder"), folder);
+  assert.equal(new URLSearchParams(ctx.window.location.search).get("value"), folder, "the address names the folder");
+  assert.ok(ctx.document.getElementById("panel-content").classList.contains("hidden"), "the folder's grid is shown");
+
+  // A photo of that folder's view: its folder's name goes back to the grid it came from, asking the library nothing.
+  ctx.cardById(14).querySelector(".btn-thumbnail-detail").click();
+  await ctx.settle(100);
+  assert.ok(!ctx.document.getElementById("panel-content").classList.contains("hidden"));
+  const before = ctx.server.urls().length;
+  click(ctx.window, ctx.document.getElementById("detail-folder"));
+  await ctx.settle(100);
+  assert.ok(ctx.document.getElementById("panel-content").classList.contains("hidden"), "the grid was not shown again");
+  assert.equal(ctx.server.urls().slice(before).filter((url) => url.includes("/api/library/ids")).length, 0);
+});
 
 test("a photo's and a clip's size read on the Size line under Date taken, the camera under both only when the file names one", async (t) => {
   for (const [record, size, camera] of [
@@ -79,7 +142,7 @@ test("a photo's and a clip's size read on the Size line under Date taken, the ca
     assert.equal(page.getElementById("detail-size").textContent, size);
     assert.equal(new Set(lines.map((line) => line.closest(".detail-item"))).size, 1, "the lines are one column's");
     if (camera) assert.equal(page.getElementById("detail-camera").textContent, camera);
-    assert.equal(page.getElementById("detail-path").closest(".detail-item").textContent.includes(size), false, "the size still floats under the path");
+    assert.equal(page.getElementById("detail-file-name").closest(".detail-item").textContent.includes(size), false, "the size still floats under the path");
     closeAllApps();
   }
 });

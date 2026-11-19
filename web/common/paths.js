@@ -33,6 +33,16 @@ export function baseName(p) {
     return String(p).replace(/[\\/]+$/, '').split(/[\\/]/).pop() || '';
 }
 
+/**
+ * The folder a path is in, spelled as the path spells it ("D:\\Run\\2019\\a.jpg" is "D:\\Run\\2019"), or '' for a path
+ * with no folder in it. Either separator; a trailing one is ignored, as baseName ignores it.
+ */
+export function folderOf(p) {
+    const text = String(p || '').replace(/[\\/]+$/, '');
+    const at = Math.max(text.lastIndexOf('\\'), text.lastIndexOf('/'));
+    return at < 0 ? '' : text.slice(0, at);
+}
+
 /** Whether two spellings name the same file or folder. *//**
  * Is `p` spelled as a network share (\\\\server\\share\\..., or //server/share/...)? Windows has no
  * Recycle Bin there: a delete goes through this PC's (#694). (A mapped drive letter is not told by its

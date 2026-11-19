@@ -468,7 +468,7 @@ describe("the details panel on a library photo", () => {
     await ctx.settle(60);
     assert.deepEqual(ctx.photosAsked, [IDS[2], IDS[1]]);
     assert.equal(ctx.state.activePhotoPath, cardOf(IDS[2]).path);
-    assert.equal(ctx.document.getElementById("detail-path").textContent, cardOf(IDS[2]).path);
+    assert.equal(ctx.document.getElementById("detail-file-name").title, `Open in the default app: ${cardOf(IDS[2]).path}`);
     assert.equal(ctx.document.getElementById("photo-position").textContent, "3 of 68,000");
     assert.match(ctx.document.getElementById("detail-tags").textContent, /Trips\/Coast/);
     // a title saved: written by path, the card follows in place
