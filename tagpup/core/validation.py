@@ -102,7 +102,7 @@ def face_detector(model):
     return {"model": model}
 
 #: The ways Rotate turns a photo, a quarter each (tagpup.services.photos.rotate).
-ROTATE_DIRECTIONS = ("left", "right")
+ROTATE_DIRECTIONS = ("left", "right", "mirror")
 
 #: The longest caption IPTC keeps: Caption-Abstract holds 2,000 bytes.
 CAPTION_BYTES = 2000
@@ -236,7 +236,7 @@ KINDS = {
     # Rotate Left, Rotate Right. Anything else was once taken for a right turn.
     "rotate direction": {"rules": [
         {"rule": "one_of", "choices": list(ROTATE_DIRECTIONS),
-         "message": "Direction must be 'left' or 'right'"},
+         "message": "Direction must be 'left', 'right' or 'mirror'"},
     ]},
 }
 

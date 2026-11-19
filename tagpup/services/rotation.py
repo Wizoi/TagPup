@@ -1,4 +1,5 @@
-"""What a quarter turn of a held photo brings with its Orientation: the face boxes, crops and record, and the vectors.
+"""What a quarter turn or a mirror of a held photo brings with its Orientation: the face boxes, crops and record, and the
+vectors.
 
 A rotation is a journaled change of the file's EXIF Orientation (tagpup.services.photos.rotate_photos, through
 file_changes.write_fields). The Orientation is all the file holds of it; the rest is rows, and they are made in the
@@ -18,7 +19,7 @@ None of these is journaled: each is a fact of the picture as it now is, made aga
 takes them away once more rather than putting the old ones back.
 
 The direction of the turn is not stored beside the file: it is what the journaled Orientation says (the value before and
-the value after), and the picture's size before it is the size the file shows now, swapped.
+the value after), and the stored picture's size is the size the file shows now under the Orientation it holds.
 """
 import logging
 
@@ -45,14 +46,15 @@ def orientation(texts):
 
 
 def next_orientation(direction, texts):
-    """The Orientation after a quarter turn `direction` of a photo holding `texts` (tagpup.core.orientation's table)."""
+    """The Orientation after a quarter turn or a mirror `direction` of a photo holding `texts` (tagpup.core.orientation's
+    table)."""
     return ROTATED_ORIENTATION[direction][orientation(texts)]
 
 
 def direction_between(was, now):
-    """'left' or 'right': the quarter turn that takes Orientation `was` to `now` (journaled values), or None when no single
-    quarter turn does."""
-    for direction in ("left", "right"):
+    """'left', 'right' or 'mirror': the quarter turn or the mirror that takes Orientation `was` to `now` (journaled values),
+    or None when none does (at most one does: a quarter turn keeps a mirrored value mirrored, a mirror does not)."""
+    for direction in ROTATED_ORIENTATION:
         if next_orientation(direction, was) == orientation(now):
             return direction
     return None

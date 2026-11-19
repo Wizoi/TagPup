@@ -15,18 +15,20 @@ shown at, by Orientation: 1 (x, y); 2 (W-x, y); 3 (W-x, H-y); 4 (x, H-y); 5 (y, 
 -- what ImageOps.exif_transpose does (checked per value in tests/test_a_face_box_turned_upright_and_back.py).
 """
 
-#: The EXIF Orientation a photo has after a quarter turn, by the one it had before. Worked out against
-#: ImageOps.exif_transpose -- what is shown for the new value is what was shown for the old one, turned -- and checked the
-#: same way in tests/test_rotate_keeps_the_photo.py. The mirrored values (2, 4, 5, 7) stay mirrored.
+#: The EXIF Orientation a photo has after it is mirrored left to right as it is shown, by the one it had before: what is
+#: shown for the new value is what was shown for the old one flipped (ImageOps.mirror), checked as the turns are in
+#: tests/test_rotate_keeps_the_photo.py. Mirrored twice is where it started.
+MIRRORED = {1: 2, 2: 1, 3: 4, 4: 3, 5: 6, 6: 5, 7: 8, 8: 7}
+
+#: The EXIF Orientation a photo has after a quarter turn ("left", "right") or a mirror, by the one it had before: each
+#: direction a rotation is asked for (tagpup.services.rotation). Worked out against ImageOps.exif_transpose -- what is shown
+#: for the new value is what was shown for the old one, turned -- and checked the same way in
+#: tests/test_rotate_keeps_the_photo.py. A quarter turn leaves the mirrored values (2, 4, 5, 7) mirrored.
 ROTATED_ORIENTATION = {
     "left": {1: 8, 2: 5, 3: 6, 4: 7, 5: 4, 6: 1, 7: 2, 8: 3},
     "right": {1: 6, 2: 7, 3: 8, 4: 5, 5: 2, 6: 3, 7: 4, 8: 1},
+    "mirror": MIRRORED,
 }
-
-#: The EXIF Orientation a photo has after it is mirrored left to right as it is shown, by the one it had before: what is
-#: shown for the new value is what was shown for the old one flipped (ImageOps.mirror), checked the same way. Mirrored twice
-#: is where it started.
-MIRRORED = {1: 2, 2: 1, 3: 4, 4: 3, 5: 6, 6: 5, 7: 8, 8: 7}
 
 #: The Orientations that swap a picture's width and height as it is shown.
 TRANSPOSED = frozenset({5, 6, 7, 8})

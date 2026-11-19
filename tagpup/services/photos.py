@@ -819,9 +819,9 @@ def delete(library, photo_path, for_good=False, fresh=True):
 
 
 def rotate_plan(direction):
-    """The `plan_one` of a quarter turn (tagpup.services.file_changes.write_fields): the Orientation the photo holds, turned,
-    composed with the one already there (a phone photo stored sideways, 6, turned left is 1, not 8); one it holds none of
-    is taken for 1. `detail` is what a turn reports of the photo."""
+    """The `plan_one` of a quarter turn or a mirror (tagpup.services.file_changes.write_fields): the Orientation the photo
+    holds, turned, composed with the one already there (a phone photo stored sideways, 6, turned left is 1, not 8;
+    mirrored, 5); one it holds none of is taken for 1. `detail` is what a turn reports of the photo."""
 
     def plan_one(_path, held):
         new = rotation.next_orientation(direction, held.get(rotation.FIELD))
@@ -831,7 +831,7 @@ def rotate_plan(direction):
 
 @roots_service.canonical_args("photo_paths")
 def rotate_photos(library, photo_paths, direction, exiftool_path):
-    """Turn photos a quarter left or right, as ONE journaled change "rotate" (tagpup.services.file_changes.write_fields):
+    """Turn photos a quarter left or right, or mirror them left to right ("mirror"), as ONE journaled change "rotate" (tagpup.services.file_changes.write_fields):
     each photo's Orientation planned from what the file holds, written, and its row recorded as it is marked done -- with
     the face boxes the turn moves and the vectors it makes stale (tagpup.services.rotation), in the same transaction. A crash
     between the file and its rows is settled forward at the next start; History's Undo turns the files and the boxes back.
@@ -867,7 +867,8 @@ def rotate_photos(library, photo_paths, direction, exiftool_path):
 
 
 def rotate(library, photo_path, direction, exiftool_path):
-    """Turn a photo a quarter left or right. Clicking Rotate Left or Rotate Right: rotate_photos of one photo.
+    """Turn a photo a quarter left or right, or mirror it. Clicking Rotate Left, Rotate Right or Mirror: rotate_photos of one
+    photo.
 
     details: `mtime` and `size` of the file now (the pages version image URLs by mtime, because thumbnails are cached for a
     day), its `orientation`, `faces_turned`, and `change` (History's id of the turn; None for a photo of a folder the library

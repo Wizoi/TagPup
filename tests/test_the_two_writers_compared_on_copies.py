@@ -1,4 +1,4 @@
-"""`metadata-check`: TagPup's own JPEG writer and ExifTool's, each given the app's eight writes on fresh copies of a
+"""`metadata-check`: TagPup's own JPEG writer and ExifTool's, each given the app's nine writes on fresh copies of a
 library's photos in a sandbox, compared by what each copy holds (tagpup.services.metadata_check; scenario F1;
 docs/PLAN_OWN_METADATA.md, M4 step 4c).
 
