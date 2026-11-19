@@ -29,6 +29,7 @@ import json
 import re
 
 from tagpup.core import library, renaming, vocabulary
+from tagpup.core.orientation import ROTATED_ORIENTATION
 
 #: A backslash. Spelled by its code so that no escape in this file can be mangled in
 #: transit (CLAUDE.md); every pattern below is a regular expression's source text,
@@ -101,8 +102,9 @@ def face_detector(model):
     library, #1089)."""
     return {"model": model}
 
-#: The ways Rotate turns a photo, a quarter each (tagpup.services.photos.rotate).
-ROTATE_DIRECTIONS = ("left", "right")
+#: The ways Rotate turns a photo, a quarter each or a mirror (tagpup.services.photos.rotate): the directions the
+#: Orientation table knows, so a direction is accepted exactly when it has a row there.
+ROTATE_DIRECTIONS = tuple(ROTATED_ORIENTATION)
 
 #: The longest caption IPTC keeps: Caption-Abstract holds 2,000 bytes.
 CAPTION_BYTES = 2000
@@ -233,10 +235,10 @@ KINDS = {
         {"rule": "one_of", "choices": list(EXCLUSION_REASONS),
          "message": "'{value}' is not a reason to exclude a face: use one of %s." % ", ".join(EXCLUSION_REASONS)},
     ]},
-    # Rotate Left, Rotate Right. Anything else was once taken for a right turn.
+    # Rotate Left, Rotate Right, Mirror. Anything else was once taken for a right turn.
     "rotate direction": {"rules": [
         {"rule": "one_of", "choices": list(ROTATE_DIRECTIONS),
-         "message": "Direction must be 'left' or 'right'"},
+         "message": "Direction must be 'left', 'right' or 'mirror'"},
     ]},
 }
 

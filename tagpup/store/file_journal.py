@@ -101,8 +101,9 @@ class FileRow:
     #: Not stored: the faces recording the file named (the one-face rule: store.photos.follow_fields), [{"id", "name"}], said in
     #: the write's reply (`named_faces`) so that a page reads the photo's faces again.
     named_faces: list = field(default_factory=list)
-    #: Not stored: the quarter turn of face boxes this process made for the file, (direction, width, height) of the picture before it
-    #: (tagpup.services.rotation), so that taking the file out of its change after it was done turns them back exactly.
+    #: Not stored: the turn of face boxes this process made for the file, (stored width, stored height, Orientation before,
+    #: Orientation after) (tagpup.services.rotation), so that taking the file out of its change after it was done turns them
+    #: back exactly.
     turned: Optional[tuple] = None
     #: Not stored: the faces an undo of this file left as they were because they had changed since (tagpup.store.face_batches).
     faces_left: int = 0

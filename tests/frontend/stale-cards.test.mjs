@@ -107,7 +107,7 @@ describe("a missing photo: shown, not editable", () => {
 
   test("every button and field that writes is inside something inert, so a browser neither focuses nor clicks it", async (t) => {
     const ctx = await openMissing(t);
-    for (const id of ["btn-rotate-left", "btn-rotate-right", "btn-delete-photo", "btn-save-title", "input-photo-title", "btn-add-person",
+    for (const id of ["btn-rotate-left", "btn-rotate-right", "btn-mirror", "btn-delete-photo", "btn-save-title", "input-photo-title", "btn-add-person",
       "input-add-person", "btn-add-tag", "input-add-tag", "btn-edit-date-taken", "btn-carry-forward"]) {
       assert.ok(ctx.document.getElementById(id).closest("[inert]"), `${id} is not inert`);
     }

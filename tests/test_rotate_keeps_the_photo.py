@@ -102,28 +102,37 @@ def shown(path):
 
 
 class TestTheOrientationTable(unittest.TestCase):
-    """The table is what exif_transpose shows, turned, for every starting value."""
+    """The table is what exif_transpose shows, turned or mirrored, for every starting value."""
 
-    def test_every_orientation_turns_the_way_it_is_shown(self):
+    @staticmethod
+    def shown(value):
+        """A 3 x 2 picture of six different pixels holding Orientation `value`, as exif_transpose shows it."""
         from PIL import Image, ImageOps
 
-        base = Image.new("RGB", (3, 2))
-        base.putdata([(i, i, i) for i in range(6)])
+        img = Image.new("RGB", (3, 2))
+        img.putdata([(i, i, i) for i in range(6)])
+        exif = img.getexif()
+        exif[0x0112] = value
+        img.info["exif"] = exif.tobytes()
+        return ImageOps.exif_transpose(img)
 
-        def with_orientation(value):
-            img = base.copy()
-            exif = img.getexif()
-            exif[0x0112] = value
-            img.info["exif"] = exif.tobytes()
-            return ImageOps.exif_transpose(img)
+    def assertShownAs(self, want, after, why):
+        got = self.shown(after)
+        self.assertEqual((got.size, got.tobytes()), (want.size, want.tobytes()), why)
 
+    def test_every_orientation_turns_the_way_it_is_shown(self):
         for direction, angle in (("left", 90), ("right", 270)):
             for before in range(1, 9):
-                after = ROTATED_ORIENTATION[direction][before]
-                want = with_orientation(before).rotate(angle, expand=True)
-                got = with_orientation(after)
-                self.assertEqual((got.size, got.tobytes()), (want.size, want.tobytes()),
-                                 "%s from %d" % (direction, before))
+                self.assertShownAs(self.shown(before).rotate(angle, expand=True), ROTATED_ORIENTATION[direction][before],
+                                   "%s from %d" % (direction, before))
+
+    def test_every_orientation_mirrors_left_to_right_the_way_it_is_shown(self):
+        from PIL import ImageOps
+
+        from tagpup.core import orientation
+        for before in range(1, 9):
+            self.assertShownAs(ImageOps.mirror(self.shown(before)), orientation.MIRRORED[before], "mirror from %d" % before)
+            self.assertEqual(orientation.MIRRORED[orientation.MIRRORED[before]], before, "mirrored twice from %d" % before)
 
 
 @requires_exiftool

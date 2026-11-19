@@ -1,4 +1,5 @@
-"""What a quarter turn of a held photo brings with its Orientation: the face boxes, crops and record, and the vectors.
+"""What a quarter turn or a mirror of a held photo brings with its Orientation: the face boxes, crops and record, and the
+vectors.
 
 A rotation is a journaled change of the file's EXIF Orientation (tagpup.services.photos.rotate_photos, through
 file_changes.write_fields). The Orientation is all the file holds of it; the rest is rows, and they are made in the
@@ -18,12 +19,12 @@ None of these is journaled: each is a fact of the picture as it now is, made aga
 takes them away once more rather than putting the old ones back.
 
 The direction of the turn is not stored beside the file: it is what the journaled Orientation says (the value before and
-the value after), and the picture's size before it is the size the file shows now, swapped.
+the value after), and the stored picture's size is the size the file shows now under the Orientation it holds.
 """
 import logging
 
 from tagpup.core import fields
-from tagpup.core.orientation import ROTATED_ORIENTATION
+from tagpup.core.orientation import ROTATED_ORIENTATION, reoriented, upright_size
 from tagpup.files import images
 from tagpup.store import embeddings, faces, faces_detected, photo_fingerprints
 
@@ -45,14 +46,15 @@ def orientation(texts):
 
 
 def next_orientation(direction, texts):
-    """The Orientation after a quarter turn `direction` of a photo holding `texts` (tagpup.core.orientation's table)."""
+    """The Orientation after a quarter turn or a mirror `direction` of a photo holding `texts` (tagpup.core.orientation's
+    table)."""
     return ROTATED_ORIENTATION[direction][orientation(texts)]
 
 
 def direction_between(was, now):
-    """'left' or 'right': the quarter turn that takes Orientation `was` to `now` (journaled values), or None when no single
-    quarter turn does."""
-    for direction in ("left", "right"):
+    """'left', 'right' or 'mirror': the quarter turn or the mirror that takes Orientation `was` to `now` (journaled values),
+    or None when none does (at most one does: a quarter turn keeps a mirrored value mirrored, a mirror does not)."""
+    for direction in ROTATED_ORIENTATION:
         if next_orientation(direction, was) == orientation(now):
             return direction
     return None
@@ -66,13 +68,12 @@ def follower(row, state):
         return None
     forward = state == "done"
     was, now = (row.before, row.after) if forward else (row.after, row.before)
-    direction = direction_between(was.get(FIELD), now.get(FIELD))
     turn = None
     if not forward and row.turned:
         # Taken out of its change after it was done (file_changes._read_back): exactly the turn that was made, back.
-        done, width, height = row.turned
-        turn = ("right" if done == "left" else "left", height, width)
-    elif direction:
+        width, height, done_from, done_to = row.turned
+        turn = (width, height, done_to, done_from)
+    elif direction_between(was.get(FIELD), now.get(FIELD)):
         try:
             width, height, oriented, _turn = images.shown_shape(row.path)
         except Exception as problem:
@@ -80,14 +81,15 @@ def follower(row, state):
             logger.warning("%s: could not tell whether its face boxes turn: %s", row.named(), problem)
             oriented = False
         if oriented:
-            # The picture before the turn was as wide as the file shows it tall.
-            turn = (direction, height, width)
+            # The file shows its picture under the Orientation it holds now; its stored pixels are that size turned back.
+            new = orientation(now.get(FIELD))
+            turn = (*upright_size(width, height, new), orientation(was.get(FIELD)), new)
 
     def follow(conn):
         embeddings.forget(conn, row.path)
         photo_fingerprints.forget(conn, row.path)   # the decode the fingerprint hashed turns too
         faces.forget_crops(conn, row.path)
         faces_detected.forget(conn, row.path)
-        row.followed = faces.turn_boxes_in(conn, row.path, *turn) if turn else 0
+        row.followed = faces.turn_boxes_in(conn, row.path, lambda box: reoriented(box, *turn)) if turn else 0
         row.turned = turn if forward else None
     return follow

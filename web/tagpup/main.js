@@ -11,7 +11,7 @@ import { upper } from './hooks.js';
 import {
     btnAddPerson, btnAddTag, btnApplyAllSingleSugg, btnApplyTimeshift, btnBrowseFolder,
     btnBulkAddPeople, btnBulkAddTags, btnCarryForward, btnCreateDb, btnDeletePhoto, btnDeleteSelection,
-    btnFolderAutoApply, btnRefreshList, btnRotateLeft, btnRotateRight, btnSaveTitle,
+    btnFolderAutoApply, btnMirror, btnRefreshList, btnRotateLeft, btnRotateRight, btnSaveTitle,
     btnSelectAllThumbnails, btnSelectNoneThumbnails, btnSuggestCancel, btnSuggestTags, btnSuggestTitleWand,
     btnUndo, bulkAddPeopleInput, bulkAddTagsInput, dbSelect, detailFileName, folderPathInput,
     folderViewHeader, inputAddPerson, inputAddTag, inputPhotoTitle, mainImage, photoSearch, thumbnailsGrid
@@ -131,6 +131,7 @@ document.addEventListener('DOMContentLoaded', () => {
     
     btnRotateLeft.addEventListener('click', () => rotatePhoto('left'));
     btnRotateRight.addEventListener('click', () => rotatePhoto('right'));
+    btnMirror.addEventListener('click', () => rotatePhoto('mirror'));
     btnDeletePhoto.addEventListener('click', deleteActivePhoto);
     
     btnSaveTitle.addEventListener('click', saveSingleTitle);

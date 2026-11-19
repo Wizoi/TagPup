@@ -127,6 +127,7 @@ OPERATIONS = (
     ("caption cleared", _fixed(fields.caption_fields(""))),
     ("Date Taken shifted", lambda _library: photo_actions.date_shift_plan(SHIFT_MINUTES)),
     ("turned right", lambda _library: photo_actions.rotate_plan("right")),
+    ("mirrored", lambda _library: photo_actions.rotate_plan("mirror")),
     ("preserved name set", _preserved),
 )
 

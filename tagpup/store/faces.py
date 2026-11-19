@@ -189,20 +189,10 @@ def face_refs(photo_path, db_path=None, conn=None):
             own.close()
 
 
-def turned_box(box, direction, width, height):
-    """A face box after a quarter turn of a `width` x `height` image.
-
-    Left is counter-clockwise, as Image.rotate(90, expand=True) turns it.
-    """
-    x1, y1, x2, y2 = box[:4]
-    if direction == "left":
-        return [y1, width - x2, y2, width - x1]
-    return [height - y2, x1, height - y1, x2]
-
-
-def turn_boxes_in(conn, photo_path, direction, width, height):
+def turn_boxes_in(conn, photo_path, moved):
     """Turn a photo's stored face boxes with it, in the caller's transaction (a rotation's, tagpup.services.rotation).
-    `width` and `height` are the picture's size before the turn. Returns how many rows changed.
+    `moved` takes a box [x1, y1, x2, y2] to where the same pixels are shown after the turn (tagpup.core.orientation's
+    `reoriented`). Returns how many rows changed.
 
     Only for a photo Pillow shows already oriented (a TIFF: Pillow applies its
     Orientation on load), where every box is in the turned picture's coordinates once the
@@ -220,7 +210,7 @@ def turn_boxes_in(conn, photo_path, direction, width, height):
         if not isinstance(box, list) or len(box) < 4:
             continue
         cursor.execute("UPDATE faces SET box = ? WHERE id = ?",
-                       (json.dumps(turned_box(box, direction, width, height)), face_id))
+                       (json.dumps(moved(box[:4])), face_id))
         changed += cursor.rowcount
     return changed
 

@@ -15,9 +15,16 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from test_file_journal import EXIFTOOL, Crash, crash_at  # noqa: E402
 from test_rotate_is_journaled import BOX, HEIGHT, MODEL, WIDTH, RotationCase, picture  # noqa: E402
 
+#: BOX of the WIDTH x HEIGHT picture on the picture turned a quarter left (shown HEIGHT x WIDTH), a quarter right, a half
+#: turn, flipped left to right (a mirror keeps the picture's size), and flipped then turned left (its diagonal flip).
+TURNED_LEFT = [BOX[1], WIDTH - BOX[2], BOX[3], WIDTH - BOX[0]]
+TURNED_RIGHT = [HEIGHT - BOX[3], BOX[0], HEIGHT - BOX[1], BOX[2]]
+HALF_TURN = [WIDTH - BOX[2], HEIGHT - BOX[3], WIDTH - BOX[0], HEIGHT - BOX[1]]
+MIRRORED_BOX = [WIDTH - BOX[2], BOX[1], WIDTH - BOX[0], BOX[3]]
+MIRRORED_THEN_LEFT = [BOX[1], BOX[0], BOX[3], BOX[2]]
+
 from tagpup.services import batches, file_changes, photos as photo_actions  # noqa: E402
 from tagpup.store import embeddings, faces_detected, file_journal  # noqa: E402
-from tagpup.store.faces import turned_box  # noqa: E402
 
 
 class TheFaceBoxesTurnWithTheFile(RotationCase):
@@ -26,11 +33,11 @@ class TheFaceBoxesTurnWithTheFile(RotationCase):
         self.face(path)
         first = self.rotate(path, "left")
         self.assertEqual(first.details["faces_turned"], 1)
-        self.assertEqual(self.boxes(), [turned_box(BOX, "left", WIDTH, HEIGHT)])
+        self.assertEqual(self.boxes(), [TURNED_LEFT])
         second = self.rotate(path, "left").details["change"]
-        self.assertEqual(self.boxes(), [turned_box(turned_box(BOX, "left", WIDTH, HEIGHT), "left", HEIGHT, WIDTH)])
+        self.assertEqual(self.boxes(), [HALF_TURN])
         self.undo(second)
-        self.assertEqual(self.boxes(), [turned_box(BOX, "left", WIDTH, HEIGHT)])
+        self.assertEqual(self.boxes(), [TURNED_LEFT])
         self.undo(first.details["change"])
         self.assertEqual((self.boxes(), self.orientation(path)), ([BOX], None))
 
@@ -76,14 +83,14 @@ class TheFaceBoxesTurnWithTheFile(RotationCase):
         self.execute("UPDATE faces SET name = 'Cora Ingersoll' WHERE id = ?", (face,))
         self.assertEqual(self.settle(), 1)
         self.assertEqual((self.states(change), self.status(change)), (["done"], "applied"))
-        self.assertEqual(self.boxes(), [turned_box(BOX, "left", WIDTH, HEIGHT)])
+        self.assertEqual(self.boxes(), [TURNED_LEFT])
         self.assertEqual(self.rows("SELECT name FROM faces"), [("Cora Ingersoll",)])
         self.assertEqual(self.rows("SELECT COUNT(*) FROM face_crops"), [(0,)])
         self.assertEqual(self.rows("SELECT COUNT(*) FROM embeddings"), [(0,)])
         self.assertEqual(self.orientation(path), 8, "settling must not turn the file twice")
         # Settled once: nothing is left to settle, and the boxes are not turned again.
         self.assertEqual(self.settle(), 0)
-        self.assertEqual(self.boxes(), [turned_box(BOX, "left", WIDTH, HEIGHT)])
+        self.assertEqual(self.boxes(), [TURNED_LEFT])
 
     def test_a_crash_before_the_file_is_written_is_carried_out_whole(self):
         path = self.make("scan.tif", fmt="TIFF")
@@ -92,7 +99,7 @@ class TheFaceBoxesTurnWithTheFile(RotationCase):
         self.assertEqual((self.orientation(path), self.boxes()), (None, [BOX]))
         self.assertEqual(self.settle(), 1)
         self.assertEqual((self.orientation(path), self.boxes(), self.status(change)),
-                         (6, [turned_box(BOX, "right", WIDTH, HEIGHT)], "applied"))
+                         (6, [TURNED_RIGHT], "applied"))
 
     def test_a_crash_in_an_undo_is_settled_back_with_the_boxes(self):
         path = self.make("scan.tif", fmt="TIFF")
@@ -101,9 +108,34 @@ class TheFaceBoxesTurnWithTheFile(RotationCase):
         with mock.patch.object(file_changes, "_reached", side_effect=crash_at("file written", 1)):
             with self.assertRaises(Crash):
                 self.undo(change)
-        self.assertEqual((self.orientation(path), self.boxes()), (None, [turned_box(BOX, "left", WIDTH, HEIGHT)]))
+        self.assertEqual((self.orientation(path), self.boxes()), (None, [TURNED_LEFT]))
         self.assertEqual(self.settle(), 1)
         self.assertEqual((self.orientation(path), self.boxes(), self.status(change)), (None, [BOX], "undone"))
+
+    def test_a_tiff_mirrored_with_a_crash_after_the_file_is_settled_forward_its_boxes_flipped_and_undone_back(self):
+        path = self.make("scan.tif", fmt="TIFF")
+        self.face(path)
+        change = self.crash("file written", path, "mirror")
+        self.assertEqual((self.orientation(path), self.states(change), self.boxes()), (2, ["writing"], [BOX]))
+        self.assertEqual(self.settle(), 1)
+        self.assertEqual((self.states(change), self.status(change), self.boxes()), (["done"], "applied", [MIRRORED_BOX]))
+        self.assertEqual((self.orientation(path), self.settle(), self.boxes()), (2, 0, [MIRRORED_BOX]),
+                         "settled once: neither the file nor the boxes flipped twice")
+        self.undo(change)
+        self.assertEqual((self.orientation(path), self.boxes(), self.status(change)), (None, [BOX], "undone"))
+
+    def test_a_tiff_mirrored_then_turned_is_undone_turn_first_back_to_its_boxes(self):
+        path = self.make("scan.tif", fmt="TIFF")
+        self.face(path)
+        mirrored = self.rotate(path, "mirror")
+        self.assertEqual((mirrored.details["faces_turned"], self.boxes()), (1, [MIRRORED_BOX]))
+        turned = self.rotate(path, "left").details["change"]
+        self.assertEqual(self.orientation(path), 5)
+        self.assertEqual(self.boxes(), [MIRRORED_THEN_LEFT])
+        self.undo(turned)
+        self.assertEqual((self.orientation(path), self.boxes()), (2, [MIRRORED_BOX]))
+        self.undo(mirrored.details["change"])
+        self.assertEqual((self.orientation(path), self.boxes()), (None, [BOX]))
 
 
 class ManyPhotos(RotationCase):

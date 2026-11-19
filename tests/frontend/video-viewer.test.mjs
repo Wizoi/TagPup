@@ -156,12 +156,12 @@ describe("a video's title, keywords, name and date are edited, and its turn is n
   const held = (ctx, id) => Boolean(el(ctx, id).closest("[inert]"));
   const LIVE = ["input-photo-title", "btn-save-title", "btn-edit-people", "input-add-person", "btn-add-person",
     "btn-edit-tags", "input-add-tag", "btn-add-tag", "input-smart-rename-one", "btn-delete-photo", "btn-edit-date-taken"];
-  const TURNS = ["btn-rotate-left", "btn-rotate-right"];
+  const TURNS = ["btn-rotate-left", "btn-rotate-right", "btn-mirror"];
   const turnsOffered = (ctx) => TURNS.map((id) => !el(ctx, id).closest(".hidden"));
 
   function assertClip(ctx, what) {
     for (const id of LIVE) assert.equal(held(ctx, id), false, `${what}: ${id} is live`);
-    assert.deepEqual(turnsOffered(ctx), [false, false], `${what}: the rotate buttons are not offered`);
+    assert.deepEqual(turnsOffered(ctx), [false, false, false], `${what}: the rotate and mirror buttons are not offered`);
     assert.equal(note(ctx).classList.contains("hidden"), true, `${what}: no sentence: every field it holds is edited`);
     assert.equal(note(ctx).textContent, "", `${what}: and none left over`);
   }
@@ -171,7 +171,7 @@ describe("a video's title, keywords, name and date are edited, and its turn is n
     assert.deepEqual(inert(ctx), [], `${what}: every control that writes is live`);
     assert.ok(writers(ctx).every((node) => !node.hasAttribute("aria-disabled")), `${what}: none says it is not`);
     assert.equal(note(ctx).classList.contains("hidden"), true, `${what}: no sentence`);
-    assert.deepEqual(turnsOffered(ctx), [true, true], `${what}: the rotate buttons are offered`);
+    assert.deepEqual(turnsOffered(ctx), [true, true, true], `${what}: the rotate and mirror buttons are offered`);
   }
 
   test("a clip opened: its title, keywords, name, date and delete live, its turn not offered, and no sentence", async (t) => {
@@ -199,7 +199,7 @@ describe("a video's title, keywords, name and date are edited, and its turn is n
     });
     await open(ctx, VIDEO);
     assert.equal(note(ctx).textContent, "Not edited here: date, title and people and keywords.");
-    assert.deepEqual(turnsOffered(ctx), [true, true], "nothing says it cannot be turned: shown, inert");
+    assert.deepEqual(turnsOffered(ctx), [true, true, true], "nothing says it cannot be turned: shown, inert");
     assert.equal(held(ctx, "btn-rotate-left"), true);
   });
 
