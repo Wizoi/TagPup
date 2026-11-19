@@ -36,10 +36,10 @@ const B = photoRecord({ filename: "b.jpg" });
 /** What a write leaves in a file holding `tags`: a bulk-tags change `{add, remove}`. */
 const changed = (tags, { add = [], remove = [] }) => [...tags.filter((t) => !remove.includes(t)), ...add.filter((t) => !tags.includes(t))];
 
-async function open(t) {
+async function open(t, { b = [] } = {}) {
   const held = [];
   // The files as the server would hold them; a write changes its file when it is answered, in the order it was sent.
-  const files = new Map([[A.path, TAGS.slice()], [B.path, []]]);
+  const files = new Map([[A.path, TAGS.slice()], [B.path, b.slice()]]);
   // The request just made is the last call the server saw (FakeServer hands a route only its url).
   const hold = (kind) => () => new Promise((resolve) => held.push({ kind, body: server.calls.at(-1).body, resolve }));
   const server = new FakeServer()
@@ -50,7 +50,7 @@ async function open(t) {
     .on("/api/databases", { databases: ["photo_index"], selected: "photo_index" })
     .on("/api/folder/suggest-status", { status: "idle" })
     .on("/api/folder/index-status", { status: "completed", percent: 100, message: "Ready" })
-    .on("/api/folder/scan", [{ ...A, tags: TAGS.slice() }, { ...B, tags: [] }])
+    .on("/api/folder/scan", [{ ...A, tags: TAGS.slice() }, { ...B, tags: b.slice() }])
     .on("/api/photo-faces", { faces: [], total: 0, unmatched: 0 })
     .on("/api/photos/bulk-tags", hold("bulk"))
     .on("/api/photo/save-metadata", hold("save"));
@@ -65,6 +65,10 @@ async function open(t) {
   ctx.bulks = () => server.calls.filter((c) => c.url.includes("bulk-tags")).map((c) => c.body);
   ctx.saves = () => server.calls.filter((c) => c.url.includes("save-metadata")).map((c) => c.body);
   ctx.order = () => server.calls.filter((c) => /bulk-tags|save-metadata/.test(c.url)).map((c) => (c.url.includes("bulk") ? "bulk" : "save"));
+  // Which photos each write named, in the order sent: "bulk:a,b", "save:b".
+  const named = (path) => (path === A.path ? "a" : "b");
+  ctx.writes = () => server.calls.filter((c) => /bulk-tags|save-metadata/.test(c.url))
+    .map((c) => (c.url.includes("bulk") ? `bulk:${Object.keys(c.body.changes).map(named).join(",")}` : `save:${named(c.body.path)}`));
   // Answer the oldest write still held: written, the file then holding what the route leaves in it; or refused with `error`.
   ctx.answer = async (error = null) => {
     const { kind, body, resolve } = held.shift();
@@ -234,6 +238,68 @@ describe("V20: taking tags off the open photo is answered at the click, the writ
     assert.equal(ctx.document.activeElement.id, "input-add-tag");
     while (ctx.unanswered()) await ctx.answer();
     assert.deepEqual(ctx.file(A), []);
+  });
+});
+
+// The one rule (pending.js takeChunk): a write -- a save, a chunk -- never runs against a record missing a change clicked before
+// it, on any photo; so the chunk ahead of a save takes every photo's own removals waiting, in the order clicked, and they go even
+// while a failed write waits for its Retry (#3210).
+describe("V20: pills taken off on several photos, then a tag given back: the writes go in the order clicked", () => {
+  const typeBack = async (ctx, tag) => {
+    ctx.$("input-add-tag").value = tag;
+    ctx.$("btn-add-tag").click();
+    await flush(ctx.window, 8);
+  };
+  const pillsOnTwoPhotos = async (ctx) => {
+    await ctx.takeOff("Cross Country");   // A: written at once, its write out
+    await ctx.select(B);
+    await ctx.takeOff("Kentridge");
+    await ctx.select(A);
+    await ctx.takeOff("Harbourside");
+    await ctx.select(B);
+  };
+
+  test("pill off A, pill off B, pill off A, then B's tag typed back: B keeps it", async (t) => {
+    const ctx = await open(t, { b: ["Kentridge"] });
+    await pillsOnTwoPhotos(ctx);
+    await typeBack(ctx, "Kentridge");
+    while (ctx.unanswered()) await ctx.answer();
+    assert.deepEqual(ctx.writes(), ["bulk:a", "bulk:b,a", "save:b"], "the save went ahead of a removal clicked before it");
+    assert.deepEqual(ctx.file(B), ["Kentridge"], "the tag typed back was lost");
+    assert.deepEqual(ctx.file(A), ["Kentridge"]);
+    assert.deepEqual(ctx.pills(), ["Kentridge"]);
+    assert.equal(ctx.$("input-add-tag").value, "");
+    assert.equal(ctx.status(), "Saved b.jpg");
+  });
+
+  test("the same, B's tag given back by its suggestion: B keeps it, never 'already on this photo'", async (t) => {
+    const ctx = await open(t, { b: ["Kentridge"] });
+    pageExports(ctx.window, "web/tagpup/state.js").state.folderSuggestions[B.path] = { people: [], tags: [{ tag: "Kentridge", score: 0.9 }] };
+    await pillsOnTwoPhotos(ctx);
+    const chip = Array.from(ctx.document.querySelectorAll("#suggestions-section .suggestion-chip")).find((each) => each.textContent.startsWith("Kentridge"));
+    assert.ok(chip, "the tag taken off was not offered again");
+    chip.click();
+    await flush(ctx.window, 8);
+    while (ctx.unanswered()) await ctx.answer();
+    assert.deepEqual(ctx.writes(), ["bulk:a", "bulk:b,a", "save:b"]);
+    assert.deepEqual(ctx.file(B), ["Kentridge"], "the suggestion clicked was lost");
+    assert.notEqual(ctx.status(), "Kentridge is already on this photo");
+  });
+
+  test("while a failed write waits for its Retry, a pill taken off and typed back: the removal goes first, the tag stays", async (t) => {
+    const ctx = await open(t, { b: ["Kentridge"] });
+    pageExports(ctx.window, "web/tagpup/pending.js").pendTags([A.path], { add: ["Places/Beach"] });
+    await flush(ctx.window, 4);
+    await ctx.answer("The share did not answer");
+    assert.equal(ctx.retries(), 1);
+    await ctx.select(B);
+    await ctx.takeOff("Kentridge");
+    await typeBack(ctx, "Kentridge");
+    while (ctx.unanswered()) await ctx.answer();
+    assert.deepEqual(ctx.writes(), ["bulk:a", "bulk:b", "save:b"], "the removal waited for the Retry behind the save");
+    assert.deepEqual(ctx.file(B), ["Kentridge"], "the tag typed back was lost");
+    assert.equal(ctx.retries(), 1, "the failed write's Retry went by itself, or was lost");
+    assert.deepEqual(ctx.file(A), TAGS.slice().sort(), "the failed write went without its Retry");
   });
 });
 

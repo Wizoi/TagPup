@@ -9,8 +9,8 @@
 // already written gets it in a later chunk. A chunk that fails gives its files' ops back and stops the drain until Retry
 // or Cancel: it never loops by itself. The map is this page's memory only (closing the page loses what is not sent).
 //
-// The open photo's own removals (its pills, a face's person: removePhotoTags) enter the map too, first in line, and are
-// answered at the click, and a write of them that fails puts them back rather than waiting for Retry. Any other change
+// The open photo's own removals (its pills, a face's person: removePhotoTags) enter the map too, first in line (takeChunk), and
+// are answered at the click, and a write of them that fails puts them back rather than waiting for Retry. Any other change
 // waiting for a photo makes its panel read-only until it is written (pendingOf; stale.js offerWrites). The record follows
 // the reply, not the map; what the page shows of a photo's tags, and decides by, is the record with the map's changes for
 // it applied (shownTags), redrawn whenever the map changes for a photo of the page (pageFollows).
@@ -31,6 +31,8 @@ import { offerWrites } from './stale.js';
 const CHUNK = 25;
 
 const photosWord = (n) => `${n.toLocaleString()} ${n === 1 ? 'photo' : 'photos'}`;
+
+const STOPPED = 'Tag changes wait for the failed write: Retry or Cancel it (bottom right).';
 
 /** Wait to write `add` and `remove` to each of `paths`; resolves {written, failed, skipped} once every file is settled. */
 export function pendTags(paths, { add = [], remove = [], people = false } = {}) {
@@ -62,12 +64,11 @@ export function pendChanges(list, { people = false, panel = false } = {}) {
         // The panel's tags are those whose last click was the panel's; a click elsewhere on one makes it a change it does not draw.
         [...add, ...remove].forEach(tag => (panel ? entry.panel.add(tag) : entry.panel.delete(tag)));
         if (people) [...add, ...remove].forEach(tag => pending.people.add(tag));
-        if (panel) pending.files = new Map([[key, entry], ...[...pending.files].filter(([other]) => other !== key)]);
         entry.actions.add(action);
         action.left.add(key);
     }
     if (!action.left.size) resolve({ written: 0, failed: 0, skipped: 0 });
-    if (pending.stopped) setStatus('error', 'Tag changes wait for the failed write: Retry or Cancel it (bottom right).', { transient: false });
+    if (pending.stopped && !panel) setStatus('error', STOPPED, { transient: false });
     pageFollows(new Set(list.map(({ path }) => pathKey(path))));
     drain();
     return settled;
@@ -157,13 +158,14 @@ export function deleteWaits(paths) {
 }
 
 /**
- * Queue the next chunk, unless one is queued and has not had its turn, the drain is stopped by a failure, or nothing waits.
- * A click while a chunk is out queues the next at the click, so a save clicked after it goes after it (one queue, in the
- * order clicked); the drain's own next chunk is queued when the one out is answered, behind whatever was queued meanwhile.
+ * Queue the next chunk, unless one is queued and has not had its turn, nothing waits, or the drain is stopped by a failure
+ * and no photo's own removal waits (those go anyway: takeChunk). A click while a chunk is out queues the next at the click,
+ * so a save clicked after it goes after it (one queue, in the order clicked); the drain's own next chunk is queued when the
+ * one out is answered, behind whatever was queued meanwhile.
  */
 function drain() {
     const pending = state.pending;
-    if (pending.queued || pending.stopped || !pending.files.size) return;
+    if (pending.queued || !pending.files.size || (pending.stopped && !ownRemovals().length)) return;
     pending.queued = true;
     queuePhotoWrite(sendChunk, 'Write tag changes', () => resume());
 }
@@ -240,20 +242,34 @@ function settle(entry, how, which = () => true) {
 }
 
 /**
- * The next chunk, taken when its turn comes (not when it was queued): files in the order they came, those carrying the
- * first one's token, at most CHUNK. Every op is sent, whatever the page's record holds: the record may be older than the
- * file, and the server skips a file that already holds it all.
+ * The files whose photo's own removals wait (a pill, a face's person), in the order clicked; while a failed write waits for
+ * its Retry, only those holding nothing else (a file with other changes waits with them; its panel is read-only meanwhile).
+ */
+function ownRemovals() {
+    const pending = state.pending;
+    const ownOnly = (entry) => [...entry.add, ...entry.remove].every(tag => entry.panel.has(tag));
+    return [...pending.files].filter(([, entry]) => entry.panel.size && (!pending.stopped || ownOnly(entry)));
+}
+
+/**
+ * The next chunk, taken when its turn comes (not when it was queued), at most CHUNK files: the one place that says in what
+ * order the changes are written. The rule: a write -- a chunk, or a save or a suggestion queued behind it -- never runs
+ * against a record that is missing a change clicked before it, on any photo. A save is made only on a photo whose waiting
+ * changes are all its own removals (any other makes it read-only: pendingOf), so the chunk queued ahead of it takes every
+ * photo's own removals waiting, in the order clicked, whatever action each was: one write of them, under the first one's
+ * group (the pills taken off while a write was out are one line of History). They go while a failed write waits for its
+ * Retry, as their failure is answered at once (answerPanel). With none waiting, the files of the first action in the map,
+ * which is in the order clicked (a failed chunk's files given back first). Every op is sent, whatever the page's record
+ * holds: the record may be older than the file, and the server skips a file that already holds it all.
  */
 function takeChunk() {
-    const files = state.pending.files;
-    const chunk = [];
-    for (const [key, entry] of files) {
-        if (chunk.length >= CHUNK) break;
-        if (chunk.length && entry.token !== chunk[0].token) continue;
-        files.delete(key);
-        chunk.push(entry);
-    }
-    return chunk;
+    const pending = state.pending;
+    const own = ownRemovals();
+    const first = pending.files.values().next().value;
+    const taken = own.length ? own : pending.stopped ? [] : [...pending.files].filter(([, entry]) => entry.token === first.token);
+    const chunk = taken.slice(0, CHUNK);
+    chunk.forEach(([key]) => pending.files.delete(key));
+    return chunk.map(([, entry]) => entry);
 }
 
 /** What a chunk's entry in the write queue says: "Add Trips/Coast to 25 photos, 4,975 more pending". */
@@ -271,16 +287,12 @@ async function sendChunk(entry) {
     let chunk = [];
     state.pending.queued = false;
     try {
-        if (state.pending.stopped) {
-            // Queued at a click while the chunk before was out, and that one failed: the changes wait for its Retry.
-            entry.label = 'Tag changes: waiting for the failed write';
-            return true;
-        }
         const drops = state.pending.drops;
         chunk = takeChunk();
         state.pending.out = chunk;
         if (!chunk.length) {
-            entry.label = 'Tag changes: nothing left to write';
+            // Queued at a click while the chunk before was out, and that one failed: the changes wait for its Retry.
+            entry.label = state.pending.stopped ? 'Tag changes: waiting for the failed write' : 'Tag changes: nothing left to write';
             return true;
         }
         entry.label = chunkLabel(chunk);
@@ -360,7 +372,7 @@ function takeReply(chunk, data, entry, dropped) {
     } else if (!data.success) {
         ({ kept, putBack } = answerPanel(back));
         giveBack(kept);
-        state.pending.stopped = kept.length > 0;
+        state.pending.stopped = state.pending.stopped || kept.length > 0;   // stopped already: own removals sent meanwhile
     }
     if (written.length) {
         upper.updateSelectedThumbnailsCount();   // the list follows in sendChunk's pageFollows
@@ -390,6 +402,10 @@ function takeReply(chunk, data, entry, dropped) {
         return false;
     }
     if (dropped) return true;
+    if (state.pending.stopped) {
+        setStatus('error', STOPPED, { transient: false });
+        return true;
+    }
     // Photos missing on disk are said once, when each owner action they belong to is done (counted over its chunks).
     const finished = new Set(chunk.flatMap(item => [...item.actions].filter(action => !action.left.size)));
     const gone = [...finished].reduce((n, action) => n + action.skipped, 0);
