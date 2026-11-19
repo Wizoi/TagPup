@@ -13,6 +13,8 @@
  * - A dropped connection or a server that cannot answer says a sentence, the sheet open, the text kept; a refusal while
  *   the server is updated is waited out (web/common/api.js).
  * - Close with a title or date typed asks; Back or the Libraries button keeps it, and the photo's Edit shows it again.
+ * - A chip taken off stays off on the photo's sheet read again (Edit opened again, a Save refused and read again) while
+ *   its removal waits, and the removal lands on the sheet shown: the next Save names the file as the removal left it.
  *
  * Names hold spaces and apostrophes, as the live libraries' do. Every name here is made up. The Undo's five seconds are
  * shortened to UNDO here: the page's timers are what it would wait on.
@@ -53,6 +55,7 @@ function cardOf(id) {
 /**
  * The page on a library of 20 photos, the first a file `file` that the fake server writes as the real one does: a tag
  * change through bulk-tags, the title and date through save-metadata, each a new stamp; /api/library/photo reads it.
+ * A Save naming another stamp or base than the file's is refused (409, changed_on_disk), as the server refuses it.
  */
 async function phone(t, file = {}) {
   const server = new FakeServer();
@@ -77,6 +80,9 @@ async function phone(t, file = {}) {
     })
     .on("/api/photo/save-metadata", () => {
       const body = server.lastBody("/api/photo/save-metadata");
+      if (body.stamp.mtime !== held.mtime || JSON.stringify(body.base.tags) !== JSON.stringify(held.tags)) {
+        return { success: false, changed_on_disk: true, error: "The file changed on disk." };
+      }
       held.title = body.title;
       if (body.date_taken) held.taken = body.date_taken.replace(/-/g, ":").replace("T", " ");
       held.mtime += 1;
@@ -298,6 +304,45 @@ describe("editing a photo on the phone", () => {
     const again = calls(ctx, "/api/photo/save-metadata")[1].body;
     assert.deepEqual([again.stamp, again.base.title], [{ mtime: 1718000300, size: 204800 }, "Set on the PC"],
       "the Save the owner sends again names the file as read again");
+    assert.equal(ctx.held.title, "Wren's Last Lap");
+  });
+
+  test("a chip taken off, Close, and Edit again within its Undo: the chip stays off, and the next Save lands", async (t) => {
+    const ctx = await phone(t);
+    await openSheet(ctx);
+    click(ctx.window, chipX(ctx, COAST));
+    click(ctx.window, el(ctx, "edit-close"));
+    click(ctx.window, el(ctx, "photo-edit"));
+    await settle(ctx);
+    assert.deepEqual(chips(ctx, "edit-keywords"), [], "its removal still waits: the chip is not shown back");
+
+    await settle(ctx, UNDO + 80);
+    assert.deepEqual(ctx.held.tags, [WREN]);
+    assert.deepEqual(chips(ctx, "edit-keywords"), [], "the sheet shows what the file holds");
+    type(ctx, "edit-title", "Wren's Last Lap");
+    click(ctx.window, el(ctx, "edit-save"));
+    await settle(ctx);
+    assert.equal(said(ctx), "Saved.", "the phone's own removal does not make its Save look changed on the PC");
+    assert.equal(ctx.held.title, "Wren's Last Lap");
+  });
+
+  test("a Save refused as changed on the PC while a removal waits: the photo read again keeps the chip off, the next Save lands", async (t) => {
+    const ctx = await phone(t);
+    await openSheet(ctx);
+    click(ctx.window, chipX(ctx, COAST));
+    Object.assign(ctx.held, { title: "Set on the PC", mtime: 1718000300 });
+    type(ctx, "edit-title", "Wren's Last Lap");
+    click(ctx.window, el(ctx, "edit-save"));
+    await settle(ctx);
+    assert.match(said(ctx), /changed on the PC since it was read/);
+    assert.deepEqual(chips(ctx, "edit-keywords"), [], "read again, the chip taken off is still off");
+
+    await settle(ctx, UNDO + 80);
+    assert.deepEqual(ctx.held.tags, [WREN]);
+    assert.deepEqual(chips(ctx, "edit-keywords"), []);
+    click(ctx.window, el(ctx, "edit-save"));
+    await settle(ctx);
+    assert.equal(said(ctx), "Saved.");
     assert.equal(ctx.held.title, "Wren's Last Lap");
   });
 

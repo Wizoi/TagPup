@@ -11,6 +11,9 @@
  * so and reads the photo again, the text typed kept. Each write of the page waits for the one before it (state.writing).
  * A title or date typed and left by Back or another screen is kept (state.drafts) and put back when the photo's sheet
  * opens again; only Close lets it go, and asks first. The page going while one is kept asks first too.
+ *
+ * A chip taken off and a tag change waiting are the photo's, by its id, not the record read: the sheet read again (Edit
+ * opened again, a Save refused and read again) still leaves the chip off, and the write lands on the record it shows.
  */
 import { api } from './common/api.js';
 import { buildElement, replaceContent } from './common/dom.js';
@@ -46,7 +49,8 @@ function inTurn(job) {
 }
 
 const isPerson = (tag) => Boolean(state.people && state.people.ofTag(tag));
-const sheetOf = (record) => Boolean(state.edit && state.edit.record === record);
+/** The record the sheet shows of photo `id`, read; null when the sheet is shut, on another photo, or still reading. */
+const shownOf = (id) => (state.edit && state.edit.id === id && state.edit.record) || null;
 
 /** A line at the foot of the page that outlives the sheet: `undo` gives it an Undo; it goes after `ms`, or by `close()`. */
 function toast(text, undo = null, ms = UNDO_MS) {
@@ -61,9 +65,9 @@ function toast(text, undo = null, ms = UNDO_MS) {
     return close;
 }
 
-/** Add `add` or take off `remove` in the file of `record`; its tags, stamp and base become the file's. */
-async function writeTags(record, change) {
-    const path = record.path;
+/** Add `add` or take off `remove` in the file of `job` (a photo's id and path); the sheet's record of it becomes the file's. */
+async function writeTags(job) {
+    const { path, change } = job;
     const res = await api.fetch('/api/photos/bulk-tags', {
         method: 'POST', headers: { 'Content-Type': 'application/json' }, keepalive: true,
         body: JSON.stringify({ changes: { [path]: change } }),
@@ -72,14 +76,16 @@ async function writeTags(record, change) {
     const of = (map) => Object.entries(map || {}).find(([each]) => pathKey(each) === pathKey(path));
     const written = of(data.written);
     if (!written) throw new Error('this file is not where the library last saw it.');
+    const record = shownOf(job.id);    // read again since the change was asked, or not shown: the sheet's as it is now
+    if (!record) return;
     record.tags = written[1].slice();
     takeWritten(record, (of(data.stamps) || [])[1], record.tags);
-    if (sheetOf(record)) drawChips();
+    drawChips();
 }
 
-/** A tag change of `record` in its turn, after every write sent before it, or sooner as the page goes (leavePage). */
-function tagWrite(record, change) {
-    const job = { record, change, sending: null };
+/** A tag change of photo `id` at `path` in its turn, after every write sent before it, or sooner as the page goes. */
+function tagWrite(id, path, change) {
+    const job = { id, path, change, sending: null };
     state.queued.push(job);
     return inTurn(() => sendTags(job));
 }
@@ -88,7 +94,7 @@ function tagWrite(record, change) {
 function sendTags(job) {
     if (!job.sending) {
         state.queued = state.queued.filter((each) => each !== job);
-        job.sending = writeTags(job.record, job.change);
+        job.sending = writeTags(job);
     }
     return job.sending;
 }
@@ -98,20 +104,19 @@ function sendRemoval(removal) {
     window.clearTimeout(removal.timer);
     removal.close();
     state.removals = state.removals.filter((each) => each !== removal);
-    tagWrite(removal.record, { remove: [removal.tag] }).catch((err) => {
-        if (sheetOf(removal.record)) drawChips();    // the chip is back
+    tagWrite(removal.id, removal.path, { remove: [removal.tag] }).catch((err) => {
+        if (shownOf(removal.id)) drawChips();    // the chip is back
         toast(`Not taken off ${leafOf(removal.tag)}: ${why(err)}`, null, UNDO_MS * 2);
     });
 }
 
 /** Take `tag` off the sheet's photo in five seconds, unless Undo is tapped first. */
 function removeLater(tag) {
-    const record = state.edit.record;
-    const removal = { record, tag };
+    const removal = { id: state.edit.id, path: state.edit.record.path, tag };
     removal.close = toast(`Took off ${leafOf(tag)}.`, () => {
         window.clearTimeout(removal.timer);
         state.removals = state.removals.filter((each) => each !== removal);
-        if (sheetOf(record)) drawChips();
+        if (shownOf(removal.id)) drawChips();
     });
     removal.timer = window.setTimeout(() => sendRemoval(removal), UNDO_MS);
     state.removals.push(removal);
@@ -119,9 +124,9 @@ function removeLater(tag) {
 }
 
 function drawChips() {
-    const record = state.edit.record;
-    const going = new Set(state.removals.filter((each) => each.record === record).map((each) => each.tag));
-    for (const job of state.queued) if (job.record === record) (job.change.remove || []).forEach((tag) => going.add(tag));
+    const { id, record } = state.edit;
+    const going = new Set(state.removals.filter((each) => each.id === id).map((each) => each.tag));
+    for (const job of state.queued) if (job.id === id) (job.change.remove || []).forEach((tag) => going.add(tag));
     const tags = sortedTags((record.tags || []).filter((tag) => !going.has(tag)));
     const twice = (tag) => tags.filter((each) => leafOf(each).toLowerCase() === leafOf(tag).toLowerCase()).length > 1;
     const chip = (tag) => buildElement('span', { className: 'edit-chip', title: tag }, [
@@ -144,15 +149,15 @@ function drawMatches() {
 }
 
 function addTag(tag) {
-    const record = state.edit.record;
+    const { id, record } = state.edit;
     const typed = byId('edit-add').value;
     byId('edit-add').value = '';
     drawMatches();
     say(`Adding ${leafOf(tag)}...`);
-    tagWrite(record, { add: [tag] }).then(() => {
-        if (sheetOf(record)) say('');
+    tagWrite(id, record.path, { add: [tag] }).then(() => {
+        if (shownOf(id)) say('');
     }, (err) => {
-        if (!sheetOf(record)) return;
+        if (!shownOf(id)) return;
         say(`Not added: ${why(err)}`);
         if (!byId('edit-add').value) byId('edit-add').value = typed;    // the text typed, to try again
     });
@@ -278,7 +283,10 @@ function save() {
             Object.assign(held, { path: data.new_path || held.path, mtime: record.mtime, taken: record.taken });
             held.name = held.filename = baseName(held.path);
         }
-        if (data.new_path) record.path = data.new_path;
+        if (data.new_path) {    // a tag change of the photo still waiting names the file by its new name
+            record.path = data.new_path;
+            for (const each of [...state.removals, ...state.queued]) if (each.id === edit.id) each.path = data.new_path;
+        }
         state.drafts.delete(edit.id);
         if (state.edit === edit) {
             drawRecord(record, false);

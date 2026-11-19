@@ -32,9 +32,9 @@ export const state = {
     edit: null,
     // The tail of the page's writes, one at a time in the order sent; null when none is out.
     writing: null,
-    // Chips taken off and not sent yet, each behind its Undo: { record, tag, timer, close }.
+    // Chips taken off and not sent yet, each behind its Undo: { id, path (the photo's), tag, timer, close }.
     removals: [],
-    // Tag changes waiting their turn behind another write (state.writing): { record, change, sending }. The page
+    // Tag changes waiting their turn behind another write (state.writing): { id, path, change, sending }. The page
     // going sends them at once (mobile-edit.js), never leaves them unsent behind a Save still out.
     queued: [],
     // The title and Date Taken typed on a photo's sheet, neither saved nor let go by Close, by the photo's id: left by
