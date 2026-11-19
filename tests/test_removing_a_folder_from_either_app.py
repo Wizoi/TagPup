@@ -14,15 +14,21 @@ import sys
 import unittest
 from unittest import mock
 
+from click.testing import CliRunner
+
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import photo_rows  # noqa: E402
 import web_client  # noqa: E402
+from test_an_index_reads_the_next_photos_ahead import COLOURS, StandIns, photo  # noqa: E402
+
+import tagpup_cli  # noqa: E402
 
 from tagpup.core.library import Library  # noqa: E402
-from tagpup.core.result import Result  # noqa: E402
+from tagpup.core.result import NotHeld, Result  # noqa: E402
 from tagpup.services import libraries as library_actions  # noqa: E402
 from tagpup.store import added_folders, db  # noqa: E402
+from tagpup.store import roots as store_roots  # noqa: E402
 
 
 class _Library(unittest.TestCase):
@@ -187,6 +193,79 @@ class FromTagPup(RemovingAFolder, _Library):
 
 class FromTagTuner(RemovingAFolder, _Library):
     kind = "tuner"
+
+
+class AnIndexInTheCli(unittest.TestCase):
+    """The owner indexes a folder with the CLI (how long indexes are run, CLAUDE.md) and removes it in an app while the
+    run goes on. The server's queue cannot see the CLI's run, so the removal goes ahead; the folder stays gone, and the
+    run stops at its next batch, saying why (NotHeld), its rows and faces not made. The models are stood in for
+    (test_an_index_reads_the_next_photos_ahead.StandIns)."""
+
+    def setUp(self):
+        self.app, self.home = web_client.app_for(self, "tuner")
+        self.client = self.app.test_client()
+        self.library = self.home.library("library.db")
+        self.models = StandIns(self)
+        self.season = os.path.join(self.home.root, "Pictures", "Season")
+        self.meet, self.meet2 = os.path.join(self.season, "Meet 1"), os.path.join(self.season, "Meet 2")
+
+    def photos(self, folder, count):
+        return [photo(os.path.join(folder, "p%02d.jpg" % n), COLOURS[n % len(COLOURS)]) for n in range(count)]
+
+    def index(self, folder):
+        return CliRunner().invoke(tagpup_cli.cli, ["--db", self.library, "index", folder])
+
+    def remove(self, folder):
+        reply = self.client.post("/library/api/folder/remove", json={"folder_path": folder})
+        self.assertEqual(200, reply.status_code, reply.get_json())
+        return reply.get_json()
+
+    def held(self, folder):
+        """(rows under `folder`, their faces)."""
+        conn = db.connect(db.readonly_uri(self.library), uri=True)
+        try:
+            where, params = store_roots.sql_under(conn, "p.path", folder)
+            return (conn.execute("SELECT COUNT(*) FROM photos p WHERE " + where, params).fetchone()[0],
+                    conn.execute("SELECT COUNT(*) FROM faces f JOIN photos p ON p.id = f.photo_id WHERE " + where,
+                                 params).fetchone()[0])
+        finally:
+            conn.close()
+
+    def test_a_removal_between_two_batches_stays_removed_and_the_index_stops_saying_why(self):
+        self.photos(self.meet, 5)
+        read_again, batches = tagpup_cli._read_again, []
+
+        def removed_before_the_second_batch(*args):
+            batches.append(self.held(self.meet))
+            if len(batches) == 2:
+                self.assertTrue(self.remove(self.meet)["success"])
+            return read_again(*args)
+        with mock.patch.object(tagpup_cli, "PHOTO_CHUNK", 2), \
+                mock.patch.object(tagpup_cli, "_read_again", removed_before_the_second_batch):
+            result = self.index(self.meet)
+        self.assertEqual(2, batches[1][1], "the first batch was not recorded, with its faces, before the removal")
+        self.assertEqual((0, 0), self.held(self.meet), "the index brought the removed folder back")
+        conn = db.connect(db.readonly_uri(self.library), uri=True)
+        try:
+            self.assertFalse(added_folders.covers(conn, self.meet))
+        finally:
+            conn.close()
+        self.assertIsInstance(result.exception, NotHeld, result.output)
+        self.assertEqual(2, len(batches), "the index went on past the refusal")
+        self.assertEqual(4, len(self.models.shown), "the index read on past the refusal")
+
+    def test_an_index_of_the_folder_above_leaves_a_removed_folder_out(self):
+        self.photos(self.meet, 2)
+        self.photos(self.meet2, 2)
+        result = self.index(self.season)
+        self.assertEqual(0, result.exit_code, result.output)
+        self.assertEqual((2, 2), self.held(self.meet))
+        # Season was added with its subfolders: Meet 1, removed, is put in the ignored folders.
+        self.assertTrue(self.remove(self.meet)["ignored"])
+        result = self.index(self.season)
+        self.assertEqual(0, result.exit_code, result.output)
+        self.assertEqual((0, 0), self.held(self.meet), "the index of the folder above brought the removed folder back")
+        self.assertEqual((2, 2), self.held(self.meet2))
 
 
 if __name__ == "__main__":
