@@ -2,7 +2,7 @@
 import { state } from './state.js';
 import { dialogOpen } from './common/dialog.js';
 import { imageZoomOpen } from './common/image-zoom.js';
-import { inputAddPerson, inputAddTag, mainVideo, photoList, photoSearch } from './elements.js';
+import { btnDeletePhoto, btnDeleteSelection, inputAddPerson, inputAddTag, mainVideo, photoList, photoSearch } from './elements.js';
 import { hasUnsavedEdits, leavePhotoThen, openPhotoWrite } from './edits.js';
 import { carryTagsForward, openLibraryPhoto, selectPhoto } from './photo.js';
 import { libraryStepTarget } from './library-source.js';
@@ -86,6 +86,25 @@ export function ownsItsKeys(el) {
     return Boolean(el && typeof el.closest === 'function' && el.closest('[data-own-keys]'));
 }
 
+/** Is this button one a person can press now: not under a hidden ancestor, not disabled? */
+function canPress(button) {
+    return Boolean(button) && !button.disabled && button.getAttribute('aria-disabled') !== 'true' && !button.closest('.hidden');
+}
+
+/**
+ * The Delete key presses the red Delete button that is showing, as a click does (its confirmation, its busy and Just look
+ * rules are the button's own): the open photo's, else the selection's (the smaller delete first). Not a held key (one press, one
+ * question), not in a field (there it edits text), not over the zoom, not with the button hidden or disabled.
+ */
+function pressDelete(e) {
+    if (e.repeat || e.defaultPrevented) return;
+    if (keystrokeBelongsToField(e.target) || e.target === photoSearch || imageZoomOpen()) return;
+    const button = [btnDeletePhoto, btnDeleteSelection].find(canPress);
+    if (!button) return;
+    e.preventDefault();
+    button.click();
+}
+
 export function wireKeyboard() {
     document.addEventListener('keydown', (e) => {
         if (state.leavePrompt) return;   // "Save changes?" is open; its keys are its own
@@ -107,6 +126,10 @@ export function wireKeyboard() {
             return;
         }
         if (e.ctrlKey || e.metaKey || e.altKey) return;
+        if (e.key === 'Delete') {
+            if (!e.shiftKey) pressDelete(e);
+            return;
+        }
 
         // Escape closes a photo opened over a library view: back to the view as it was left (view-left.js, #780). What has the key
         // first keeps it: the zoom (it hears it before this does), a face's panel, and a field it was pressed in -- which empties
