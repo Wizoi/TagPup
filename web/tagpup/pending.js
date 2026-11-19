@@ -15,7 +15,8 @@ import { upper } from './hooks.js';
 import { state } from './state.js';
 import { setStatus } from './status.js';
 import { changeCachedPhotos, forgetCachedFolder, saveToLocalStorageCache } from './cache.js';
-import { leavePhotoThen, queuePhotoWrite, redrawIfShowing, takeWritten } from './edits.js';
+import { leavePhotoThen, queuePhotoWrite, redrawIfShowing } from './edits.js';
+import { takeWritten } from './common/photo-write.js';
 import { renderWriteQueue, whereWritten } from './write-queue.js';
 import { updatePeopleDatalist, updateTagsDatalist } from './tags.js';
 

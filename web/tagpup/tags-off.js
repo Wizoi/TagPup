@@ -4,7 +4,8 @@ import { state } from './state.js';
 import { setStatus } from './status.js';
 import { saveToLocalStorageCache } from './cache.js';
 import { normalizeTag, updateTagsDatalist } from './tags.js';
-import { baseOf, postPhotoMetadata, queueWriteOf, redrawIfShowing } from './edits.js';
+import { photoChangedOnDisk, queueWriteOf, redrawIfShowing } from './edits.js';
+import { baseOf, postPhotoMetadata } from './common/photo-write.js';
 
 /**
  * The tags of each photo taken off on this page and not written yet ({photo: Map(normalized tag: removals)}): renderTags
@@ -98,7 +99,7 @@ async function writeRemoval(photo, batch, entry) {
     if (!state.removals.failed) setStatus('busy', 'Deleting tag...');
     let saved;
     try {
-        saved = await postPhotoMetadata(photo, { tags: updatedTags });
+        saved = await postPhotoMetadata(photo, { tags: updatedTags }, photoChangedOnDisk);
     } catch (err) {
         console.error(err);
         unmarkBatch(photo, batch);
