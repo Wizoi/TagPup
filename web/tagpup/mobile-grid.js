@@ -71,7 +71,8 @@ export function showGrid() {
         state.grid.render();
         // The photo last open (`activeId`, as the desktop's view means it: tapped here, or swiped to in mobile-photo.js):
         // its card in view, the scroll kept when it already is (vgrid.js, 'nearest').
-        const open = held.activeId === null ? -1 : held.ids.indexOf(held.activeId);
+        // Only coming back from the Photo screen: from the list of libraries the grid stays where it was scrolled to.
+        const open = held.activeId === null || state.cameFrom !== 'photo' ? -1 : held.ids.indexOf(held.activeId);
         if (open >= 0) state.grid.scrollToIndex(open);
         return;
     }

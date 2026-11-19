@@ -8,6 +8,8 @@ export const state = {
     library: '',
     // The screen shown, a data-screen of mobile.html, and the one the page opens on.
     screen: '',
+    // The screen shown before it (mobile-screens.js): the Grid scrolls to the photo last open only coming back from the Photo screen.
+    cameFrom: '',
     home: 'browse',
     // Where on that screen, as its history entry holds it: a level of Browse ([section, row ids...]), the Grid's view,
     // the Photo screen's { id, at }; null for none (the top of Browse).

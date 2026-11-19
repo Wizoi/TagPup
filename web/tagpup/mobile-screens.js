@@ -50,6 +50,7 @@ export function showScreen(name, place = null) {
     for (const section of document.querySelectorAll('[data-screen]')) {
         section.classList.toggle('hidden', section.dataset.screen !== name);
     }
+    state.cameFrom = state.screen;
     state.screen = name;
     state.place = place ?? null;
     const section = sectionOf(name);

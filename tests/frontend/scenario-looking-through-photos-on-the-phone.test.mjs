@@ -213,6 +213,23 @@ describe("looking through a view's photos on the phone", () => {
     assert.equal(ctx.here.scrollTop, 3000, "where it was left");
   });
 
+  test("a photo opened and Back, the grid scrolled far away, then the list of libraries and Back: the grid stays where it was scrolled to (#3145)", async (t) => {
+    const ctx = await phone(t, { count: 2000 });
+    await openEvents(ctx);
+    await ctx.scrollTo(3000);
+    const card = cards(ctx).find((c) => c.querySelector("img") && 120 + Math.floor(Number(c.dataset.at) / 3) * 134 >= 3000);
+    click(ctx.window, card);
+    await settle(ctx);
+    await back(ctx);
+    await ctx.scrollTo(9000);
+
+    await tap(ctx, el(ctx, "bar-library"));
+    await back(ctx);
+
+    assert.deepEqual(shown(ctx), ["grid"]);
+    assert.equal(ctx.here.scrollTop, 9000, "not jumped back to the photo last open");
+  });
+
   test("ids that could not be read say so with Try again, and Try again shows the photos", async (t) => {
     const ctx = await phone(t, { count: 3 });
     ctx.server.first("/api/library/ids", { error: "The library is busy." }, { status: 500 });
