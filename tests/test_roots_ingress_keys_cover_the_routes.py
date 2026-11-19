@@ -69,6 +69,7 @@ NOT_ADDING = {
     "/api/folder/automatch": "reads the faces of photos the library holds",
     "/api/folder/index-cancel": "names a folder queued, by its key",
     "/api/folder/index-status": "names a folder queued, by its key",
+    "/api/folder/on-disk": "asks whether folders the library holds are still there; a gone one answers gone",
     "/api/folder/remove": "takes the library's rows away; the folder need not exist",
     "/api/folder/rename-photos": "writes photos of the folder the page has open",
     "/api/folder/suggest-cancel": "names a run, by its folder's key",

@@ -68,7 +68,6 @@ class RemoveFolderListsTheLibrary(unittest.TestCase):
         for parent in (self.training, self.photos):
             self.assertIn(paths.stored(parent), folders)
             self.assertEqual(0, folders[paths.stored(parent)]["own_photos"])
-            self.assertTrue(folders[paths.stored(parent)]["on_disk"])
         self.assertEqual(3, folders[paths.stored(self.training)]["photos"])
         self.assertEqual(7, folders[paths.stored(self.photos)]["photos"])
 
@@ -93,10 +92,19 @@ class RemoveFolderListsTheLibrary(unittest.TestCase):
         self.assertEqual(training["photos"], reply.get_json()["photos_removed"])
         self.assertNotIn(paths.stored(self.training), self.folders())
 
-    def test_a_folder_gone_from_disk_is_listed_and_marked(self):
+    def test_a_folder_gone_from_disk_is_listed_and_marked_when_asked(self):
         folders = self.folders()
-        self.assertFalse(folders[paths.stored(self.gone)]["on_disk"])
-        self.assertTrue(folders[paths.stored(self.meet)]["on_disk"])
+        self.assertNotIn("on_disk", folders[paths.stored(self.gone)])   # asked apart: 22 s on photo_index
+        asked = [folders[paths.stored(self.gone)]["path"], folders[paths.stored(self.meet)]["path"]]
+        reply = self.client.get("/library/api/folder/on-disk", query_string=[("path", f) for f in asked])
+        self.assertEqual(200, reply.status_code, reply.data)
+        self.assertEqual([{"path": asked[0], "state": "gone"}, {"path": asked[1], "state": "there"}],
+                         reply.get_json()["folders"])
+
+    def test_more_folders_than_one_look_takes_are_refused(self):
+        reply = self.client.get("/library/api/folder/on-disk",
+                                query_string=[("path", self.meet)] * 101)
+        self.assertEqual(400, reply.status_code, reply.data)
 
     def test_each_counts_every_photo_under_it(self):
         folders = self.folders()

@@ -106,9 +106,22 @@ def folder_remove():
 @routes.get("/api/folder/indexed")
 def folder_indexed():
     """The folders this library holds photos in (tagpup.services.photos.indexed_folders):
-    what Remove Folder offers, a folder gone from disk included (#47)."""
+    what Manage Folders offers, a folder gone from disk included (#47)."""
     library = state.require()
     return jsonify({"folders": photo_actions.indexed_folders(library)})
+
+
+@routes.get("/api/folder/on-disk")
+def folder_on_disk():
+    """Whether each `path` (repeated, at most photos.FOLDER_STATES_MOST) is on disk (photos.folder_states): asked of
+    the rows Manage Folders shows, not of every folder /api/folder/indexed lists."""
+    state.require()
+    wanted = request.args.getlist("path")
+    if not wanted:
+        return responses.error(400, "Missing path parameter")
+    if len(wanted) > photo_actions.FOLDER_STATES_MOST:
+        return responses.error(400, "At most %d folders at once" % photo_actions.FOLDER_STATES_MOST)
+    return jsonify({"folders": photo_actions.folder_states(wanted)})
 
 
 @routes.get("/api/folder/subfolders")
