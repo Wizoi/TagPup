@@ -498,9 +498,7 @@ def ensure_row(conn, photo_path, admit=False, kind="photo"):
     if photo_id is not None:
         return photo_id
     if not admit:
-        folder = os.path.dirname(paths.stored(photo_path))
-        if not folders.holds(conn, folder):
-            raise NotHeld(folder)
+        _refuse_unheld(conn, os.path.dirname(paths.stored(photo_path)), None)
     photo_id = _unread_row(conn, photo_path, kind)
     date_photos(conn, [photo_id])
     derived.refresh_photos(conn, [photo_id])
