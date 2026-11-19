@@ -355,6 +355,13 @@ class TheTwoWritersComparedOnCopies(FilesCase):
         self.assertEqual(["EXIF:IFD0:Make"], metadata_check._tags_differing(
             original, theirs, dict(original, **{"EXIF:IFD0:Make": "Other"}), set()))
 
+    def test_a_maker_note_tag_the_rewrite_changed_and_the_own_copy_reads_the_same_is_no_difference(self):   # #3112
+        original = {"MakerNotes:Canon:FirmwareVersion": "1.0", "EXIF:IFD0:Make": "Canon"}
+        theirs = {"MakerNotes:Canon:FirmwareVersion": "2.0", "EXIF:IFD0:Make": "Canon"}
+        self.assertEqual([], metadata_check._tags_differing(original, theirs, dict(theirs), set()))
+        self.assertEqual(["MakerNotes:Canon:FirmwareVersion"], metadata_check._tags_differing(
+            original, theirs, dict(theirs, **{"MakerNotes:Canon:FirmwareVersion": "3.0"}), set()))
+
     def test_a_copy_the_second_read_leaves_out_is_a_copy_not_compared_never_silence(self):
         # A copy another program holds a moment answers the whole read and not the read of what ExifTool says of it:
         # its warnings are not "none", the copy could not be compared (ExifTool's, the own writer's or the original).
