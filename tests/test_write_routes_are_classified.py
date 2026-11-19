@@ -28,6 +28,7 @@ ALLOWED = {
     "/api/name-faces/cancel": "the job itself",
     "/api/activity/batches/cancel": "stops a batch of photo files after its chunk, with what it wrote applied; writes nothing of its own",
     "/api/folder/suggest-cancel": "stops Suggest, which writes no name, face or tag",
+    "/api/folder/index-cancel": "drops folders not started; writes no row",
     "/api/folder/suggest-start": "Suggest writes its own suggestion rows and rows for photos never read, no face name, tag or file; the job refuses to start beside it",
     # Reads asked with a body, or a command to the machine.
     "/api/library/ids": "a read (the ids of a selection), a POST for the size of its body",

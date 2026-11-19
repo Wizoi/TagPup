@@ -36,6 +36,7 @@ class _Library(unittest.TestCase):
         self.season = os.path.join(self.pictures, "Season")
         self.meet = os.path.join(self.season, "Meet 1")
         self.other = os.path.join(self.pictures, "Other")
+        self.meet2 = os.path.join(self.season, "Meet 2")
         self.photos = [os.path.join(self.meet, "a.jpg"), os.path.join(self.season, "Meet 2", "b.jpg"),
                        os.path.join(self.other, "c.jpg")]
         for photo in self.photos:
@@ -73,8 +74,9 @@ class _Library(unittest.TestCase):
             reply = self.client.post("/library/api/folder/index-start", json={"folder_paths": folders})
         self.assertEqual(200, reply.status_code, reply.get_json())
 
-    def while_indexing(self, folder, ask):
-        """Index `folder` on this thread, and `ask()` while it runs: what it answered."""
+    def while_indexing(self, folder, ask, together=False):
+        """Index `folder` (a list: one batch of them, `together`) on this thread, and `ask()` while it runs: what it
+        answered."""
         answered = []
 
         def index(_folder, report):
@@ -82,7 +84,7 @@ class _Library(unittest.TestCase):
             answered.append(ask())
             return Result(attempted=1, changed=1)
         with mock.patch("tagpup.jobs.indexing.IndexQueue._ensure_runner"):
-            self.queue().start([folder], index)
+            self.queue().start(folder if together else [folder], index, together=together)
         self.queue().run_pending()
         self.assertEqual(1, len(answered), "the index never ran")
         return answered[0]
@@ -125,6 +127,25 @@ class RemovingAFolder:
         self.assertEqual(200, reply.status_code, reply.get_json())
         status, body = self.remove(self.season)
         self.assertEqual((200, 2), (status, body["photos_removed"]), body)
+
+    def test_is_refused_while_a_folder_below_it_waits_alone_or_in_a_batch(self):
+        """A batch (sync's new files, IndexQueue.start `together`) is named by its first folder only in the queue's
+        pending() and active(): the second is below the folder removed too."""
+        self.queue_held_back([self.meet2])
+        status, body = self.remove(self.season)
+        self.assertEqual((409, False), (status, body["success"]), body)
+        self.client.post("/library/api/folder/index-cancel", json={"all": True})
+        with mock.patch("tagpup.jobs.indexing.IndexQueue._ensure_runner"):
+            self.queue().start([self.meet, self.meet2], lambda _folders, _report: Result(), together=True)
+        status, body = self.remove(self.season)
+        self.assertEqual((409, False), (status, body["success"]), body)
+        self.assertIn(self.meet, body["error"], "the sentence names the folder that waits")
+        self.assertEqual(3, self.held(), "a folder below one waiting to be indexed lost its rows")
+
+    def test_is_refused_while_a_batch_of_folders_below_it_is_being_indexed(self):
+        status, body = self.while_indexing([self.meet, self.meet2], lambda: self.remove(self.season), together=True)
+        self.assertEqual((409, False), (status, body["success"]), body)
+        self.assertEqual(3, self.held())
 
     def test_another_library_holding_the_folder_removes_it_while_this_one_indexes_it(self):
         meadow = self.home.library("meadow.db")

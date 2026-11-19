@@ -39,6 +39,7 @@ SCENARIOS = {
     "D6": ("data", "A library's settings are its own: stamped, changed, undone, and read by the next run."),
     "D7": ("data", "The folders a library holds (roots) are stored, verified and followed through the same flows with and without them."),
     "D9": ("data", "A run nests under the run of its library that queued it and says how far it got, at most every 10 s, skipped while the library is written, never a path; one gone or another process's is left alone."),
+    "D10": ("data", "A folder removed from either app takes its rows and faces and leaves its files; it is refused while it, a folder above it or a folder below it waits or is indexed in that library, never in another library holding it."),
     "D8": ("data", "A library kept at the baseline meets an additive and a destructive step: interrupted, two openers, a failing check, a backup, an older app, undoable; one below the baseline is refused untouched; the owner's library at 32 meets the real 33, at 33 the real 34, at 34 the real 35, at 35 the real 36, at 36 the real 37, and at 37 the real 38."),
     "P1": ("people", "A person is the id of a tag-tree node: two processes naming, renaming or merging at once leave one answer."),
     "P2": ("people", "Names, tags and faces stay in step across photo files, jobs and the CLI's journaled apply."),
@@ -132,6 +133,7 @@ _SCENARIO_FILES = {
     # test_an_index_is_one_run_under_its_sync is Data's file (D9, the row); its index-queue scenarios (F11) are reviewed by
     # the Files owner with the integration owner.
     "D9": "test_runs_nest_and_say_how_far_they_got test_an_index_is_one_run_under_its_sync",
+    "D10": "test_removing_a_folder_from_either_app",
     "D7": (
         "test_library_roots test_roots_at_scale test_roots_ingress test_roots_location test_roots_scenarios "
         "test_roots_store"

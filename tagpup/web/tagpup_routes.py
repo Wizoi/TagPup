@@ -319,30 +319,6 @@ def folder_membership():
     return jsonify(library_actions.membership_checked(library, folder, settings.roots, settings.ignored))
 
 
-@routes.get("/api/folder/index-status")
-def folder_index_status():
-    library = state.require()
-    folder = _wanted_path()
-    if not folder:
-        return responses.error(400, "Missing path parameter")
-    return jsonify(state.runtime().index_queues.of(library).status(folder))
-
-
-@routes.post("/api/folder/index-start")
-def folder_index_start():
-    """Queue a folder to be added to this library (tagpup.services.libraries.add, through
-    tagpup.jobs.indexing). The page asks /api/folder/add instead. The index is followed by a read-only matching
-    of the faces it made when it recorded a photo, as every index is (tagpup.services.indexing.index_folder)."""
-    library = state.require()
-    body = request.get_json(silent=True) or {}
-    result = library_actions.add(library, [body.get("folder_path")], lambda folders: state.runtime().index_queues.of(
-        library).start(folders, runtimes.index_folder(library)))
-    suggestion_jobs.dropped_by_add(library, [body.get("folder_path")])
-    if result.refused:
-        return responses.refused(result)
-    return jsonify({"success": True, "status": "running", **result.details})
-
-
 @routes.post("/api/folder/add")
 def folder_add():
     """Add a folder to this library, as the person asked: "Add to <library>"
