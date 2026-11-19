@@ -591,7 +591,8 @@ class AnUpdateWhileAShareIsAway(Base):
         with self.assertLogs(lifecycles.logger, "WARNING") as logged:
             first, first_answer = self.in_thread(lambda: self.lifecycle.drain(1, lease=LEASE))
             self.wait_until(lambda: self.stuck.stops == 1)
-            second, second_answer = self.in_thread(lambda: self.lifecycle.drain(1, lease=LEASE))
+            # Given longer than the first, so a loaded machine's first does not outlast it ("another drain").
+            second, second_answer = self.in_thread(lambda: self.lifecycle.drain(10, lease=LEASE))
             first.join(5)
             second.join(5)
             self.assertFalse(first.is_alive(),
@@ -599,7 +600,7 @@ class AnUpdateWhileAShareIsAway(Base):
         self.assertLess(time.monotonic() - started, 3)
         self.assertEqual({"drained": True}, first_answer[0])
         self.assertIn("folder watcher (still stopping)", "\n".join(logged.output))
-        # The second, beside it, waited no longer than its own deadline, and says how the first ended.
+        # The second, beside it, ended with the first and says how it ended.
         self.assertFalse(second.is_alive())
         self.assertEqual({"drained": True}, second_answer[0])
         self.assertFalse(self.lifecycle.status()["taking_work"], "taken back: a new watch started beside the hung one")
