@@ -8,7 +8,7 @@ Cause (unconfirmed, no thread dump was taken): the drain's first call sits in `B
 | A drain ends by its deadline whatever a background task's stop does | `lifecycle.py` `_drain_until` (runs `Background.stop` bounded: each `task.stop` on a daemon thread joined to the one deadline; a task still running is named) | Integration | existing: change |
 | A task's stop is bounded | `runtime.py` `Background.stop` (the bound), `watching.py` `stop` (observer stopped on its own thread, joined to the deadline) | Integration / Files | existing: change |
 | A drain that passes its deadline logs what it waited for, resumes, and clears `_draining` | `lifecycle.py` `drain` (the "Could not drain in Ns; taking work again" line must be reached) | Integration | existing |
-| An install says what it waits for and stops waiting | `launcher.py` `make_way`: "another drain" for more than a patience limit (a named constant) says what the status shows and leaves the update to the next launch, as Ctrl+C does | Integration | existing: change |
+| An install never waits on a server that is idle but will not let go | `launcher.py` `make_way` (owner, 2026-11-19): drains not ended for `IDLE_PATIENCE` (30 s: no answer, "another drain", a task still stopping) while `GET /api/server` shows requests 0 and busy [] end the old server with `end()` ("TagPup <v> is idle but would not let go; ending it.") and the hand-over goes on; a status showing work (requests > 0, a busy) is waited for as before, never ended | Integration | existing: change |
 
 Steady-state writer: no data written. The next install or launch of any version, with no command run.
 One-offs: none.
