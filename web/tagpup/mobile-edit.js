@@ -23,6 +23,7 @@ import { buildElement, replaceContent } from './common/dom.js';
 import { postPhotoMetadata, takeWritten } from './common/photo-write.js';
 import { baseName, pathKey } from './common/paths.js';
 import { PeopleDirectory, leafOf, photoAlreadyHas, rootOf, sortedTags } from './common/vocabulary.js';
+import { TAKEN_DIGITS } from './format.js';
 import { state } from './mobile-state.js';
 import { closeSheetStep, openSheetStep, whenSheet } from './mobile-screens.js';
 
@@ -163,8 +164,8 @@ function addTag(tag) {
 
 /** The Date Taken as the file holds it, "YYYY:MM:DD HH:MM:SS", as the date and time inputs answer it. */
 function whenOf(taken) {
-    const found = /^(\d{4}):(\d{2}):(\d{2}) (\d{2}:\d{2}:\d{2})/.exec(taken || '');
-    return found ? { date: `${found[1]}-${found[2]}-${found[3]}`, time: found[4] } : { date: '', time: '' };
+    const found = TAKEN_DIGITS.exec(String(taken || '').trim());
+    return found ? { date: `${found[1]}-${found[2]}-${found[3]}`, time: `${found[4]}:${found[5]}:${found[6]}` } : { date: '', time: '' };
 }
 
 const fullTime = (time) => (time.length === 5 ? `${time}:00` : time);    // a time input may leave out ":00"

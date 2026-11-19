@@ -311,7 +311,7 @@ describe("the other file edits", () => {
     ctx.$("input-date-taken").value = "2018-03-04T09:08:07";
     click(ctx.window, ctx.$("btn-save-date-modal"));
     await flush(ctx.window, 10);
-    assert.match(ctx.$("detail-date-taken").textContent, /4:05:06/, "the page shows the reply's date, not its own spelling of what it sent");
+    assert.equal(ctx.$("detail-date-taken").textContent, "2/3/01 4:05 AM", "the page shows the reply's date, not its own spelling of what it sent");
   });
 
   test("Smart Rename is sent for the selection", async (t) => {

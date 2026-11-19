@@ -137,15 +137,15 @@ describe("the main page by the keyboard", () => {
     const at = order.indexOf("#btn-edit-date-taken");
     assert.ok(at > 0, `the Date Taken button is a stop: ${order}`);
     assert.deepEqual(order.slice(at + 1, at + 5), ["#input-photo-title", "#btn-save-title", "#btn-edit-people", "#btn-edit-tags"]);
-    for (const name of ["#detail-path", "#main-image", "span.tag-pill", "span.suggestion-chip", "div.face-card"]) {
+    for (const name of ["#detail-folder", "#detail-file-name", "#btn-copy-path", "#main-image", "span.tag-pill", "span.suggestion-chip", "div.face-card"]) {
       assert.ok(order.includes(name), `${name} is a stop: ${order}`);
     }
     assert.equal(order.filter((name) => name === "span.suggestion-chip").length, 2, "the person's chip and the keyword's");
     noHiddenOrMouseOnlyStops(ctx);
 
-    // The path is a button (Enter and Space are the browser's); on each of the others they are its click. The
+    // The path's links are buttons (Enter and Space are the browser's); on each of the others they are its click. The
     // click is counted, not run: what a pill or a chip writes is other tests'.
-    assert.equal(ctx.document.getElementById("detail-path").tagName, "BUTTON");
+    for (const id of ["detail-folder", "detail-file-name", "btn-copy-path"]) assert.equal(ctx.document.getElementById(id).tagName, "BUTTON");
     for (const selector of [".tag-pill", "#suggested-tags-container .suggestion-chip", "#suggested-people-container .suggestion-chip", ".face-card"]) {
       const el = ctx.document.querySelector(selector);
       assert.ok(el, selector);

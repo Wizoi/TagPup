@@ -13,7 +13,7 @@ import {
     btnBulkAddPeople, btnBulkAddTags, btnCarryForward, btnCreateDb, btnDeletePhoto, btnDeleteSelection,
     btnFolderAutoApply, btnRefreshList, btnRotateLeft, btnRotateRight, btnSaveTitle,
     btnSelectAllThumbnails, btnSelectNoneThumbnails, btnSuggestCancel, btnSuggestTags, btnSuggestTitleWand,
-    btnUndo, bulkAddPeopleInput, bulkAddTagsInput, dbSelect, detailPath, folderPathInput,
+    btnUndo, bulkAddPeopleInput, bulkAddTagsInput, dbSelect, detailFileName, folderPathInput,
     folderViewHeader, inputAddPerson, inputAddTag, inputPhotoTitle, mainImage, photoSearch, thumbnailsGrid
 } from './elements.js';
 import { fetchKnownTagsAndPeople } from './tags.js';
@@ -30,6 +30,7 @@ import {
 } from './library-view.js';
 import { wireSelectionPanel } from './selection-panel.js';
 import { wireDetailsPanel } from './details-panel.js';
+import { wirePhotoPath } from './photo-path.js';
 import { restoreViewAsLeft, showGrid, wireViewLeft } from './view-left.js';
 import { deleteSelection } from './bulk-edit.js';
 import { checkFolderMembership, wireMembership } from './membership.js';
@@ -143,8 +144,8 @@ document.addEventListener('DOMContentLoaded', () => {
 
     btnSuggestTitleWand.addEventListener('click', applySuggestedTitle);
     btnApplyAllSingleSugg.addEventListener('click', applyAllSingleSuggestions);
-    detailPath.addEventListener('click', openPhotoInDefaultApp);
-    detailPath.title = 'Open in default app';
+    detailFileName.addEventListener('click', openPhotoInDefaultApp);
+    wirePhotoPath();
     btnApplyTimeshift.addEventListener('click', applyTimeShift);
     
     wireThumbnailGrid();

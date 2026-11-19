@@ -212,25 +212,34 @@
                             <div class="details-grid">
                                 <div class="detail-item">
                                     <span class="detail-label">File Path</span>
-                                    <button type="button" class="detail-value clickable" id="detail-path"></button>
-                                    <!-- The file's size as the library last read it (photo.js showPhoto; what Sort by's File size orders by). -->
-                                    <span class="detail-value one-line" id="detail-file-size"></span>
+                                    <!-- The folder's name and the photo's, each a link, and a button that copies the whole path (web/tagpup/photo-path.js). -->
+                                    <div class="detail-path-line">
+                                        <button type="button" class="detail-value clickable one-line" id="detail-folder"></button>
+                                        <span class="detail-path-between" aria-hidden="true">&rsaquo;</span>
+                                        <button type="button" class="detail-value clickable one-line" id="detail-file-name"></button>
+                                        <button type="button" class="detail-path-copy" id="btn-copy-path" title="Copy the full path" aria-label="Copy the full path">&#128203;</button>
+                                    </div>
                                     <!-- Smart Rename of this photo alone: the grouping its name holds, to edit; its number is kept (web/tagpup/rename-one.js). -->
                                     <div class="title-edit-container" data-writes="name">
                                         <input type="text" id="input-smart-rename-one" placeholder="Grouping" title="The grouping of this photo's name: change it and press Smart Rename. The photo keeps its number.">
                                         <button type="button" id="btn-smart-rename-one" class="btn btn-secondary btn-sm" title="Rename this photo by the grouping beside it, keeping its number">Smart Rename</button>
                                     </div>
                                 </div>
+                                <!-- What the file is, a labelled line each (photo.js showPhoto): when it was taken, its size as the library last
+                                     read it (what Sort by's File size orders by), a photo's and a clip's alike, and the camera and lens, read
+                                     only, hidden when the file names neither. -->
                                 <div class="detail-item">
-                                    <span class="detail-label">Date Taken</span>
-                                    <div style="display: flex; align-items: center; gap: 8px;">
+                                    <div class="detail-fact">
+                                        <span class="detail-fact-label">Date taken:</span>
                                         <span class="detail-value" id="detail-date-taken"></span>
                                         <button id="btn-edit-date-taken" data-writes="date" class="btn btn-secondary btn-sm" style="padding: 2px 6px; font-size: 11px; line-height: 1;" title="Edit date taken">✏️</button>
                                     </div>
-                                    <!-- A video's file size, under its date (photo.js showPhoto; a photo's is under its path). -->
-                                    <span class="detail-value one-line hidden" id="detail-video-size"></span>
-                                    <!-- Camera and lens, read only: a line under the date (hidden when the file names neither). -->
-                                    <div class="hidden" id="detail-camera-item">
+                                    <div class="detail-fact">
+                                        <span class="detail-fact-label">Size:</span>
+                                        <span class="detail-value" id="detail-size"></span>
+                                    </div>
+                                    <div class="detail-fact hidden" id="detail-camera-item">
+                                        <span class="detail-fact-label">Camera:</span>
                                         <span class="detail-value one-line" id="detail-camera"></span>
                                     </div>
                                 </div>

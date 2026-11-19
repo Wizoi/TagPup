@@ -11,9 +11,7 @@ import {
 import { setStatus } from './status.js';
 import { whereWritten } from './write-queue.js';
 import { saveToLocalStorageCache } from './cache.js';
-import {
-    exifDateToIso, formatFriendlyDateSingle, getCurrentDateTimeIso, getFolderDateStats, parseExifDateToLocalDate, takenOf
-} from './format.js';
+import { exifDateToIso, getCurrentDateTimeIso, takenOf, takenSaid } from './format.js';
 import { photoChangedOnDisk, queueWriteOf } from './edits.js';
 import { postPhotoMetadata } from './common/photo-write.js';
 import { renderFileList } from './folder.js';
@@ -82,15 +80,7 @@ export function wireDateTakenModal() {
                 photo.taken = formattedDate;
 
                 // Format and display in UI -- if this photo is still the one shown.
-                if (state.activePhotoPath === photo.path) {
-                    const localD = parseExifDateToLocalDate(formattedDate);
-                    if (localD) {
-                        const stats = getFolderDateStats();
-                        detailDateTaken.textContent = formatFriendlyDateSingle(localD, stats);
-                    } else {
-                        detailDateTaken.textContent = newDateVal;
-                    }
-                }
+                if (state.activePhotoPath === photo.path) detailDateTaken.textContent = takenSaid(formattedDate);
 
                 setStatus('ready', 'Saved the date taken.' + whereWritten(saved));
                 saveToLocalStorageCache();

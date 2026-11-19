@@ -15,7 +15,7 @@ import { clearPhotoFaces, nameFaceAs, showPhotoFaces } from './face-boxes.js';
 import { state } from './state.js';
 import {
     btnCarryForward,
-    detailCamera, detailCameraItem, detailDateTaken, detailPath, detailPeople, detailsPanel, detailTags,
+    detailCamera, detailCameraItem, detailDateTaken, detailPeople, detailsPanel, detailSize, detailTags,
     btnAddAllFaces, emptyState, facesSection, facesStrip, facesSummary, folderViewContent,
     folderViewStats, inputAddPerson, inputAddTag,
     inputPhotoTitle, mainImage, panelContent, photoList, statusDot, statusText
@@ -24,9 +24,7 @@ import { setStatus } from './status.js';
 import { isJustLooking, libraryName } from './looking.js';
 import { pictureCheckSaid, whereWritten } from './write-queue.js';
 import { forgetCachedPhoto, saveToLocalStorageCache } from './cache.js';
-import {
-    formatFriendlyDateSingle, getFolderDateStats, parseExifDateToLocalDate, takenOf
-} from './format.js';
+import { fileSizeSaid, takenOf, takenSaid } from './format.js';
 import { namesAPerson, normalizeTag } from './tags.js';
 import { goingOffOf, removePhotoTags } from './tags-off.js';
 import {
@@ -40,10 +38,11 @@ import {
 import { removeFromSelection } from './selected.js';
 import { applyPhotoStale, holdDeletes } from './stale.js';
 import { bigClip, forGoodQuestion } from './bulk-words.js';
-import { isVideo, showFileSize, showMedia, stopVideo } from './media.js';
+import { isVideo, showMedia, stopVideo } from './media.js';
 import { fetchLibraryRecord, forgetPhoto, libraryIdOfPath, refetchCards } from './library-source.js';
 import { backToView, notePhoto, rememberView } from './view-left.js';
 import { showSmartRenameParts } from './rename-one.js';
+import { showPhotoPath } from './photo-path.js';
 import { bulkBusy, busySentence, lockBulkControls } from './bulk-run.js';
 
 // ---- Detected faces ----------------------------------------------------
@@ -435,12 +434,9 @@ export function showPhoto(path) {
 
     // Render values. A photo whose file is gone has no picture to ask for; a video is played in the image's place (media.js).
     showMedia(photo, photo.missing ? '' : photoFileUrl(photo, 800));
-    detailPath.textContent = photo.path;
-    showFileSize(photo);
-    let dateVal = "Unknown";
-    const shownDate = takenOf(photo) && parseExifDateToLocalDate(takenOf(photo));
-    if (shownDate) dateVal = formatFriendlyDateSingle(shownDate, getFolderDateStats());
-    detailDateTaken.textContent = dateVal;
+    showPhotoPath(photo);
+    detailSize.textContent = fileSizeSaid(photo.size);
+    detailDateTaken.textContent = takenSaid(takenOf(photo));
     showCamera(photo);
     // The same photo shown again -- a refresh -- keeps a title being typed.
     const typing = state.titleShown.path === path && inputPhotoTitle.value !== state.titleShown.title;

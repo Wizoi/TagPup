@@ -108,12 +108,14 @@ export const clipConvertNote = document.getElementById('clip-convert-note');
 export const btnClipConvertCancel = document.getElementById('btn-clip-convert-cancel');
 export const facesSection = document.getElementById('faces-section');
 
-export const detailPath = document.getElementById('detail-path');
-export const detailFileSize = document.getElementById('detail-file-size');
+// Where the open photo is: its folder's name, its own, and the button that copies its path (photo-path.js).
+export const detailFolder = document.getElementById('detail-folder');
+export const detailFileName = document.getElementById('detail-file-name');
+export const btnCopyPath = document.getElementById('btn-copy-path');
 // Smart Rename of the open photo: the grouping box beside its name and its button (rename-one.js).
 export const inputSmartRenameOne = document.getElementById('input-smart-rename-one');
 export const btnSmartRenameOne = document.getElementById('btn-smart-rename-one');
-export const detailVideoSize = document.getElementById('detail-video-size');
+export const detailSize = document.getElementById('detail-size');
 export const detailDateTaken = document.getElementById('detail-date-taken');
 export const detailCamera = document.getElementById('detail-camera');
 export const detailCameraItem = document.getElementById('detail-camera-item');

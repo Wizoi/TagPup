@@ -89,7 +89,10 @@ describe("a missing photo: shown, not editable", () => {
     assert.ok(controls.every((el) => el.hasAttribute("inert") && el.getAttribute("aria-disabled") === "true"));
     assert.equal(ctx.document.getElementById("main-image").getAttribute("src") || "", "", "no request for a file that is not there");
     assert.ok(ctx.document.getElementById("main-image").classList.contains("hidden"), "and no broken-image icon in its place");
-    assert.equal(ctx.document.getElementById("detail-path").textContent, recordOf(13).path);
+    assert.equal(ctx.document.getElementById("detail-file-name").title, `Open in the default app: ${recordOf(13).path}`);
+    for (const id of ["detail-folder", "btn-copy-path"]) {
+      assert.ok(!ctx.document.getElementById(id).closest("[inert]"), `${id}: where a missing photo was is still shown and copied`);
+    }
   });
 
   test("the next photo is editable again: nothing of the missing one is carried to it", async (t) => {

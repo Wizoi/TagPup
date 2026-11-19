@@ -8,6 +8,24 @@ export function takenOf(photo) {
     return (photo && photo.taken) || null;
 }
 
+/** The digits of a stored Date Taken ("2021:03:27 00:00:00", some with a zone after): year, month, day, hours, minutes, seconds. */
+export const TAKEN_DIGITS = /^(\d{4})[: -](\d{2})[: -](\d{2})\s+(\d{2}):(\d{2}):(\d{2})/;
+
+/**
+ * When the open photo was taken, whole, for the person checking it is right: "3/27/21 12:00 AM", or "Unknown" for a photo
+ * with none (owner, 2026-11-19). Read from the digits of the stored Date Taken as they are, a wall-clock time: never
+ * through a Date, which would move a time in the hour a clock skips (2:30 AM on the day it goes forward) and could be
+ * read in another zone. A zone after the seconds ("-07:00", which some photos carry) is not shown. The grid and the
+ * selection keep their short form (formatFriendlyDateSingle).
+ */
+export function takenSaid(taken) {
+    const match = TAKEN_DIGITS.exec(String(taken || '').trim());
+    if (!match) return 'Unknown';
+    const [, year, month, day, hours, minutes] = match;
+    const hour = Number(hours);
+    return `${Number(month)}/${Number(day)}/${year.slice(-2)} ${hour % 12 || 12}:${minutes} ${hour >= 12 ? 'PM' : 'AM'}`;
+}
+
 /** A file's size as a person reads it: "820 KB", "3.4 MB", "1.2 GB" (of 1,024); "" for a size not read. */
 export function fileSizeSaid(bytes) {
     if (!Number.isFinite(bytes) || bytes < 0) return '';
@@ -19,8 +37,7 @@ export function fileSizeSaid(bytes) {
 }
 
 export function parseExifDateToLocalDate(rawStr) {
-    const regex = /^(\d{4})[: -](\d{2})[: -](\d{2})\s+(\d{2}):(\d{2}):(\d{2})/;
-    const match = String(rawStr).trim().match(regex);
+    const match = String(rawStr).trim().match(TAKEN_DIGITS);
     if (!match) return null;
     
     return new Date(
@@ -121,9 +138,7 @@ export function formatFriendlyDateRange(minDate, maxDate) {
 
 export function exifDateToIso(exifStr) {
     if (!exifStr) return "";
-    // Match standard formats like YYYY:MM:DD HH:MM:SS or similar
-    const regex = /^(\d{4})[: -](\d{2})[: -](\d{2})\s+(\d{2}):(\d{2}):(\d{2})/;
-    const match = String(exifStr).trim().match(regex);
+    const match = String(exifStr).trim().match(TAKEN_DIGITS);
     if (!match) return "";
     
     const year = match[1];
