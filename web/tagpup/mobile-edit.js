@@ -4,7 +4,8 @@
  *
  * It edits the photo as /api/library/photo reads it when the sheet opens (the file's stamp and what it holds), not the
  * Grid's card. A chip's x waits five seconds behind an Undo before anything is sent; leaving the photo (a swipe, Back,
- * another screen) or the page sends it then, never drops it. A tag is added or taken off through /api/photos/bulk-tags,
+ * another screen) or the page sends it then, never drops it; the page going sends a tag change still waiting its turn
+ * behind a Save at once (keepalive), not after it. A tag is added or taken off through /api/photos/bulk-tags,
  * against what the file holds, so no stamp; the title and Date Taken through save-metadata (web/common/photo-write.js)
  * with the stamp, which the server refuses when the file changed since it was read: nothing is written, the sheet says
  * so and reads the photo again, the text typed kept. Each write of the page waits for the one before it (state.writing).
@@ -76,12 +77,28 @@ async function writeTags(record, change) {
     if (sheetOf(record)) drawChips();
 }
 
-/** Send a removal waiting behind its Undo now. */
+/** A tag change of `record` in its turn, after every write sent before it, or sooner as the page goes (leavePage). */
+function tagWrite(record, change) {
+    const job = { record, change, sending: null };
+    state.queued.push(job);
+    return inTurn(() => sendTags(job));
+}
+
+/** Send a queued tag change now, once: its turn come, or the page going, whichever is first. */
+function sendTags(job) {
+    if (!job.sending) {
+        state.queued = state.queued.filter((each) => each !== job);
+        job.sending = writeTags(job.record, job.change);
+    }
+    return job.sending;
+}
+
+/** Send a removal waiting behind its Undo, in its turn. */
 function sendRemoval(removal) {
     window.clearTimeout(removal.timer);
     removal.close();
     state.removals = state.removals.filter((each) => each !== removal);
-    inTurn(() => writeTags(removal.record, { remove: [removal.tag] })).catch((err) => {
+    tagWrite(removal.record, { remove: [removal.tag] }).catch((err) => {
         if (sheetOf(removal.record)) drawChips();    // the chip is back
         toast(`Not taken off ${leafOf(removal.tag)}: ${why(err)}`, null, UNDO_MS * 2);
     });
@@ -104,6 +121,7 @@ function removeLater(tag) {
 function drawChips() {
     const record = state.edit.record;
     const going = new Set(state.removals.filter((each) => each.record === record).map((each) => each.tag));
+    for (const job of state.queued) if (job.record === record) (job.change.remove || []).forEach((tag) => going.add(tag));
     const tags = sortedTags((record.tags || []).filter((tag) => !going.has(tag)));
     const twice = (tag) => tags.filter((each) => leafOf(each).toLowerCase() === leafOf(tag).toLowerCase()).length > 1;
     const chip = (tag) => buildElement('span', { className: 'edit-chip', title: tag }, [
@@ -131,7 +149,7 @@ function addTag(tag) {
     byId('edit-add').value = '';
     drawMatches();
     say(`Adding ${leafOf(tag)}...`);
-    inTurn(() => writeTags(record, { add: [tag] })).then(() => {
+    tagWrite(record, { add: [tag] }).then(() => {
         if (sheetOf(record)) say('');
     }, (err) => {
         if (!sheetOf(record)) return;
@@ -232,6 +250,12 @@ export function leaveEdit() {
     closeEdit();
 }
 
+/** The page goes: what waits behind an Undo or behind a Save still out is sent now, with keepalive (writeTags). */
+function leavePage() {
+    leaveEdit();
+    for (const job of state.queued.slice()) sendTags(job).catch(() => {});    // told in its turn, if the page stays
+}
+
 /** The one Save: the title and the Date Taken, named by the stamp of the file as it was read. */
 function save() {
     const edit = state.edit;
@@ -289,7 +313,7 @@ export function wireEdit() {
             if (x && state.edit && state.edit.record) removeLater(x.dataset.tag);
         });
     }
-    window.addEventListener('pagehide', leaveEdit);
+    window.addEventListener('pagehide', leavePage);
     // Another library or a reload with a title or date typed and not saved: the browser asks first, as Close does.
     window.addEventListener('beforeunload', (event) => {
         if (!editDirty() && !state.drafts.size) return;
