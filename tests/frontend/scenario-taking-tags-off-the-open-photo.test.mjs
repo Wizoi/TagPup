@@ -1,19 +1,21 @@
 /**
  * V20: somebody takes tags off the open photo by its pills (owner, 2026-11-15: "when i remove, it seems to delay things until
  * that one tag is removed, can those be queued sort of how clicking on faces are queued"). The pill goes at the click, before
- * the file's write is answered (1-4 s on a share), and the write waits its turn behind the photo's others; pills clicked
- * quickly all go at once, those clicked while a write is out written together, and the file ends holding none of them; a removal and an add queued around it neither undo the other,
- * nor a title saved meanwhile; a write that fails puts back exactly the tags it took, says so, and a removal queued behind it
- * still goes; another photo chosen meanwhile shows only its own tags, and the first photo, opened again, its tags as written;
- * a pill taken off by the keyboard leaves the focus on the next pill, or on the add box when it was the last. The status line
- * says 'Deleting tag...' until the last removal is answered.
+ * the file's write is answered (1-4 s on a share): the removal waits in the page's tag changes (web/tagpup/pending.js), first
+ * in line, and is written through /api/photos/bulk-tags in its turn among the photo's other writes. Pills clicked quickly
+ * are written together while a write is out, and the file ends holding none of them; a removal and a save around it neither
+ * undo the other, nor does a title's save already out draw the removed pill again; a write that fails draws its own tags
+ * again, says so, offers no Retry, and the next removal still goes; another photo chosen meanwhile shows only its own tags,
+ * and the first photo, opened again, its tags as written; a pill taken off by the keyboard leaves the focus on the next pill,
+ * or on the add box when it was the last. The panel's own removals never make it read-only (owner's V20 request).
  *
- * Every save is held until the test answers it, as the route answers it (its `base`: what the file holds now).
+ * Every write is held until the test answers it, oldest first, as the routes answer it: the server keeps a model of each
+ * file's tags, and a bulk-tags reply's `written` (a save-metadata reply's `base`) is what the file holds after it.
  */
 import { test, describe, afterEach } from "node:test";
 import assert from "node:assert/strict";
 import {
-  loadApp, FakeServer, photoRecord, flush, openFolder, closeAllApps, PEOPLE_ROUTE, peopleRecordsOf,
+  loadApp, FakeServer, photoRecord, flush, openFolder, closeAllApps, pageExports, PEOPLE_ROUTE, peopleRecordsOf,
 } from "./harness.mjs";
 
 const TAXONOMY = [
@@ -29,8 +31,15 @@ const TAGS = ["Cross Country", "Harbourside", "Kentridge"];
 const A = photoRecord({ filename: "a.jpg" });
 const B = photoRecord({ filename: "b.jpg" });
 
+/** What a write leaves in a file holding `tags`: a bulk-tags change `{add, remove}`. */
+const changed = (tags, { add = [], remove = [] }) => [...tags.filter((t) => !remove.includes(t)), ...add.filter((t) => !tags.includes(t))];
+
 async function open(t) {
   const held = [];
+  // The files as the server would hold them; a write changes its file when it is answered, in the order it was sent.
+  const files = new Map([[A.path, TAGS.slice()], [B.path, []]]);
+  // The request just made is the last call the server saw (FakeServer hands a route only its url).
+  const hold = (kind) => () => new Promise((resolve) => held.push({ kind, body: server.calls.at(-1).body, resolve }));
   const server = new FakeServer()
     .on("/api/tags", TAGS)
     .first(PEOPLE_ROUTE, peopleRecordsOf(TAXONOMY))
@@ -41,7 +50,8 @@ async function open(t) {
     .on("/api/folder/index-status", { status: "completed", percent: 100, message: "Ready" })
     .on("/api/folder/scan", [{ ...A, tags: TAGS.slice() }, { ...B, tags: [] }])
     .on("/api/photo-faces", { faces: [], total: 0, unmatched: 0 })
-    .on("/api/photo/save-metadata", () => new Promise((resolve) => held.push(resolve)));
+    .on("/api/photos/bulk-tags", hold("bulk"))
+    .on("/api/photo/save-metadata", hold("save"));
   const ctx = await loadApp("tagpup", { t, url: "http://localhost:8090/photo_index/", server });
   ctx.window.console.error = () => {};
   ctx.alerts = [];
@@ -49,13 +59,31 @@ async function open(t) {
   await openFolder(ctx, "D:/Library/2020", { settle: 6 });
   const $ = (id) => ctx.document.getElementById(id);
   ctx.$ = $;
+  ctx.file = (photo) => files.get(photo.path).slice().sort();
+  ctx.bulks = () => server.calls.filter((c) => c.url.includes("bulk-tags")).map((c) => c.body);
   ctx.saves = () => server.calls.filter((c) => c.url.includes("save-metadata")).map((c) => c.body);
-  let answered = 0;
-  // Answer the oldest save still held: written, the file then holding what it was sent; or refused with `error`.
+  ctx.order = () => server.calls.filter((c) => /bulk-tags|save-metadata/.test(c.url)).map((c) => (c.url.includes("bulk") ? "bulk" : "save"));
+  // Answer the oldest write still held: written, the file then holding what the route leaves in it; or refused with `error`.
   ctx.answer = async (error = null) => {
-    const sent = ctx.saves()[answered];
-    answered += 1;
-    held.shift()(error ? { success: false, error } : { success: true, base: { tags: sent.tags.slice(), title: "" } });
+    const { kind, body, resolve } = held.shift();
+    if (error) {
+      resolve({ success: false, error });
+    } else if (kind === "bulk") {
+      const written = {};
+      for (const [path, change] of Object.entries(body.changes)) {
+        files.set(path, changed(files.get(path), change));
+        written[path] = files.get(path).slice();
+      }
+      resolve({ success: true, written });
+    } else {
+      // A save writes what it changed from the record it was made from (`base`) onto what the file holds.
+      const was = body.base ? body.base.tags : files.get(body.path);
+      files.set(body.path, changed(files.get(body.path), {
+        add: body.tags.filter((t) => !was.includes(t)),
+        remove: was.filter((t) => !body.tags.includes(t)),
+      }));
+      resolve({ success: true, base: { tags: files.get(body.path).slice(), title: body.title || "" } });
+    }
     await flush(ctx.window, 12);
   };
   ctx.unanswered = () => held.length;
@@ -67,6 +95,7 @@ async function open(t) {
     await flush(ctx.window, 4);
   };
   ctx.status = () => $("status-text").textContent;
+  ctx.retries = () => pageExports(ctx.window, "web/tagpup/state.js").state.writeQueue.entries.filter((e) => e.status === "failed" && (e.retry || e.cancel)).length;
   ctx.select = async (photo) => {
     ctx.document.querySelector(`li[data-path="${photo.path.replace(/\\/g, "\\\\")}"]`).click();
     await flush(ctx.window, 8);
@@ -75,6 +104,7 @@ async function open(t) {
     const row = ctx.document.querySelector(".photo-item-file.active");
     return row && row.getAttribute("data-path");
   };
+  ctx.editable = () => !$("btn-edit-tags").hasAttribute("inert");
   await ctx.select(A);
   return ctx;
 }
@@ -89,28 +119,31 @@ describe("V20: taking tags off the open photo is answered at the click, the writ
     await ctx.takeOff("Cross Country");
     assert.deepEqual(sorted(ctx.pills()), ["Harbourside", "Kentridge"], "the pill waited for the write");
     assert.equal(ctx.unanswered(), 1, "the write was not sent");
-    assert.equal(ctx.status(), "Deleting tag...");
+    assert.ok(ctx.editable(), "the panel's own removal made it read-only");
     await ctx.takeOff("Harbourside");
     assert.deepEqual(ctx.pills(), ["Kentridge"], "the second pill waited behind the first write");
     await ctx.takeOff("Kentridge");
     assert.deepEqual(ctx.pills(), []);
+    assert.equal(ctx.unanswered(), 1, "a second write went beside the first");
     await ctx.answer();
-    assert.equal(ctx.status(), "Deleting tag...", "said Ready after the first of two writes");
+    assert.deepEqual(ctx.pills(), [], "the first write's reply drew the pills taken off since");
     while (ctx.unanswered()) await ctx.answer();
-    assert.equal(ctx.saves().length, 2, "the two pills clicked while the first write was out were not written as one");
-    assert.deepEqual(ctx.saves().at(-1).tags, []);
+    assert.equal(ctx.bulks().length, 2, "the two pills clicked while the first write was out were not written as one");
+    assert.deepEqual(sorted(ctx.bulks()[1].changes[A.path].remove), ["Harbourside", "Kentridge"]);
+    assert.deepEqual(ctx.file(A), []);
     assert.deepEqual(ctx.pills(), []);
     assert.equal(ctx.status(), "Ready");
   });
 
-  test("a removal and an add queued around it: neither undoes the other, either way round", async (t) => {
+  test("a removal and a save around it: neither undoes the other, and a title's save already out draws no pill again", async (t) => {
     const ctx = await open(t);
     await ctx.takeOff("Cross Country");
     ctx.$("input-add-tag").value = "Places/Beach";
     ctx.$("btn-add-tag").click();
     await flush(ctx.window, 8);
     while (ctx.unanswered()) await ctx.answer();
-    assert.deepEqual(sorted(ctx.saves().at(-1).tags), ["Harbourside", "Kentridge", "Places/Beach"]);
+    assert.deepEqual(ctx.order(), ["bulk", "save"]);
+    assert.deepEqual(ctx.file(A), ["Harbourside", "Kentridge", "Places/Beach"]);
     assert.deepEqual(sorted(ctx.pills()), ["Harbourside", "Kentridge", "Places/Beach"]);
 
     // A title's save out first: its reply carries the tag the click took off, not drawn again; the removal writes after it.
@@ -122,56 +155,43 @@ describe("V20: taking tags off the open photo is answered at the click, the writ
     await ctx.answer();
     assert.deepEqual(sorted(ctx.pills()), ["Kentridge", "Places/Beach"], "the title's reply drew the pill taken off again");
     while (ctx.unanswered()) await ctx.answer();
-    const last = ctx.saves().at(-1);
-    assert.deepEqual(sorted(last.tags), ["Kentridge", "Places/Beach"]);
-    assert.equal(last.title, "Harbour run");
+    assert.deepEqual(ctx.order(), ["bulk", "save", "save", "bulk"]);
+    assert.equal(ctx.saves().at(-1).title, "Harbour run");
+    assert.deepEqual(ctx.file(A), ["Kentridge", "Places/Beach"]);
+    assert.deepEqual(sorted(ctx.pills()), ["Kentridge", "Places/Beach"]);
   });
 
-  test("a write that fails puts back only its own tag, says so, and the removal queued behind it still goes", async (t) => {
+  test("a write that fails draws its own tag again, says so, offers no Retry, and the next removal still goes", async (t) => {
     const ctx = await open(t);
     await ctx.takeOff("Cross Country");
     await ctx.takeOff("Harbourside");
     await ctx.answer("The share did not answer");
     assert.deepEqual(sorted(ctx.pills()), ["Cross Country", "Kentridge"], "not exactly the failed removal's tag came back");
-    assert.match(ctx.status(), /Cross Country.*The share did not answer/);
-    assert.equal(ctx.alerts.length, 1);
+    assert.deepEqual(ctx.alerts, ["Not taken off Cross Country: The share did not answer"]);
+    const row = pageExports(ctx.window, "web/tagpup/state.js").state.writeQueue.entries.find((e) => e.status === "failed");
+    assert.equal(row && row.error, "The share did not answer", "the list of writes does not say the removal failed");
+    assert.equal(ctx.retries(), 0, "the failed removal offers a Retry or a Cancel");
+    assert.equal(ctx.unanswered(), 1, "the removal clicked behind the failed one did not go");
     while (ctx.unanswered()) await ctx.answer();
-    assert.deepEqual(sorted(ctx.saves().at(-1).tags), ["Cross Country", "Kentridge"]);
-    assert.deepEqual(sorted(ctx.pills()), ["Cross Country", "Kentridge"]);
-    assert.match(ctx.status(), /Cross Country/, "the failure was said over by the next removal");
-    assert.ok(ctx.document.querySelector(".write-queue-retry"), "the failed write offers no Retry");
-  });
-
-  test("a removal that fails after an earlier write already wrote it does not put the tag back, nor write it again", async (t) => {
-    const ctx = await open(t);
+    assert.deepEqual(ctx.bulks()[1].changes[A.path], { add: [], remove: ["Harbourside"] }, "the failed tag was sent again");
     await ctx.takeOff("Kentridge");
-    ctx.$("input-add-tag").value = "Places/Beach";
-    ctx.$("btn-add-tag").click();
-    await flush(ctx.window, 8);
-    await ctx.takeOff("Cross Country");
-    await ctx.answer();
-    await ctx.answer();
-    assert.ok(!ctx.saves()[1].tags.includes("Cross Country"), "the add queued before the click was expected to carry it off");
-    await ctx.answer("The share did not answer");
-    assert.ok(!ctx.pills().includes("Cross Country"), "the file no longer holds it, yet its pill came back");
-    assert.doesNotMatch(ctx.status(), /Not taken off Cross Country/);
-    ctx.$("input-add-tag").value = "Kentridge";
-    ctx.$("btn-add-tag").click();
-    await flush(ctx.window, 8);
     while (ctx.unanswered()) await ctx.answer();
-    assert.ok(!ctx.saves().at(-1).tags.includes("Cross Country"), "the next save wrote the tag back");
+    assert.deepEqual(ctx.file(A), ["Cross Country"]);
+    assert.deepEqual(ctx.pills(), ["Cross Country"]);
+    assert.equal(ctx.status(), "Ready");
   });
 
   test("another photo chosen while a removal is out shows its own tags; the first, opened again, its tags as written", async (t) => {
     const ctx = await open(t);
     await ctx.takeOff("Cross Country");
     await ctx.select(B);
-    while (ctx.unanswered()) await ctx.answer();
-    await flush(ctx.window, 8);
-    assert.equal(ctx.active(), B.path);
     assert.deepEqual(ctx.pills(), [], "the first photo's tags drawn on the second");
+    while (ctx.unanswered()) await ctx.answer();
+    assert.equal(ctx.active(), B.path);
+    assert.deepEqual(ctx.pills(), [], "the first photo's reply drew its tags on the second");
     await ctx.select(A);
     assert.deepEqual(sorted(ctx.pills()), ["Harbourside", "Kentridge"]);
+    assert.deepEqual(ctx.file(A), ["Harbourside", "Kentridge"]);
   });
 
   test("a pill taken off by the keyboard leaves the focus on the next pill, the last one on the add box", async (t) => {
@@ -190,6 +210,6 @@ describe("V20: taking tags off the open photo is answered at the click, the writ
     await flush(ctx.window, 4);
     assert.equal(ctx.document.activeElement.id, "input-add-tag");
     while (ctx.unanswered()) await ctx.answer();
-    assert.deepEqual(ctx.saves().at(-1).tags, []);
+    assert.deepEqual(ctx.file(A), []);
   });
 });

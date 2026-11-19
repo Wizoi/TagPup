@@ -26,7 +26,7 @@ import { pictureCheckSaid, whereWritten } from './write-queue.js';
 import { forgetCachedPhoto, saveToLocalStorageCache } from './cache.js';
 import { fileSizeSaid, takenOf, takenSaid } from './format.js';
 import { namesAPerson, normalizeTag } from './tags.js';
-import { goingOffOf, removePhotoTags } from './tags-off.js';
+import { pendingOf, removePhotoTags, takenOffOf } from './pending.js';
 import {
     leavePhotoThen, photoChangedOnDisk, queueWriteOf, redrawIfShowing, saveDetailEdits,
     updateSaveButton
@@ -428,8 +428,8 @@ export function showPhoto(path) {
 
     // Fetch photo data from local array
     const photo = state.folderPhotos.find(p => p.path === path);
-    // A photo whose file is gone is shown as the library holds it and cannot be edited (stale.js); any other is editable.
-    applyPhotoStale(photo);
+    // A photo whose file is gone, or with tag changes waiting, cannot be edited (stale.js); any other is editable.
+    applyPhotoStale(photo, pendingOf(photo));
     if (!photo) return;
 
     // Render values. A photo whose file is gone has no picture to ask for; a video is played in the image's place (media.js).
@@ -611,9 +611,9 @@ export function renderTags(tags) {
 
     const photo = state.folderPhotos.find(p => p.path === state.activePhotoPath);
     const photoPeople = (photo && photo.people) ? photo.people : [];
-    // A tag taken off and not written yet is not drawn, whatever a write queued before it answers meanwhile.
-    const marks = goingOffOf(photo);
-    if (marks && tags) tags = tags.filter(tag => !marks.has(normalizeTag(tag)));
+    // A tag taken off in the panel and not written yet is not drawn, whatever a write queued before it answers meanwhile.
+    const marks = takenOffOf(photo);
+    if (marks.size && tags) tags = tags.filter(tag => !marks.has(normalizeTag(tag)));
     
     const peopleTags = [];
     const nonPeopleTags = [];

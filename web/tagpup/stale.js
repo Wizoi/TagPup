@@ -16,6 +16,9 @@
 // name and date (fields.CLIP_WRITES), so its turn is not offered (the rotate buttons are hidden). The delete (`data-deletes`) is no write of a field: a
 // clip is deleted as a photo is (recycle_bin, up to its MOST_CLIP_BYTES, a larger one for good once confirmed), and the
 // button is inert only while the file is missing.
+//
+// A photo with tag changes waiting for it (pending.js pendingOf) is read-only until they are written: every `data-writes`
+// control is inert, with a sentence saying how many wait. Viewing it, the arrows and moving on stay free.
 import { buildElement } from './common/dom.js';
 import { state } from './state.js';
 import { mainImage, photoMissingNote } from './elements.js';
@@ -42,6 +45,13 @@ export function markStale(card, photo) {
 // What the sentence calls each field a control's `data-writes` names, in the order it names them.
 // The turn is not among them: a record that leaves it out has its rotate controls hidden (applyPhotoStale), not explained.
 const FIELD_WORDS = { date: 'date', title: 'title', tags: 'people and keywords' };
+
+/** The sentence of a photo with `waiting` tag changes not written yet. */
+function waitingSentence(waiting) {
+    return waiting === 1
+        ? '1 tag change is waiting for this photo. Edit it when it is written.'
+        : `${waiting.toLocaleString()} tag changes are waiting for this photo. Edit it when they are written.`;
+}
 
 /** The sentence of a photo whose record's `writes` leaves out `held` (fields of FIELD_WORDS), or '' when none is. */
 function heldSentence(held) {
@@ -81,29 +91,38 @@ function inertUnless(el, offered) {
     }
 }
 
-export function applyPhotoStale(photo) {
+/**
+ * The panel's controls for `photo` and the sentence over them: a missing one has every write control inert, one with
+ * `waiting` tag changes (pending.js pendingOf) too; any other has live the controls whose field its `writes` names.
+ * pending.js calls it again for the open photo whenever the changes waiting for it change.
+ */
+export function offerWrites(photo, waiting) {
     const missing = Boolean(photo && photo.missing);
-    const writes = (photo && !missing && photo.writes) || [];
-    // A clip cannot be turned: when its record names its writes and leaves the turn out, the rotate controls are not
-    // offered at all (a missing file, no photo, or a record naming no writes shows them inert, as every control is).
-    const turnless = Boolean(photo) && !missing && Array.isArray(photo.writes) && !photo.writes.includes('rotate');
+    const writes = (photo && !missing && !waiting && photo.writes) || [];
     const controls = [...document.querySelectorAll('[data-writes]')];
     const held = new Set(controls.map((el) => el.dataset.writes).filter((field) => !writes.includes(field)));
     const sentence = missing
         ? `This photo’s file is not on disk. ${libraryName() || 'The library'} still holds it, and it is shown as the library holds it. `
             + 'It cannot be edited until the file is back or the photo is removed from the library.'
-        : (photo ? heldSentence(held) : '');
+        : (!photo ? '' : waiting ? waitingSentence(waiting) : heldSentence(held));
     photoMissingNote.classList.toggle('hidden', !sentence);
     photoMissingNote.textContent = sentence;
-    // No picture to show, and no broken-image icon in its place.
-    mainImage.classList.toggle('hidden', missing);
     const deletes = [...document.querySelectorAll('[data-deletes]')];
-    for (const el of controls) {
-        if (el.dataset.writes === 'rotate') el.classList.toggle('hidden', turnless);
-    }
     for (const el of controls.concat(deletes)) {
         inertUnless(el, !(el.hasAttribute('data-deletes') ? deletesHeld(photo) : held.has(el.dataset.writes)));
     }
+}
+
+/** `waiting`: the tag changes waiting for `photo` (pending.js pendingOf). */
+export function applyPhotoStale(photo, waiting) {
+    const missing = Boolean(photo && photo.missing);
+    // A clip cannot be turned: when its record names its writes and leaves the turn out, the rotate controls are not
+    // offered at all (a missing file, no photo, or a record naming no writes shows them inert, as every control is).
+    const turnless = Boolean(photo) && !missing && Array.isArray(photo.writes) && !photo.writes.includes('rotate');
+    // No picture to show, and no broken-image icon in its place.
+    mainImage.classList.toggle('hidden', missing);
+    for (const el of document.querySelectorAll('[data-writes="rotate"]')) el.classList.toggle('hidden', turnless);
+    offerWrites(photo, waiting);
     const lib = state.library;
     if (!lib || !photo || photo.id === undefined) return;
     const card = lib.cards.get(photo.id);

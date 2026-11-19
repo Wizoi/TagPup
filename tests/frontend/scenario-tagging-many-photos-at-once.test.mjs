@@ -5,7 +5,9 @@
  *
  * What the owner lives through: a tag added while the first 25 are out reaches the 25 not yet sent in the same write and
  * the 25 already written in a later one; the last click on a tag wins; a write that fails keeps its files'
- * changes for Retry and never loops by itself; a single save clicked meanwhile goes between two writes; Cancel says how
+ * changes for Retry and never loops by itself; a single save clicked meanwhile goes between two writes; the open photo is
+ * read-only while a change it does not draw waits for its file, saying how many, and editable again once that file is
+ * written or its change dropped, its viewing and the arrows free throughout; Cancel says how
  * many photos it left unwritten, and a write already out neither says Ready over it nor gives its files back; choosing
  * another library or opening another folder asks while changes are not sent -- the tag question and the open photo's
  * together, nothing dropped or discarded until both are yes -- and leaving drops them; back from a library view to the
@@ -236,8 +238,10 @@ describe("a write that fails part-way", () => {
 
 describe("a single save clicked between two writes", () => {
   test("goes between them, and the file gets both the tag and the save", async (t) => {
-    const ctx = await folderOf(t, 50);
+    const ctx = await folderOf(t, 75);
     await addTags(ctx, "Trips/Coast");
+    await answer(ctx);
+    // The first photo's chunk is written (one still waiting would hold its panel read-only); the second is out.
     ctx.document.dispatchEvent(new ctx.window.KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true, cancelable: true }));
     await flush(ctx.window, 8);
     const input = ctx.document.getElementById("input-add-tag");
@@ -248,12 +252,73 @@ describe("a single save clicked between two writes", () => {
     await flush(ctx.window, 8);
 
     await answer(ctx);
-    for (let i = 0; i < 20 && ctx.server.calls.filter((c) => c.url.includes("bulk-tags")).length < 2; i++) await flush(ctx.window, 2);
+    for (let i = 0; i < 20 && ctx.server.calls.filter((c) => c.url.includes("bulk-tags")).length < 3; i++) await flush(ctx.window, 2);
     const order = ctx.server.calls.filter((c) => /bulk-tags|save-metadata/.test(c.url)).map((c) => (c.url.includes("bulk") ? "bulk" : "save"));
-    assert.deepEqual(order, ["bulk", "save", "bulk"]);
+    assert.deepEqual(order, ["bulk", "bulk", "save", "bulk"]);
     const save = ctx.server.calls.find((c) => c.url.includes("save-metadata")).body;
     assert.deepEqual(save.tags, ["Trips/Coast", "Places/Beach"]);
     await answer(ctx);
+  });
+});
+
+describe("the open photo while its tag changes wait", () => {
+  const WAITING_ONE = "1 tag change is waiting for this photo. Edit it when it is written.";
+  const panel = (ctx) => {
+    const note = ctx.document.getElementById("photo-missing-note");
+    return {
+      editable: ["btn-edit-tags", "btn-edit-people", "btn-edit-date-taken"].every((id) => !ctx.document.getElementById(id).hasAttribute("inert")),
+      deletes: !ctx.document.getElementById("btn-delete-photo").hasAttribute("inert"),
+      said: note.classList.contains("hidden") ? "" : note.textContent,
+    };
+  };
+  const active = (ctx) => pageExports(ctx.window, "web/tagpup/state.js").state.activePhotoPath;
+  const arrow = async (ctx) => {
+    ctx.document.dispatchEvent(new ctx.window.KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true, cancelable: true }));
+    await flush(ctx.window, 8);
+  };
+  const openPhoto = async (ctx, i) => {
+    ctx.document.querySelector(`li[data-path="${pathOf(i).replace(/\\/g, "\\\\")}"]`).click();
+    await flush(ctx.window, 8);
+  };
+
+  test("a bulk click that includes it makes it read-only, saying so; viewing and the arrows go on; written, it is editable", async (t) => {
+    const ctx = await folderOf(t, 50);
+    await arrow(ctx);
+    assert.equal(active(ctx), pathOf(0));
+    assert.deepEqual(panel(ctx), { editable: true, deletes: true, said: "" });
+    await addTags(ctx, "Trips/Coast");
+    assert.deepEqual(panel(ctx), { editable: false, deletes: true, said: WAITING_ONE }, "the open photo's panel stayed editable under a change it does not draw");
+    await arrow(ctx);
+    assert.equal(active(ctx), pathOf(1), "the arrows stopped while changes wait");
+    assert.deepEqual(panel(ctx), { editable: false, deletes: true, said: WAITING_ONE });
+    await answer(ctx);
+    assert.deepEqual(panel(ctx), { editable: true, deletes: true, said: "" }, "the photo stayed read-only once its file was written");
+    assert.ok(ctx.document.querySelector("#detail-tags .tag-pill"), "the written tag is not drawn");
+  });
+
+  test("Cancel while a write is out gives back the panel of a photo whose changes were not sent", async (t) => {
+    const ctx = await folderOf(t, 60);
+    await addTags(ctx, "Trips/Coast");
+    await addTags(ctx, "Places/Harbour");
+    await openPhoto(ctx, 30);
+    assert.deepEqual(panel(ctx), { editable: false, deletes: true, said: "2 tag changes are waiting for this photo. Edit it when they are written." });
+    click(ctx.window, ctx.document.querySelector(".write-queue-entry[data-status='writing'] .write-queue-cancel"));
+    await flush(ctx.window, 4);
+    assert.deepEqual(panel(ctx), { editable: true, deletes: true, said: "" }, "the changes dropped still hold the panel");
+    await answer(ctx);
+  });
+
+  test("a failed write keeps the panel read-only until it is cancelled", async (t) => {
+    const ctx = await folderOf(t, 60);
+    await addTags(ctx, "Trips/Coast");
+    await openPhoto(ctx, 0);
+    assert.equal(panel(ctx).editable, false, "the file in the write out is editable");
+    await answer(ctx, { success: false, error: "The share did not answer" });
+    assert.deepEqual(panel(ctx), { editable: false, deletes: true, said: WAITING_ONE }, "the failed write's changes, given back, no longer hold the panel");
+    click(ctx.window, ctx.document.querySelector(".write-queue-entry[data-status='failed'] .write-queue-cancel"));
+    await flush(ctx.window, 4);
+    assert.deepEqual(panel(ctx), { editable: true, deletes: true, said: "" }, "the failed write's changes, cancelled, still hold the panel");
+    assert.equal(writes(ctx).length, 1, "a cancelled change was written");
   });
 });
 
@@ -526,7 +591,7 @@ describe("leaving asks about the changes it drops, no others", () => {
     await addTags(ctx, "Trips/Coast");
     ctx.document.getElementById("btn-show-in-library").click();
     await ctx.settle(100);
-    pendingOf(ctx).files.set("undo", { path: `${FOLDER}\\IMG_0049.JPG`, add: new Set(["Places/Undone"]), remove: new Set(), token: "u", actions: new Set(), folder: null });
+    pendingOf(ctx).files.set("undo", { path: `${FOLDER}\\IMG_0049.JPG`, add: new Set(["Places/Undone"]), remove: new Set(), panel: new Set(), token: "u", actions: new Set(), folder: null });
     ctx.window.history.back();
     await ctx.settle(300);
     assert.ok(ctx.confirms.some((m) => /Tag changes for 1 photo are not written yet/.test(m)), ctx.confirms.join("|"));
