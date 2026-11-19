@@ -11,6 +11,8 @@
  * - Back after swipes is the grid, its ids not asked again, the card swiped to in view.
  * - A file that is gone, a picture the PC could not read, a card that could not be read, a clip that will not play: a
  *   sentence, and the swipe goes on.
+ * - A picture that failed while the server was being updated is shown again once api.js has asked for it again, and
+ *   its sentence goes.
  *
  * Names hold spaces and apostrophes, as the live libraries' do. Every name here is made up.
  */
@@ -31,6 +33,16 @@ const wait = (window, ms) => new Promise((resolve) => window.setTimeout(resolve,
 
 async function settle(ctx, ms = 50) {
   await wait(ctx.window, ms);
+  await flush(ctx.window, 6);
+}
+
+/** Wait for `done()`, at most 10 s. */
+async function until(ctx, done, what) {
+  const end = Date.now() + 10000;
+  while (!done()) {
+    if (Date.now() > end) throw new Error(`waited 10 s for ${what}`);
+    await wait(ctx.window, 5);
+  }
   await flush(ctx.window, 6);
 }
 
@@ -238,5 +250,27 @@ describe("looking at a photo on the phone", () => {
     previous(ctx);
     await settle(ctx);
     assert.equal(el(ctx, "photo-name").textContent, "Rowan's Meet 299.jpg");
+  });
+
+  test("a picture that failed while the server was updated is shown again once it is asked again, its sentence gone", async (t) => {
+    const ctx = await phone(t, { count: 5 });
+    await openPhoto(ctx, 2);
+    pageExports(ctx.window, "web/common/api.js").imagesAfterAnUpdate.watch(ctx.document, { every: 5 });
+    ctx.server.first("/api/server", {}, { status: 503, headers: { "X-TagPup-Updating": "1" } });
+    const src = picture(ctx).getAttribute("src");
+
+    picture(ctx).dispatchEvent(new ctx.window.Event("error"));    // the server went away for its update
+    assert.ok(picture(ctx).classList.contains("hidden"));
+    assert.match(said(ctx), /^Could not load this photo/);
+    assert.doesNotMatch(said(ctx), /could not read/, "an update is not a file the PC could not read");
+    await until(ctx, () => ctx.server.urls().some((u) => u.includes("/api/server")), "the server to be asked");
+    ctx.server.routes.shift();                                     // and is back
+    await until(ctx, () => picture(ctx).getAttribute("src") !== src, "the picture to be asked again");
+    assert.ok(picture(ctx).getAttribute("src").startsWith(`${src}&_again=`));
+
+    picture(ctx).dispatchEvent(new ctx.window.Event("load"));
+    assert.ok(!picture(ctx).classList.contains("hidden"), "the picture is shown again");
+    assert.equal(said(ctx), "", "and what its failure said goes");
+    assert.equal(el(ctx, "photo-name").textContent, "Rowan's Meet 2.jpg");
   });
 });

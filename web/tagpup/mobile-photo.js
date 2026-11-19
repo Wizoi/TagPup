@@ -8,7 +8,8 @@
  * where the phone's own pinch enlarges it. A clip plays from /api/video-file, its poster shown until it does. Which file
  * is the card the Grid holds, or, for a card not asked yet (a window still loading, a reload), the card read by id; a
  * reply for a photo already swiped past is dropped. A missing file, a share that does not answer, a clip the phone
- * cannot play: a sentence, and the swipe goes on.
+ * cannot play: a sentence, and the swipe goes on. A picture that failed while the server was updated is asked again by
+ * api.js once it is back (imagesAfterAnUpdate): loaded, it is shown again and its sentence goes.
  */
 import { api } from './common/api.js';
 import { photoFileUrl, videoRoute } from './common/file-addresses.js';
@@ -49,6 +50,7 @@ function blank() {
     const picture = byId('photo-picture');
     picture.classList.add('hidden');
     picture.removeAttribute('src');
+    delete picture.dataset.photo;
 }
 
 /** Show `card`: its picture, or its clip with its poster; a file that is gone says so. */
@@ -65,11 +67,13 @@ function draw(card) {
     if (card.media !== 'video') {
         stopClip();
         picture.src = photoFileUrl(card, 1024);
+        picture.dataset.photo = String(card.id);    // whose picture a load is (api.js may ask it again)
         picture.classList.remove('hidden');
         return;
     }
     picture.classList.add('hidden');
     picture.removeAttribute('src');
+    delete picture.dataset.photo;
     const clip = byId('photo-clip');
     clip.classList.remove('hidden');
     const route = videoRoute(card);
@@ -146,7 +150,13 @@ export function wirePhoto() {
     picture.addEventListener('error', () => {
         if (!picture.getAttribute('src') || state.screen !== 'photo') return;
         picture.classList.add('hidden');
-        say('Could not load this photo: the PC could not read its file. Swipe on, or come back to it later.');
+        // Not "the PC could not read it": a server being updated fails a picture too, and api.js asks it again.
+        say('Could not load this photo just now. Swipe on, or come back to it later.');
+    });
+    picture.addEventListener('load', () => {
+        if (!picture.getAttribute('src') || !state.photo || picture.dataset.photo !== String(state.photo.id)) return;
+        picture.classList.remove('hidden');    // asked again after an update, and there now
+        say('');
     });
     clip.addEventListener('error', () => {
         if (!clip.getAttribute('src') || state.screen !== 'photo') return;
