@@ -147,22 +147,25 @@ function unsentCount() {
     return state.pending.files.size;
 }
 
-/** How many of `paths` have tag changes not written yet: waiting here, or in the chunk out. */
-function pendingAmong(paths) {
+/** The files with tag changes not written yet, by key: waiting here, or in the chunk out. */
+function unwritten() {
     const pending = state.pending;
-    const out = new Set((pending.out || []).map(entry => pathKey(entry.path)));
-    return paths.filter(path => pending.files.has(pathKey(path)) || out.has(pathKey(path))).length;
+    return new Set([...pending.files.keys(), ...(pending.out || []).map(entry => pathKey(entry.path))]);
 }
 
 /**
- * A Delete of `paths` waits for their tag changes (the selection's, bulk-edit.js, and the open photo's, photo.js
+ * A Delete of `paths` waits for their tag changes (a folder's selection, bulk-edit.js, and the open photo's, photo.js
  * deleteActivePhoto): else a chunk would write, or give back the ops of, a file that is gone, and the page would call a
- * photo deleted on purpose missing. Says so and answers true while any is not written; false when the delete may go on.
+ * photo deleted on purpose missing. A library view's selection is ids (every photo of the view, with Select all), which
+ * the page cannot match to the files waiting without their cards: it is asked with no `paths`, and waits for every change
+ * (in a view only the open photo's removals and an Undo, written in a moment). Says so and answers true while any is not
+ * written; false when the delete may go on.
  */
-export function deleteWaits(paths) {
-    const waiting = pendingAmong(paths);
+export function deleteWaits(paths = null) {
+    const keys = unwritten();
+    const waiting = paths ? paths.filter(path => keys.has(pathKey(path))).length : keys.size;
     if (!waiting) return false;
-    const which = paths.length === 1 ? 'this photo' : `${waiting.toLocaleString()} of these photos`;
+    const which = !paths ? photosWord(waiting) : paths.length === 1 ? 'this photo' : `${waiting.toLocaleString()} of these photos`;
     alert(`Tag changes for ${which} are not written yet: wait for them, or cancel them in the list of writes, then delete.`);
     return true;
 }

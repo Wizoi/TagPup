@@ -357,6 +357,7 @@ describe("V20: in a library view", () => {
     const files = new Map([[11, ["Cross Country", "Harbourside"]], [12, []]]);
     const ctx = await loadViewPage(t, { search: "?view=all", onPhoto: (id) => ({ photo: recordOf(id, { tags: (files.get(id) || []).slice() }) }) });
     ctx.out = [];
+    ctx.files = files;
     ctx.server.first("/api/photos/bulk-tags", () => new Promise((resolve) => ctx.out.push({ body: ctx.server.calls.at(-1).body, resolve })));
     ctx.answerWrite = async () => {
       const { body, resolve } = ctx.out.shift();
@@ -393,5 +394,20 @@ describe("V20: in a library view", () => {
     ctx.document.dispatchEvent(new ctx.window.KeyboardEvent("keydown", { key: "d", ctrlKey: true, bubbles: true, cancelable: true }));
     await ctx.settle(80);
     assert.deepEqual(ctx.saves().map((s) => s.tags), [["Harbourside"]], "Ctrl+D copied the tag the pill took off");
+  });
+
+  test("the selection's Delete while the open photo's removal is out is refused, as a folder's is (#3203)", async (t) => {
+    const ctx = await view(t);
+    ctx.alerts = [];
+    ctx.window.alert = (text) => ctx.alerts.push(text);
+    await ctx.openPhoto(11);
+    await ctx.takeOff("Cross Country");
+    ctx.cardById(11).querySelector(".thumbnail-checkbox").click();
+    ctx.document.getElementById("btn-delete-selection").click();
+    await ctx.settle(40);
+    assert.deepEqual(ctx.alerts, ["Tag changes for 1 photo are not written yet: wait for them, or cancel them in the list of writes, then delete."]);
+    assert.deepEqual(ctx.server.calls.filter((c) => c.url.includes("/selection/delete-check")), [], "the delete was asked of the server");
+    await ctx.answerWrite();
+    assert.deepEqual(ctx.files.get(11), ["Harbourside"]);
   });
 });

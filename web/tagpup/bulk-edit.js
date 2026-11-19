@@ -198,7 +198,7 @@ export async function deleteSelection() {
     if (!picked) return false;
     state.bulk.asking = true;
     try {
-        if (inFolder && !(await folderMayDelete(picked))) return false;
+        if (inFolder ? !(await folderMayDelete(picked)) : deleteWaits()) return false;
         setStatus('busy', `Looking where the files of ${itemsOf(picked.count, picked.kinds)} are...`);
         let where;
         try {
