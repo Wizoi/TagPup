@@ -308,8 +308,11 @@ class Lifecycle:
 
     def _drain_until(self, deadline, seconds, in_flight):
         logger.info("Draining for an update: taking no new work; %d request(s) in flight.", in_flight)
+        # Bounded by the deadline whatever a task's stop does (runtime.Background.stop): one still stopping is waited
+        # for, named, and the server takes work again, never left closed and not drained (2026-11-19).
+        stopping = []
         if self._background is not None:
-            self._background.stop(timeout=max(0.0, deadline - self._clock()))
+            stopping = self._background.stop(timeout=max(0.0, deadline - self._clock()))
         while True:
             with self._changed:
                 if not self._closed:
@@ -318,7 +321,9 @@ class Lifecycle:
                 # A batch claimed on a request's thread is that request: it is named once, with its photos. The settle
                 # thread's batch is no request.
                 requests = self._in_flight - batches.running_here(threads=set(self._serving))
-                waiting = (["%d request(s)" % requests] if requests > 0 else []) + self.busy()
+                busy = self.busy()
+                waiting = ((["%d request(s)" % requests] if requests > 0 else []) + busy
+                           + ["%s (still stopping)" % name for name in stopping if name not in busy])
                 if not waiting:
                     self._drained_at = self._clock()
                     logger.info("Drained: nothing in flight, nothing running.")

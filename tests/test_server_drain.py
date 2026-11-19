@@ -32,6 +32,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import own_home  # noqa: E402
 
 from tagpup import launcher  # noqa: E402
+from tagpup import runtime as runtimes  # noqa: E402
 from tagpup.web import lifecycle as lifecycles  # noqa: E402
 from tagpup.web import responses  # noqa: E402
 from tagpup.core.library import Library  # noqa: E402
@@ -533,6 +534,81 @@ class AnIndexsEndWaitingForTheLibrary(unittest.TestCase):
         self.assertTrue(queue.start([self.home.root], lambda folders, report: Result(), together=True).ok)
         queue.wait()
         self.assertEqual(job_runs.DONE, runs_service.get(self.library, run.id).outcome)
+
+
+class StuckTask:
+    """A background task whose stop does not return until it is let go: on Windows, a folder watch on a share that
+    stopped answering can block in watchdog's observer.stop() itself, which no timeout bounds."""
+
+    def __init__(self):
+        self.let_go = threading.Event()
+        self.stops = self.starts = 0
+
+    def start(self):
+        self.starts += 1
+
+    def stop(self, timeout=30):
+        self.stops += 1
+        self.let_go.wait()
+        return True
+
+    def busy(self):
+        return False
+
+
+class QuickTask(StuckTask):
+    def stop(self, timeout=30):
+        self.stops += 1
+        return True
+
+
+class AnUpdateWhileAShareIsAway(Base):
+    """2026-11-19: an install's drain logged "Draining for an update" and then neither "Drained" nor "Could not drain";
+    every later drain answered "another drain" for 22 minutes, until the owner had the old server ended by hand,
+    `GET /api/server` reading taking_work false, no request, nothing busy all the while. A background task whose stop
+    never returns held the drain past its deadline (runtime.Background.stop waited on it) with `_draining` set. On the
+    code before, test_the_drain_ends_at_its_deadline_and_the_server_takes_work_again failed: the first drain was still
+    running 5 s after its 1 s deadline."""
+
+    def setUp(self):
+        super().setUp()
+        self.stuck, self.quick = StuckTask(), QuickTask()
+        self.addCleanup(self.stuck.let_go.set)
+        self.lifecycle = Lifecycle(version="v", launcher_token=TOKEN, runtime=self.runtime,
+                                   background=runtimes.Background([(runtimes.FOLDER_WATCHER, self.stuck),
+                                                                   (runtimes.RECURRING_JOBS, self.quick)]))
+        self.addCleanup(self.lifecycle.resume)
+
+    def test_the_drain_ends_at_its_deadline_and_the_server_takes_work_again(self):
+        started = time.monotonic()
+        with self.assertLogs(lifecycles.logger, "WARNING") as logged:
+            first, first_answer = self.in_thread(lambda: self.lifecycle.drain(1, lease=LEASE))
+            self.wait_until(lambda: self.stuck.stops == 1)
+            second, second_answer = self.in_thread(lambda: self.lifecycle.drain(1, lease=LEASE))
+            first.join(5)
+            second.join(5)
+            self.assertFalse(first.is_alive(),
+                             "the drain did not end at its deadline: a stop that never returned held it")
+        self.assertLess(time.monotonic() - started, 3)
+        self.assertEqual({"drained": False, "waiting_for": ["folder watcher (still stopping)"]},
+                         first_answer[0])
+        self.assertIn("Could not drain in 1s (waiting for folder watcher (still stopping)); taking work "
+                      "again.", "\n".join(logged.output))
+        # The second, beside it, waited no longer than its own deadline.
+        self.assertFalse(second.is_alive())
+        self.assertEqual({"drained": False, "waiting_for": ["another drain"]}, second_answer[0])
+        self.assertTrue(self.lifecycle.status()["taking_work"], "left closed and not drained")
+        self.assertEqual((1, 1), (self.stuck.starts, self.quick.starts), "the background was not started again")
+        # The next drain is one of its own, not "another drain".
+        third = self.lifecycle.drain(1, lease=LEASE)
+        self.assertEqual(["folder watcher (still stopping)"], third["waiting_for"])
+
+    def test_stops_that_return_at_once_drain_it_and_leave_no_thread_running(self):
+        self.stuck.let_go.set()
+        self.assertEqual({"drained": True}, self.lifecycle.drain(1, lease=LEASE))
+        self.assertEqual((1, 1), (self.stuck.stops, self.quick.stops))
+        self.assertEqual([], [thread.name for thread in threading.enumerate()
+                              if thread.name.startswith(runtimes.STOPPING_THREAD)])
 
 
 if __name__ == "__main__":
