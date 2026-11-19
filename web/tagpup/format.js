@@ -9,7 +9,7 @@ export function takenOf(photo) {
 }
 
 /** The digits of a stored Date Taken ("2021:03:27 00:00:00", some with a zone after): year, month, day, hours, minutes, seconds. */
-const TAKEN_DIGITS = /^(\d{4})[: -](\d{2})[: -](\d{2})\s+(\d{2}):(\d{2}):(\d{2})/;
+export const TAKEN_DIGITS = /^(\d{4})[: -](\d{2})[: -](\d{2})\s+(\d{2}):(\d{2}):(\d{2})/;
 
 /**
  * When the open photo was taken, whole, for the person checking it is right: "3/27/21 12:00 AM", or "Unknown" for a photo
