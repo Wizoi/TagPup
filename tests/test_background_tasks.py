@@ -54,27 +54,36 @@ class TheRegistry(unittest.TestCase):
         self.assertEqual([], background.stop())
         self.assertEqual(["start watcher", "stop watcher"], log)
 
-    def test_stops_them_all_within_one_deadline(self):
-        given = []
+    def test_stops_them_all_within_one_deadline_whatever_a_stop_does(self):
+        """One deadline in all, not one per task (#721): a drain's waits add up to what it was given. A stop that does
+        not keep to its timeout -- on Windows a folder watch on a share that stopped answering blocks in watchdog's
+        observer.stop() -- is named and left to end on its own: on the code before, Background.stop waited on it, and
+        an install's drain never ended (2026-11-19)."""
+        given, let_go = [], threading.Event()
+        self.addCleanup(let_go.set)
 
-        class Slow:
+        class Stuck:
             def start(self):
                 pass
 
             def stop(self, timeout=30):
                 given.append(timeout)
-                time.sleep(min(timeout, 1.0))
-                return timeout >= 1.0
+                let_go.wait()
+                return True
 
             def busy(self):
                 return False
-        background = runtimes.background(Runtime(), {"one": lambda runtime: Slow(), "two": lambda runtime: Slow()})
-        still = background.stop(timeout=1.0)
-        # What each was given, not how long it took: a busy machine's seconds are not the deadline's (#721).
-        self.assertEqual(2, len(given))
-        self.assertLessEqual(given[0], 1.0)
-        self.assertLess(given[1], 0.1, "each task was given the whole timeout")
-        self.assertIn("two", still)
+
+        class Quick(Stuck):
+            def stop(self, timeout=30):
+                given.append(timeout)
+                return True
+        background = runtimes.background(Runtime(), {"one": lambda runtime: Stuck(), "two": lambda runtime: Quick()})
+        started = time.monotonic()
+        still = background.stop(timeout=0.5)
+        self.assertLess(time.monotonic() - started, 2, "a stop that never returned held the others")
+        self.assertEqual(["one"], still)
+        self.assertEqual([0.5, 0.5], given)
 
     def test_says_which_are_busy(self):
         log = []

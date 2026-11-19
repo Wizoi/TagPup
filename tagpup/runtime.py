@@ -280,6 +280,10 @@ def watch_folders(library):
     return sync_service.watch_folders(library, peek_settings(library).roots)
 
 
+#: The name of the thread each background task's stop runs on (Background.stop), followed by the task's.
+STOPPING_THREAD = "Stopping "
+
+
 class Background:
     """The background tasks one process runs: [(name, task)]."""
 
@@ -304,11 +308,25 @@ class Background:
 
     def stop(self, timeout=30):
         """Stop each, waiting up to `timeout` in all -- one deadline, not one per task, so
-        a drain's waits add up to what it was given. The names of those still running."""
+        a drain's waits add up to what it was given. The names of those still running: a task
+        whose stop said so, or whose stop had not returned by the deadline. Each stop runs on a
+        daemon thread of its own, so one that never returns (a folder watch on a share that does
+        not answer) cannot hold a drain past its deadline (2026-11-19); it is left to end on its own."""
         deadline = time.monotonic() + timeout
-        still = []
+        stopping = []
         for name, task in self._tasks:
-            if not task.stop(max(0.0, deadline - time.monotonic())):
+            said = []
+            thread = threading.Thread(target=lambda task=task, said=said: said.append(task.stop(timeout)),
+                                      name=STOPPING_THREAD + name, daemon=True)
+            thread.start()
+            stopping.append((name, thread, said))
+        still = []
+        for name, thread, said in stopping:
+            thread.join(max(0.0, deadline - time.monotonic()))
+            if thread.is_alive():
+                logger.warning("The %s did not stop in %.3gs; left to stop on its own.", name, timeout)
+                still.append(name)
+            elif not said or not said[0]:
                 still.append(name)
         return still
 
