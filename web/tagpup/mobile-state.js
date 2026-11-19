@@ -25,6 +25,9 @@ export const state = {
     photos: null,
     // The card of the photo the Photo screen shows, null while it is read (mobile-photo.js).
     photo: null,
+    // The Photo screen's read of the cards around the photo open, while it is out: { lib, ids (a Set), reply }; a swipe
+    // onto a photo it names waits for it rather than asking again (mobile-photo.js).
+    cardsAsked: null,
     // The Grid's windowed grid (vgrid.js), made once as the page is wired.
     grid: null,
     // How many times the library list was asked for: a reply to an older ask is dropped.

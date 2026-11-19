@@ -7,7 +7,8 @@
  *   whole in the shared zoom.
  * - A swipe is the shared one (web/common/swipe.js): each lands one photo on, in the step the photo was opened in, so
  *   rapid swipes are as many photos and no extra Back; the first and the last photo go no further.
- * - A photo whose card the grid has not asked yet is read by id; a reply for a photo swiped past is dropped.
+ * - A photo whose card the grid has not asked yet is read with the cards around it, kept in the view as the grid's own:
+ *   80 swipes past the grid's window are a few reads, not 80 (#3151); a reply for a photo swiped past is dropped.
  * - A photo deleted on the PC while it is looked at (a card window's empty reply drops it from the view): a swipe
  *   still steps on, from where it was.
  * - Back after swipes is the grid, its ids not asked again, the card swiped to in view.
@@ -59,11 +60,13 @@ function cardOf(id, extra = {}) {
 
 /**
  * The page on a library whose keyword holds `count` photos, the Grid given a phone's layout (jsdom has none): 3
- * columns, 600 px of view. `card(id)` answers each card, null for a photo the library no longer has; a read of one card
- * alone (the Photo screen's) is held until released when `holdOne`.
+ * columns, 600 px of view. `card(id)` answers each card, null for a photo the library no longer has; a read of cards
+ * sent while the Photo screen shows is held until released when `holdOne`.
  */
 async function phone(t, { count = 2000, card = (id) => cardOf(id), holdOne = false } = {}) {
   const held = [];
+  let page = null;
+  const onPhoto = () => Boolean(page) && !page.document.querySelector('[data-screen="photo"]').classList.contains("hidden");
   const server = new FakeServer()
     .on("/api/databases", { databases: ["alpha", "beta"] })
     .on("/api/library/navigator?section=keywords", KEYWORDS)
@@ -74,9 +77,10 @@ async function phone(t, { count = 2000, card = (id) => cardOf(id), holdOne = fal
     .on("/api/library/cards", (url) => {
       const ids = decodeURIComponent((url.match(/ids=([^&]+)/) || [])[1] || "").split(",").map(Number);
       const body = { cards: ids.map(card).filter(Boolean) };
-      return holdOne && ids.length === 1 ? new Promise((resolve) => held.push({ id: ids[0], go: () => resolve(body) })) : body;
+      return holdOne && onPhoto() ? new Promise((resolve) => held.push({ id: ids[0], ids, go: () => resolve(body) })) : body;
     });
   const ctx = await loadApp("phone", { t, server, url: PAGE });
+  page = ctx;
   const section = ctx.document.querySelector('[data-screen="grid"]');
   const here = { scrollTop: 0, viewport: 600, columns: 3, cardHeight: 130, rowGap: 4, gridTop: 120, cardWidth: 120, columnGap: 4 };
   Object.defineProperty(section, "scrollTop", { get: () => here.scrollTop, set: (v) => { here.scrollTop = v; }, configurable: true });
@@ -135,10 +139,14 @@ describe("looking at a photo on the phone", () => {
       "the library's picture at 1024, its stamp the card's");
     const steps = ctx.window.history.length;
     const ids = idsAsked(ctx).length;
+    const cardReads = () => ctx.server.urls().filter((u) => u.includes("/api/library/cards")).length;
+    const reads = cardReads();
 
     for (let i = 0; i < 80; i += 1) next(ctx);
     previous(ctx);
     await settle(ctx);
+    assert.ok(cardReads() - reads <= 3, `80 swipes read the cards around them a few times, not each (${cardReads() - reads})`);
+    assert.ok(pageState(ctx).photos.cards.has(79), "a card read for a swipe is kept in the view, the grid's own");
 
     assert.deepEqual({ ...pageState(ctx).place }, { id: 80, at: 79 });
     assert.deepEqual({ ...ctx.window.history.state.place }, { id: 80, at: 79 }, "the step holds the photo swiped to");
@@ -195,8 +203,8 @@ describe("looking at a photo on the phone", () => {
     assert.ok(picture(ctx).classList.contains("hidden"), "no picture of another photo either");
     next(ctx);                                       // photo 101, before 100's card has come
     await settle(ctx);
-    const asked = ctx.held.map((each) => each.id);
-    assert.deepEqual(asked.slice(-2), [100, 101]);
+    assert.ok(ctx.held.at(-1).ids.includes(100) && ctx.held.at(-1).ids.includes(101), "one read out names both: none sent again");
+    assert.ok(ctx.held.length <= 4, `the photos swiped through are read a window at a time (${ctx.held.length})`);
 
     ctx.held.at(-1).go();
     await settle(ctx);
@@ -210,11 +218,11 @@ describe("looking at a photo on the phone", () => {
     let deleted = false;
     const ctx = await phone(t, { card: (id) => (deleted && id === 250 ? null : cardOf(id)) });
     await openPhoto(ctx, 1);
+    deleted = true;                                  // on the PC, before the phone reads its card
     for (let i = 0; i < 249; i += 1) next(ctx);
     await settle(ctx);
-    assert.equal(el(ctx, "photo-name").textContent, "Rowan's Meet 250.jpg");
+    assert.equal(said(ctx), "This photo is no longer in the library.");
 
-    deleted = true;                                  // on the PC
     ctx.window.history.back();                       // the grid asks the window around it: its card is not there
     await settle(ctx, 400);
     assert.ok(!pageState(ctx).photos.ids.includes(250), "the view dropped it");
@@ -254,7 +262,8 @@ describe("looking at a photo on the phone", () => {
     const card = (id) => (id === 2 ? cardOf(id, { stale: "missing" })
       : id === 4 ? cardOf(id, { name: "Wren's Kite.mp4", media: "video" }) : cardOf(id));
     const ctx = await phone(t, { count: 300, card });
-    ctx.server.first("/api/library/cards?ids=300", { error: "The library is busy." }, { status: 500 });
+    // A read naming photo 300 fails: the last photo's card, and those read with it, cannot be read.
+    ctx.server.first(/\/api\/library\/cards\?ids=(?:\d+,)*300(?:,|$)/, { error: "The library is busy." }, { status: 500 });
     await openPhoto(ctx, 1);
 
     next(ctx);
@@ -286,6 +295,7 @@ describe("looking at a photo on the phone", () => {
     await settle(ctx);
     assert.equal(el(ctx, "photo-at").textContent, "300 of 300");
     assert.match(said(ctx), /^Could not load this photo\./);
+    ctx.server.routes.shift();                       // the library answers again: a swipe reads anew
     previous(ctx);
     await settle(ctx);
     assert.equal(el(ctx, "photo-name").textContent, "Rowan's Meet 299.jpg");
