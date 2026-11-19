@@ -1,0 +1,273 @@
+/**
+ * The phone's Edit sheet over the Photo screen (docs/plans/phone-viewer.md, Screens 5): the photo's people and keywords
+ * as chips, an add box listing the library's tags that match what is typed, its title and its Date Taken, one Save.
+ *
+ * It edits the photo as /api/library/photo reads it when the sheet opens (the file's stamp and what it holds), not the
+ * Grid's card. A chip's x waits five seconds behind an Undo before anything is sent; leaving the photo (a swipe, Back,
+ * another screen) or the page sends it then, never drops it. A tag is added or taken off through /api/photos/bulk-tags,
+ * against what the file holds, so no stamp; the title and Date Taken through save-metadata (web/common/photo-write.js)
+ * with the stamp, which the server refuses when the file changed since it was read: nothing is written, the sheet says
+ * so and reads the photo again, the text typed kept. Each write of the page waits for the one before it (state.writing).
+ */
+import { api } from './common/api.js';
+import { buildElement, replaceContent } from './common/dom.js';
+import { postPhotoMetadata, takeWritten } from './common/photo-write.js';
+import { baseName, pathKey } from './common/paths.js';
+import { PeopleDirectory, leafOf, photoAlreadyHas, rootOf, sortedTags } from './common/vocabulary.js';
+import { state } from './mobile-state.js';
+
+const byId = (id) => document.getElementById(id);
+const UNDO_MS = 5000;
+const MATCHES = 8;
+
+function say(text) {
+    byId('edit-problem').textContent = text;
+    byId('edit-problem').classList.toggle('hidden', !text);
+}
+
+/** A failure as the owner reads it: the server's sentence, or a connection that dropped. */
+function why(err) {
+    return err instanceof TypeError ? 'no connection. Try again.' : (err && err.message) || 'try again.';
+}
+
+/** Run `job` after every write sent before it; resolves what it resolves, rejects with its failure. */
+function inTurn(job) {
+    const run = (state.writing || Promise.resolve()).then(job);
+    const tail = run.then(() => {}, () => {});
+    state.writing = tail;
+    tail.then(() => {
+        if (state.writing === tail) state.writing = null;
+    });
+    return run;
+}
+
+const isPerson = (tag) => Boolean(state.people && state.people.ofTag(tag));
+const sheetOf = (record) => Boolean(state.edit && state.edit.record === record);
+
+/** A line at the foot of the page that outlives the sheet: `undo` gives it an Undo; it goes after `ms`, or by `close()`. */
+function toast(text, undo = null, ms = UNDO_MS) {
+    const line = buildElement('div', { className: 'edit-toast' }, [buildElement('span', { text })]);
+    const close = () => line.remove();
+    if (undo) {
+        line.append(buildElement('button', { className: 'edit-undo', text: 'Undo', attrs: { type: 'button' } }));
+        line.lastChild.addEventListener('click', () => { close(); undo(); });
+    }
+    byId('edit-toasts').append(line);
+    window.setTimeout(close, ms);
+    return close;
+}
+
+/** Add `add` or take off `remove` in the file of `record`; its tags, stamp and base become the file's. */
+async function writeTags(record, change) {
+    const path = record.path;
+    const res = await api.fetch('/api/photos/bulk-tags', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, keepalive: true,
+        body: JSON.stringify({ changes: { [path]: change } }),
+    });
+    const data = await api.answered(res, 'The tags were not written.');
+    const of = (map) => Object.entries(map || {}).find(([each]) => pathKey(each) === pathKey(path));
+    const written = of(data.written);
+    if (!written) throw new Error('this file is not where the library last saw it.');
+    record.tags = written[1].slice();
+    takeWritten(record, (of(data.stamps) || [])[1], record.tags);
+    if (sheetOf(record)) drawChips();
+}
+
+/** Send a removal waiting behind its Undo now. */
+function sendRemoval(removal) {
+    window.clearTimeout(removal.timer);
+    removal.close();
+    state.removals = state.removals.filter((each) => each !== removal);
+    inTurn(() => writeTags(removal.record, { remove: [removal.tag] })).catch((err) => {
+        if (sheetOf(removal.record)) drawChips();    // the chip is back
+        toast(`Not taken off ${leafOf(removal.tag)}: ${why(err)}`, null, UNDO_MS * 2);
+    });
+}
+
+/** Take `tag` off the sheet's photo in five seconds, unless Undo is tapped first. */
+function removeLater(tag) {
+    const record = state.edit.record;
+    const removal = { record, tag };
+    removal.close = toast(`Took off ${leafOf(tag)}.`, () => {
+        window.clearTimeout(removal.timer);
+        state.removals = state.removals.filter((each) => each !== removal);
+        if (sheetOf(record)) drawChips();
+    });
+    removal.timer = window.setTimeout(() => sendRemoval(removal), UNDO_MS);
+    state.removals.push(removal);
+    drawChips();
+}
+
+function drawChips() {
+    const record = state.edit.record;
+    const going = new Set(state.removals.filter((each) => each.record === record).map((each) => each.tag));
+    const tags = sortedTags((record.tags || []).filter((tag) => !going.has(tag)));
+    const twice = (tag) => tags.filter((each) => leafOf(each).toLowerCase() === leafOf(tag).toLowerCase()).length > 1;
+    const chip = (tag) => buildElement('span', { className: 'edit-chip', title: tag }, [
+        twice(tag) ? `${leafOf(tag)} (${rootOf(tag)})` : leafOf(tag),
+        buildElement('button', { className: 'edit-chip-x', text: '×', data: { tag }, attrs: { type: 'button', 'aria-label': `Take off ${tag}` } }),
+    ]);
+    replaceContent(byId('edit-people'), ...tags.filter(isPerson).map(chip));
+    replaceContent(byId('edit-keywords'), ...tags.filter((tag) => !isPerson(tag)).map(chip));
+}
+
+/** The library's tags that match the text typed and the photo does not hold, as buttons. */
+function drawMatches() {
+    const text = byId('edit-add').value.trim().toLowerCase();
+    const record = state.edit && state.edit.record;
+    const found = !text || !record || !state.tags ? [] : state.tags.filter((tag) => tag.toLowerCase().includes(text)
+        && !photoAlreadyHas(record, tag, isPerson, state.people)).slice(0, MATCHES);
+    replaceContent(byId('edit-matches'), ...found.map((tag) => buildElement('button', {
+        className: 'edit-match', data: { tag }, attrs: { type: 'button' } }, [leafOf(tag),
+        tag === leafOf(tag) ? null : buildElement('span', { className: 'edit-match-path', text: ` ${tag}` })])));
+}
+
+function addTag(tag) {
+    const record = state.edit.record;
+    const typed = byId('edit-add').value;
+    byId('edit-add').value = '';
+    drawMatches();
+    say(`Adding ${leafOf(tag)}...`);
+    inTurn(() => writeTags(record, { add: [tag] })).then(() => {
+        if (sheetOf(record)) say('');
+    }, (err) => {
+        if (!sheetOf(record)) return;
+        say(`Not added: ${why(err)}`);
+        if (!byId('edit-add').value) byId('edit-add').value = typed;    // the text typed, to try again
+    });
+}
+
+/** The Date Taken as the file holds it, "YYYY:MM:DD HH:MM:SS", as the date and time inputs answer it. */
+function whenOf(taken) {
+    const found = /^(\d{4}):(\d{2}):(\d{2}) (\d{2}:\d{2}:\d{2})/.exec(taken || '');
+    return found ? { date: `${found[1]}-${found[2]}-${found[3]}`, time: found[4] } : { date: '', time: '' };
+}
+
+const fullTime = (time) => (time.length === 5 ? `${time}:00` : time);    // a time input may leave out ":00"
+const typedWhen = () => `${byId('edit-date').value}T${fullTime(byId('edit-time').value)}`;
+const keptWhen = (record) => { const when = whenOf(record.taken); return `${when.date}T${when.time}`; };
+
+/** Do the title or the date say anything the photo does not hold? */
+export function editDirty() {
+    const record = state.edit && state.edit.record;
+    return Boolean(record) && (byId('edit-title').value !== (record.title || '') || typedWhen() !== keptWhen(record));
+}
+
+/** The fields as `record` holds them; with `keepTyped`, the title and date typed are left as they are. */
+function drawRecord(record, keepTyped) {
+    drawChips();
+    drawMatches();
+    say(record.missing ? 'This file is not where the library last saw it: moved or deleted on the PC.' : '');
+    byId('edit-when').classList.toggle('hidden', !(record.writes || []).includes('date'));
+    if (keepTyped) return;
+    byId('edit-title').value = record.title || '';
+    const when = whenOf(record.taken);
+    byId('edit-date').value = when.date;
+    byId('edit-time').value = when.time;
+}
+
+/** Read the sheet's photo as its file is now. */
+function readRecord(keepTyped = false) {
+    const edit = state.edit;
+    api.fetch(`/api/library/photo?id=${edit.id}`)
+        .then((res) => api.answered(res, 'Could not read this photo.'))
+        .then((body) => {
+            if (state.edit !== edit || !body || !body.photo) return;
+            edit.record = body.photo;
+            drawRecord(edit.record, keepTyped);
+        })
+        .catch((err) => {
+            if (state.edit === edit && !keepTyped) say(`Could not read this photo: ${why(err)}`);
+        });
+}
+
+/** The library's tags and people, asked once a page; a failure is asked again at the next open. */
+function readVocabulary() {
+    if (state.tags) return;
+    Promise.all(['/api/tags', '/api/people'].map((route) => api.fetch(route).then((res) => api.answered(res, 'no tags.'))))
+        .then(([tags, people]) => {
+            state.people = new PeopleDirectory(people);
+            state.tags = Array.isArray(tags) ? tags : [];
+            if (state.edit && state.edit.record) drawRecord(state.edit.record, true);
+        }, () => {});
+}
+
+export function openEdit() {
+    const place = state.place;
+    if (state.screen !== 'photo' || !place || !Number.isInteger(place.id)) return;
+    state.edit = { id: place.id, record: null, saving: false };
+    byId('edit-sheet').classList.remove('hidden');
+    for (const id of ['edit-people', 'edit-keywords', 'edit-matches']) replaceContent(byId(id));
+    for (const id of ['edit-add', 'edit-title', 'edit-date', 'edit-time']) byId(id).value = '';
+    say('Reading this photo...');
+    readVocabulary();
+    readRecord();
+}
+
+function closeEdit() {
+    state.edit = null;
+    byId('edit-sheet').classList.add('hidden');
+}
+
+/** Another photo or screen is shown, or the page goes: every removal waiting is sent, the sheet closes. */
+export function leaveEdit() {
+    state.removals.slice().forEach(sendRemoval);
+    closeEdit();
+}
+
+/** The one Save: the title and the Date Taken, named by the stamp of the file as it was read. */
+function save() {
+    const edit = state.edit;
+    if (!edit || !edit.record || edit.saving || !editDirty()) return;
+    const record = edit.record;
+    const fields = { title: byId('edit-title').value };
+    if (typedWhen() !== keptWhen(record)) fields.date_taken = typedWhen();
+    if (fields.date_taken && !(byId('edit-date').value && byId('edit-time').value)) {
+        say('Give the date and the time it was taken.');
+        return;
+    }
+    edit.saving = true;
+    say('Saving...');
+    inTurn(() => postPhotoMetadata(record, fields)).then((data) => {
+        record.title = fields.title;
+        if (data.taken) record.taken = data.taken;
+        const card = state.photos && state.photos.cards.get(edit.id);
+        for (const held of [card, state.photo && state.photo.id === edit.id ? state.photo : null]) {
+            if (!held) continue;    // the photo's card, named and stamped as its file is now (a title can rename it)
+            Object.assign(held, { path: data.new_path || held.path, mtime: record.mtime, taken: record.taken });
+            held.name = held.filename = baseName(held.path);
+        }
+        if (data.new_path) record.path = data.new_path;
+        if (state.edit === edit) {
+            drawRecord(record, false);
+            say('Saved.');
+        }
+    }, (err) => {
+        if (state.edit !== edit) return;
+        say(err.changedOnDisk ? 'Not saved: this photo changed on the PC since it was read. It was read again; your text is'
+            + ' kept. Look, then Save again.' : `Not saved: ${why(err)}`);
+        if (err.changedOnDisk) readRecord(true);
+    }).finally(() => {
+        edit.saving = false;
+    });
+}
+
+export function wireEdit() {
+    byId('photo-edit').addEventListener('click', openEdit);
+    byId('edit-save').addEventListener('click', save);
+    byId('edit-close').addEventListener('click', () => {
+        if (!editDirty() || window.confirm('Close without saving the title and date?')) closeEdit();
+    });
+    byId('edit-add').addEventListener('input', drawMatches);
+    byId('edit-matches').addEventListener('click', (event) => {
+        const match = event.target.closest('.edit-match');
+        if (match && state.edit && state.edit.record) addTag(match.dataset.tag);
+    });
+    for (const id of ['edit-people', 'edit-keywords']) {
+        byId(id).addEventListener('click', (event) => {
+            const x = event.target.closest('.edit-chip-x');
+            if (x && state.edit && state.edit.record) removeLater(x.dataset.tag);
+        });
+    }
+    window.addEventListener('pagehide', leaveEdit);
+}

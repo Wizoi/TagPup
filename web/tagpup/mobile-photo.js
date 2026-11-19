@@ -157,7 +157,7 @@ export function showPhoto() {
 
 /** The next photo of the view (1) or the one before (-1); nothing at its first or last, or with no view held (a reload). */
 export function stepPhoto(delta) {
-    if (state.screen !== 'photo') return;
+    if (state.screen !== 'photo' || state.edit) return;    // the Edit sheet open: Close it first
     const lib = state.photos;
     const next = landing(lib, state.place, delta);
     if (next < 0) return;

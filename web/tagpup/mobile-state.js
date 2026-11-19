@@ -28,6 +28,15 @@ export const state = {
     // The Photo screen's read of the cards around the photo open, while it is out: { lib, ids (a Set), reply }; a swipe
     // onto a photo it names waits for it rather than asking again (mobile-photo.js).
     cardsAsked: null,
+    // The Edit sheet open (mobile-edit.js): { id, record (as /api/library/photo read it), saving }; null when shut.
+    edit: null,
+    // The tail of the page's writes, one at a time in the order sent; null when none is out.
+    writing: null,
+    // Chips taken off and not sent yet, each behind its Undo: { record, tag, timer, close }.
+    removals: [],
+    // The library's tags (/api/tags) and its people (a PeopleDirectory of /api/people), read once; null until then.
+    tags: null,
+    people: null,
     // The Grid's windowed grid (vgrid.js), made once as the page is wired.
     grid: null,
     // How many times the library list was asked for: a reply to an older ask is dropped.
