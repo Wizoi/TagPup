@@ -23,7 +23,7 @@ the value after), and the picture's size before it is the size the file shows no
 import logging
 
 from tagpup.core import fields
-from tagpup.core.orientation import ROTATED_ORIENTATION
+from tagpup.core.orientation import ROTATED_ORIENTATION, reoriented, upright_size
 from tagpup.files import images
 from tagpup.store import embeddings, faces, faces_detected, photo_fingerprints
 
@@ -66,13 +66,12 @@ def follower(row, state):
         return None
     forward = state == "done"
     was, now = (row.before, row.after) if forward else (row.after, row.before)
-    direction = direction_between(was.get(FIELD), now.get(FIELD))
     turn = None
     if not forward and row.turned:
         # Taken out of its change after it was done (file_changes._read_back): exactly the turn that was made, back.
-        done, width, height = row.turned
-        turn = ("right" if done == "left" else "left", height, width)
-    elif direction:
+        width, height, done_from, done_to = row.turned
+        turn = (width, height, done_to, done_from)
+    elif direction_between(was.get(FIELD), now.get(FIELD)):
         try:
             width, height, oriented, _turn = images.shown_shape(row.path)
         except Exception as problem:
@@ -80,14 +79,15 @@ def follower(row, state):
             logger.warning("%s: could not tell whether its face boxes turn: %s", row.named(), problem)
             oriented = False
         if oriented:
-            # The picture before the turn was as wide as the file shows it tall.
-            turn = (direction, height, width)
+            # The file shows its picture under the Orientation it holds now; its stored pixels are that size turned back.
+            new = orientation(now.get(FIELD))
+            turn = (*upright_size(width, height, new), orientation(was.get(FIELD)), new)
 
     def follow(conn):
         embeddings.forget(conn, row.path)
         photo_fingerprints.forget(conn, row.path)   # the decode the fingerprint hashed turns too
         faces.forget_crops(conn, row.path)
         faces_detected.forget(conn, row.path)
-        row.followed = faces.turn_boxes_in(conn, row.path, *turn) if turn else 0
+        row.followed = faces.turn_boxes_in(conn, row.path, lambda box: reoriented(box, *turn)) if turn else 0
         row.turned = turn if forward else None
     return follow

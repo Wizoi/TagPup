@@ -1,5 +1,5 @@
 """What a photo's EXIF Orientation (1 to 8) does to its picture: the one statement of how a point of the pixels as stored
-lands on the picture as a person sees it, and of the Orientation a quarter turn leaves.
+lands on the picture as a person sees it, and of the Orientation a quarter turn or a mirror leaves.
 
 A face box is kept in the pixels Pillow shows a photo in (tagpup.files.images.shown_shape): the stored pixels, which an
 Orientation change leaves where they are -- except a TIFF, whose Orientation Pillow applies as it loads it, so its boxes
@@ -22,6 +22,11 @@ ROTATED_ORIENTATION = {
     "left": {1: 8, 2: 5, 3: 6, 4: 7, 5: 4, 6: 1, 7: 2, 8: 3},
     "right": {1: 6, 2: 7, 3: 8, 4: 5, 5: 2, 6: 3, 7: 4, 8: 1},
 }
+
+#: The EXIF Orientation a photo has after it is mirrored left to right as it is shown, by the one it had before: what is
+#: shown for the new value is what was shown for the old one flipped (ImageOps.mirror), checked the same way. Mirrored twice
+#: is where it started.
+MIRRORED = {1: 2, 2: 1, 3: 4, 4: 3, 5: 6, 6: 5, 7: 8, 8: 7}
 
 #: The Orientations that swap a picture's width and height as it is shown.
 TRANSPOSED = frozenset({5, 6, 7, 8})
@@ -71,6 +76,13 @@ def box_to_stored(box, stored_w, stored_h, orientation):
     `stored_h`) in the stored pixels: `to_upright` backwards."""
     u1, v1, u2, v2 = box
     return _corners(_stored(u1, v1, stored_w, stored_h, orientation), _stored(u2, v2, stored_w, stored_h, orientation))
+
+
+def reoriented(box, stored_w, stored_h, was, now):
+    """The box [x1, y1, x2, y2] of the picture shown under Orientation `was` on the same stored pixels (a picture `stored_w`
+    x `stored_h`) shown under `now`: where a face box of a picture shown as it is stored (a TIFF) goes when the file's
+    Orientation changes, a quarter turn and a mirror alike (tagpup.services.rotation)."""
+    return to_upright(box_to_stored(box, stored_w, stored_h, was), stored_w, stored_h, now)
 
 
 def area_of(box, width, height):
