@@ -99,6 +99,7 @@ function canPress(button) {
 function pressDelete(e) {
     if (e.repeat || e.defaultPrevented) return;
     if (keystrokeBelongsToField(e.target) || e.target === photoSearch || imageZoomOpen()) return;
+    if (state.faceBoxes.open !== null || ownsItsKeys(document.activeElement)) return;
     const button = [btnDeletePhoto, btnDeleteSelection].find(canPress);
     if (!button) return;
     e.preventDefault();

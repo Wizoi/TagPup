@@ -111,4 +111,16 @@ describe("the Delete key where the red Delete button shows", () => {
     assert.equal(ctx.asked.length, 0, "Delete asked where the button could not be pressed");
     assert.equal(ctx.sent(), 0);
   });
+
+  test("with focus in a menu that owns its keys it deletes nothing", async (t) => {
+    const ctx = await onSecondPhoto(t);
+    const button = ctx.document.querySelector("#sidebar-switch button");
+    button.focus();
+    assert.equal(ctx.document.activeElement, button, "the menu button took no focus");
+    const event = press(ctx.window, button, "Delete");
+    await flush(ctx.window, 6);
+    assert.equal(ctx.asked.length, 0, "Delete asked while a menu that owns its keys had the focus");
+    assert.equal(ctx.sent(), 0);
+    assert.equal(event.defaultPrevented, false);
+  });
 });
