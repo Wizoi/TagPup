@@ -260,9 +260,11 @@ class IndexQueue:
         """The job whose folders overlap `folder` -- it, a folder above it, or a folder below it, any folder of a batch
         (`together`) -- running, its bake included, or waiting: {"status": "running" or "queued", "message", "folder"},
         `folder` the job's folder that overlaps; None when none does. What a removal of the folder is refused for
-        (tagpup.web.folder_routes): the index would find its folder no longer the library's at its next row (NotHeld),
-        and its bake would write the files of photos whose rows are gone. pending() and active() name a batch by its
-        first folder only, so they cannot answer this."""
+        (tagpup.web.folder_routes): the index would be refused at its next batch (store.photos.record_indexed raises
+        NotHeld; the batch makes no rows) and stop, failed, part-way, and its bake would write the files of photos whose
+        rows are gone. It sees only this queue: a CLI index in another process is not here, and a removal landing
+        between a run's end (`_progress` cleared) and its `_queue_what_was_missed` passes it, the re-run then refused
+        the same way. pending() and active() name a batch by its first folder only, so they cannot answer this."""
         return self._job_of(folder, overlapping=True)
 
     def _job_of(self, folder, overlapping):

@@ -80,8 +80,10 @@ def folder_remove():
     (tagpup.services.faces.remove_folder). The photo files are never touched.
 
     Refused, 409, while the folder, a folder above it or one below it waits in this library's index queue or is being
-    indexed (IndexQueue.overlaps): the run would find its folder no longer the library's at its next row and fail
-    part-way. Another library's queue is its own: a library holding the same folder removes it."""
+    indexed (IndexQueue.overlaps): the run would otherwise be refused at its next batch (store.photos.record_indexed,
+    NotHeld: no rows made) and stop, failed, part-way. What the queue cannot see -- a CLI index in another process, a
+    removal between a run's end and the re-run of what it missed -- goes ahead, and that index is refused the same way
+    at its next batch. Another library's queue is its own: a library holding the same folder removes it."""
     library = state.require()
     body = request.get_json(silent=True) or {}
     folder_path = body.get("folder_path")

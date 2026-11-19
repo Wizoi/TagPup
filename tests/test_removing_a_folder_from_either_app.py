@@ -2,8 +2,9 @@
 
 Both apps serve the one route (tagpup.web.folder_routes): the folder's rows and faces go, its files stay. While the
 folder, or a folder above it, waits in the library's index queue or is being indexed, the removal is refused with a
-sentence and nothing goes: the run would otherwise find its folder no longer the library's at its next row (NotHeld)
-and fail part-way. A second library holding the same folder is its own: an index of the folder in one never refuses
+sentence and nothing goes: the run would otherwise be refused at its next batch (store.photos.record_indexed, NotHeld:
+no rows made) and stop, failed, part-way. A CLI index in another process is not in the queue: the removal goes ahead,
+and the index stops at its next batch, saying why (AnIndexInTheCli). A second library holding the same folder is its own: an index of the folder in one never refuses
 its removal from the other (two libraries holding one folder).
 
 The index runs here on the test's own thread (IndexQueue.run_pending, its worker held back), and the removal is asked
