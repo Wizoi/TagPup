@@ -8,6 +8,8 @@
  * against what the file holds, so no stamp; the title and Date Taken through save-metadata (web/common/photo-write.js)
  * with the stamp, which the server refuses when the file changed since it was read: nothing is written, the sheet says
  * so and reads the photo again, the text typed kept. Each write of the page waits for the one before it (state.writing).
+ * A title or date typed and left by Back or another screen is kept (state.drafts) and put back when the photo's sheet
+ * opens again; only Close lets it go, and asks first. The page going while one is kept asks first too.
  */
 import { api } from './common/api.js';
 import { buildElement, replaceContent } from './common/dom.js';
@@ -19,6 +21,7 @@ import { state } from './mobile-state.js';
 const byId = (id) => document.getElementById(id);
 const UNDO_MS = 5000;
 const MATCHES = 8;
+const TYPED = ['edit-title', 'edit-date', 'edit-time'];
 
 function say(text) {
     byId('edit-problem').textContent = text;
@@ -177,10 +180,20 @@ function readRecord(keepTyped = false) {
             if (state.edit !== edit || !body || !body.photo) return;
             edit.record = body.photo;
             drawRecord(edit.record, keepTyped);
+            if (!keepTyped) putDraftBack(edit);
         })
         .catch((err) => {
             if (state.edit === edit && !keepTyped) say(`Could not read this photo: ${why(err)}`);
         });
+}
+
+/** The title and date typed on this photo before and left unsaved, back in their fields, and said so. */
+function putDraftBack(edit) {
+    const draft = state.drafts.get(edit.id);
+    if (!draft) return;
+    for (const id of TYPED) byId(id).value = draft[id];
+    if (editDirty()) say('Not saved yet: the title and date typed before are back. Save them, or Close to let them go.');
+    else state.drafts.delete(edit.id);    // the file holds them now
 }
 
 /** The library's tags and people, asked once a page; a failure is asked again at the next open. */
@@ -213,6 +226,8 @@ function closeEdit() {
 
 /** Another photo or screen is shown, or the page goes: every removal waiting is sent, the sheet closes. */
 export function leaveEdit() {
+    if (state.edit && editDirty()) state.drafts.set(state.edit.id, Object.fromEntries(TYPED.map((id) => [id, byId(id).value])));
+    else if (state.edit) state.drafts.delete(state.edit.id);
     state.removals.slice().forEach(sendRemoval);
     closeEdit();
 }
@@ -240,6 +255,7 @@ function save() {
             held.name = held.filename = baseName(held.path);
         }
         if (data.new_path) record.path = data.new_path;
+        state.drafts.delete(edit.id);
         if (state.edit === edit) {
             drawRecord(record, false);
             say('Saved.');
@@ -258,7 +274,9 @@ export function wireEdit() {
     byId('photo-edit').addEventListener('click', openEdit);
     byId('edit-save').addEventListener('click', save);
     byId('edit-close').addEventListener('click', () => {
-        if (!editDirty() || window.confirm('Close without saving the title and date?')) closeEdit();
+        if (editDirty() && !window.confirm('Close without saving the title and date?')) return;
+        state.drafts.delete(state.edit.id);
+        closeEdit();
     });
     byId('edit-add').addEventListener('input', drawMatches);
     byId('edit-matches').addEventListener('click', (event) => {
@@ -272,4 +290,10 @@ export function wireEdit() {
         });
     }
     window.addEventListener('pagehide', leaveEdit);
+    // Another library or a reload with a title or date typed and not saved: the browser asks first, as Close does.
+    window.addEventListener('beforeunload', (event) => {
+        if (!editDirty() && !state.drafts.size) return;
+        event.preventDefault();
+        event.returnValue = '';
+    });
 }
