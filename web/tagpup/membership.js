@@ -211,7 +211,9 @@ export function addFolderToLibrary() {
                 };
             }
             applyJustLooking();
-            setStatus('ready', `Added to ${name}; indexing it now.`);
+            // A folder on the library's ignored list was taken off it to be added (libraries.add): say so.
+            setStatus('ready', data.note ? `Added to ${name}: ${data.note} Indexing it now.`
+                : `Added to ${name}; indexing it now.`);
             checkIndexingStatus(folder);
             return data;
         })

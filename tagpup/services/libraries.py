@@ -377,14 +377,42 @@ def record_added(library, folders, subfolders=True):
     now on, before the index has read a photo of it. No row is made: Suggest makes one for
     a photo it keeps something of, the indexer as it reads each. Returns how many were not
     added before."""
-    wanted = [paths.stored(folder) for folder in folders
-              if isinstance(folder, str) and not validation.problem("folder", folder)
-              and shares.folder_state(folder) == "there"]
+    return _record(library, _addable(folders), subfolders)
+
+
+def _record(library, wanted, subfolders=True):
     if not wanted:
         return 0
     return db.write_with_connection(
         library.path, lambda conn: sum(added_folders.record(conn, folder, subfolders) for folder in wanted),
         label="add %d folder(s)" % len(wanted))
+
+
+def _addable(folders):
+    """Each of `folders` that is a full path on disk, as stored: what record_added records."""
+    return [paths.stored(folder) for folder in folders
+            if isinstance(folder, str) and not validation.problem("folder", folder)
+            and shares.folder_state(folder) == "there"]
+
+
+def _take_off_ignored(library, folders):
+    """Take each entry of the library's ignored folders that is one of `folders`, or a folder above one, off them, as
+    one journaled change of its settings (tagpup.services.settings.change: the History lists it and undoes it). An
+    entry below a folder, or beside it, stays. (the entries taken off, as the settings held them; the change's Result,
+    or None when none was)."""
+    from tagpup.services import settings   # settings reaches sync, which reaches this module
+    held = settings.read(library).ignored
+    covering = [entry for entry in held if any(store_folders.is_ignored(folder, [entry]) for folder in folders)]
+    if not covering:
+        return [], None
+    kept = [entry for entry in held if entry not in covering]
+    return covering, settings.change(library, {settings.IGNORED: validation.FOLDER_SEPARATOR.join(kept)})
+
+
+def _taken_off(entries):
+    many = len(entries) > 1
+    return "%s %s on the ignored list and %s been taken off." % (
+        " and ".join(entries), "were" if many else "was", "have" if many else "has")
 
 
 @roots_service.canonical_args("folders")
@@ -397,14 +425,31 @@ def add(library, folders, queue):
     tens of thousands of unstamped rows for a large tree, which sync read again while the
     indexer read them too.
 
+    A folder on the library's ignored list, or under a folder on it, is taken off it first (_take_off_ignored; owner,
+    2026-11-19): an ignored folder is never the library's (tagpup.store.folders.holds), so one added and left on was
+    recorded and queued, and its index left every photo out, silently. Taken off before it is recorded: an add
+    interrupted between the two leaves the folder off the list and not added, which the next Add settles; the other
+    order left it added and ignored. A change the settings refuse (another changed them since they were read) refuses
+    the add, nothing recorded or queued.
+
     A folder that is no full path or not on disk is not recorded, and is handed on for the
     queue to report. A Result: `changed`, the folders not added before; details, the
-    queue's (`queued`, `already_queued`, `invalid`, `pending`) and `added`, the same count;
+    queue's (`queued`, `already_queued`, `invalid`, `pending`), `added`, the same count,
+    `unignored`, the ignored entries taken off, and `note`, the sentence that says so when there were any;
     refused as the queue refuses."""
     result = Result(attempted=len(folders))
+    wanted = _addable(folders)
+    unignored, change = _take_off_ignored(library, wanted)
+    result.details["unignored"] = unignored
+    if change is not None and not change.ok:
+        result.refuse("Not added: %s is on the ignored list and could not be taken off it: %s"
+                      % (" and ".join(unignored), change.message()))
+        return result
+    if unignored:
+        result.details["note"] = _taken_off(unignored)
     # Before the queue: its worker may start at once, and a Suggest asked for as soon as
     # this returns must find the folder the library's.
-    made = record_added(library, folders)
+    made = _record(library, wanted)
     outcome = queue(folders)
     result.details.update(outcome.details)
     result.details.update(added=made)

@@ -3,7 +3,8 @@
 Both apps serve the one route (tagpup.web.folder_routes): the folder's rows and faces go, its files stay. While the
 folder, or a folder above it, waits in the library's index queue or is being indexed, the removal is refused with a
 sentence and nothing goes: the run would otherwise be refused at its next batch (store.photos.record_indexed, NotHeld:
-no rows made) and stop, failed, part-way. A CLI index in another process is not in the queue: the removal goes ahead,
+no rows made) and stop, failed, part-way. A folder a parent's add still covers is put in the library's ignored folders;
+adding it again takes it off them, one journaled change the History undoes, and says so (owner, 2026-11-19). A CLI index in another process is not in the queue: the removal goes ahead,
 and the index stops at its next batch, saying why (AnIndexInTheCli). A second library holding the same folder is its own: an index of the folder in one never refuses
 its removal from the other (two libraries holding one folder).
 
@@ -27,15 +28,23 @@ from test_an_index_reads_the_next_photos_ahead import photo as jpeg  # noqa: E40
 
 import tagpup_cli  # noqa: E402
 
+from tagpup.core import paths, validation  # noqa: E402
 from tagpup.core.library import Library  # noqa: E402
 from tagpup.core.result import NotHeld, Result  # noqa: E402
 from tagpup.services import libraries as library_actions  # noqa: E402
+from tagpup.services import settings as library_settings  # noqa: E402
 from tagpup.store import added_folders, db  # noqa: E402
 from tagpup.store import roots as store_roots  # noqa: E402
 
 
+def ignored(library):
+    """The library's ignored folders, as its settings hold them."""
+    return library_settings.read(Library(library) if isinstance(library, str) else library).ignored
+
+
 class _Library(unittest.TestCase):
     kind = None
+    add_route = None    # each app's Add: TagPup's "Add to library", TagTuner's Add Folder
 
     def setUp(self):
         self.app, self.home = web_client.app_for(self, self.kind)
@@ -76,6 +85,21 @@ class _Library(unittest.TestCase):
 
     def queue(self):
         return self.app.config["RUNTIME"].index_queues.of(self.library)
+
+    def ignore(self, *folders):
+        """The owner's own Ignore: these are the library's ignored folders (a journaled change of its settings)."""
+        change = library_settings.change(self.library, {
+            library_settings.IGNORED: validation.FOLDER_SEPARATOR.join(folders)})
+        self.assertTrue(change.ok, change.message())
+
+    def add(self, folder):
+        """Add `folder` through this app's Add, its index queued and not run: the reply."""
+        with mock.patch("tagpup.jobs.indexing.IndexQueue._ensure_runner"):
+            reply = self.client.post(self.add_route, json={"folder_path": folder})
+        body = reply.get_json()
+        self.assertEqual((200, True), (reply.status_code, body["success"]), body)
+        self.queue().cancel([], everything=True)
+        return body
 
     def queue_held_back(self, folders):
         """Queue `folders` through the route, its worker held back: they wait."""
@@ -180,6 +204,22 @@ class RemovingAFolder:
         self.assertIn("could not be put in the ignored folders: the disk is full", body["error"])
         self.assertEqual(2, self.held())
 
+    def test_add_takes_off_the_ignored_entry_that_covers_the_folder_and_says_so(self):
+        """Add of a folder on the ignored list, or under a folder on it, takes that entry off, and the reply says so
+        (owner, 2026-11-19): left on, the folder was recorded and queued and its index left every photo out, silently.
+        An entry below the folder added, or beside it, stays: adding Season leaves its ignored Meet 1 out."""
+        self.ignore(self.meet, self.other)
+        body = self.add(self.season)
+        self.assertEqual([], body["unignored"], body)
+        self.assertNotIn("note", body)
+        self.assertEqual([paths.stored(self.meet), paths.stored(self.other)], ignored(self.library))
+        self.ignore(self.season, self.other)
+        body = self.add(self.meet)
+        self.assertEqual([paths.stored(self.season)], body["unignored"], body)
+        self.assertEqual("%s was on the ignored list and has been taken off." % paths.stored(self.season),
+                         body["note"])
+        self.assertEqual([paths.stored(self.other)], ignored(self.library))
+
     def test_the_picker_says_why_a_folder_windows_will_not_list_is_not_listed(self):
         """The folder dialog (both apps) expands a folder the owner may not read."""
         with mock.patch("tagpup.services.photos.subfolders", side_effect=PermissionError(13, "Access is denied")):
@@ -203,10 +243,12 @@ class RemovingAFolder:
 
 class FromTagPup(RemovingAFolder, _Library):
     kind = "tagpup"
+    add_route = "/library/api/folder/add"
 
 
 class FromTagTuner(RemovingAFolder, _Library):
     kind = "tuner"
+    add_route = "/library/api/folder/index-start"
 
 
 class AnIndexInTheCli(unittest.TestCase):
@@ -280,6 +322,36 @@ class AnIndexInTheCli(unittest.TestCase):
         self.assertEqual(0, result.exit_code, result.output)
         self.assertEqual((0, 0), self.held(self.meet), "the index of the folder above brought the removed folder back")
         self.assertEqual((2, 2), self.held(self.meet2))
+
+    def test_a_removed_folder_added_again_is_held_indexed_and_listed_and_its_history_undoes_it(self):
+        """The owner removes Meet 1 (Season, added with its subfolders, still covers it: it is ignored), then adds it
+        again in TagTuner: it comes off the ignored list as one change of the settings, its index (the CLI, as the
+        queue runs it) makes its rows and faces, Manage Folders lists it, and the History shows the change; undoing it
+        puts the ignore back (owner, 2026-11-19)."""
+        self.photos(self.meet, 2)
+        self.photos(self.meet2, 2)
+        self.assertEqual(0, self.index(self.season).exit_code)
+        self.assertTrue(self.remove(self.meet)["ignored"])
+        self.assertEqual([paths.stored(self.meet)], ignored(self.library))
+        with mock.patch("tagpup.jobs.indexing.IndexQueue._ensure_runner"):
+            reply = self.client.post("/library/api/folder/index-start", json={"folder_paths": [self.meet]})
+        body = reply.get_json()
+        self.assertEqual((200, [paths.stored(self.meet)]), (reply.status_code, body.get("unignored")), body)
+        self.assertIn("was on the ignored list and has been taken off", body["note"])
+        self.assertEqual([], ignored(self.library))
+        self.assertTrue(library_actions.holds(Library(self.library), self.meet))
+        self.client.post("/library/api/folder/index-cancel", json={"all": True})
+        result = self.index(self.meet)
+        self.assertEqual(0, result.exit_code, result.output)
+        self.assertEqual((2, 2), self.held(self.meet), "the folder added again was not indexed")
+        listed = self.client.get("/library/api/folder/indexed").get_json()["folders"]
+        self.assertTrue(any(paths.same(each["path"], self.meet) for each in listed), "Manage Folders leaves it out")
+        changes = self.client.get("/library/api/history").get_json()["changes"]
+        settings_changes = [each for each in changes if each["operation"] == library_settings.CHANGE]
+        self.assertEqual(2, len(settings_changes), "the ignore and the taking off, each a change in the History")
+        undo = self.client.post("/library/api/history/%d/undo" % settings_changes[0]["id"], json={"apply": True})
+        self.assertEqual(200, undo.status_code, undo.get_json())
+        self.assertEqual([paths.stored(self.meet)], ignored(self.library), "the undo did not put the ignore back")
 
 
 if __name__ == "__main__":
