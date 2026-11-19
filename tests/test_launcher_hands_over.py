@@ -160,6 +160,44 @@ class Way(unittest.TestCase):
         self.assertEqual(1, len(busy), "said again at every try: %s" % busy)
         self.assertIn("the app is in use", busy[0])
 
+    def test_a_server_idle_but_not_letting_go_is_ended_after_the_patience(self):
+        """2026-11-19: an install's drain hung on the old server, every later drain answering "another drain" for 22
+        minutes while GET /api/server read no request and nothing busy; the owner had it ended by hand. The old version
+        is the one being replaced, so its drain may never end: the launcher ends it (owner, 2026-11-19). On the code
+        before, make_way asked again for good."""
+        self.answers = [dict(self.status(OLD), taking_work=False)]
+        stuck = {"drained": False, "waiting_for": ["another drain"]}
+        tries = launcher.IDLE_PATIENCE // launcher.RETRY_BUSY
+        self.drains = [{"drained": False, "no_answer": "timed out"}] + [dict(stuck) for _ in range(tries + 1)]
+        self.assertEqual(launcher.SERVE, self.way()[0])
+        self.assertEqual([4242], self.ended)
+        self.assertIn("TagPup %s is idle but would not let go; ending it." % OLD, self.said)
+        self.assertGreaterEqual(self.clock.now, launcher.IDLE_PATIENCE)
+        self.assertEqual([], self.drains, "ended before the patience ran out")
+
+    def test_an_open_idle_server_that_will_not_drain_is_waited_for_and_never_ended(self):
+        """#3184: a recurring job over 30 s on a server still taking work reads requests 0, busy []; only a CLOSED
+        server (drain begun) that will not finish is ended."""
+        self.waited_for_never_ended({"taking_work": True, "requests": 0, "busy": []}, ["another drain"])
+
+    def waited_for_never_ended(self, status, waiting_for):
+        self.answers = [dict(status, version=OLD)]
+        tries = 3 * launcher.IDLE_PATIENCE // launcher.RETRY_BUSY
+        self.drains = [{"drained": False, "waiting_for": waiting_for} for _ in range(tries)] + [{"drained": True}]
+        self.assertEqual(launcher.SERVE, self.way()[0])
+        self.assertEqual(tries + 1, len(self.drained), "stopped waiting for a server at work")
+        self.assertFalse(any("would not let go" in line for line in self.said), self.said)
+
+    def test_a_server_whose_status_shows_a_task_busy_is_waited_for_and_never_ended(self):
+        self.waited_for_never_ended({"taking_work": True, "requests": 0, "busy": ["recurring jobs"]}, ["another drain"])
+
+    def test_a_server_whose_status_shows_a_request_in_flight_is_waited_for_and_never_ended(self):
+        self.waited_for_never_ended({"taking_work": False, "requests": 1, "busy": []}, ["1 request(s)"])
+
+    def test_a_status_that_does_not_say_what_is_busy_is_not_idle(self):
+        """#3176: a missing `busy` was read as nothing busy."""
+        self.waited_for_never_ended({"taking_work": False, "requests": 0}, ["another drain"])
+
     def test_a_silent_port_without_a_record_is_waited_for_then_opened_never_ended(self):
         """A server starting -- its record comes once it serves -- or not this user's."""
         self.answers = [None]

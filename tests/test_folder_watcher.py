@@ -456,6 +456,33 @@ class Stopping(Base):
         time.sleep(1)
         self.assertEqual([], self.synced)
 
+    def test_watches_that_will_not_stop_are_left_behind_at_the_deadline(self):
+        """An update while a share is away (2026-11-19): on Windows a watch on a share that stopped answering can block
+        in watchdog's observer.stop() itself. The stop ends at its deadline and leaves them; started again, it watches
+        anew. On the code before, stop() waited in observer.stop() for good."""
+        let_go, stops = threading.Event(), []
+
+        def stuck_observer():
+            observer = watching.make_observer()
+            stop = observer.stop
+
+            def blocking_stop():
+                stops.append(observer)
+                let_go.wait()
+                stop()
+            observer.stop = blocking_stop
+            return observer
+        watcher = self.make(observer=stuck_observer)
+        self.addCleanup(let_go.set)
+        self.started(watcher)
+        started = time.monotonic()
+        self.assertTrue(watcher.stop(timeout=1))
+        self.assertLess(time.monotonic() - started, 3, "the stop waited for watches that would not stop")
+        self.assertEqual(1, len(stops))
+        watcher.start()
+        self.wait_until(lambda: watcher.watched() == [paths.stored(self.root)])
+        let_go.set()
+
     def test_started_again_it_watches_again_without_the_catch_up(self):
         watcher = self.started(self.make())
         watcher.stop()

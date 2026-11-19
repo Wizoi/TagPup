@@ -92,6 +92,12 @@ SAY_AGAIN = 300
 QUIET = 15
 QUIET_PATIENCE = 120
 
+#: A server whose drains have not ended for IDLE_PATIENCE seconds -- no answer, "another drain" -- while its status says
+#: no request in flight and nothing running is idle but will not let go: it is ended (owner, 2026-11-19: an install's
+#: drain hung 22 minutes on a server reading requests 0, busy []; a server of 2026-11-19 or later ends such a drain
+#: drained itself, tagpup.web.lifecycle). One showing work, or not saying, is waited for as before, never ended.
+IDLE_PATIENCE = 30
+
 #: Drained, the server takes work again if it has not been ended within LEASE seconds: the
 #: launcher ends it within a second, and a window closed in between leaves no server
 #: refusing every request (tagpup.web.lifecycle).
@@ -353,8 +359,8 @@ def make_way(port, version, say, open_page, answering, sleep=time.sleep, clock=t
     said, said_at = None, None
     unanswered = 0
     starting_since = None
-    #: Since when the drain has waited only for a moment with no request.
-    quiet_since = None
+    #: Since when the drain has waited only for a moment with no request; since when it has not ended otherwise.
+    quiet_since = stuck_since = None
     while True:
         if not answering(port):
             return SERVE, opened
@@ -408,10 +414,21 @@ def make_way(port, version, say, open_page, answering, sleep=time.sleep, clock=t
         if answer.get("refused"):
             say("TagPup %s refused to make way (%s); %s." % (_name(running_version), answer["refused"], then))
             return OPEN, opened
+        reasons = answer.get("waiting_for") or ["the server"]
+        in_use = not answer.get("no_answer") and all(reason.startswith("a request ") for reason in reasons)
+        stuck_since = None if in_use else (clock() if stuck_since is None else stuck_since)
+        if stuck_since is not None and clock() - stuck_since >= IDLE_PATIENCE:
+            now = ask(port)
+            if (now is not None and now.get("taking_work") is False and now.get("requests") == 0
+                    and "busy" in now and not now["busy"]):
+                say("TagPup %s is idle but would not let go; ending it." % _name(running_version))
+                if not end(theirs, port, answering, sleep=sleep):
+                    say("It did not end; %s, on port %d." % (then, port))
+                    return OPEN, opened
+                continue
         if answer.get("no_answer"):
             continue   # asked again: gone (serve), or hanging (counted above)
-        reasons = answer.get("waiting_for") or ["the server"]
-        if all(reason.startswith("a request ") for reason in reasons):
+        if in_use:
             # Someone is using the page: the moment after their last request, or, after
             # QUIET_PATIENCE, the next with nothing in flight.
             quiet_since = clock() if quiet_since is None else quiet_since
