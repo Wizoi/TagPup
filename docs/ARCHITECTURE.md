@@ -352,8 +352,9 @@ same transaction (`store/derived.py`, `people.tree_edit`).
   retried across a server update), `batch-strip.js` (the strip of the batches of photo files), `paths.js`, `vocabulary.js`, `library.js`, `validate.js` (the rules
   `/api/rules` publishes), `dom.js` (elements built from text), `dialog.js`, `press.js` (a pill, chip, card or row the keyboard presses
   as a click: Tab reaches it, Enter or Space clicks it), `file-addresses.js` (the one spelling of a photo's file and a
-  clip's address, `/api/photo-file` and `/api/video-file`, versioned by the record's or card's `mtime`), and the gear's tag editor,
-  settings and history dialogs.
+  clip's address, `/api/photo-file` and `/api/video-file`, versioned by the record's or card's `mtime`), `photo-write.js`
+  (both pages' write of one photo's title, tags and Date Taken through `/api/photo/save-metadata`, named by the stamp and
+  base of the file as read), and the gear's tag editor, settings and history dialogs.
 - `web/activity/` is the Activity page; `web/tagpup/` and `web/tuner/` have a `main.js` that only wires the
   page, plus one module per feature, and their mutable state in one `state` object.
 - `web/common/theme.css` is the one place the dark theme's tokens live (colours, fonts and the card
@@ -366,8 +367,10 @@ same transaction (`store/derived.py`, `people.tree_edit`).
   its modules are served as every page module is. It has no gear, no link to TagTuner and no `/api/apps` (through
   Tailscale Serve the other app's address cannot be built from the request). `mobile-browse.js` walks a section a level
   at a time, `mobile-grid.js` shows a view through library-source.js's card windows and `vgrid.js`, `mobile-photo.js`
-  shows one photo large (read-only until the edit sheet, cut 3b), swiped through with `web/common/swipe.js`, the swipe
-  the desktop page uses too, and zoomed with `web/common/image-zoom.js`.
+  shows one photo large, swiped through with `web/common/swipe.js`, the swipe the desktop page uses too, and zoomed with
+  `web/common/image-zoom.js`. `mobile-edit.js` is its Edit sheet, a history step of its own over the photo: a tag added
+  or taken off (behind an Undo) through `/api/photos/bulk-tags`, the title and Date Taken through `photo-write.js`, each
+  write of the page in turn after the one before it.
 - No build step. Tests import the modules (`node --test tests/frontend/*.test.mjs`), jsdom loads a page's
   modules in import order for whole flows (`tests/frontend/harness.mjs`).
 
