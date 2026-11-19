@@ -165,7 +165,7 @@ class Way(unittest.TestCase):
         minutes while GET /api/server read no request and nothing busy; the owner had it ended by hand. The old version
         is the one being replaced, so its drain may never end: the launcher ends it (owner, 2026-11-19). On the code
         before, make_way asked again for good."""
-        self.answers = [self.status(OLD)]
+        self.answers = [dict(self.status(OLD), taking_work=False)]
         stuck = {"drained": False, "waiting_for": ["another drain"]}
         tries = launcher.IDLE_PATIENCE // launcher.RETRY_BUSY
         self.drains = [{"drained": False, "no_answer": "timed out"}] + [dict(stuck) for _ in range(tries + 1)]
@@ -174,6 +174,11 @@ class Way(unittest.TestCase):
         self.assertIn("TagPup %s is idle but would not let go; ending it." % OLD, self.said)
         self.assertGreaterEqual(self.clock.now, launcher.IDLE_PATIENCE)
         self.assertEqual([], self.drains, "ended before the patience ran out")
+
+    def test_an_open_idle_server_that_will_not_drain_is_waited_for_and_never_ended(self):
+        """#3184: a recurring job over 30 s on a server still taking work reads requests 0, busy []; only a CLOSED
+        server (drain begun) that will not finish is ended."""
+        self.waited_for_never_ended({"taking_work": True, "requests": 0, "busy": []}, ["another drain"])
 
     def waited_for_never_ended(self, status, waiting_for):
         self.answers = [dict(status, version=OLD)]

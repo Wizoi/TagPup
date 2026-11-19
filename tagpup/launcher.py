@@ -419,7 +419,8 @@ def make_way(port, version, say, open_page, answering, sleep=time.sleep, clock=t
         stuck_since = None if in_use else (clock() if stuck_since is None else stuck_since)
         if stuck_since is not None and clock() - stuck_since >= IDLE_PATIENCE:
             now = ask(port)
-            if now is not None and now.get("requests") == 0 and "busy" in now and not now["busy"]:
+            if (now is not None and now.get("taking_work") is False and now.get("requests") == 0
+                    and "busy" in now and not now["busy"]):
                 say("TagPup %s is idle but would not let go; ending it." % _name(running_version))
                 if not end(theirs, port, answering, sleep=sleep):
                     say("It did not end; %s, on port %d." % (then, port))
