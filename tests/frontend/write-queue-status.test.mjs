@@ -111,6 +111,9 @@ describe("the list", () => {
     await flush(ctx.window, 8);
     await answer(ctx, { success: false, error: REFUSED, written: {} });
     assert.equal(ctx.held.length, 0, "the write queued behind the failed one went by itself");
+    // The write queued at the second click had its turn, sent nothing, and says why; the failed one keeps its Retry.
+    const states = rows(ctx).map((r) => [r.querySelector(".write-queue-label").textContent, r.dataset.status]);
+    assert.deepEqual(states, [["Tag changes: waiting for the failed write", "done"], [`Add ${OFFERED[0]} to 2 photos`, "failed"]]);
     click(ctx.window, rows(ctx).find((r) => r.dataset.status === "failed").querySelector(".write-queue-retry"));
     await flush(ctx.window, 8);
     assert.equal(ctx.held.length, 1, "Retry sent nothing");
