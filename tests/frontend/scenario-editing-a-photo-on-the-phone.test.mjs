@@ -1,0 +1,447 @@
+/**
+ * Owner scenario: on the phone page (web/tagpup/mobile.html, docs/plans/phone-viewer.md, Screens 5) the owner opens a
+ * photo, taps Edit, and changes its people, keywords, title and Date Taken from the sheet (web/tagpup/mobile-edit.js).
+ *
+ * - A tag added or taken off is one path's change through /api/photos/bulk-tags, against what the file holds: no stamp.
+ * - A chip's x waits behind its own Undo; an Undo in time sends nothing; leaving the photo (a swipe, Back, the Libraries
+ *   button) or the page (pagehide, keepalive) sends what is still waiting, even behind a Save still out.
+ * - Two chips of one leaf say their roots.
+ * - Each write waits for the one before it: a tag added while the Save is out is sent after it.
+ * - The title and Date Taken go through save-metadata with the stamp and base of the file as read; a title that renames
+ *   the file renames the card the page holds. A file changed on the PC is never written over: the sheet says so, reads
+ *   it again and keeps the text typed.
+ * - A dropped connection or a server that cannot answer says a sentence, the sheet open, the text kept; a refusal while
+ *   the server is updated is waited out (web/common/api.js).
+ * - Close with a title or date typed asks; Back or the Libraries button keeps it, and the photo's Edit shows it again.
+ *
+ * Names hold spaces and apostrophes, as the live libraries' do. Every name here is made up. The Undo's five seconds are
+ * shortened to UNDO here: the page's timers are what it would wait on.
+ */
+import { test, describe, afterEach } from "node:test";
+import assert from "node:assert/strict";
+import { loadApp, FakeServer, flush, click, closeAllApps, pageExports, PEOPLE_ROUTE, PHOTO_WRITES, CLIP_WRITES } from "./harness.mjs";
+
+const PAGE = "http://localhost:8090/alpha/mobile.html";
+const KEYWORDS = { keywords: [{ tag: "Events", name: "Events", parent: null, count: 20 }], untagged: 0 };
+const UNDO = 200;
+const PATH = "D:\\Photos\\Wren's Meet\\Wren's Meet 1.jpg";
+const WREN = "People/Wren O'Malley";
+const JUNIPER = "People/Juniper Okafor";
+const COAST = "Trips/Coast";
+const COVE = "Trips/Cove Walk";
+const TAGS = [WREN, JUNIPER, COAST, COVE, "Events/Harvest", "Places/Harvest", "Events/Relay"];
+const PEOPLE = [{ id: 1, name: "Wren O'Malley", tag: WREN }, { id: 2, name: "Juniper Okafor", tag: JUNIPER }];
+
+const el = (ctx, id) => ctx.document.getElementById(id);
+const pageState = (ctx) => pageExports(ctx.window, "web/tagpup/mobile-state.js").state;
+const vocabulary = (ctx) => pageExports(ctx.window, "web/common/vocabulary.js");
+const wait = (window, ms) => new Promise((resolve) => window.setTimeout(resolve, ms));
+const shown = (ctx) =>
+  [...ctx.document.querySelectorAll("[data-screen]")].filter((s) => !s.classList.contains("hidden")).map((s) => s.dataset.screen);
+
+async function settle(ctx, ms = 30) {
+  await wait(ctx.window, ms);
+  await flush(ctx.window, 6);
+}
+
+function cardOf(id) {
+  const name = id === 1 ? "Wren's Meet 1.jpg" : `Wren's Meet ${id}.jpg`;
+  return { id, name, path: `D:\\Photos\\Wren's Meet\\${name}`, taken: "2024:06:01 10:00:00",
+    thumb: `/api/photo-thumb?id=${id}&v=1718000000.5`, mtime: 1718000000.5, media: "photo" };
+}
+
+/**
+ * The page on a library of 20 photos, the first a file `file` that the fake server writes as the real one does: a tag
+ * change through bulk-tags, the title and date through save-metadata, each a new stamp; /api/library/photo reads it.
+ */
+async function phone(t, file = {}) {
+  const server = new FakeServer();
+  const held = Object.assign({ path: PATH, tags: [WREN, COAST], title: "Finish line", taken: "2024:06:01 10:00:00",
+    mtime: 1718000000.5, size: 204800, writes: PHOTO_WRITES, media: "photo" }, file);
+  const record = () => ({ ...held, filename: held.path.split("\\").pop(), tags: held.tags.slice(), people: [], raw_metadata: {} });
+  server
+    .on("/api/databases", { databases: ["alpha", "beta"] })
+    .on("/api/library/navigator?section=keywords", KEYWORDS)
+    .on("/api/library/ids", { ids: Array.from({ length: 20 }, (_, i) => i + 1), total: 20, of: 20, videos: [] })
+    .on("/api/library/cards", (url) => ({
+      cards: decodeURIComponent((url.match(/ids=([^&]+)/) || [])[1] || "").split(",").map(Number).map(cardOf) }))
+    .on("/api/library/photo", () => ({ photo: record() }))
+    .on("/api/tags", TAGS)
+    .on(PEOPLE_ROUTE, PEOPLE)
+    .on("/api/photos/bulk-tags", () => {
+      const [[path, change]] = Object.entries(server.lastBody("/api/photos/bulk-tags").changes);
+      held.tags = held.tags.filter((tag) => !(change.remove || []).includes(tag))
+        .concat((change.add || []).filter((tag) => !held.tags.includes(tag)));
+      held.mtime += 1;
+      return { written: { [path]: held.tags.slice() }, stamps: { [path]: { mtime: held.mtime, size: held.size } } };
+    })
+    .on("/api/photo/save-metadata", () => {
+      const body = server.lastBody("/api/photo/save-metadata");
+      held.title = body.title;
+      if (body.date_taken) held.taken = body.date_taken.replace(/-/g, ":").replace("T", " ");
+      held.mtime += 1;
+      return { success: true, mtime: held.mtime, size: held.size, taken: held.taken, base: { tags: held.tags.slice(), title: held.title } };
+    });
+  const ctx = await loadApp("phone", { t, server, url: PAGE });
+  const section = ctx.document.querySelector('[data-screen="grid"]');
+  const here = { scrollTop: 0, viewport: 600, columns: 3, cardHeight: 130, rowGap: 4, gridTop: 120, cardWidth: 120, columnGap: 4 };
+  Object.defineProperty(section, "scrollTop", { get: () => here.scrollTop, set: (v) => { here.scrollTop = v; }, configurable: true });
+  Object.defineProperty(section, "clientHeight", { get: () => (section.classList.contains("hidden") ? 0 : 600), configurable: true });
+  pageState(ctx).grid.setMeasure(() => (section.classList.contains("hidden") ? { ...here, viewport: 0 } : { ...here }));
+  // What each request asked of the browser: a write sent as the page goes must outlive it (keepalive).
+  const sent = [];
+  const fetch = ctx.window.fetch;
+  ctx.window.fetch = (input, init) => {
+    sent.push({ url: String(input), keepalive: Boolean(init && init.keepalive) });
+    return fetch(input, init);
+  };
+  // The Undo's five seconds, shortened: every other timer as the page set it.
+  const setTimer = ctx.window.setTimeout.bind(ctx.window);
+  ctx.window.setTimeout = (job, ms, ...rest) => setTimer(job, ms === 5000 ? UNDO : ms, ...rest);
+  return Object.assign(ctx, { held, sent });
+}
+
+/** Keywords, Events, Show these photos, a tap on the first card, and Edit. */
+async function openSheet(ctx) {
+  click(ctx.window, ctx.document.querySelector('[data-section="keywords"]'));
+  await settle(ctx);
+  click(ctx.window, [...el(ctx, "browse-rows").querySelectorAll(".browse-item")].find((r) => r.textContent.includes("Events")));
+  await settle(ctx);
+  click(ctx.window, el(ctx, "browse-show"));
+  await settle(ctx, 80);
+  await openPhotoEdit(ctx);
+}
+
+async function openPhotoEdit(ctx) {
+  click(ctx.window, [...el(ctx, "grid-cards").querySelectorAll(".phone-card[data-id]")].find((c) => c.dataset.id === "1"));
+  await settle(ctx);
+  click(ctx.window, el(ctx, "photo-edit"));
+  await settle(ctx);
+}
+
+const chips = (ctx, id) => [...el(ctx, id).querySelectorAll(".edit-chip")].map((chip) => chip.firstChild.textContent);
+const chipX = (ctx, tag) => [...ctx.document.querySelectorAll(".edit-chip-x")].find((x) => x.dataset.tag === tag);
+const toasts = (ctx) => [...el(ctx, "edit-toasts").querySelectorAll(".edit-toast")];
+const said = (ctx) => (el(ctx, "edit-problem").classList.contains("hidden") ? "" : el(ctx, "edit-problem").textContent);
+const sheetOpen = (ctx) => !el(ctx, "edit-sheet").classList.contains("hidden");
+const calls = (ctx, route) => ctx.server.calls.filter((c) => c.url.includes(route));
+const tagWrites = (ctx) => calls(ctx, "/api/photos/bulk-tags").map((c) => c.body.changes);
+
+function type(ctx, id, value) {
+  el(ctx, id).value = value;
+  el(ctx, id).dispatchEvent(new ctx.window.Event("input", { bubbles: true }));
+}
+
+async function pick(ctx, text, tag) {
+  type(ctx, "edit-add", text);
+  const match = [...el(ctx, "edit-matches").querySelectorAll(".edit-match")].find((m) => m.dataset.tag === tag);
+  assert.ok(match, `${tag} is offered for "${text}"`);
+  click(ctx.window, match);
+  await settle(ctx);
+}
+
+/** A route answered later: `release(body)` sends the reply. */
+function holdNext(ctx, route) {
+  const hold = {};
+  ctx.server.first(route, () => {
+    ctx.server.routes.shift();
+    return new Promise((resolve) => { hold.release = resolve; });
+  });
+  return hold;
+}
+
+afterEach(() => closeAllApps());
+
+describe("editing a photo on the phone", () => {
+  test("a person and a keyword added and taken off: one path each through bulk-tags, no stamp", async (t) => {
+    const ctx = await phone(t);
+    await openSheet(ctx);
+    const { leafOf } = vocabulary(ctx);
+    assert.deepEqual(chips(ctx, "edit-people"), [leafOf(WREN)]);
+    assert.deepEqual(chips(ctx, "edit-keywords"), [leafOf(COAST)]);
+    type(ctx, "edit-add", "wren");
+    assert.equal(el(ctx, "edit-matches").children.length, 0, "a person the photo holds is not offered again");
+
+    await pick(ctx, "jun", JUNIPER);
+    await pick(ctx, "cove", COVE);
+    assert.equal(el(ctx, "edit-add").value, "", "the add box is empty for the next");
+    click(ctx.window, chipX(ctx, COAST));
+    click(ctx.window, chipX(ctx, WREN));
+    await settle(ctx, UNDO + 80);
+
+    assert.deepEqual(tagWrites(ctx), [{ [PATH]: { add: [JUNIPER] } }, { [PATH]: { add: [COVE] } },
+      { [PATH]: { remove: [COAST] } }, { [PATH]: { remove: [WREN] } }], "one path's change each, nothing of a stamp or base");
+    assert.deepEqual(ctx.held.tags, [JUNIPER, COVE]);
+    assert.deepEqual(chips(ctx, "edit-people"), [leafOf(JUNIPER)]);
+    assert.deepEqual(chips(ctx, "edit-keywords"), [leafOf(COVE)]);
+    assert.equal(said(ctx), "");
+  });
+
+  test("rapid removals each have their own Undo; an Undo in time sends nothing", async (t) => {
+    const ctx = await phone(t, { tags: [WREN, COAST, "Events/Relay", COVE] });
+    await openSheet(ctx);
+    for (const tag of [COAST, "Events/Relay", COVE]) click(ctx.window, chipX(ctx, tag));
+    await flush(ctx.window);
+    assert.equal(toasts(ctx).length, 3, "a line with its Undo for each");
+    assert.deepEqual(chips(ctx, "edit-keywords"), [], "each chip goes at its tap");
+
+    click(ctx.window, toasts(ctx)[1].querySelector(".edit-undo"));
+    await flush(ctx.window);
+    assert.deepEqual(chips(ctx, "edit-keywords"), ["Relay"], "the chip undone is back");
+    assert.equal(toasts(ctx).length, 2);
+    assert.equal(tagWrites(ctx).length, 0, "nothing is sent while the Undo can still be tapped");
+
+    await settle(ctx, UNDO + 80);
+    assert.deepEqual(tagWrites(ctx), [{ [PATH]: { remove: [COAST] } }, { [PATH]: { remove: [COVE] } }]);
+    assert.deepEqual(ctx.held.tags, [WREN, "Events/Relay"], "the tag undone was never taken off");
+    assert.equal(toasts(ctx).length, 0);
+  });
+
+  for (const [how, leave] of [
+    ["a swipe to the next photo", (ctx) => {
+      click(ctx.window, el(ctx, "edit-close"));       // the sheet open, a swipe is not taken
+      const stage = el(ctx, "photo-stage");
+      for (const [type, x] of [["pointerdown", 200], ["pointerup", 80]]) {
+        const event = new ctx.window.MouseEvent(type, { bubbles: true, clientX: x, clientY: 300, button: 0 });
+        Object.defineProperty(event, "pointerId", { value: 7 });
+        Object.defineProperty(event, "pointerType", { value: "touch" });
+        stage.dispatchEvent(event);
+      }
+    }],
+    ["Back", (ctx) => ctx.window.history.back()],
+    ["the Libraries button", (ctx) => click(ctx.window, el(ctx, "bar-library"))],
+    ["the page going", (ctx) => ctx.window.dispatchEvent(new ctx.window.Event("pagehide"))],
+  ]) {
+    test(`a removal still behind its Undo is sent on ${how}, not dropped`, async (t) => {
+      const ctx = await phone(t);
+      await openSheet(ctx);
+      click(ctx.window, chipX(ctx, COAST));
+      leave(ctx);
+      await settle(ctx);
+      assert.deepEqual(tagWrites(ctx), [{ [PATH]: { remove: [COAST] } }], "sent at once, not after the Undo's time");
+      assert.ok(ctx.sent.find((s) => s.url.includes("/api/photos/bulk-tags")).keepalive, "a write that outlives the page");
+      assert.equal(sheetOpen(ctx), false);
+      assert.equal(toasts(ctx).length, 0, "its Undo is gone with it");
+    });
+  }
+
+  test("two chips of one leaf say their roots", async (t) => {
+    const ctx = await phone(t, { tags: [WREN, "Events/Harvest", "Places/Harvest", COAST] });
+    await openSheet(ctx);
+    const { leafOf, rootOf } = vocabulary(ctx);
+    assert.deepEqual(chips(ctx, "edit-keywords").sort(), [leafOf(COAST),
+      `${leafOf("Events/Harvest")} (${rootOf("Events/Harvest")})`, `${leafOf("Places/Harvest")} (${rootOf("Places/Harvest")})`].sort());
+  });
+
+  test("a tag added while the Save is out waits for it", async (t) => {
+    const ctx = await phone(t);
+    await openSheet(ctx);
+    const save = holdNext(ctx, "/api/photo/save-metadata");
+    type(ctx, "edit-title", "Wren's Last Lap");
+    click(ctx.window, el(ctx, "edit-save"));
+    await pick(ctx, "cove", COVE);
+    assert.equal(tagWrites(ctx).length, 0, "not sent while the Save is out");
+
+    save.release({ success: true, mtime: 1718000009, size: 204800, base: { tags: [WREN, COAST], title: "Wren's Last Lap" } });
+    await settle(ctx);
+    assert.deepEqual(tagWrites(ctx), [{ [PATH]: { add: [COVE] } }]);
+    assert.ok(ctx.server.calls.findIndex((c) => c.url.includes("bulk-tags")) > ctx.server.calls.findIndex((c) => c.url.includes("save-metadata")));
+    assert.deepEqual(chips(ctx, "edit-keywords"), [leaf(ctx, COAST), leaf(ctx, COVE)]);
+  });
+
+  test("the title and Date Taken are saved with the stamp and base read; a title that renames the file renames its card", async (t) => {
+    const ctx = await phone(t);
+    await openSheet(ctx);
+    const renamed = "D:\\Photos\\Wren's Meet\\Wren's Last Lap.jpg";
+    ctx.server.first("/api/photo/save-metadata", { success: true, new_path: renamed, mtime: 1718000077, size: 204900,
+      taken: "2024:06:02 09:30:00", base: { tags: [WREN, COAST], title: "Wren's Last Lap" } });
+    assert.equal(el(ctx, "edit-title").value, "Finish line");
+    assert.equal(el(ctx, "edit-date").value, "2024-06-01");
+    type(ctx, "edit-title", "Wren's Last Lap");
+    type(ctx, "edit-date", "2024-06-02");
+    type(ctx, "edit-time", "09:30");                   // a time input may leave the seconds out
+    click(ctx.window, el(ctx, "edit-save"));
+    await settle(ctx);
+
+    assert.deepEqual(calls(ctx, "/api/photo/save-metadata").map((c) => c.body), [{ path: PATH, title: "Wren's Last Lap",
+      tags: [WREN, COAST], stamp: { mtime: 1718000000.5, size: 204800 }, base: { tags: [WREN, COAST], title: "Finish line" },
+      date_taken: "2024-06-02T09:30:00" }]);
+    assert.equal(said(ctx), "Saved.");
+    const card = pageState(ctx).photos.cards.get(1);
+    assert.equal(card.path, renamed, "the grid's card names the file as it is now");
+    assert.equal(card.name, "Wren's Last Lap.jpg");
+    assert.equal(card.mtime, 1718000077, "and its stamp");
+    assert.equal(pageState(ctx).photo.path, renamed, "the Photo screen's card too");
+    assert.equal(el(ctx, "edit-time").value, "09:30:00");
+  });
+
+  test("a file changed on the PC since it was read is not written over: the sheet says so, reads it again, keeps the text", async (t) => {
+    const ctx = await phone(t);
+    await openSheet(ctx);
+    ctx.server.first("/api/photo/save-metadata", () => {
+      ctx.server.routes.shift();
+      Object.assign(ctx.held, { title: "Set on the PC", mtime: 1718000300 });
+      return { success: false, changed_on_disk: true, error: "The file changed on disk." };
+    }, { status: 409 });
+    type(ctx, "edit-title", "Wren's Last Lap");
+    click(ctx.window, el(ctx, "edit-save"));
+    await settle(ctx);
+
+    assert.match(said(ctx), /changed on the PC since it was read/);
+    assert.equal(calls(ctx, "/api/photo/save-metadata").length, 1, "nothing sent again by itself");
+    assert.equal(calls(ctx, "/api/library/photo").length, 2, "the photo read again");
+    assert.equal(el(ctx, "edit-title").value, "Wren's Last Lap", "the text typed kept");
+    assert.ok(sheetOpen(ctx));
+
+    click(ctx.window, el(ctx, "edit-save"));
+    await settle(ctx);
+    const again = calls(ctx, "/api/photo/save-metadata")[1].body;
+    assert.deepEqual([again.stamp, again.base.title], [{ mtime: 1718000300, size: 204800 }, "Set on the PC"],
+      "the Save the owner sends again names the file as read again");
+    assert.equal(ctx.held.title, "Wren's Last Lap");
+  });
+
+  test("a dropped connection or a server that cannot answer: a sentence, the sheet open, the text kept", async (t) => {
+    const ctx = await phone(t);
+    await openSheet(ctx);
+    type(ctx, "edit-title", "Wren's Last Lap");
+    ctx.server.first("/api/photo/save-metadata", () => {
+      ctx.server.routes.shift();
+      return Promise.reject(new ctx.window.TypeError("Failed to fetch"));
+    });
+    click(ctx.window, el(ctx, "edit-save"));
+    await settle(ctx);
+    assert.equal(said(ctx), "Not saved: no connection. Try again.");
+    assert.equal(calls(ctx, "/api/photo/save-metadata").length, 1, "a write is not sent again by itself");
+
+    ctx.server.first("/api/photo/save-metadata", () => {
+      ctx.server.routes.shift();
+      return { success: false, error: "Could not reach the library's folder just now. Try again." };
+    }, { status: 503 });
+    click(ctx.window, el(ctx, "edit-save"));
+    await settle(ctx);
+    assert.equal(said(ctx), "Not saved: Could not reach the library's folder just now. Try again.");
+    assert.ok(sheetOpen(ctx));
+    assert.equal(el(ctx, "edit-title").value, "Wren's Last Lap");
+    assert.equal(ctx.held.title, "Finish line");
+  });
+
+  test("a Save turned away while the server is updated is waited out and lands once", async (t) => {
+    const ctx = await phone(t);
+    await openSheet(ctx);
+    ctx.server.first("/api/photo/save-metadata", () => {
+      ctx.server.routes.shift();
+      return { success: false, error: "Updating" };
+    }, { status: 503, headers: { "X-TagPup-Updating": "1", "Retry-After": "0" } });
+    type(ctx, "edit-title", "Wren's Last Lap");
+    click(ctx.window, el(ctx, "edit-save"));
+    await settle(ctx, 60);
+    assert.equal(said(ctx), "Saved.");
+    assert.equal(calls(ctx, "/api/photo/save-metadata").length, 2, "sent again once the update was through");
+    assert.equal(ctx.held.title, "Wren's Last Lap");
+  });
+
+  test("a clip's Date Taken is offered and saved; a record that says no date offers none", async (t) => {
+    const clip = "D:\\Photos\\Wren's Meet\\Wren's Meet 1.mp4";
+    const ctx = await phone(t, { path: clip, media: "video", writes: CLIP_WRITES });
+    await openSheet(ctx);
+    assert.equal(el(ctx, "edit-when").classList.contains("hidden"), false);
+    type(ctx, "edit-date", "2024-06-03");
+    click(ctx.window, el(ctx, "edit-save"));
+    await settle(ctx);
+    assert.equal(calls(ctx, "/api/photo/save-metadata")[0].body.date_taken, "2024-06-03T10:00:00");
+    assert.equal(calls(ctx, "/api/photo/save-metadata")[0].body.path, clip);
+
+    const other = await phone(t, { writes: ["tags", "title"] });
+    await openSheet(other);
+    assert.ok(el(other, "edit-when").classList.contains("hidden"), "the record's writes leave out the date");
+  });
+
+  test("an add that fails says why and puts the text typed back", async (t) => {
+    const ctx = await phone(t);
+    await openSheet(ctx);
+    ctx.server.first("/api/photos/bulk-tags", { error: "The library is busy: try again." }, { status: 500 });
+    await pick(ctx, "cove", COVE);
+    assert.equal(said(ctx), "Not added: The library is busy: try again.");
+    assert.equal(el(ctx, "edit-add").value, "cove");
+    assert.deepEqual(chips(ctx, "edit-keywords"), [leaf(ctx, COAST)]);
+  });
+
+  test("Close with a title typed asks first; Close with nothing typed does not", async (t) => {
+    const ctx = await phone(t);
+    await openSheet(ctx);
+    const asked = [];
+    let answer = false;
+    ctx.window.confirm = (text) => { asked.push(text); return answer; };
+    type(ctx, "edit-title", "Wren's Last Lap");
+    click(ctx.window, el(ctx, "edit-close"));
+    assert.equal(asked.length, 1);
+    assert.ok(sheetOpen(ctx), "kept open when the owner says no");
+    answer = true;
+    click(ctx.window, el(ctx, "edit-close"));
+    assert.equal(sheetOpen(ctx), false);
+
+    click(ctx.window, el(ctx, "photo-edit"));
+    await settle(ctx);
+    assert.equal(el(ctx, "edit-title").value, "Finish line", "a draft let go on Close is not shown again");
+    click(ctx.window, el(ctx, "edit-close"));
+    assert.equal(asked.length, 2, "nothing typed: no question");
+    assert.equal(sheetOpen(ctx), false);
+  });
+
+  for (const [how, leave] of [
+    ["Back", async (ctx) => { ctx.window.history.back(); await settle(ctx); }],
+    ["the Libraries button", async (ctx) => {
+      click(ctx.window, el(ctx, "bar-library"));
+      await settle(ctx);
+      assert.deepEqual(shown(ctx), ["library"]);
+      ctx.window.history.back();
+      await settle(ctx);
+      ctx.window.history.back();
+      await settle(ctx);
+    }],
+  ]) {
+    test(`a title and date typed are kept through ${how}: the photo's Edit shows them again`, async (t) => {
+      const ctx = await phone(t);
+      await openSheet(ctx);
+      type(ctx, "edit-title", "Wren's Last Lap");
+      type(ctx, "edit-date", "2024-06-02");
+      await leave(ctx);
+      assert.deepEqual(shown(ctx), ["grid"]);
+      const goes = new ctx.window.Event("beforeunload", { cancelable: true });
+      ctx.window.dispatchEvent(goes);
+      assert.ok(goes.defaultPrevented, "the page going asks first while a draft is kept");
+
+      await openPhotoEdit(ctx);
+      assert.equal(el(ctx, "edit-title").value, "Wren's Last Lap");
+      assert.equal(el(ctx, "edit-date").value, "2024-06-02");
+      assert.match(said(ctx), /not saved yet/i);
+      assert.equal(calls(ctx, "/api/photo/save-metadata").length, 0, "nothing was saved for the owner");
+      click(ctx.window, el(ctx, "edit-save"));
+      await settle(ctx);
+      assert.equal(ctx.held.title, "Wren's Last Lap");
+      await openPhotoEdit(ctx);
+      assert.equal(said(ctx), "", "a draft saved is not offered again");
+    });
+  }
+
+  test("a removal waiting behind a Save still out is sent at once when the page goes", async (t) => {
+    const ctx = await phone(t);
+    await openSheet(ctx);
+    holdNext(ctx, "/api/photo/save-metadata");         // never answered: the page goes first
+    type(ctx, "edit-title", "Wren's Last Lap");
+    click(ctx.window, el(ctx, "edit-save"));
+    click(ctx.window, chipX(ctx, COAST));
+    await settle(ctx, UNDO + 80);
+    assert.equal(tagWrites(ctx).length, 0, "its turn is after the Save");
+
+    ctx.window.dispatchEvent(new ctx.window.Event("pagehide"));
+    await settle(ctx);
+    assert.deepEqual(tagWrites(ctx), [{ [PATH]: { remove: [COAST] } }]);
+    assert.ok(ctx.sent.find((s) => s.url.includes("/api/photos/bulk-tags")).keepalive);
+  });
+});
+
+function leaf(ctx, tag) {
+  return vocabulary(ctx).leafOf(tag);
+}

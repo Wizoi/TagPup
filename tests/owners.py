@@ -93,6 +93,12 @@ SCENARIOS = {
     "V23": ("views", "On the phone page somebody walks Folders, Keywords, People or Dates down one level at a time and Back up one at a time, to the list of libraries at the top and never off the page; Show these photos and a search of words open the grid on that view (a folder with its subfolders); a section that could not be read says so with Try again, a slow reply never draws over a newer one, two quick taps open one level, an empty search does nothing, and an address naming a view opens its photos."),
     "V24": ("views", "On the phone page somebody opens a view of tens of thousands of photos and scrolls through its thumbnails: only the window in view has its cards asked, the next as it is scrolled to; the order or Photos/Clips chosen reads the view again from the top and a reply for the order left is dropped; a clip shows its play mark and a stale photo its badge; a tap opens the photo, two quick taps one step, and Back is the grid where it was left with nothing asked again; ids or cards that could not be read say so with a Try again that works, and an empty view says why."),
     "V25": ("views", "On the phone page somebody taps a thumbnail and looks at the photo large, swiping left and right through the view: rapid swipes go as many photos on in one step of history, the first and last go no further, a photo whose card is still being read waits for it and a reply for one swiped past is dropped, a tap zooms the file whole, and Back after the swipes is the grid with the card swiped to in view; a missing file, a picture or card that could not be read and a clip that will not play each say so and the swipe goes on."),
+    "V26": ("views", "On the phone page somebody opens a photo's Edit sheet and adds and takes off people and keywords, "
+            "each one path's change with no stamp; rapid x taps each have their own Undo and an Undo in time sends "
+            "nothing; a swipe, Back, the Libraries button or the page going sends a removal still waiting, even one "
+            "behind a Save still out; the title and Date Taken save with the stamp read, a file changed on the PC is "
+            "never written over and the text typed is kept, a dropped connection says so, a title or date left by "
+            "Back is put back when the sheet opens again, and Close with text typed asks."),
     "I1": ("apps", "Switching library in the middle of a folder shows no card of the first."),
     "I2": ("apps", "A write through a server update is waited out and not repeated."),
     "I3": ("apps", "An update by a launch and by an install hands one server over to the next without killing its work."),
@@ -228,6 +234,7 @@ _SCENARIO_FILES = {
     "V23": "scenario-browsing-on-the-phone",
     "V24": "scenario-looking-through-photos-on-the-phone",
     "V25": "scenario-looking-at-a-photo-on-the-phone",
+    "V26": "scenario-editing-a-photo-on-the-phone",
 }
 
 #: owner -> kind -> the unit, migration and guard files, a .mjs without its ".test.mjs".
