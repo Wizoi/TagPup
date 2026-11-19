@@ -39,9 +39,9 @@ export function openSheetStep() {
     window.history.pushState({ ...window.history.state, sheet: true }, '');
 }
 
-/** The sheet closed by its own button: its step goes too, so the next Back leaves the screen. */
+/** The sheet closed by its own button: its step goes too, so the next Back leaves the screen. Every open sheet has one. */
 export function closeSheetStep() {
-    if (window.history.state && window.history.state.sheet) window.history.back();
+    window.history.back();
 }
 
 function sectionOf(name) {
