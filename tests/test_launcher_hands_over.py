@@ -189,6 +189,10 @@ class Way(unittest.TestCase):
     def test_a_server_whose_status_shows_a_request_in_flight_is_waited_for_and_never_ended(self):
         self.waited_for_never_ended({"taking_work": False, "requests": 1, "busy": []}, ["1 request(s)"])
 
+    def test_a_status_that_does_not_say_what_is_busy_is_not_idle(self):
+        """#3176: a missing `busy` was read as nothing busy."""
+        self.waited_for_never_ended({"taking_work": False, "requests": 0}, ["another drain"])
+
     def test_a_silent_port_without_a_record_is_waited_for_then_opened_never_ended(self):
         """A server starting -- its record comes once it serves -- or not this user's."""
         self.answers = [None]

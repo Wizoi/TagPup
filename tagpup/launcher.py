@@ -92,10 +92,10 @@ SAY_AGAIN = 300
 QUIET = 15
 QUIET_PATIENCE = 120
 
-#: A server whose drains have not ended for IDLE_PATIENCE seconds -- no answer, "another drain", a background task still
-#: stopping -- while its status shows no request in flight and nothing running is idle but will not let go: it is ended
-#: (owner, 2026-11-19: an install's drain hung 22 minutes on a server reading requests 0, busy []). One showing work
-#: is waited for as before, never ended.
+#: A server whose drains have not ended for IDLE_PATIENCE seconds -- no answer, "another drain" -- while its status says
+#: no request in flight and nothing running is idle but will not let go: it is ended (owner, 2026-11-19: an install's
+#: drain hung 22 minutes on a server reading requests 0, busy []; a server of 2026-11-19 or later ends such a drain
+#: drained itself, tagpup.web.lifecycle). One showing work, or not saying, is waited for as before, never ended.
 IDLE_PATIENCE = 30
 
 #: Drained, the server takes work again if it has not been ended within LEASE seconds: the
@@ -419,7 +419,7 @@ def make_way(port, version, say, open_page, answering, sleep=time.sleep, clock=t
         stuck_since = None if in_use else (clock() if stuck_since is None else stuck_since)
         if stuck_since is not None and clock() - stuck_since >= IDLE_PATIENCE:
             now = ask(port)
-            if now is not None and now.get("requests") == 0 and not now.get("busy"):
+            if now is not None and now.get("requests") == 0 and "busy" in now and not now["busy"]:
                 say("TagPup %s is idle but would not let go; ending it." % _name(running_version))
                 if not end(theirs, port, answering, sleep=sleep):
                     say("It did not end; %s, on port %d." % (then, port))
