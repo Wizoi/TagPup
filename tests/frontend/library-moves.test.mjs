@@ -142,7 +142,7 @@ describe("a folder opened in Organize from a view (openInOrganize)", () => {
     await organize(ctx);
     await ctx.settle(300);
     assert.equal(ctx.state.library, null);
-    assert.equal(ctx.here.scrollTop, GRID_TOP + 40 * STRIDE, "the 161st photo is at the top again (no strip above a folder view)");
+    assert.equal(ctx.here.scrollTop, GRID_TOP + 40 * STRIDE - 16, "the 161st photo is at the top again, below Organize's header (its height, 0 here, and the 16 px gutter)");
   });
 
   test("a folder that is not on disk keeps the view and says so; the page is never left with neither a view nor a folder (#569)", async (t) => {

@@ -76,7 +76,7 @@ describe("#713: one floating header for a library view", () => {
   test("the header holds the title, the total, Refresh view as an icon, and the view's actions; the card's own title is hidden", async (t) => {
     const ctx = await loadViewPage(t, { search: "?view=person&value=Wren%20Halloway", ids: range(40) });
     assert.ok(top(ctx).classList.contains("in-library-view"));
-    assert.match(rule(".folder-view-top.in-library-view"), /position: sticky;/);
+    assert.match(rule(".folder-view-top"), /position: sticky;/);
     assert.match(rule(".folder-view-top.in-library-view .folder-view-heading"), /display: none;/, "no second \"Photos of\" that scrolls away");
     assert.equal(el(ctx, "library-strip-source").textContent, "Photos of Wren Halloway");
     assert.ok(top(ctx).querySelector(".folder-view-heading").contains(el(ctx, "folder-view-title")), "the hidden one is the card's");
@@ -93,10 +93,18 @@ describe("#713: one floating header for a library view", () => {
     assert.equal(ctx.idsAsked.length, 2, "it asks the library again");
   });
 
-  test("Organize's header is as it was: nothing floats, its card keeps its title", async (t) => {
+  test("Organize's header stays in place as the library view's does (the one sticky rule), its card keeps its title", async (t) => {
     const ctx = await loadViewPage(t, { search: "" });
     await openFolder(ctx, "D:\\Library\\2020\\Event 01");
     await ctx.settle(60);
+    // The one rule that makes the header stay is on the wrapper both share, not on the library view's class.
+    const base = rule(".folder-view-top");
+    assert.match(base, /position: sticky;/);
+    assert.match(base, /top: -20px;/);
+    assert.match(base, /background: var\(--bg-secondary\)/, "the grid does not show through it");
+    assert.doesNotMatch(rule(".folder-view-top.in-library-view"), /position: sticky;/, "no second mechanism");
+    assert.ok(el(ctx, "rename-panel").closest("#folder-view-main") === el(ctx, "folder-view-main"), "the panels scroll below it, in the same scroller");
+    assert.ok(!top(ctx).contains(el(ctx, "rename-panel")), "an opened Organize panel is not inside the header");
     assert.ok(!top(ctx).classList.contains("in-library-view"));
     assert.ok(el(ctx, "library-strip").classList.contains("hidden"));
     assert.equal(el(ctx, "folder-view-title").closest(".folder-view-heading") !== null, true);

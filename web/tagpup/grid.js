@@ -237,8 +237,8 @@ export function wireThumbnailGrid() {
         isBusy: cardIsBeingEdited,
         afterBuild: () => upper.updateCameraHighlights(),
         afterDraw: settleRoving,
-        // A library view's header floats over the grid (#713): a card scrolled to is put below it and the gutter under it.
-        topInset: () => (folderViewTop.classList.contains('in-library-view') ? folderViewTop.offsetHeight + HEADER_GUTTER : 0),
+        // The header floats over the grid in a library view (#713) and in Organize: a card scrolled to is put below it and the gutter under it.
+        topInset: () => folderViewTop.offsetHeight + HEADER_GUTTER,
         empty: noPhotosFound,
     });
     wireGridKeys({

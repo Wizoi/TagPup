@@ -815,10 +815,14 @@ button.detail-value.clickable {
    It sticks at the very top of the scroller (top: minus the scroller's 20 px padding), so no card shows above it; a card
    scrolled to by the keys is put below it (grid.js topInset). Everything in it wraps: never a page that scrolls sideways.
    In Organize the wrapper is a plain block and the card is as it always was. */
-.folder-view-top.in-library-view {
+.folder-view-top {
     position: sticky;
     top: -20px;
     z-index: 5;
+    background: var(--bg-secondary);
+}
+
+.folder-view-top.in-library-view {
     display: flex;
     align-items: center;
     flex-wrap: wrap;
