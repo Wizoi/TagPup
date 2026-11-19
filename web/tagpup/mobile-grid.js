@@ -6,7 +6,8 @@
  * address naming one; `state.view` is it while the Grid is shown. What is held for it, its ids and the cards asked so far,
  * is a view of library-source.js (`newLibrary`) in `state.photos`, shown through this page's host: its ids are read and its
  * cards asked a window at a time (at most 200 a request) by the desktop page's own code, and a reply for a view the Grid no
- * longer holds is dropped. Back from a photo finds the view held and asks nothing again; Browse lets it go.
+ * longer holds is dropped. Back from a photo finds the view held and asks nothing again, the card of the photo left (swiped
+ * to, mobile-photo.js) in view; Browse lets it go.
  *
  * The order and Photos/Clips are the view's own names (`order`, `media`): a change is the view's place in its history step,
  * so Back and a reload keep it, and the photos are read again from the top.
@@ -68,6 +69,11 @@ export function showGrid() {
     if (held && held.status !== 'error' && samePlace(viewOf(held), view)) {
         drawStatus();
         state.grid.render();
+        // The photo last open (`activeId`, as the desktop's view means it: tapped here, or swiped to in mobile-photo.js):
+        // its card in view, the scroll kept when it already is (vgrid.js, 'nearest').
+        // Only coming back from the Photo screen: from the list of libraries the grid stays where it was scrolled to.
+        const open = held.activeId === null || state.cameFrom !== 'photo' ? -1 : held.ids.indexOf(held.activeId);
+        if (open >= 0) state.grid.scrollToIndex(open);
         return;
     }
     readView(view);
@@ -142,7 +148,9 @@ export function wireGrid() {
     });
     byId('grid-cards').addEventListener('click', (event) => {
         const card = event.target.closest('.phone-card[data-id]');
-        if (card) openScreen('photo', { id: Number(card.dataset.id), at: Number(card.dataset.at) });
+        if (!card) return;
+        if (state.photos) state.photos.activeId = Number(card.dataset.id);    // the photo open, as a swipe sets it
+        openScreen('photo', { id: Number(card.dataset.id), at: Number(card.dataset.at) });
     });
     byId('grid-retry').addEventListener('click', tryAgain);
 }

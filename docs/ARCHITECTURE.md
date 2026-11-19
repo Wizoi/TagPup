@@ -351,7 +351,8 @@ same transaction (`store/derived.py`, `people.tree_edit`).
 - `web/common/` holds ES modules shared by the pages: `api.js` (library-aware URLs and JSON, with a read
   retried across a server update), `batch-strip.js` (the strip of the batches of photo files), `paths.js`, `vocabulary.js`, `library.js`, `validate.js` (the rules
   `/api/rules` publishes), `dom.js` (elements built from text), `dialog.js`, `press.js` (a pill, chip, card or row the keyboard presses
-  as a click: Tab reaches it, Enter or Space clicks it), and the gear's tag editor,
+  as a click: Tab reaches it, Enter or Space clicks it), `file-addresses.js` (the one spelling of a photo's file and a
+  clip's address, `/api/photo-file` and `/api/video-file`, versioned by the record's or card's `mtime`), and the gear's tag editor,
   settings and history dialogs.
 - `web/activity/` is the Activity page; `web/tagpup/` and `web/tuner/` have a `main.js` that only wires the
   page, plus one module per feature, and their mutable state in one `state` object.
@@ -363,8 +364,10 @@ same transaction (`store/derived.py`, `people.tree_edit`).
   `api.js`, `library.js` and `roots-banner.js` as they are, so another library is another page and an update shows
   the same banner. `tagpup/web/app.py` `PHONE_FILES` serves its html, css, manifest and icons (TagPup's alone);
   its modules are served as every page module is. It has no gear, no link to TagTuner and no `/api/apps` (through
-  Tailscale Serve the other app's address cannot be built from the request), and as of cut 1 no browsing,
-  photo or editing screens.
+  Tailscale Serve the other app's address cannot be built from the request). `mobile-browse.js` walks a section a level
+  at a time, `mobile-grid.js` shows a view through library-source.js's card windows and `vgrid.js`, `mobile-photo.js`
+  shows one photo large (read-only until the edit sheet, cut 3b), swiped through with `web/common/swipe.js`, the swipe
+  the desktop page uses too, and zoomed with `web/common/image-zoom.js`.
 - No build step. Tests import the modules (`node --test tests/frontend/*.test.mjs`), jsdom loads a page's
   modules in import order for whole flows (`tests/frontend/harness.mjs`).
 

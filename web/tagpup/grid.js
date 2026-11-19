@@ -4,6 +4,7 @@
 // selecting does across all of them.
 import { api } from './common/api.js';
 import { buildElement } from './common/dom.js';
+import { photoFileUrl } from './common/file-addresses.js';
 import { baseName, pathKey } from './common/paths.js';
 import { upper } from './hooks.js';
 import { state } from './state.js';
@@ -17,7 +18,7 @@ import {
 } from './format.js';
 import { baseOf, photoChangedOnDisk, photoRenamed, queueWriteOf, stampOf, takeStamp } from './edits.js';
 import { countSaid, renderFileList, visiblePhotos } from './folder.js';
-import { openLibraryPhoto, photoFileUrl, selectPhoto } from './photo.js';
+import { openLibraryPhoto, selectPhoto } from './photo.js';
 import { isVideo } from './media.js';
 import { createVGrid } from './vgrid.js';
 import { cardLabel, settleRoving, wireGridKeys } from './grid-keys.js';

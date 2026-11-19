@@ -10,6 +10,7 @@
     <link rel="stylesheet" href="mobile.css">
     <link rel="stylesheet" href="common/roots-banner.css">
     <link rel="stylesheet" href="common/dark-select.css">
+    <link rel="stylesheet" href="common/image-zoom.css">
 </head>
 <body>
     <div id="roots-banner" class="roots-banner hidden" role="alert">
@@ -66,8 +67,13 @@
         </section>
 
         <section class="screen hidden" data-screen="photo" data-title="Photo">
+            <div id="photo-stage" class="photo-stage">
+                <img id="photo-picture" class="photo-picture hidden" alt="The photo">
+                <video id="photo-clip" class="photo-clip hidden" controls playsinline preload="metadata"></video>
+            </div>
+            <p id="photo-problem" class="problem hidden" role="alert"></p>
             <h2 id="photo-name" class="photo-name"></h2>
-            <p class="screen-note">Photo screen: next cut</p>
+            <p id="photo-at" class="screen-note"></p>
         </section>
 
         <section class="screen hidden" data-screen="library" data-title="Libraries">

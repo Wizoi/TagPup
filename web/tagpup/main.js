@@ -54,7 +54,8 @@ import {
     wireThumbnailGrid, wireThumbnailSize
 } from './grid.js';
 import { recordUndo, undoLastOperation } from './undo.js';
-import { enableSwipeNavigation, wireKeyboard } from './navigation.js';
+import { stepPhoto, wireKeyboard } from './navigation.js';
+import { enableSwipeNavigation } from './common/swipe.js';
 import { wireFaceBoxes } from './face-boxes.js';
 import { holdForWrite, resumeAfterWrite, wireMedia } from './media.js';
 import { wireEditToggles } from './edit-toggles.js';
@@ -177,7 +178,7 @@ document.addEventListener('DOMContentLoaded', () => {
     // The photo panel's Back, to the grid of a library view as it was left.
     wireViewLeft();
 
-    enableSwipeNavigation(mainImage);
+    enableSwipeNavigation(mainImage, stepPhoto);
 
     if (btnCarryForward) btnCarryForward.addEventListener('click', carryTagsForward);
     if (btnUndo) btnUndo.addEventListener('click', undoLastOperation);

@@ -177,7 +177,7 @@ class ABoxSitsOnItsFaceInATurnedPhoto(Case):
         return photo_path
 
     def served(self, photo_path):
-        """The picture the page shows: what it asks /api/photo-file for (web/tagpup/photo.js photoFileUrl)."""
+        """The picture the page shows: what it asks /api/photo-file for (web/common/file-addresses.js photoFileUrl)."""
         reply = self.client.get("/library/api/photo-file", query_string={"path": photo_path, "size": 800})
         self.assertEqual(200, reply.status_code)
         return Image.open(io.BytesIO(reply.data)).convert("L")

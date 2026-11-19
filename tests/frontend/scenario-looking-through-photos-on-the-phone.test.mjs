@@ -7,7 +7,7 @@
  *   (web/tagpup/mobile-grid.js). The real photo_index holds 59,967 photos at the top (counted read-only 2026-11-18).
  * - The order and Photos/Clips are two choices above the grid: a change reads the view again from the top, a reply for
  *   the order left is dropped, and the step in history keeps the choice.
- * - A tap opens the photo (the Photo screen, a placeholder until the next cut, web/tagpup/mobile-photo.js): one step for
+ * - A tap opens the photo (the Photo screen, web/tagpup/mobile-photo.js): one step for
  *   two quick taps, and Back is the grid where it was left, its ids not asked again.
  * - The ids or a window's cards that could not be read say "Could not load photos" with a Try again that works; an empty
  *   view says why.
@@ -177,7 +177,8 @@ describe("looking through a view's photos on the phone", () => {
     const ctx = await phone(t, { count: 2000 });
     await openEvents(ctx);
     await ctx.scrollTo(3000);
-    const card = cards(ctx).find((c) => c.querySelector("img"));
+    // A card in view (the grid draws some above it too): a finger reaches only those.
+    const card = cards(ctx).find((c) => c.querySelector("img") && 120 + Math.floor(Number(c.dataset.at) / 3) * 134 >= 3000);
     const id = Number(card.dataset.id);
     const steps = ctx.window.history.length;
     const ids = idsAsked(ctx).length;
@@ -210,6 +211,23 @@ describe("looking through a view's photos on the phone", () => {
     assert.deepEqual(shown(ctx), ["grid"]);
     assert.equal(idsAsked(ctx).length, ids, "the view held is shown, not asked again");
     assert.equal(ctx.here.scrollTop, 3000, "where it was left");
+  });
+
+  test("a photo opened and Back, the grid scrolled far away, then the list of libraries and Back: the grid stays where it was scrolled to (#3145)", async (t) => {
+    const ctx = await phone(t, { count: 2000 });
+    await openEvents(ctx);
+    await ctx.scrollTo(3000);
+    const card = cards(ctx).find((c) => c.querySelector("img") && 120 + Math.floor(Number(c.dataset.at) / 3) * 134 >= 3000);
+    click(ctx.window, card);
+    await settle(ctx);
+    await back(ctx);
+    await ctx.scrollTo(9000);
+
+    await tap(ctx, el(ctx, "bar-library"));
+    await back(ctx);
+
+    assert.deepEqual(shown(ctx), ["grid"]);
+    assert.equal(ctx.here.scrollTop, 9000, "not jumped back to the photo last open");
   });
 
   test("ids that could not be read say so with Try again, and Try again shows the photos", async (t) => {
