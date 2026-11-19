@@ -410,8 +410,10 @@ function takeReply(chunk, data, entry, dropped) {
             alert(`Not taken off ${putBack.join(', ')}: ${entry.error}`);
             return false;
         }
-        setStatus('error', `Tags not written to ${photosWord(kept.length)}`, { transient: false });
-        alert(`Tags not written to ${photosWord(kept.length)}: ${entry.error}. Retry or Cancel it in the list of writes (bottom right).`);
+        // The panel's own removals among them are drawn again now, and are not part of the Retry: said by name.
+        const notOff = putBack.length ? ` Not taken off ${putBack.join(', ')}.` : '';
+        setStatus('error', `Tags not written to ${photosWord(kept.length)}.${notOff}`, { transient: false });
+        alert(`Tags not written to ${photosWord(kept.length)}: ${entry.error}.${notOff} Retry or Cancel it in the list of writes (bottom right).`);
         return false;
     }
     if (dropped) return true;

@@ -209,6 +209,22 @@ describe("V20: taking tags off the open photo is answered at the click, the writ
     assert.equal(ctx.status(), "Ready");
   });
 
+  test("a failed write of a pill's removal with another change of the photo says the tag is not taken off, and keeps the other for Retry", async (t) => {
+    const ctx = await open(t);
+    await ctx.takeOff("Cross Country");
+    await ctx.takeOff("Harbourside");
+    // A bulk click's change for the open photo, waiting with the pill's removal: one write of both.
+    pageExports(ctx.window, "web/tagpup/pending.js").pendTags([A.path], { add: ["Places/Beach"] });
+    await flush(ctx.window, 4);
+    await ctx.answer();
+    await ctx.answer("The share did not answer");
+    assert.deepEqual(sorted(ctx.pills()), ["Harbourside", "Kentridge", "Places/Beach"], "the failed removal's tag was not drawn again");
+    assert.deepEqual(ctx.alerts, ["Tags not written to 1 photo: The share did not answer. Not taken off Harbourside. "
+      + "Retry or Cancel it in the list of writes (bottom right)."]);
+    assert.equal(ctx.status(), "Tags not written to 1 photo. Not taken off Harbourside.");
+    assert.equal(ctx.retries(), 1, "the other change lost its Retry");
+  });
+
   test("another photo chosen while a removal is out shows its own tags; the first, opened again, its tags as written", async (t) => {
     const ctx = await open(t);
     await ctx.takeOff("Cross Country");
