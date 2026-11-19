@@ -388,7 +388,7 @@ export function openLibraryPhoto(id) {
             done();
             if (lib !== state.library || token !== lib.openToken) return;
             showLibraryRecord(lib, record);
-        });
+        }, { onStay: done });
         return true;
     }).catch(err => {
         done();

@@ -8,7 +8,7 @@
 import { test, describe, afterEach } from "node:test";
 import assert from "node:assert/strict";
 import { closeAllApps, click } from "./harness.mjs";
-import { loadViewPage, pageErrors, STRIDE } from "./view-page.mjs";
+import { loadViewPage, pageErrors, recordOf, STRIDE } from "./view-page.mjs";
 
 afterEach(() => {
   closeAllApps();
@@ -188,6 +188,27 @@ describe("what is asked, and what fails", () => {
     await ctx.settle(200);
     await answer(ctx, "discard");
     assertAsLeft(ctx, "after Discard");
+  });
+
+  test("a photo asked for while its record is read, then the question about unsaved edits turned back, leaves no wanted photo (#3183)", async (t) => {
+    let release = null;
+    let slow = false;
+    const ctx = await leftView(t, {
+      onPhoto: (id) => (slow ? new Promise((resolve) => { release = () => resolve({ photo: recordOf(id) }); }) : { photo: recordOf(id) }),
+    });
+    await open(ctx, ctx.left.photo);
+    slow = true;
+    press(ctx, "ArrowRight");
+    await ctx.settle(60);
+    assert.ok(ctx.state.library.wantedId !== null, "the next photo is wanted while its record is read");
+    const title = el(ctx, "input-photo-title");
+    title.value = "Unsaved caption";
+    title.dispatchEvent(new ctx.window.Event("input", { bubbles: true }));
+    title.blur();
+    release();
+    await ctx.settle(200);
+    await answer(ctx, "cancel");
+    assert.equal(ctx.state.library.wantedId, null, "Cancel: the next arrow would step from the wrong photo");
   });
 
   test("the photo's title saved: its card follows when the view is back", async (t) => {
