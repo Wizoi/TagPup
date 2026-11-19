@@ -363,8 +363,10 @@ same transaction (`store/derived.py`, `people.tree_edit`).
   `api.js`, `library.js` and `roots-banner.js` as they are, so another library is another page and an update shows
   the same banner. `tagpup/web/app.py` `PHONE_FILES` serves its html, css, manifest and icons (TagPup's alone);
   its modules are served as every page module is. It has no gear, no link to TagTuner and no `/api/apps` (through
-  Tailscale Serve the other app's address cannot be built from the request), and as of cut 1 no browsing,
-  photo or editing screens.
+  Tailscale Serve the other app's address cannot be built from the request). `mobile-browse.js` walks a section a level
+  at a time, `mobile-grid.js` shows a view through library-source.js's card windows and `vgrid.js`, `mobile-photo.js`
+  shows one photo large (read-only until the edit sheet, cut 3b), swiped through with `web/common/swipe.js`, the swipe
+  the desktop page uses too, and zoomed with `web/common/image-zoom.js`.
 - No build step. Tests import the modules (`node --test tests/frontend/*.test.mjs`), jsdom loads a page's
   modules in import order for whole flows (`tests/frontend/harness.mjs`).
 

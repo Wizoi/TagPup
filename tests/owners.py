@@ -92,6 +92,7 @@ SCENARIOS = {
     "V22": ("views", "Somebody tags many photos at once, a folder of 50 or a select-all, while clicking on: each file's tag change waits in the page and goes 25 files a write under one group token, a tag added meanwhile rides the write of the files not yet sent and reaches the written ones in a later write, clicks on one tag leave the last one, a write that fails keeps its files' changes for Retry and never loops by itself, a single save clicked meanwhile goes between two writes, Cancel says how many photos it left unwritten, and choosing another library asks while changes are not sent; staying keeps them."),
     "V23": ("views", "On the phone page somebody walks Folders, Keywords, People or Dates down one level at a time and Back up one at a time, to the list of libraries at the top and never off the page; Show these photos and a search of words open the grid on that view (a folder with its subfolders); a section that could not be read says so with Try again, a slow reply never draws over a newer one, two quick taps open one level, an empty search does nothing, and an address naming a view opens its photos."),
     "V24": ("views", "On the phone page somebody opens a view of tens of thousands of photos and scrolls through its thumbnails: only the window in view has its cards asked, the next as it is scrolled to; the order or Photos/Clips chosen reads the view again from the top and a reply for the order left is dropped; a clip shows its play mark and a stale photo its badge; a tap opens the photo, two quick taps one step, and Back is the grid where it was left with nothing asked again; ids or cards that could not be read say so with a Try again that works, and an empty view says why."),
+    "V25": ("views", "On the phone page somebody taps a thumbnail and looks at the photo large, swiping left and right through the view: rapid swipes go as many photos on in one step of history, the first and last go no further, a photo whose card is still being read waits for it and a reply for one swiped past is dropped, a tap zooms the file whole, and Back after the swipes is the grid with the card swiped to in view; a missing file, a picture or card that could not be read and a clip that will not play each say so and the swipe goes on."),
     "I1": ("apps", "Switching library in the middle of a folder shows no card of the first."),
     "I2": ("apps", "A write through a server update is waited out and not repeated."),
     "I3": ("apps", "An update by a launch and by an install hands one server over to the next without killing its work."),
@@ -226,6 +227,7 @@ _SCENARIO_FILES = {
     "V22": "scenario-tagging-many-photos-at-once",
     "V23": "scenario-browsing-on-the-phone",
     "V24": "scenario-looking-through-photos-on-the-phone",
+    "V25": "scenario-looking-at-a-photo-on-the-phone",
 }
 
 #: owner -> kind -> the unit, migration and guard files, a .mjs without its ".test.mjs".

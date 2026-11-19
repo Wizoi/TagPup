@@ -273,6 +273,27 @@ body:has(> main > .grid-screen:not(.hidden)) > main {
     overflow-wrap: anywhere;
 }
 
+/* The Photo screen: the picture as large as the screen allows, fitted (not measured), so a phone turned fits it again;
+   a sideways swipe is the page's (web/common/swipe.js), a pinch the browser's. */
+.photo-stage {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 50vh;
+    margin: -1rem -1rem 0.75rem;
+    touch-action: pan-y pinch-zoom;
+    user-select: none;
+}
+
+.photo-picture,
+.photo-clip {
+    display: block;
+    max-width: 100%;
+    max-height: calc(100vh - 10rem);
+    max-height: calc(100dvh - 10rem);
+    object-fit: contain;
+}
+
 .grid-choices {
     display: flex;
     gap: 0.5rem;

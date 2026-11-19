@@ -6,7 +6,8 @@
  * address naming one; `state.view` is it while the Grid is shown. What is held for it, its ids and the cards asked so far,
  * is a view of library-source.js (`newLibrary`) in `state.photos`, shown through this page's host: its ids are read and its
  * cards asked a window at a time (at most 200 a request) by the desktop page's own code, and a reply for a view the Grid no
- * longer holds is dropped. Back from a photo finds the view held and asks nothing again; Browse lets it go.
+ * longer holds is dropped. Back from a photo finds the view held and asks nothing again, the card of the photo left (swiped
+ * to, mobile-photo.js) in view; Browse lets it go.
  *
  * The order and Photos/Clips are the view's own names (`order`, `media`): a change is the view's place in its history step,
  * so Back and a reload keep it, and the photos are read again from the top.
@@ -68,6 +69,11 @@ export function showGrid() {
     if (held && held.status !== 'error' && samePlace(viewOf(held), view)) {
         drawStatus();
         state.grid.render();
+        // The photo swiped to: its card in view, the scroll kept when it already is (vgrid.js, 'nearest'); once, so the
+        // list of libraries opened over the Grid and closed again leaves the scroll alone.
+        const left = held.activeId === null ? -1 : held.ids.indexOf(held.activeId);
+        held.activeId = null;
+        if (left >= 0) state.grid.scrollToIndex(left);
         return;
     }
     readView(view);

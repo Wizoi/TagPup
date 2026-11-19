@@ -6,13 +6,14 @@
  * build from the request (docs/plans/phone-viewer.md).
  */
 import { wireRootsBanner } from './common/roots-banner.js';
+import { wireImageZoom } from './common/image-zoom.js';
 import { libraryOfThePage } from './common/library.js';
 import { state } from './mobile-state.js';
 import { openScreen, startScreens, whenShown, wireScreens } from './mobile-screens.js';
 import { showLibraries, wireLibraries } from './mobile-library.js';
 import { linkedView, showBrowse, wireBrowse } from './mobile-browse.js';
 import { forgetGrid, showGrid, wireGrid } from './mobile-grid.js';
-import { showPhoto } from './mobile-photo.js';
+import { leavePhoto, showPhoto, wirePhoto } from './mobile-photo.js';
 
 document.addEventListener('DOMContentLoaded', () => {
     wireRootsBanner();
@@ -24,7 +25,10 @@ document.addEventListener('DOMContentLoaded', () => {
     whenShown('browse', showBrowse);
     wireGrid();
     whenShown('grid', showGrid);
+    wireImageZoom();
+    wirePhoto();
     whenShown('photo', showPhoto);
+    for (const name of ['library', 'browse', 'grid']) whenShown(name, leavePhoto);
     document.getElementById('bar-library').addEventListener('click', () => openScreen('library'));
 
     // Last: the view and the library the URL names (the library remembered as the one opened last), then the first screen.

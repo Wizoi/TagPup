@@ -7,7 +7,7 @@
  *   (web/tagpup/mobile-grid.js). The real photo_index holds 59,967 photos at the top (counted read-only 2026-11-18).
  * - The order and Photos/Clips are two choices above the grid: a change reads the view again from the top, a reply for
  *   the order left is dropped, and the step in history keeps the choice.
- * - A tap opens the photo (the Photo screen, a placeholder until the next cut, web/tagpup/mobile-photo.js): one step for
+ * - A tap opens the photo (the Photo screen, web/tagpup/mobile-photo.js): one step for
  *   two quick taps, and Back is the grid where it was left, its ids not asked again.
  * - The ids or a window's cards that could not be read say "Could not load photos" with a Try again that works; an empty
  *   view says why.
