@@ -72,6 +72,12 @@ def main():
     print(f"Training folder prepared: {training_dir}")
     print(f"New content folder prepared: {new_dir}")
 
+    # A row is recorded only in a folder the library holds (store.photos.record_indexed): both folders are added
+    # first, as an index adds the folder it is given.
+    from tagpup.core.library import Library
+    from tagpup.services import libraries
+    libraries.record_added(Library(DB_PATH), [training_dir, new_dir], subfolders=False)
+
     # 4. Connect to database to write mock records
     conn = tagpup_db.connect(DB_PATH)
 
@@ -105,12 +111,6 @@ def main():
     # Crop real face from puppy2.png (head region, approx [350, 200, 750, 600])
     puppy2_face_box = [350, 200, 750, 600]
     puppy2_crop = images.face_crop(os.path.join(new_dir, "puppy2.png"), puppy2_face_box)
-
-    # A row is recorded only in a folder the library holds (store.photos.record_indexed): both folders are added
-    # first, as an index adds the folder it is given.
-    from tagpup.store import added_folders
-    for folder in (os.path.dirname(puppy_path), os.path.dirname(puppy2_path)):
-        added_folders.record(conn, folder, subfolders=False)
 
     # Insert puppy image representing training set (already matched in database)
     store_photos.record_indexed(conn, puppy_path, {
