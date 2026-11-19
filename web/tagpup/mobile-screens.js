@@ -65,6 +65,13 @@ export function openScreen(name, place = null) {
     showScreen(name, place);
 }
 
+/** Show the screen shown at another place, in its own step: a choice made on it (the Grid's order), not a step to go Back from. */
+export function replacePlace(place) {
+    if (samePlace(state.place, place)) return;
+    window.history.replaceState({ ...window.history.state, place: place ?? null }, '');
+    showScreen(state.screen, place);
+}
+
 /** Up a step: Back, or from the page's first step (the list under Browse), Browse opened again. */
 export function upAScreen() {
     if (isFirst()) openScreen(state.home);

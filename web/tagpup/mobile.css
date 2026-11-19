@@ -243,13 +243,133 @@ button {
     margin-top: 1rem;
 }
 
-/* The Grid (mobile-grid.js): for now its view and how many photos it holds. */
-.grid-heading {
+/* The Grid (mobile-grid.js): its view, two choices, the count, and the cards in a windowed grid (vgrid.js). While it is
+   shown the page is the height of the screen and the Grid's section is the one that scrolls, so the grid can tell what is
+   in view and keep its place across a photo opened and Back. */
+body:has(> main > .grid-screen:not(.hidden)) {
+    display: flex;
+    flex-direction: column;
+    height: 100vh;
+    height: 100dvh;
+    min-height: 0;
+}
+
+body:has(> main > .grid-screen:not(.hidden)) > main {
+    display: flex;
+    flex: 1;
+    flex-direction: column;
+    min-height: 0;
+}
+
+.grid-screen {
+    flex: 1;
+    min-height: 0;
+    overflow-y: auto;
+}
+
+.grid-heading,
+.photo-name {
     font-size: max(16px, 1.25rem);
     overflow-wrap: anywhere;
+}
+
+.grid-choices {
+    display: flex;
+    gap: 0.5rem;
+    margin-top: 0.75rem;
+}
+
+.grid-choice {
+    flex: 1;
+    min-width: 0;
+    min-height: max(44px, 2.75rem);
+    padding: 0 0.5rem;
+    background-color: var(--bg-secondary);
+    border: 1px solid var(--border-color);
+    border-radius: 0.5rem;
 }
 
 .grid-count {
     margin-top: 0.5rem;
     color: var(--text-secondary);
+}
+
+/* Three columns at 390 px, two at large type: the grid reads them from here. Its padding is the rows not drawn. */
+.grid-cards {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(7rem, 1fr));
+    gap: 0.25rem;
+    margin-top: 0.75rem;
+    padding-top: var(--vgrid-before, 0px);
+    padding-bottom: calc(1rem + var(--vgrid-after, 0px));
+}
+
+.phone-card {
+    display: flex;
+    flex-direction: column;
+    gap: 0.125rem;
+    min-width: 0;
+    padding: 0;
+    text-align: left;
+    background: none;
+    border: none;
+    touch-action: manipulation;
+}
+
+.phone-card-picture {
+    position: relative;
+    aspect-ratio: 1;
+    overflow: hidden;
+    background-color: var(--bg-tertiary);
+    border-radius: 0.375rem;
+}
+
+.phone-card:active .phone-card-picture {
+    outline: 2px solid var(--accent);
+}
+
+.phone-card-picture img {
+    display: block;
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+}
+
+.phone-card-picture img:not([src]),
+.phone-card-picture img.failed {
+    visibility: hidden;
+}
+
+.phone-card.stale-missing img {
+    opacity: 0.4;
+}
+
+.phone-card-play,
+.phone-card-stale,
+.phone-card-note {
+    position: absolute;
+    padding: 0 0.25rem;
+    font-size: 0.75rem;
+    color: var(--text-primary);
+    background-color: rgba(0, 0, 0, 0.6);
+    border-radius: 0.25rem;
+}
+
+.phone-card-play {
+    top: 0.25rem;
+    left: 0.25rem;
+}
+
+.phone-card-stale,
+.phone-card-note {
+    bottom: 0.25rem;
+    left: 0.25rem;
+}
+
+.phone-card-name {
+    overflow: hidden;
+    font-size: 0.75rem;
+    color: var(--text-secondary);
+    text-overflow: ellipsis;
+    white-space: nowrap;
 }

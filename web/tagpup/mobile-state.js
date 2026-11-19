@@ -9,8 +9,8 @@ export const state = {
     // The screen shown, a data-screen of mobile.html, and the one the page opens on.
     screen: '',
     home: 'browse',
-    // Where on that screen, as its history entry holds it: a level of Browse ([section, row ids...]), the Grid's view;
-    // null for none (the top of Browse).
+    // Where on that screen, as its history entry holds it: a level of Browse ([section, row ids...]), the Grid's view,
+    // the Photo screen's { id, at }; null for none (the top of Browse).
     place: null,
     // The view an address names (?view=, web/common/library.js VIEW_PARAMS), opened as the page starts; null for none.
     linked: null,
@@ -18,8 +18,11 @@ export const state = {
     view: null,
     // Browse's sections by name: { asked, index, status, message } (mobile-browse.js).
     sections: {},
-    // How many times the Grid's photos were asked for: a reply to an older ask is dropped.
-    gridAsked: 0,
+    // What is held for the Grid's view: a view of library-source.js (newLibrary), its ids and the cards asked so far,
+    // kept while a photo of it is open; null when Browse is shown. A reply for a view no longer held is dropped.
+    photos: null,
+    // The Grid's windowed grid (vgrid.js), made once as the page is wired.
+    grid: null,
     // How many times the library list was asked for: a reply to an older ask is dropped.
     librariesAsked: 0,
 };

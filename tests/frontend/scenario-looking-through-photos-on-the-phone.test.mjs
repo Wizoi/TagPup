@@ -1,0 +1,242 @@
+/**
+ * Owner scenario: on the phone page (web/tagpup/mobile.html, docs/plans/phone-viewer.md, Screens 3) the owner opens a
+ * keyword's photos and looks through them as thumbnails, three to a row, scrolling down a view of tens of thousands.
+ *
+ * - Only the cards of the window in view are asked (GET /api/library/cards, at most 200 ids a request), the next window
+ *   as it is scrolled to: the desktop page's own card windows (library-source.js), through the phone's host
+ *   (web/tagpup/mobile-grid.js). The real photo_index holds 59,967 photos at the top (counted read-only 2026-11-18).
+ * - The order and Photos/Clips are two choices above the grid: a change reads the view again from the top, a reply for
+ *   the order left is dropped, and the step in history keeps the choice.
+ * - A tap opens the photo (the Photo screen, a placeholder until the next cut, web/tagpup/mobile-photo.js): one step for
+ *   two quick taps, and Back is the grid where it was left, its ids not asked again.
+ * - The ids or a window's cards that could not be read say "Could not load photos" with a Try again that works; an empty
+ *   view says why.
+ *
+ * Names hold spaces and apostrophes, as the live libraries' do. Every name here is made up.
+ */
+import { test, describe, afterEach } from "node:test";
+import assert from "node:assert/strict";
+import { loadApp, FakeServer, flush, click, closeAllApps, pageExports } from "./harness.mjs";
+
+const PAGE = "http://localhost:8090/alpha/mobile.html";
+const KEYWORDS = { keywords: [{ tag: "Events", name: "Events", parent: null, count: 40000 }], untagged: 0 };
+const VIEW = 40000;
+
+const el = (ctx, id) => ctx.document.getElementById(id);
+const shown = (ctx) =>
+  [...ctx.document.querySelectorAll("[data-screen]")].filter((s) => !s.classList.contains("hidden")).map((s) => s.dataset.screen);
+const pageState = (ctx) => pageExports(ctx.window, "web/tagpup/mobile-state.js").state;
+const cards = (ctx) => [...el(ctx, "grid-cards").querySelectorAll(".phone-card[data-id]")];
+const names = (ctx) => cards(ctx).map((c) => c.querySelector(".phone-card-name").textContent);
+const idsAsked = (ctx) => ctx.server.urls().filter((u) => u.includes("/api/library/ids"));
+const wait = (window, ms) => new Promise((resolve) => window.setTimeout(resolve, ms));
+
+async function settle(ctx, ms = 50) {
+  await wait(ctx.window, ms);
+  await flush(ctx.window, 6);
+}
+
+async function tap(ctx, element) {
+  click(ctx.window, element);
+  await settle(ctx);
+}
+
+async function back(ctx) {
+  ctx.window.history.back();
+  await settle(ctx);
+}
+
+/** A view's ids, by the order and the media the request names. */
+function idsOf(url, { count = VIEW, videos = [] } = {}) {
+  const descending = /order=name-desc/.test(url);
+  const ids = Array.from({ length: count }, (_, i) => (descending ? 100000 + i : i + 1));
+  if (/media=video/.test(url)) return { ids: videos, total: videos.length, of: count, videos };
+  return { ids, total: ids.length, of: count, videos };
+}
+
+/**
+ * The page on a library whose keyword holds `count` photos, opened at Browse, the Grid's section given a phone's layout
+ * (jsdom has none): 3 columns, 600 px of view. `cardsReply(ids)` answers the cards; `hold` keeps each reply until released.
+ */
+async function phone(t, { count = VIEW, videos = [], cardsReply, hold = false } = {}) {
+  const asked = [];
+  const held = [];
+  const server = new FakeServer()
+    .on("/api/databases", { databases: ["alpha", "beta"] })
+    .on("/api/library/navigator?section=keywords", KEYWORDS)
+    .on("/api/library/ids", (url) => idsOf(url, { count, videos }))
+    .on("/api/library/cards", (url) => {
+      const ids = decodeURIComponent((url.match(/ids=([^&]+)/) || [])[1] || "").split(",").map(Number);
+      asked.push(ids);
+      const body = cardsReply ? cardsReply(ids) : {
+        cards: ids.map((id) => ({ id, name: `Rowan's Meet ${id}.jpg`, thumb: `/api/photo-thumb?id=${id}&v=1`, media: "photo" })),
+      };
+      return hold ? new Promise((resolve) => held.push(() => resolve(body))) : body;
+    });
+  const ctx = await loadApp("phone", { t, server, url: PAGE });
+  const section = ctx.document.querySelector('[data-screen="grid"]');
+  const here = { scrollTop: 0, viewport: 600, columns: 3, cardHeight: 130, rowGap: 4, gridTop: 120, cardWidth: 120, columnGap: 4 };
+  Object.defineProperty(section, "scrollTop", { get: () => here.scrollTop, set: (v) => { here.scrollTop = v; }, configurable: true });
+  Object.defineProperty(section, "clientHeight", { get: () => (section.classList.contains("hidden") ? 0 : here.viewport), configurable: true });
+  pageState(ctx).grid.setMeasure(() => {
+    if (section.classList.contains("hidden")) {
+      here.scrollTop = 0;       // the browser forgets a hidden element's scroll offset
+      return { ...here, viewport: 0 };
+    }
+    return { ...here };
+  });
+  return Object.assign(ctx, {
+    asked, here, section,
+    release: async () => {
+      held.splice(0).forEach((go) => go());
+      await settle(ctx);
+    },
+    scrollTo: async (top) => {
+      here.scrollTop = top;
+      section.dispatchEvent(new ctx.window.Event("scroll"));
+      await settle(ctx, 400);    // the window stands still, its cards are asked (library-source.js FETCH_DELAY_MS)
+    },
+  });
+}
+
+/** Keywords, Events, Show these photos: the Grid on the keyword and everything under it. */
+async function openEvents(ctx) {
+  await tap(ctx, ctx.document.querySelector('[data-section="keywords"]'));
+  await tap(ctx, [...el(ctx, "browse-rows").querySelectorAll(".browse-item")].find((r) => r.textContent.includes("Events")));
+  await tap(ctx, el(ctx, "browse-show"));
+  await settle(ctx, 100);
+}
+
+async function choose(ctx, id, value) {
+  el(ctx, id).value = value;
+  el(ctx, id).dispatchEvent(new ctx.window.Event("change"));
+  await settle(ctx, 100);
+}
+
+afterEach(() => closeAllApps());
+
+describe("looking through a view's photos on the phone", () => {
+  test("a keyword of 40,000 photos asks only the cards of the window in view, then the next window as it is scrolled to", async (t) => {
+    const ctx = await phone(t);
+    await openEvents(ctx);
+
+    assert.deepEqual(shown(ctx), ["grid"]);
+    assert.equal(el(ctx, "grid-count").textContent, "40,000 photos");
+    assert.equal(ctx.asked.length, 1, "one request for the first window");
+    assert.ok(ctx.asked[0].length <= 200 && Math.max(...ctx.asked[0]) <= 60, `asked ${ctx.asked[0].length}, up to id ${Math.max(...ctx.asked[0])}`);
+    assert.ok(cards(ctx).length > 0 && cards(ctx).length < 60, "only the window's cards are drawn");
+    assert.equal(names(ctx)[0], "Rowan's Meet 1.jpg");
+    assert.ok(cards(ctx)[0].querySelector("img").dataset.src.includes("/alpha/api/photo-thumb?id=1&v=1"), "the library's thumbnail, by id and stamp");
+
+    await ctx.scrollTo(20000);      // row 148: index about 447
+    assert.equal(ctx.asked.length, 2, "the window scrolled to is asked");
+    const second = ctx.asked[1];
+    assert.ok(Math.min(...second) > 380 && Math.max(...second) < 520, `asked ids ${Math.min(...second)}-${Math.max(...second)}`);
+    assert.ok(ctx.asked.flat().length < 200, "never the view's 40,000");
+  });
+
+  test("changing the order reads the view again from the top and drops the cards answered for the order left", async (t) => {
+    const ctx = await phone(t, { count: 500, hold: true });
+    await openEvents(ctx);
+    assert.equal(ctx.asked.length, 1, "the first window's cards are under way");
+
+    await choose(ctx, "grid-order", "name-desc");
+    const asked = idsAsked(ctx);
+    assert.equal(asked.length, 2);
+    assert.match(asked[1], /order=name-desc/);
+    assert.deepEqual({ ...pageState(ctx).place }, { kind: "keyword", value: "Events", recursive: false, order: "name-desc", media: "both" });
+    assert.equal(ctx.window.history.state.place.order, "name-desc", "the step in history keeps the order");
+    assert.equal(ctx.here.scrollTop, 0, "from the top");
+    await ctx.release();     // both windows' replies, the order left's first
+
+    assert.equal(names(ctx)[0], "Rowan's Meet 100000.jpg");
+    assert.ok(!pageState(ctx).photos.cards.has(1), "no card of the order left is held");
+    assert.ok(names(ctx).every((n) => /Meet 1\d{5}\.jpg$/.test(n)), "only the new order's cards are drawn");
+  });
+
+  test("Photos/Clips: the clips alone are asked, the count says of how many, and a clip shows its play mark; a stale photo its badge", async (t) => {
+    const ctx = await phone(t, {
+      count: 5, videos: [3, 5],
+      cardsReply: (ids) => ({
+        cards: ids.map((id) => ({ id, name: `Clip ${id}.mp4`, thumb: `/api/photo-thumb?id=${id}&v=1`, media: "video", stale: id === 5 ? "missing" : null })),
+      }),
+    });
+    await openEvents(ctx);
+    await choose(ctx, "grid-media", "video");
+
+    assert.match(idsAsked(ctx).at(-1), /media=video/);
+    assert.equal(el(ctx, "grid-count").textContent, "Showing 2 of 5");
+    assert.deepEqual(names(ctx), ["Clip 3.mp4", "Clip 5.mp4"]);
+    assert.ok(cards(ctx)[0].querySelector(".phone-card-play"), "a clip says it is one");
+    assert.equal(cards(ctx)[1].querySelector(".phone-card-stale").textContent, "missing");
+    assert.ok(cards(ctx)[1].classList.contains("stale-missing"));
+    assert.equal(el(ctx, "grid-media").value, "video");
+  });
+
+  test("a tap opens the photo, two quick taps one step; Back is the grid where it was left, its ids not asked again", async (t) => {
+    const ctx = await phone(t, { count: 2000 });
+    await openEvents(ctx);
+    await ctx.scrollTo(3000);
+    const card = cards(ctx).find((c) => c.querySelector("img"));
+    const id = Number(card.dataset.id);
+    const steps = ctx.window.history.length;
+    const ids = idsAsked(ctx).length;
+
+    click(ctx.window, card);
+    click(ctx.window, card);
+    await settle(ctx);
+    assert.deepEqual(shown(ctx), ["photo"]);
+    assert.equal(ctx.window.history.length, steps + 1, "two quick taps are one step");
+    assert.equal(el(ctx, "photo-name").textContent, `Rowan's Meet ${id}.jpg`);
+    assert.equal(pageState(ctx).place.id, id);
+
+    await back(ctx);
+    assert.deepEqual(shown(ctx), ["grid"]);
+    assert.equal(idsAsked(ctx).length, ids, "the view held is shown, not asked again");
+    assert.equal(ctx.here.scrollTop, 3000, "where it was left");
+    assert.ok(cards(ctx).some((c) => Number(c.dataset.id) === id));
+  });
+
+  test("ids that could not be read say so with Try again, and Try again shows the photos", async (t) => {
+    const ctx = await phone(t, { count: 3 });
+    ctx.server.first("/api/library/ids", { error: "The library is busy." }, { status: 500 });
+    await openEvents(ctx);
+
+    assert.ok(!el(ctx, "grid-problem").classList.contains("hidden"));
+    assert.match(el(ctx, "grid-problem-text").textContent, /^Could not load photos\./);
+    assert.equal(cards(ctx).length, 0);
+
+    ctx.server.routes.shift();
+    await tap(ctx, el(ctx, "grid-retry"));
+    await settle(ctx, 100);
+    assert.ok(el(ctx, "grid-problem").classList.contains("hidden"));
+    assert.equal(el(ctx, "grid-count").textContent, "3 photos");
+    assert.deepEqual(names(ctx), ["Rowan's Meet 1.jpg", "Rowan's Meet 2.jpg", "Rowan's Meet 3.jpg"]);
+  });
+
+  test("cards that could not be read are tried once more, then say so with Try again, and Try again draws them", async (t) => {
+    const ctx = await phone(t, { count: 3 });
+    ctx.server.first("/api/library/cards", { error: "The library is busy." }, { status: 500 });
+    await openEvents(ctx);
+    await settle(ctx, 2300);   // the one more try (library-source.js RETRY_MS)
+
+    assert.ok(!el(ctx, "grid-problem").classList.contains("hidden"), "never a grid of empty cards saying nothing");
+    assert.equal(el(ctx, "grid-problem-text").textContent, "Could not load photos.");
+    assert.ok(el(ctx, "grid-cards").querySelector(".phone-card.placeholder .phone-card-note"), "each card says it could not load");
+
+    ctx.server.routes.shift();
+    await tap(ctx, el(ctx, "grid-retry"));
+    await settle(ctx, 100);
+    assert.ok(el(ctx, "grid-problem").classList.contains("hidden"));
+    assert.equal(names(ctx).length, 3);
+  });
+
+  test("an empty view says why and asks for no cards", async (t) => {
+    const ctx = await phone(t, { count: 0 });
+    await openEvents(ctx);
+
+    assert.equal(el(ctx, "grid-count").textContent, "No photo carries the keyword “Events”, or the library's tag tree has no such keyword.");
+    assert.equal(ctx.asked.length, 0);
+    assert.equal(cards(ctx).length, 0);
+  });
+});

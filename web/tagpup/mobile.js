@@ -11,7 +11,8 @@ import { state } from './mobile-state.js';
 import { openScreen, startScreens, whenShown, wireScreens } from './mobile-screens.js';
 import { showLibraries, wireLibraries } from './mobile-library.js';
 import { linkedView, showBrowse, wireBrowse } from './mobile-browse.js';
-import { showGrid, wireGrid } from './mobile-grid.js';
+import { forgetGrid, showGrid, wireGrid } from './mobile-grid.js';
+import { showPhoto } from './mobile-photo.js';
 
 document.addEventListener('DOMContentLoaded', () => {
     wireRootsBanner();
@@ -19,9 +20,12 @@ document.addEventListener('DOMContentLoaded', () => {
     wireLibraries();
     whenShown('library', showLibraries);
     wireBrowse();
+    whenShown('browse', forgetGrid);
     whenShown('browse', showBrowse);
+    whenShown('library', forgetGrid);
     wireGrid();
     whenShown('grid', showGrid);
+    whenShown('photo', showPhoto);
     document.getElementById('bar-library').addEventListener('click', () => openScreen('library'));
 
     // Last: the view and the library the URL names (the library remembered as the one opened last), then the first screen.

@@ -42,6 +42,12 @@ const KEYWORDS = {
 
 const IDS = { ids: [4, 5, 6], total: 3, of: 3 };
 
+/** The cards of the ids asked (the Grid asks for the window's, mobile-grid.js): a photo with no card has left the library. */
+const cardsOf = (url) => ({
+  cards: decodeURIComponent((url.match(/ids=([^&]+)/) || [])[1] || "").split(",").map(Number)
+    .map((id) => ({ id, name: `IMG_${id}.jpg`, thumb: `/api/photo-thumb?id=${id}&v=1`, media: "photo" })),
+});
+
 const el = (ctx, id) => ctx.document.getElementById(id);
 
 const shown = (ctx) =>
@@ -79,7 +85,8 @@ function library() {
     .on("/api/databases", { databases: ["alpha", "beta"] })
     .on("/api/library/navigator?section=folders", FOLDERS)
     .on("/api/library/navigator?section=keywords", KEYWORDS)
-    .on("/api/library/ids", IDS);
+    .on("/api/library/ids", IDS)
+    .on("/api/library/cards", cardsOf);
 }
 
 afterEach(() => closeAllApps());
@@ -332,7 +339,8 @@ describe("browsing a library on the phone", () => {
     await tap(ctx, row(ctx, "Wren Alder"));
     assert.deepEqual(shown(ctx), ["grid"], "a person has nothing under: a tap opens their photos");
     assert.equal(asView().value, "People/Family/Cousins/Wren Alder");
-    assert.ok(ctx.server.urls().at(-1).includes(encodeURIComponent("People/Family/Cousins/Wren Alder")));
+    assert.ok(ctx.server.urls().filter((u) => u.includes("/api/library/ids")).at(-1)
+      .includes(encodeURIComponent("People/Family/Cousins/Wren Alder")));
   });
 
   test("dates: a year's months and its Other; odd years apart under Other years, drilled to their months", async (t) => {

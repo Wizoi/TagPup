@@ -51,13 +51,23 @@
             </div>
         </section>
 
-        <section class="screen hidden" data-screen="grid" data-title="Photos">
+        <section class="screen grid-screen hidden" data-screen="grid" data-title="Photos">
             <h2 id="grid-heading" class="grid-heading"></h2>
+            <div class="grid-choices">
+                <select id="grid-order" class="grid-choice" aria-label="Order"></select>
+                <select id="grid-media" class="grid-choice" aria-label="Show"></select>
+            </div>
             <p id="grid-count" class="grid-count"></p>
             <div id="grid-problem" class="problem hidden" role="alert">
                 <p id="grid-problem-text"></p>
                 <button type="button" id="grid-retry" class="problem-retry">Try again</button>
             </div>
+            <div id="grid-cards" class="grid-cards"></div>
+        </section>
+
+        <section class="screen hidden" data-screen="photo" data-title="Photo">
+            <h2 id="photo-name" class="photo-name"></h2>
+            <p class="screen-note">Photo screen: next cut</p>
         </section>
 
         <section class="screen hidden" data-screen="library" data-title="Libraries">
