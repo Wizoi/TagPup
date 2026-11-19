@@ -262,14 +262,16 @@ const IMAGE_PROBE_MS = 2000;
  * module does it for the page's own); `every` is how often it asks, a test's shorter.
  */
 export const imagesAfterAnUpdate = (() => {
-    const failed = new Set();
+    // Each image that failed, with the address it failed on: one given another address since (the phone's one picture,
+    // swiped on to a missing file or a clip) is not asked again, nor given back the address it let go (#3155).
+    const failed = new Map();
     const watched = new WeakSet();
     let probing = false;
     let every = IMAGE_PROBE_MS;
 
-    function again(img) {
-        if (!img.isConnected) return;
-        const src = (img.getAttribute('src') || '').replace(/[?&]_again=\d+$/, '');
+    function again(img, failedOn) {
+        if (!img.isConnected || !failedOn || img.getAttribute('src') !== failedOn) return;
+        const src = failedOn.replace(/[?&]_again=\d+$/, '');
         img.setAttribute('src', src + (src.includes('?') ? '&' : '?') + '_again=' + Date.now());
     }
 
@@ -291,7 +293,7 @@ export const imagesAfterAnUpdate = (() => {
                 failed.clear();
                 // Only after the server was away: an image that fails with the server
                 // there is broken for its own reasons, and asking again changes nothing.
-                if (back && away) images.forEach(again);
+                if (back && away) images.forEach(([img, failedOn]) => again(img, failedOn));
                 return;
             }
             setTimeout(step, every);
@@ -303,7 +305,7 @@ export const imagesAfterAnUpdate = (() => {
         const target = event.target;
         if (!target || target.tagName !== 'IMG') return;
         if (!(target.getAttribute('src') || '').includes('/api/')) return;
-        failed.add(target);
+        failed.set(target, target.getAttribute('src'));
         probe();
     }
 

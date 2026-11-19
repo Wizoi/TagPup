@@ -79,6 +79,19 @@ describe("an image that failed during an update", () => {
     dom.window.close();
   });
 
+  test("but not one given another address since it failed, nor the address it let go (#3155)", async () => {
+    const { dom, document, asked } = page([reply(503, { "X-TagPup-Updating": "1" }), reply(200)]);
+    const moved = image(document, "/kr-track/api/photo-file?path=a.jpg&size=1024");
+    moved.setAttribute("src", "/kr-track/api/photo-file?path=b.jpg&size=1024");    // swiped on to the next photo
+    const emptied = image(document, "/kr-track/api/photo-file?path=c.jpg&size=1024");
+    emptied.removeAttribute("src");                                                 // swiped on to a missing file
+    await until(() => asked.length >= 2, "the server to be back");
+    await settle();
+    assert.equal(moved.getAttribute("src"), "/kr-track/api/photo-file?path=b.jpg&size=1024", "the address it holds now, left alone");
+    assert.equal(emptied.getAttribute("src"), null, "no address given back: not the page's own with ?_again");
+    dom.window.close();
+  });
+
   test("and nothing that is not an /api/ image is looked at", async () => {
     const { dom, document, asked } = page([reply(503, { "X-TagPup-Updating": "1" }), reply(200)]);
     const img = image(document, "/icons/gear.png");
