@@ -312,21 +312,34 @@ class Watcher:
         return self._thread
 
     def stop(self, timeout=30):
-        """Stop watching, and wait up to `timeout` for a sync under way to end. True when
-        it has."""
+        """Stop watching, and wait up to `timeout` in all for a sync under way to end. True when
+        it has. The watches are stopped on a thread of their own: on Windows a watch on a share that
+        stopped answering can block in observer.stop() itself, which no timeout bounds (2026-11-19); one
+        that has not stopped by the deadline is left to stop on its own, and watches nothing more."""
+        deadline = time.monotonic() + timeout
         self._stop.set()
         thread, self._thread = self._thread, None
         observer, self._observer = self._observer, None
         if observer is not None:
-            try:
-                observer.stop()
-                observer.join(timeout)
-            except Exception as e:
-                logger.error("Could not stop the folder watches: %s", e)
+            stopping = threading.Thread(target=self._stop_watches, args=(observer, deadline),
+                                        name="FolderWatchesStopping", daemon=True)
+            stopping.start()
+            stopping.join(timeout)
+            if stopping.is_alive():
+                logger.warning("The folder watches did not stop in %.3gs (a share that does not answer?); "
+                               "left to stop on their own.", timeout)
         if thread is None:
             return True
-        thread.join(timeout)
+        thread.join(max(0.0, deadline - time.monotonic()))
         return not thread.is_alive()
+
+    @staticmethod
+    def _stop_watches(observer, deadline):
+        try:
+            observer.stop()
+            observer.join(max(0.0, deadline - time.monotonic()))
+        except Exception as e:
+            logger.error("Could not stop the folder watches: %s", e)
 
     def busy(self):
         """Is a sync it started running, or a folder whose notifications settled waiting for one (_due)?"""
