@@ -361,10 +361,11 @@ class ShareSpelledRows(unittest.TestCase):
             "UPDATE roots SET address = ? WHERE name = ?", (SHARE, rl.NAME)))
         found = roots_service.check(self.side.library)
         self.assertEqual(1, len(found), found)
-        self.assertIn("3 row(s) kept their native path", found[0])
+        # The three photos, and the folder they were indexed from (photo_rows.added, as the index adds it first).
+        self.assertIn("4 row(s) kept their native path", found[0])
         conn = db.connect(db.readonly_uri(self.side.db_path), uri=True)
         self.addCleanup(conn.close)
-        self.assertEqual(3, checks.native_rows_under_a_root(conn).count)
+        self.assertEqual(4, checks.native_rows_under_a_root(conn).count)
 
 
 @unittest.skipUnless(WINDOWS, "spellings below are Windows paths")

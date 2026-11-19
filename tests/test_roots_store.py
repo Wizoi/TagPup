@@ -79,7 +79,12 @@ class WhatTheLibraryHolds(TwoLibraries):
         self.assertEqual([], self.plain.library_roots())
 
     def test_every_other_table_with_a_path_is_converted(self):
-        self.assertEqual(["@pictures/Added later"], self.rooted.raw_paths("added_folders"))
+        # Beside the folder added by hand, the folders the photos were indexed from (photo_rows.added, as the index
+        # adds its folder before a row there): each under the root in row form, the one outside every root native.
+        held = self.rooted.raw_paths("added_folders")
+        self.assertIn("@pictures/Added later", held)
+        self.assertEqual([], [each for each in held if paths.is_under(each, self.rooted.pictures)], held)
+        self.assertIn(self.rooted.outside_folder, held)
         if rl.EXIFTOOL:
             self.assertEqual(["@pictures/2024 Regatta/IMG_1001.jpg", "@pictures/2024 Regatta/IMG_1002.jpg"],
                              self.rooted.raw_paths("change_files"))

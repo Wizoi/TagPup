@@ -335,7 +335,8 @@ class NestedRoots(unittest.TestCase):
             broken = checks.rooted_rows_convert(conn).count
         finally:
             conn.close()
-        self.assertEqual(17, broken, "17 photos")
+        # The folder they were indexed from too (photo_rows.added, as the index adds it before its rows).
+        self.assertEqual(18, broken, "17 photos and their added folder")
         self.assertTrue([p for p in problems if "held under one root but lie under another" in p], problems)
 
     def test_verify_is_clean_when_nothing_is_nested(self):
