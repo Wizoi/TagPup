@@ -17,6 +17,7 @@
     <link rel="stylesheet" href="common/person-choice.css">
     <link rel="stylesheet" href="common/dark-select.css">
     <link rel="stylesheet" href="common/library-picker.css">
+    <link rel="stylesheet" href="common/folder-manager.css">
     <link rel="stylesheet" href="common/dialog.css">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -39,11 +40,6 @@
                     <label for="db-select">DB:</label>
                     <select id="db-select" class="mode-select" style="min-width: 120px;"></select>
                     <button id="btn-create-db" class="btn btn-secondary btn-sm" title="Create New Database" style="padding: 4px 8px; font-size: 12px; margin-left: 2px; cursor: pointer; background: var(--bg-card); color: var(--text-color); border: 1px solid var(--border-color); border-radius: 4px; height: 32px;">➕</button>
-                </div>
-                <div class="control-group" id="index-controls" style="display: flex; align-items: center; gap: 6px;">
-                    <label>Index:</label>
-                    <button id="btn-add-folder" class="btn btn-secondary btn-sm" title="Index folders into this database so their faces can be identified">➕ Add folders</button>
-                    <button id="btn-remove-folder" class="btn btn-secondary btn-sm" title="Remove a folder's photos and faces from this database (photo files are not deleted)">➖ Remove folder</button>
                 </div>
                 <div class="control-group">
                     <label for="tuner-mode">Tune target:</label>
@@ -79,6 +75,7 @@
                         <button type="button" role="menuitem" data-action="name-faces" title="Name the faces the photos' person tags name, in the whole library. You are shown the plan and asked before anything is written.">Name faces from tags...</button>
                         <button type="button" role="menuitem" data-action="folders-review" title="Folders under the library's roots that hold photos not in it: include or ignore each">Folders to review...</button>
                         <button type="button" role="menuitem" data-action="library-roots" title="Where this computer keeps each root of the library: check a place, move a root, move it back">Roots...</button>
+                        <button type="button" role="menuitem" data-action="manage-folders" title="Add folders to this library and index them, or remove one from it (its photo files stay)">Manage folders...</button>
                         <a role="menuitem" href="/activity/" target="_blank" rel="noopener" title="What runs and what ran in every library: indexing, jobs, syncs, snapshots, logs">Activity...</a>
                         <div class="gear-menu-separator" role="separator"></div>
                         <a role="menuitem" data-app="tagpup" target="_blank" rel="noopener" aria-disabled="true">Open in TagPup</a>
@@ -386,59 +383,6 @@
         </div>
     </div>
 
-    <div id="folder-picker-modal" class="modal hidden">
-        <div class="modal-content folder-picker-content">
-            <div class="modal-header">
-                <h3>Add folders to the index</h3>
-                <button id="btn-close-folder-picker" class="close-btn">&times;</button>
-            </div>
-            <div class="modal-body">
-                <div class="folder-picker-actions">
-                    <button id="btn-folder-picker-browse" class="btn btn-primary btn-sm">&#128193; Browse...</button>
-                    <span id="folder-picker-parent" class="folder-picker-parent"></span>
-                </div>
-                <div id="folder-picker-empty" class="folder-picker-empty">
-                    Browse to a folder. If it contains subfolders you can pick which of
-                    them to index, and each is queued separately.
-                </div>
-                <div id="folder-picker-list-wrap" class="folder-picker-list-wrap hidden">
-                    <div class="folder-picker-toolbar">
-                        <button id="btn-folder-select-all" class="btn btn-secondary btn-sm">Select all</button>
-                        <button id="btn-folder-select-none" class="btn btn-secondary btn-sm">Select none</button>
-                        <label class="folder-picker-skip">
-                            <input type="checkbox" id="folder-picker-hide-indexed">
-                            Hide folders already fully indexed
-                        </label>
-                    </div>
-                    <div id="folder-picker-list" class="folder-picker-list"></div>
-                </div>
-                <div id="folder-picker-loading" class="folder-picker-empty hidden">Reading folder...</div>
-            </div>
-            <div class="modal-footer">
-                <span id="folder-picker-selection" class="folder-picker-selection"></span>
-                <button id="btn-folder-picker-cancel" class="btn btn-secondary">Cancel</button>
-                <button id="btn-folder-picker-queue" class="btn btn-primary" disabled>Add to queue</button>
-            </div>
-        </div>
-    </div>
-    <div id="remove-folder-modal" class="modal hidden">
-        <div class="modal-content folder-picker-content">
-            <div class="modal-header">
-                <h3>Remove a folder from this library</h3>
-                <button id="btn-close-remove-folder" class="close-btn">&times;</button>
-            </div>
-            <div class="modal-body">
-                <input type="search" id="remove-folder-filter" class="remove-folder-filter" placeholder="Filter the library's folders">
-                <div id="remove-folder-empty" class="folder-picker-empty">Reading the library's folders...</div>
-                <div id="remove-folder-list" class="folder-picker-list hidden"></div>
-            </div>
-            <div class="modal-footer">
-                <span id="remove-folder-selection" class="folder-picker-selection"></span>
-                <button id="btn-remove-folder-cancel" class="btn btn-secondary">Cancel</button>
-                <button id="btn-remove-folder-confirm" class="btn btn-danger" disabled>Remove</button>
-            </div>
-        </div>
-    </div>
     <div id="new-person-modal" class="modal hidden">
         <div class="modal-content">
             <div class="modal-header">

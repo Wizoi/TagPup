@@ -1,12 +1,13 @@
-"""TagTuner's Remove Folder picks from the library's folders, not the disk's (#47).
+"""Manage folders removes a folder picked from the library's folders, not the disk's (#47).
 
-It chose with the system folder dialog, which lists what is on disk, so a folder gone
-from disk -- the usual reason to remove one -- could not be chosen: a deleted training
-folder's rows stayed with no way to pick it. GET /api/folder/indexed lists each folder
-the library holds photos directly in, as the library spells it, with every photo under
-it (what removing it takes) and whether it is still on disk -- and the folders above
-them too, which hold none of their own: the native dialog could pick a parent, and
-removing one takes every folder under it (store.photos.remove_under).
+TagTuner's Remove Folder chose with the system folder dialog, which lists what is on disk,
+so a folder gone from disk -- the usual reason to remove one -- could not be chosen: a
+deleted training folder's rows stayed with no way to pick it. GET /api/folder/indexed lists
+each folder the library holds photos directly in, as the library spells it, with every
+photo under it (what removing it takes) -- and the folders above them too, which hold none
+of their own: the native dialog could pick a parent, and removing one takes every folder
+under it (store.photos.remove_under). Whether a folder is on disk is asked apart, of the
+rows the dialog shows (GET /api/folder/on-disk).
 """
 import os
 import shutil
@@ -68,7 +69,6 @@ class RemoveFolderListsTheLibrary(unittest.TestCase):
         for parent in (self.training, self.photos):
             self.assertIn(paths.stored(parent), folders)
             self.assertEqual(0, folders[paths.stored(parent)]["own_photos"])
-            self.assertTrue(folders[paths.stored(parent)]["on_disk"])
         self.assertEqual(3, folders[paths.stored(self.training)]["photos"])
         self.assertEqual(7, folders[paths.stored(self.photos)]["photos"])
 
@@ -93,10 +93,19 @@ class RemoveFolderListsTheLibrary(unittest.TestCase):
         self.assertEqual(training["photos"], reply.get_json()["photos_removed"])
         self.assertNotIn(paths.stored(self.training), self.folders())
 
-    def test_a_folder_gone_from_disk_is_listed_and_marked(self):
+    def test_a_folder_gone_from_disk_is_listed_and_marked_when_asked(self):
         folders = self.folders()
-        self.assertFalse(folders[paths.stored(self.gone)]["on_disk"])
-        self.assertTrue(folders[paths.stored(self.meet)]["on_disk"])
+        self.assertNotIn("on_disk", folders[paths.stored(self.gone)])   # asked apart: 22 s on photo_index
+        asked = [folders[paths.stored(self.gone)]["path"], folders[paths.stored(self.meet)]["path"]]
+        reply = self.client.get("/library/api/folder/on-disk", query_string=[("path", f) for f in asked])
+        self.assertEqual(200, reply.status_code, reply.data)
+        self.assertEqual([{"path": asked[0], "state": "gone"}, {"path": asked[1], "state": "there"}],
+                         reply.get_json()["folders"])
+
+    def test_more_folders_than_one_look_takes_are_refused(self):
+        reply = self.client.get("/library/api/folder/on-disk",
+                                query_string=[("path", self.meet)] * 101)
+        self.assertEqual(400, reply.status_code, reply.data)
 
     def test_each_counts_every_photo_under_it(self):
         folders = self.folders()

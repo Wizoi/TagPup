@@ -1,0 +1,167 @@
+/* Manage folders (web/common/folder-manager.js). Its frame is its own: TagPup's page styles no .modal. The lists
+   can be long, so each scrolls inside its part and the footer keeps what was done in view. */
+
+.folder-manager-modal {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100vw;
+    height: 100vh;
+    background-color: rgba(9, 13, 22, 0.85);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 1000;
+}
+
+.folder-manager-modal.hidden {
+    display: none !important;
+}
+
+.folder-manager-content {
+    display: flex;
+    flex-direction: column;
+    width: 760px;
+    max-width: 92vw;
+    max-height: 90vh;
+    background-color: var(--bg-secondary);
+    border: 1px solid var(--border-color);
+    border-radius: 12px;
+    color: var(--text-primary);
+}
+
+.folder-manager-content .modal-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 14px 20px;
+    border-bottom: 1px solid var(--border-color);
+}
+
+.folder-manager-content .close-btn {
+    background: none;
+    border: none;
+    color: var(--text-secondary);
+    font-size: 24px;
+    line-height: 1;
+    cursor: pointer;
+}
+
+.folder-manager-body {
+    padding: 8px 20px;
+    overflow-y: auto;
+    flex: 1;
+}
+
+.folder-manager-part {
+    padding: 8px 0 12px;
+}
+
+.folder-manager-part + .folder-manager-part {
+    border-top: 1px solid var(--border-color);
+}
+
+.folder-manager-part h4 {
+    margin: 4px 0;
+}
+
+.folder-manager-about,
+.folder-manager-parent,
+.folder-manager-meta,
+.folder-manager-selection,
+.folder-manager-skip,
+.folder-manager-empty {
+    font-size: 12px;
+    color: var(--text-muted);
+}
+
+.folder-manager-about {
+    margin: 0 0 8px;
+    line-height: 1.5;
+}
+
+.folder-manager-actions {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin: 6px 0;
+}
+
+.folder-manager-parent {
+    word-break: break-all;
+}
+
+.folder-manager-skip {
+    margin-left: auto;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    cursor: pointer;
+}
+
+.folder-manager-list {
+    max-height: 28vh;
+    overflow-y: auto;
+}
+
+.folder-manager-empty {
+    padding: 12px 8px;
+    text-align: center;
+    margin: 0;
+}
+
+.folder-manager-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 5px 8px;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 13px;
+}
+
+.folder-manager-row:hover {
+    background: var(--bg-hover, rgba(255, 255, 255, 0.04));
+}
+
+.folder-manager-row.already-indexed {
+    opacity: 0.55;
+}
+
+.folder-manager-row.not-on-disk .folder-manager-meta {
+    color: #f87171;
+}
+
+.folder-manager-name {
+    flex: 1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.folder-manager-meta {
+    white-space: nowrap;
+}
+
+.folder-manager-filter {
+    width: 100%;
+    box-sizing: border-box;
+    margin-bottom: 6px;
+}
+
+.folder-manager-selection {
+    margin-right: auto;
+}
+
+.folder-manager-footer {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 12px 20px;
+    border-top: 1px solid var(--border-color);
+}
+
+.folder-manager-status {
+    flex: 1;
+    font-size: 13px;
+}

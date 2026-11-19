@@ -135,36 +135,36 @@ holding no settings is stamped once with the defaults, as a new library is made;
 
 ### 0. Managing the Index
 
-TagTuner can bring folders into the current database and take them out again, using the
-**Add folders** and **Remove folder** controls in the header. This follows the division of
-labour between the two interfaces: TagTuner is where identities are established and
-confidence is raised, so it needs to be able to pull in new material directly rather than
-requiring the folder to be added in TagPup first.
+TagTuner can bring folders into the current database and take them out again, through
+**Manage folders...** in the gear (the same dialog as TagPup's gear, `web/common/folder-manager.js`;
+docs/plans/manage-folders.md). This follows the division of labour between the two interfaces:
+TagTuner is where identities are established and confidence is raised, so it needs to be able
+to pull in new material directly rather than requiring the folder to be added in TagPup first.
 
-**Add folders** opens a picker rather than the native folder dialog. That dialog returns a
-single path and cannot multi-select, so adding a season of shoots meant opening it once per
-folder — and, while a second folder was refused outright, waiting beside the machine for
-each to finish before the next could be started. The picker browses to a parent, lists its
+**Add folders**, the dialog's first half, browses rather than opening the native folder dialog
+once per folder. That dialog returns a single path and cannot multi-select, so adding a season
+of shoots meant opening it once per folder. The dialog browses to a parent, lists its
 subfolders with a recursive image count and how many of those images this database already
 holds, and queues every ticked folder in one request. Folders already fully indexed are
 listed unticked and can be hidden. A folder that holds images directly is offered as a row
 of its own ("this folder itself"), which is also what a leaf folder with no subfolders
 shows.
 
-**Remove folder** lists the folders the library holds photos in (`/api/folder/indexed`),
-and the folders above them, not the folders on disk, with a filter box. Each shows every
-photo under it -- what removing it takes -- a folder above says its photos are "in folders
-under it", and one gone from disk is marked "not on disk": that is the usual
-reason to remove a folder, and the native dialog, which lists the disk, could not pick it
-(findings.md, #47). Choosing one and confirming removes its rows; the files are never
-touched.
+**Remove a folder**, its second half, lists the folders the library holds photos in
+(`/api/folder/indexed`), and the folders above them, not the folders on disk, with a filter
+box. Each shows every photo under it -- what removing it takes -- a folder above says its
+photos are "in folders under it", and one gone from disk is marked "not on disk" (asked of
+the rows shown, `/api/folder/on-disk`): that is the usual reason to remove a folder, and the
+native dialog, which lists the disk, could not pick it (findings.md, #47). Choosing one and
+confirming removes its rows; the files are never touched. The server refuses to remove a
+folder being indexed, and the dialog shows its sentence.
 
 Queued folders are indexed **one at a time** — that constraint has not changed, because
 indexing is GPU-bound — but the queue is drained without further asking. The header shows
 what is running and what is waiting behind it, and **Cancel queue** forgets everything that
 has not started. A folder that fails is reported and the rest of the queue carries on: one
-unreadable folder should not cost the other nine. **Add folders** stays enabled while
-indexing, because folders now queue rather than collide.
+unreadable folder should not cost the other nine. Folders can be added while another indexes:
+they queue rather than collide.
 
 Indexing runs in the background with a progress bar, and **does not re-cluster**: that
 would re-derive every name in the database, discarding corrections made here. Name the faces
@@ -517,6 +517,7 @@ matching can still read its name.
 - **A folder refused** (`/api/folder/scan`, `/add`, `/index-start`, `/suggest-start`, `/auto-apply`, `/time-shift`, `/rename-photos`, `/api/sync/review/include`, `/api/folder/subfolders`, and `tagpup_cli.py index`) is refused with one sentence from one place (`tagpup.files.shares.folder_refusal`, #2129): a folder on a network share that did not answer within its moment is `503` "The network share `\\server\share` is not answering just now. Try again when it is back.", naming the share and never the folder; a folder that is not there, or not a folder, is `400` "Path is not a valid directory: <path>", except on the `/index-start` routes, whose queue says `400` "No valid folder path: <path>" (up to three paths). A share is named by its server and share, or by its drive letter (`Z:`) when it is a mapped drive.
 - `/api/folder/subfolders?path=<folder_path>`: Both apps' (`tagpup.web.folder_routes`); SPEC_TAGPUP_GUI.md says what it takes and answers.
 - `/api/folder/indexed`: Both apps' (`tagpup.web.folder_routes`); SPEC_TAGPUP_GUI.md says what it takes and answers.
+- `/api/folder/on-disk?path=<folder_path>`: Both apps' (`tagpup.web.folder_routes`); SPEC_TAGPUP_GUI.md says what it takes and answers.
 - `/api/folder/index-status?path=<folder_path>`: Both apps' (`tagpup.web.folder_routes`); SPEC_TAGPUP_GUI.md says what it takes and answers.
 - `/api/faces/excluded`: Returns `{"faces": list, "total_count": int}` for every face marked as not-a-person, each carrying its `reason`, so exclusions can be reviewed and undone.
 - `/api/browse-folder`: Invokes native folder dialog and returns selected path.

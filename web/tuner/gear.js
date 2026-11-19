@@ -1,13 +1,16 @@
 // TagTuner's page: the gear in its header (web/common/gear.js) -- the tag editor, the
 // library's settings (web/common/settings-dialog.js), its history of changes, each
 // undoable (web/common/history-dialog.js), the folders to review (review.js), the roots
-// and where this computer keeps them (roots.js), and TagPup on this library.
+// and where this computer keeps them (roots.js), adding and removing folders
+// (web/common/folder-manager.js), and TagPup on this library.
+import { openFolderManager } from './common/folder-manager.js';
 import { wireGear } from './common/gear.js';
 import { openHistory } from './common/history-dialog.js';
 import { openSettings } from './common/settings-dialog.js';
 import { wireTagEditor } from './common/tag-editor.js';
 import { fetchKnownPeople } from './shared.js';
-import { refreshSidebarQuietly } from './sidebar.js';
+import { fetchPhotos, refreshSidebarQuietly } from './sidebar.js';
+import { indexingQueued } from './indexing.js';
 import { startNamingFaces } from './name-faces.js';
 import { openReview } from './review.js';
 import { openRoots } from './roots.js';
@@ -31,6 +34,8 @@ export function wireTunerGear() {
         'folders-review': openReview,
         'name-faces': startNamingFaces,
         'library-roots': openRoots,
+        // Queued folders show in the header's progress bar; a removal is read again in the list beside the photo.
+        'manage-folders': () => openFolderManager({ queued: indexingQueued, removed: () => fetchPhotos() }),
         // An undo may have put back names and tags: the list beside the photo is read again.
         'library-history': () => openHistory({
             undone: () => {

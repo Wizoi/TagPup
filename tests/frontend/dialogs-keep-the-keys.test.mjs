@@ -273,6 +273,7 @@ const TAGPUP_DIALOGS = {
   "Library settings": viaGear("library-settings", "settings-modal"),
   "History": viaGear("library-history", "history-modal"),
   "Name faces from tags": viaGear("name-faces", "name-faces-modal"),
+  "Manage folders": viaGear("manage-folders", "folder-manager-modal"),
   "the placement question": {
     opener: (ctx) => {
       // The tag field, shown the way the owner shows it.
@@ -526,7 +527,8 @@ function tunerServer() {
     .on("/api/apps", { this: "tuner", apps: {} })
     .on("/api/taxonomy/tree", TREE)
     .on("/api/folder/index-active", { active: [], queued: [], busy: false, remaining: 0 })
-    .on("/api/folder/indexed", { folders: [{ path: "D:/Library/2020", photos: 2, own_photos: 2, on_disk: true }] })
+    .on("/api/folder/indexed", { folders: [{ path: "D:/Library/2020", photos: 2, own_photos: 2 }] })
+    .on("/api/folder/on-disk", { folders: [{ path: "D:/Library/2020", state: "there" }] })
     .on("/api/databases", { databases: ["photo_index"] })
     .on("/api/people-with-counts", [])
     .on("/api/people", [])
@@ -594,16 +596,6 @@ describe("TagTuner: the sidebar does not move behind a dialog", () => {
 
   // Each opened the way the page opens it -- its own button -- and closed by its own Cancel.
   const DIALOGS = {
-    "folder-picker-modal": {
-      view: folderView,
-      open: (ctx) => click(ctx.window, ctx.document.getElementById("btn-add-folder")),
-      close: "btn-folder-picker-cancel",
-    },
-    "remove-folder-modal": {
-      view: folderView,
-      open: (ctx) => click(ctx.window, ctx.document.getElementById("btn-remove-folder")),
-      close: "btn-remove-folder-cancel",
-    },
     "new-person-modal": {
       view: folderView,
       open: async (ctx) => {
@@ -700,28 +692,22 @@ const TUNER_DIALOGS = {
     ...viaTunerGear("folders-review", "review-modal"),
     cancelled: (ctx) => assert.deepEqual(posted(ctx, "/api/sync/review/"), [], "Escape included or ignored a folder"),
   },
-  "Add folders": {
-    view: folderView,
-    opener: (ctx) => ctx.document.getElementById("btn-add-folder"),
-    open: (ctx) => click(ctx.window, ctx.document.getElementById("btn-add-folder")),
-    dialog: (ctx) => ctx.document.getElementById("folder-picker-modal"),
-    focused: (ctx) => ctx.document.getElementById("btn-folder-picker-browse"),
-    cancelled: (ctx) => assert.deepEqual(posted(ctx, "/api/folder/index-start"), [], "Escape queued a folder"),
-  },
-  // A folder chosen, and Escape: the folder is not removed.
-  "Remove folder": {
-    view: folderView,
-    opener: (ctx) => ctx.document.getElementById("btn-remove-folder"),
+  // A folder chosen to remove, and Escape: nothing is queued, nothing removed.
+  "Manage folders": {
+    ...viaTunerGear("manage-folders", "folder-manager-modal"),
     open: async (ctx) => {
-      click(ctx.window, ctx.document.getElementById("btn-remove-folder"));
+      viaTunerGear("manage-folders", "folder-manager-modal").open(ctx);
       await flush(ctx.window, 4);
-      click(ctx.window, ctx.document.querySelector('#remove-folder-list input[type="radio"]'));
+      click(ctx.window, ctx.document.querySelector('#folder-manager-modal input[type="radio"]'));
     },
-    dialog: (ctx) => ctx.document.getElementById("remove-folder-modal"),
-    focused: (ctx) => ctx.document.getElementById("remove-folder-filter"),
+    focused: (ctx) => [...ctx.document.querySelectorAll("#folder-manager-modal button")]
+      .find((b) => b.textContent === "Browse..."),
     cancelled: (ctx) => {
-      assert.equal(ctx.document.getElementById("btn-remove-folder-confirm").disabled, false, "no folder was chosen");
+      const remove = [...ctx.document.querySelectorAll("#folder-manager-modal button")]
+        .find((b) => b.textContent === "Remove...");
+      assert.equal(remove.disabled, false, "no folder was chosen");
       assert.deepEqual(posted(ctx, "/api/folder/remove"), [], "Escape removed the folder");
+      assert.deepEqual(posted(ctx, "/api/folder/index-start"), [], "Escape queued a folder");
     },
   },
   // A name typed, and Escape: no person is made, no face named.

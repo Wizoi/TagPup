@@ -933,10 +933,12 @@ def indexed_folders(library):
     none of its own -- removing a folder takes every folder under it
     (store.photos.remove_under), so a parent removes a season in one step. Each is
     {"path" (as stored), "photos" (every photo under it: what removing it takes),
-    "own_photos" (those directly in it; 0 for a folder above), "on_disk"}. TagTuner
-    offers these rather than the disk's folders, so a folder deleted from disk can still
-    be taken out (#47). The library's folders are tagpup.store.folders': a folder added
-    and not read yet is listed, holding none, and can be removed."""
+    "own_photos" (those directly in it; 0 for a folder above)}. Manage Folders offers
+    these rather than the disk's folders, so a folder deleted from disk can still be taken
+    out (#47). The library's folders are tagpup.store.folders': a folder added and not read
+    yet is listed, holding none, and can be removed. Whether each is on disk is asked
+    apart, of the folders a page shows (folder_states): looking at all of them took 22 s
+    for photo_index's 2,660, nearly all on a share (2026-11-19)."""
     conn = db.connect(db.readonly_uri(library.path), uri=True)
     try:
         held = store_folders.of(conn).listed()
@@ -955,8 +957,18 @@ def indexed_folders(library):
             entry = listed.setdefault(paths.key(current), [current, 0, 0])
             entry[1] += count
             current = parent
-    return [{"path": folder, "photos": under, "own_photos": own, "on_disk": shares.folder_state(folder) == "there"}
+    return [{"path": folder, "photos": under, "own_photos": own}
             for _key, (folder, under, own) in sorted(listed.items())]
+
+
+#: The most folders one folder_states asks about: a page asks of the rows it shows.
+FOLDER_STATES_MOST = 100
+
+
+def folder_states(folders):
+    """[{"path", "state"}] of each of `folders`, in order: "there", "gone" or "unanswered" (a share that did not
+    answer), tagpup.files.shares.folder_state's words. Each look is bounded on a share."""
+    return [{"path": folder, "state": shares.folder_state(folder)} for folder in folders]
 
 
 def is_photo(path):

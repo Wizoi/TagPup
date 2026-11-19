@@ -73,10 +73,6 @@ export const state = {
     detailsAbortController: null,
     sidebarDetailAbortController: null,
 
-    // What the picker is currently offering, and which of it is ticked.
-    pickerFolders: [],
-    pickerSelected: new Set(),
-
     // Folders to review (review.js): those /api/sync/review lists, whether an Include or
     // Ignore is on its way, and the dialog's parts, built the first time it opens.
     review: { folders: [], busy: false, modal: null, body: null, status: null },
@@ -85,10 +81,6 @@ export const state = {
     // which opening (`token`, so an answer that comes after it closed is let go); a move being made
     // (`busy`, so a second press of Move does nothing).
     roots: { modal: null, body: null, status: null, open: false, token: 0, busy: false },
-
-    // Remove Folder: the library's folders (/api/folder/indexed), and the one chosen.
-    removeFolders: [],
-    removeFolderChosen: null,
 
     // The last folder whose poll reached a terminal status. index-active and
     // index-status are two reads of state that moves between them, so the first can
