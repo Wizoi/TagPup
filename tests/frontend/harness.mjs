@@ -204,9 +204,41 @@ function boundIn(code) {
   return names;
 }
 
+/** A template literal's text emptied, its `${...}` expressions kept (they are code; the text is a sentence). */
+function emptyTemplates(body) {
+  let out = "";
+  let i = 0;
+  const template = () => {            // i is just past an opening backtick; leaves i on the closing one
+    out += "``";
+    while (i < body.length && body[i] !== "`") {
+      if (body[i] === "\\") { i += 2; continue; }
+      if (body[i] === "$" && body[i + 1] === "{") {
+        i += 2;
+        out += " ";
+        let depth = 1;
+        while (i < body.length) {
+          const c = body[i];
+          if (c === "`") { i += 1; template(); i += 1; continue; }
+          if (c === "{") depth += 1;
+          if (c === "}" && !(depth -= 1)) break;
+          out += c;
+          i += 1;
+        }
+        out += " ";
+      }
+      i += 1;
+    }
+  };
+  while (i < body.length) {
+    if (body[i] === "`") { i += 1; template(); } else out += body[i];
+    i += 1;
+  }
+  return out;
+}
+
 /** A module's code with its comments and quoted strings emptied: where names are used. */
 function codeOf(body) {
-  return body
+  return emptyTemplates(body)
     .replace(/'(?:[^'\\\n]|\\.)*'|"(?:[^"\\\n]|\\.)*"/g, "''")
     .replace(/\/\*[\s\S]*?\*\//g, " ")
     .replace(/(^|[^:\\])\/\/.*$/gm, "$1");

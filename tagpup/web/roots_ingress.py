@@ -83,8 +83,15 @@ def forget(library):
         _looks.pop(library.key, None)
 
 
+def _selected_paths(body):
+    """The `paths` of a selection nested in the body (`{"selection": {"paths": [...]}}`), or None."""
+    selection = body.get("selection") if isinstance(body, dict) else None
+    return selection.get("paths") if isinstance(selection, dict) else None
+
+
 def _carries_a_path(body):
-    return any(key in request.args for key in KEYS) or (isinstance(body, dict) and any(key in body for key in KEYS))
+    return (any(key in request.args for key in KEYS) or (isinstance(body, dict) and any(key in body for key in KEYS))
+            or _selected_paths(body) is not None)
 
 
 def mark(response):
@@ -132,6 +139,9 @@ def guard():
         request.__dict__["args"] = resolved          # request.args is a cached property
     if isinstance(body, dict) and any(key in body for key in KEYS):
         body = {key: (_each(value, make) if key in KEYS else value) for key, value in body.items()}
+        request._cached_json = (body, body)
+    if _selected_paths(body) is not None:
+        body = {**body, "selection": {**body["selection"], "paths": _each(body["selection"]["paths"], make)}}
         request._cached_json = (body, body)
     if moved:
         found = canonical.roots.locate(moved[0][0])
