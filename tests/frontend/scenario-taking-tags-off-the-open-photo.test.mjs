@@ -19,6 +19,7 @@ import assert from "node:assert/strict";
 import {
   loadApp, FakeServer, photoRecord, flush, openFolder, closeAllApps, pageExports, PEOPLE_ROUTE, peopleRecordsOf,
 } from "./harness.mjs";
+import { loadViewPage, recordOf } from "./view-page.mjs";
 
 const TAXONOMY = [
   { id: 1, tag: "People", name: "People", parent_id: null, has_face: 1 },
@@ -346,5 +347,51 @@ describe("V20: a tag taken off is gone wherever the page shows or copies the pho
     while (ctx.unanswered()) await ctx.answer();
     assert.deepEqual(ctx.saves(), [], "Ctrl+D wrote a photo whose panel is read-only");
     assert.deepEqual(ctx.file(B), ["Places/Beach"]);
+  });
+});
+
+// A library view holds only the open photo's record, and the one before it (Ctrl+D's), read from the library when the open one
+// is shown: a write's reply reaches whichever of them the page holds (pending.js heldRecords).
+describe("V20: in a library view", () => {
+  async function view(t) {
+    const files = new Map([[11, ["Cross Country", "Harbourside"]], [12, []]]);
+    const ctx = await loadViewPage(t, { search: "?view=all", onPhoto: (id) => ({ photo: recordOf(id, { tags: (files.get(id) || []).slice() }) }) });
+    ctx.out = [];
+    ctx.server.first("/api/photos/bulk-tags", () => new Promise((resolve) => ctx.out.push({ body: ctx.server.calls.at(-1).body, resolve })));
+    ctx.answerWrite = async () => {
+      const { body, resolve } = ctx.out.shift();
+      const written = {};
+      for (const [path, change] of Object.entries(body.changes)) {
+        const id = Number(path.match(/IMG_(\d+)/)[1]);
+        files.set(id, changed(files.get(id), change));
+        written[path] = files.get(id).slice();
+      }
+      resolve({ success: true, written });
+      await ctx.settle(40);
+    };
+    ctx.openPhoto = async (id) => {
+      ctx.cardById(id).querySelector(".btn-thumbnail-detail").click();
+      await ctx.settle(80);
+    };
+    ctx.takeOff = async (text) => {
+      Array.from(ctx.document.querySelectorAll(".tag-pill")).find((each) => each.textContent === text).click();
+      await ctx.settle(20);
+    };
+    ctx.saves = () => ctx.server.calls.filter((c) => c.url.includes("save-metadata")).map((c) => c.body);
+    return ctx;
+  }
+
+  test("a pill taken off, the next photo opened, the write answered: Ctrl+D copies the tags the photo before holds now", async (t) => {
+    const ctx = await view(t);
+    await ctx.openPhoto(11);
+    await ctx.takeOff("Cross Country");
+    await ctx.openPhoto(12);
+    assert.equal(ctx.out.length, 1, "the removal was not out while the next photo was opened");
+    await ctx.answerWrite();
+    assert.equal(ctx.document.getElementById("btn-carry-forward").title, "Copy 1 tag(s) from IMG_11.jpg  (Ctrl+D)",
+      "the button offered the tag taken off");
+    ctx.document.dispatchEvent(new ctx.window.KeyboardEvent("keydown", { key: "d", ctrlKey: true, bubbles: true, cancelable: true }));
+    await ctx.settle(80);
+    assert.deepEqual(ctx.saves().map((s) => s.tags), [["Harbourside"]], "Ctrl+D copied the tag the pill took off");
   });
 });

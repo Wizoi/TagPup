@@ -116,11 +116,21 @@ export function shownTags(photo) {
 }
 
 /**
+ * The records the page holds of photos, the one lookup of them: the folder's (a library view's: the open photo's), and a
+ * library view's photo before the open one, read from the library for Ctrl+D (photo.js readPreviousOf). A reply reaches
+ * each of them (takeReply), and the page follows a change for any of them (pageFollows).
+ */
+function heldRecords() {
+    const previous = state.library && state.library.previous;
+    return previous ? [...state.folderPhotos, previous.record] : state.folderPhotos;
+}
+
+/**
  * The page follows a change of the map for any of `keys`: the list (its counts are of the tags shown), Ctrl+D's offer,
  * and the open photo's pills, suggestions, and whether it is read-only.
  */
 function pageFollows(keys) {
-    if (!state.folderPhotos.some(p => keys.has(pathKey(p.path)))) return;
+    if (!heldRecords().some(p => keys.has(pathKey(p.path)))) return;
     upper.renderFileList();
     upper.updateCarryForwardState();
     const path = state.activePhotoPath;
@@ -320,7 +330,7 @@ async function sendChunk(entry) {
 
 /**
  * The reply into the records: each file written takes the stamp and the tags its file holds now, in any record of it
- * the page shows and, its folder left since, in the records this browser kept of that folder (whatever the page shows
+ * the page holds (heldRecords) and, its folder left since, in the records this browser kept of that folder (whatever the page shows
  * meanwhile: a library view may show one of its photos); a file gone was skipped and keeps its record. A failed chunk's
  * unwritten files go back to the front of the map and the drain stops, unless the changes were dropped while it was out
  * (`dropped`): then they are not written, and Cancel's message stands.
@@ -330,7 +340,8 @@ function takeReply(chunk, data, entry, dropped) {
     const stamps = byKey(data.stamps);
     const held = byKey(data.written);
     const skipped = new Set((data.skipped || []).map(s => pathKey(s.path)));
-    const photos = new Map(state.folderPhotos.map(p => [pathKey(p.path), p]));
+    const photos = new Map();   // key -> the records the page holds of it
+    heldRecords().forEach(p => photos.set(pathKey(p.path), [...(photos.get(pathKey(p.path)) || []), p]));
     const back = [];
     const written = [];
     const left = new Map();   // folder left since -> its items written
@@ -344,11 +355,10 @@ function takeReply(chunk, data, entry, dropped) {
         if (skipped.has(key)) {
             settle(item, 'skipped');
         } else if (data.success || held.has(key)) {
-            const photo = photos.get(key);
-            if (photo) {
+            (photos.get(key) || []).forEach(photo => {
                 take(photo, item);
                 written.push(photo);
-            }
+            });
             if (item.folder && !(state.scannedFolder && samePath(item.folder, state.scannedFolder))) {
                 left.set(item.folder, [...(left.get(item.folder) || []), item]);
             }
