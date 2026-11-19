@@ -5,6 +5,7 @@
 // main.js wires).
 import { baseName, folderOf, samePath } from './common/paths.js';
 import { upper } from './hooks.js';
+import { isVideo } from './media.js';
 import { state } from './state.js';
 import { btnCopyPath, detailFileName, detailFolder } from './elements.js';
 import { setStatus } from './status.js';
@@ -16,7 +17,9 @@ export function showPhotoPath(photo) {
     detailFolder.textContent = baseName(folder);
     detailFolder.title = `Show this folder in the library: ${folder}`;
     detailFileName.textContent = baseName(photo.path);
-    detailFileName.title = `Open in the default app: ${photo.path}`;
+    // A clip is not opened in the default app (the server refuses a video): its name is a label, its whole path in the tooltip.
+    detailFileName.disabled = isVideo(photo);
+    detailFileName.title = isVideo(photo) ? photo.path : `Open in the default app: ${photo.path}`;
 }
 
 /**
@@ -30,13 +33,18 @@ function showFolder() {
     else upper.openLibraryView({ kind: 'folder', value: folder, recursive: true });
 }
 
+const COPY_REFUSED = 'This browser will not let the page copy; select the path in the panel instead.';
+
 /** Copy the open photo's whole path; a browser that will not let the page copy (an address that is not this computer's) says so. */
 function copyPath() {
     const path = state.activePhotoPath;
     Promise.resolve()
-        .then(() => window.navigator.clipboard.writeText(path))
+        .then(() => {
+            if (!window.navigator.clipboard) throw new Error('no clipboard');
+            return window.navigator.clipboard.writeText(path);
+        })
         .then(() => setStatus('ready', 'Copied the full path.'))
-        .catch(err => setStatus('error', `Could not copy the path: ${err.message}`, { transient: false }));
+        .catch(() => setStatus('error', COPY_REFUSED, { transient: false }));
 }
 
 export function wirePhotoPath() {

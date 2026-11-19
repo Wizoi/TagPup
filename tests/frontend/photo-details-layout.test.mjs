@@ -96,7 +96,23 @@ test("a browser that will not let the page copy says so, rather than seeming to 
   const page = await openWith(t, PHOTO, { before });
   click(page.defaultView, page.getElementById("btn-copy-path"));
   await settle(page.defaultView);
-  assert.match(page.getElementById("status-text").textContent, /Could not copy the path/);
+  assert.equal(page.getElementById("status-text").textContent, "This browser will not let the page copy; select the path in the panel instead.");
+});
+
+test("a copy the browser refuses says the same sentence, never the browser's own error", async (t) => {
+  const before = (window) => Object.defineProperty(window.navigator, "clipboard", { value: { writeText: async () => { throw new Error("NotAllowedError: Document is not focused"); } } });
+  const page = await openWith(t, PHOTO, { before });
+  click(page.defaultView, page.getElementById("btn-copy-path"));
+  await settle(page.defaultView);
+  assert.equal(page.getElementById("status-text").textContent, "This browser will not let the page copy; select the path in the panel instead.");
+});
+
+test("a clip's name is a label with its whole path, not a button promising to open it", async (t) => {
+  const path = "D:\\Pictures\\Run\\a.mp4";
+  const page = await openWith(t, { ...PHOTO, path, filename: "a.mp4", media: "video", size: 3 * 1024 * 1024, camera: "" });
+  const name = page.getElementById("detail-file-name");
+  assert.equal(name.title, path);
+  assert.equal(name.disabled, true);
 });
 
 test("the folder's name opens it in the library this page is on, and back to its grid when that is the view the photo came from", async (t) => {
