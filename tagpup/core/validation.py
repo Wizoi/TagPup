@@ -233,7 +233,7 @@ KINDS = {
         {"rule": "one_of", "choices": list(EXCLUSION_REASONS),
          "message": "'{value}' is not a reason to exclude a face: use one of %s." % ", ".join(EXCLUSION_REASONS)},
     ]},
-    # Rotate Left, Rotate Right. Anything else was once taken for a right turn.
+    # Rotate Left, Rotate Right, Mirror. Anything else was once taken for a right turn.
     "rotate direction": {"rules": [
         {"rule": "one_of", "choices": list(ROTATE_DIRECTIONS),
          "message": "Direction must be 'left', 'right' or 'mirror'"},

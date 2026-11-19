@@ -8,6 +8,8 @@
  *
  * A rotate is a write of the photo, and waits its turn behind a save of it (#2587): posted at once, it turned the file
  * under a queued save, which then named the stamp from before the turn and was refused as changed on disk.
+ *
+ * Mirror, beside the two, is the same write asked with the direction "mirror": the same images, the same queue.
  */
 import { test, describe, afterEach } from "node:test";
 import assert from "node:assert/strict";
@@ -50,6 +52,29 @@ describe("a rotate refreshes every image of the photo", () => {
     assert.match(document.getElementById("main-image").getAttribute("src"), /v=2000/);
   });
 
+  test("Mirror asks the route to turn the photo with the direction mirror, and the photo gets the new version", async (t) => {
+    const server = new FakeServer()
+      .on("/api/folder/scan", PHOTOS.map((p) => ({ ...p })))
+      .on("/api/taxonomy/tree", [])
+      .on("/api/people", [])
+      .on("/api/tags", [])
+      .on("/api/photo-faces", { faces: [], total: 0, unmatched: 0 })
+      .on("/api/folder/suggest-status", { status: "idle" })
+      .on("/api/photo/rotate", { success: true, mtime: 2000 });
+    const { window, document } = await loadApp("tagpup", { server, t });
+    window.alert = () => {};
+    await openFolder({ window, document }, "D:\\p");
+    await new Promise((r) => window.setTimeout(r, 60));
+    document.querySelector('#photo-list .photo-item-file[data-path="D:\\\\p\\\\a.jpg"]')
+      .dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
+    await new Promise((r) => window.setTimeout(r, 40));
+    document.getElementById("btn-mirror").dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
+    await new Promise((r) => window.setTimeout(r, 60));
+
+    assert.deepEqual(server.lastBody("/api/photo/rotate"), { path: "D:\\p\\a.jpg", direction: "mirror" });
+    assert.match(document.getElementById("main-image").getAttribute("src"), /v=2000/);
+  });
+
   test("a rotate whose stamp the route could not look at reads the photo again for its real stamp", async (t) => {
     // The route answers shares.known_stamp(path) or (None, None): a share slow to answer gives no stamp.
     let scans = 0;
@@ -79,7 +104,8 @@ describe("a rotate refreshes every image of the photo", () => {
     assert.match(document.getElementById("main-image").getAttribute("src"), /v=3000/);
   });
 
-  test("Rotate clicked while a save of the photo is under way waits for the save to answer", async (t) => {
+  for (const [button, direction] of [["btn-rotate-left", "left"], ["btn-mirror", "mirror"]]) {
+  test(`${button} clicked while a save of the photo is under way waits for the save to answer`, async (t) => {
     const held = [];
     const server = new FakeServer()
       .on("/api/folder/scan", PHOTOS.map((p) => ({ ...p, size: 500 })))
@@ -106,7 +132,7 @@ describe("a rotate refreshes every image of the photo", () => {
     await new Promise((r) => window.setTimeout(r, 40));
     assert.equal(held.length, 1, "fixture: the save is held on the server");
 
-    document.getElementById("btn-rotate-left").dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
+    document.getElementById(button).dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
     await new Promise((r) => window.setTimeout(r, 60));
     const rotates = () => server.calls.filter((c) => c.url.includes("/api/photo/rotate"));
     assert.equal(rotates().length, 0, "the rotate was posted while the save of the photo was under way");
@@ -114,6 +140,8 @@ describe("a rotate refreshes every image of the photo", () => {
     held.shift()();
     await new Promise((r) => window.setTimeout(r, 80));
     assert.equal(rotates().length, 1, "the rotate was not posted once the save answered");
+    assert.equal(server.lastBody("/api/photo/rotate").direction, direction);
     assert.match(document.getElementById("main-image").getAttribute("src"), /v=2000/);
   });
+  }
 });

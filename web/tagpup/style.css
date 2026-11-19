@@ -992,6 +992,12 @@ button.detail-value.clickable {
     line-height: 1;
 }
 
+/* A drawn glyph before a button's words (Rotate Left, Rotate Right): the text's colour, on its line. */
+.btn-glyph {
+    vertical-align: -3px;
+    margin-right: 5px;
+}
+
 .library-strip-status {
     color: var(--text-muted);
 }

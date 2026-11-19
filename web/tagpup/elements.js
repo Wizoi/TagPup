@@ -100,6 +100,7 @@ export const imageViewer = document.getElementById('image-viewer');
 export const faceLayer = document.getElementById('face-layer');
 export const btnRotateLeft = document.getElementById('btn-rotate-left');
 export const btnRotateRight = document.getElementById('btn-rotate-right');
+export const btnMirror = document.getElementById('btn-mirror');
 export const btnDeletePhoto = document.getElementById('btn-delete-photo');
 // The clip panel's Convert, Make smaller (MP4), the line of one under way and its Cancel (clip-convert.js).
 export const btnClipConvert = document.getElementById('btn-clip-convert');
