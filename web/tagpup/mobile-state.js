@@ -34,8 +34,8 @@ export const state = {
     writing: null,
     // Chips taken off and not sent yet, each behind its Undo: { id, path (the photo's), tag, timer, close }.
     removals: [],
-    // Tag changes waiting their turn behind another write (state.writing): { id, path, change, sending }. The page
-    // going sends them at once (mobile-edit.js), never leaves them unsent behind a Save still out.
+    // Tag changes waiting their turn behind another write (state.writing): { id, path, change }; the sheet shows a
+    // removal among them as gone (mobile-edit.js).
     queued: [],
     // The title and Date Taken typed on a photo's sheet, neither saved nor let go by Close, by the photo's id: left by
     // Back or another screen, they are put back when its sheet opens again (mobile-edit.js). Gone with the page.

@@ -4,8 +4,8 @@
  *
  * It edits the photo as /api/library/photo reads it when the sheet opens (the file's stamp and what it holds), not the
  * Grid's card. A chip's x waits five seconds behind an Undo before anything is sent; leaving the photo (a swipe, Back,
- * another screen) or the page sends it then, never drops it; the page going sends a tag change still waiting its turn
- * behind a Save at once (keepalive), not after it. A tag is added or taken off through /api/photos/bulk-tags,
+ * another screen) or the page puts it in its turn then: after a Save still out, never beside it (the Save would be
+ * refused as changed on the PC), each write keepalive so the page going does not cancel it. A tag is added or taken off through /api/photos/bulk-tags,
  * against what the file holds, so no stamp; the title and Date Taken through save-metadata (web/common/photo-write.js)
  * with the stamp, which the server refuses when the file changed since it was read: nothing is written, the sheet says
  * so and reads the photo again, the text typed kept. Each write of the page waits for the one before it (state.writing).
@@ -83,20 +83,14 @@ async function writeTags(job) {
     drawChips();
 }
 
-/** A tag change of photo `id` at `path` in its turn, after every write sent before it, or sooner as the page goes. */
+/** A tag change of photo `id` at `path` in its turn, after every write sent before it (a Save renaming the file moves `path`). */
 function tagWrite(id, path, change) {
-    const job = { id, path, change, sending: null };
+    const job = { id, path, change };
     state.queued.push(job);
-    return inTurn(() => sendTags(job));
-}
-
-/** Send a queued tag change now, once: its turn come, or the page going, whichever is first. */
-function sendTags(job) {
-    if (!job.sending) {
+    return inTurn(() => {
         state.queued = state.queued.filter((each) => each !== job);
-        job.sending = writeTags(job);
-    }
-    return job.sending;
+        return writeTags(job);
+    });
 }
 
 /** Send a removal waiting behind its Undo, in its turn. */
@@ -247,18 +241,12 @@ function closeEdit() {
     byId('edit-sheet').classList.add('hidden');
 }
 
-/** Another photo or screen is shown, or the page goes: every removal waiting is sent, the sheet closes. */
+/** Another photo or screen is shown, or the page goes: every removal waiting is sent in its turn, the sheet closes. */
 export function leaveEdit() {
     if (state.edit && editDirty()) state.drafts.set(state.edit.id, Object.fromEntries(TYPED.map((id) => [id, byId(id).value])));
     else if (state.edit) state.drafts.delete(state.edit.id);
     state.removals.slice().forEach(sendRemoval);
     closeEdit();
-}
-
-/** The page goes: what waits behind an Undo or behind a Save still out is sent now, with keepalive (writeTags). */
-function leavePage() {
-    leaveEdit();
-    for (const job of state.queued.slice()) sendTags(job).catch(() => {});    // told in its turn, if the page stays
 }
 
 /** The one Save: the title and the Date Taken, named by the stamp of the file as it was read. */
@@ -274,7 +262,7 @@ function save() {
     }
     edit.saving = true;
     say('Saving...');
-    inTurn(() => postPhotoMetadata(record, fields)).then((data) => {
+    inTurn(() => postPhotoMetadata(record, fields, undefined, { keepalive: true })).then((data) => {
         record.title = fields.title;
         if (data.taken) record.taken = data.taken;
         const card = state.photos && state.photos.cards.get(edit.id);
@@ -321,7 +309,7 @@ export function wireEdit() {
             if (x && state.edit && state.edit.record) removeLater(x.dataset.tag);
         });
     }
-    window.addEventListener('pagehide', leavePage);
+    window.addEventListener('pagehide', leaveEdit);
     // Another library or a reload with a title or date typed and not saved: the browser asks first, as Close does.
     window.addEventListener('beforeunload', (event) => {
         if (!editDirty() && !state.drafts.size) return;

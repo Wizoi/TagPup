@@ -4,7 +4,8 @@
  *
  * - A tag added or taken off is one path's change through /api/photos/bulk-tags, against what the file holds: no stamp.
  * - A chip's x waits behind its own Undo; an Undo in time sends nothing; leaving the photo (a swipe, Back, the Libraries
- *   button) or the page (pagehide, keepalive) sends what is still waiting, even behind a Save still out.
+ *   button) or the page (pagehide, keepalive) sends what is still waiting; behind a Save still out (itself keepalive),
+ *   it goes after the Save, never beside it, and names the file by the name a title gave it.
  * - Two chips of one leaf say their roots.
  * - Each write waits for the one before it: a tag added while the Save is out is sent after it.
  * - The title and Date Taken go through save-metadata with the stamp and base of the file as read; a title that renames
@@ -470,21 +471,28 @@ describe("editing a photo on the phone", () => {
     });
   }
 
-  test("a removal waiting behind a Save still out is sent at once when the page goes", async (t) => {
-    const ctx = await phone(t);
-    await openSheet(ctx);
-    holdNext(ctx, "/api/photo/save-metadata");         // never answered: the page goes first
-    type(ctx, "edit-title", "Wren's Last Lap");
-    click(ctx.window, el(ctx, "edit-save"));
-    click(ctx.window, chipX(ctx, COAST));
-    await settle(ctx, UNDO + 80);
-    assert.equal(tagWrites(ctx).length, 0, "its turn is after the Save");
+  for (const [how, wait] of [["behind its Undo", 0], ["in its turn behind the Save", UNDO + 80]]) {
+    test(`the page going with a removal ${how} and a Save still out: the Save goes first, the removal after it`, async (t) => {
+      const ctx = await phone(t);
+      await openSheet(ctx);
+      const save = holdNext(ctx, "/api/photo/save-metadata");
+      type(ctx, "edit-title", "Wren's Last Lap");
+      click(ctx.window, el(ctx, "edit-save"));
+      click(ctx.window, chipX(ctx, COAST));
+      await settle(ctx, wait);
+      ctx.window.dispatchEvent(new ctx.window.Event("pagehide"));
+      await settle(ctx);
+      assert.equal(tagWrites(ctx).length, 0, "not beside the Save, which it would make look changed on the PC");
+      assert.ok(ctx.sent.find((s) => s.url.includes("/api/photo/save-metadata")).keepalive, "the Save outlives the page");
 
-    ctx.window.dispatchEvent(new ctx.window.Event("pagehide"));
-    await settle(ctx);
-    assert.deepEqual(tagWrites(ctx), [{ [PATH]: { remove: [COAST] } }]);
-    assert.ok(ctx.sent.find((s) => s.url.includes("/api/photos/bulk-tags")).keepalive);
-  });
+      const renamed = "D:\\Photos\\Wren's Meet\\Wren's Last Lap.jpg";
+      save.release({ success: true, new_path: renamed, mtime: 1718000009, size: 204800,
+        base: { tags: [WREN, COAST], title: "Wren's Last Lap" } });
+      await settle(ctx);
+      assert.deepEqual(tagWrites(ctx), [{ [renamed]: { remove: [COAST] } }], "after the Save, by the file's new name");
+      assert.ok(ctx.sent.find((s) => s.url.includes("/api/photos/bulk-tags")).keepalive);
+    });
+  }
 });
 
 function leaf(ctx, tag) {

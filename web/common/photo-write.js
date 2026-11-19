@@ -51,11 +51,14 @@ export function takeWritten(photo, stamp, tags) {
 /**
  * POST a photo's title and tags -- as they are now, unless given -- and check the reply. A refusal rejects with the
  * server's sentence; one because the file changed since it was read (409) is marked `changedOnDisk` and handed to
- * `changed(photo)` first, the page's own way of reading it again. Nothing is retried or merged.
+ * `changed(photo)` first, the page's own way of reading it again. Nothing is retried or merged. `request` is of the
+ * request, never its body: the phone's Save goes with keepalive, so the page going does not cancel it.
  */
-export async function postPhotoMetadata(photo, { title = photo.title, tags = photo.tags || [], ...extra } = {}, changed = () => {}) {
+export async function postPhotoMetadata(photo, { title = photo.title, tags = photo.tags || [], ...extra } = {}, changed = () => {},
+    request = {}) {
     if (photo.unreadable) throw new Error(UNREADABLE_SAVE);
     const res = await api.fetch('/api/photo/save-metadata', {
+        ...request,
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ path: photo.path, title, tags, stamp: stampOf(photo), base: baseOf(photo), ...extra })
