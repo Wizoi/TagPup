@@ -308,8 +308,10 @@ class Lifecycle:
 
     def _drain_until(self, deadline, seconds, in_flight):
         logger.info("Draining for an update: taking no new work; %d request(s) in flight.", in_flight)
-        # Bounded by the deadline whatever a task's stop does (runtime.Background.stop): one still stopping is waited
-        # for, named, and the server takes work again, never left closed and not drained (2026-11-19).
+        # Bounded by the deadline whatever a task's stop does (runtime.Background.stop). A stop that has not returned by
+        # it, with nothing in flight and nothing busy (every piece of work is in busy()), holds nothing an update waits
+        # for: the drain ends drained and the server stays closed for the launcher to end -- taking work again would
+        # start a new watch beside the hung one, drain after drain (2026-11-19, #3174). It is named in the log only.
         stopping = []
         if self._background is not None:
             stopping = self._background.stop(timeout=max(0.0, deadline - self._clock()))
@@ -321,18 +323,21 @@ class Lifecycle:
                 # A batch claimed on a request's thread is that request: it is named once, with its photos. The settle
                 # thread's batch is no request.
                 requests = self._in_flight - batches.running_here(threads=set(self._serving))
-                busy = self.busy()
-                waiting = ((["%d request(s)" % requests] if requests > 0 else []) + busy
-                           + ["%s (still stopping)" % name for name in stopping if name not in busy])
+                waiting = (["%d request(s)" % requests] if requests > 0 else []) + self.busy()
+                hung = ["%s (still stopping)" % name for name in stopping if name not in waiting]
                 if not waiting:
                     self._drained_at = self._clock()
-                    logger.info("Drained: nothing in flight, nothing running.")
+                    if hung:
+                        logger.warning("Drained: nothing in flight, nothing running; %s, left to end with the "
+                                       "server.", ", ".join(hung))
+                    else:
+                        logger.info("Drained: nothing in flight, nothing running.")
                     return {"drained": True}
                 left = deadline - self._clock()
                 if left <= 0:
                     break
                 self._changed.wait(min(0.2, left))
-        logger.warning("Could not drain in %ds (waiting for %s); taking work again.", seconds, ", ".join(waiting))
+        logger.warning("Could not drain in %ds (waiting for %s); taking work again.", seconds, ", ".join(waiting + hung))
         self.resume()
         return {"drained": False, "waiting_for": waiting}
 
