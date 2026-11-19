@@ -189,4 +189,19 @@ describe("V27: moving on from a photo while its save is out", () => {
     await ctx.wait(60);
     assert.equal(ctx.active(), A.path, "the move went after it was let go");
   });
+
+  test("Escape pressed in a field does not let the waiting move go (#3182)", async (t) => {
+    const ctx = await open(t);
+    await ctx.startSave();
+    await ctx.key("ArrowDown");
+    await ctx.wait(PAST_THE_MOMENT);
+    assert.ok(ctx.note());
+    const title = ctx.document.getElementById("input-photo-title");
+    title.focus();
+    await ctx.key("Escape", title);
+    assert.ok(ctx.note(), "Escape meant for the field let the move go");
+    await ctx.answer();
+    await ctx.wait(60);
+    assert.equal(ctx.active(), B.path);
+  });
 });

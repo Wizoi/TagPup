@@ -91,7 +91,7 @@ export function wireKeyboard() {
         if (state.leavePrompt) return;   // "Save changes?" is open; its keys are its own
         if (dialogOpen()) return;        // so are any other dialog's (web/common/dialog.js)
         // Escape lets a move waiting for the photo's save go, before it means anything else (edits.js).
-        if (e.key === 'Escape' && letHeldMoveGo()) {
+        if (e.key === 'Escape' && state.faceBoxes.open === null && !keystrokeBelongsToField(e.target) && letHeldMoveGo()) {
             e.preventDefault();
             return;
         }
