@@ -222,9 +222,19 @@ def _under_any(folder, folders):
     return any(paths.same(folder, other) or paths.is_under(folder, other) for other in folders)
 
 
-def is_ignored(photo_path, ignored):
-    """Is the photo in one of the library's `ignored` folders, or under one?"""
-    return store_folders.is_ignored(os.path.dirname(paths.stored(photo_path)), ignored)
+def ignored_photos(ignored):
+    """A test of a photo path: is the photo in one of the library's `ignored` folders, or under one? For a scan of many
+    photos (an index of a root: 60,270 in photo_index): the ignored folders are keyed once and each folder asked once,
+    by the spelling its listing gave its photos, not each photo (#3217: 3.6 s an index before it read a photo)."""
+    in_ignored = store_folders.ignored_test(ignored)
+    answers = {}
+
+    def test(photo_path):
+        folder = os.path.dirname(photo_path)
+        if folder not in answers:
+            answers[folder] = in_ignored(os.path.dirname(paths.stored(photo_path)))
+        return answers[folder]
+    return test
 
 
 def membership(library, folder, roots=(), ignored=()):
@@ -247,12 +257,13 @@ def membership(library, folder, roots=(), ignored=()):
     on_disk = images.photos_under(folder)
     unheld = not_held(library, on_disk, ignored)
     unheld_keys = {paths.key(each) for each in unheld}
+    in_ignored = ignored_photos(ignored)
     return {
         "library": picker_name(os.path.basename(library.path)),
         "folder": folder,
         "photos": len(on_disk),
         "photos_held": held_under(library, folder),
-        "photos_ignored": sum(1 for p in on_disk if is_ignored(p, ignored)),
+        "photos_ignored": sum(1 for p in on_disk if in_ignored(p)),
         "photos_not_held": sum(1 for p in on_disk if paths.key(os.path.dirname(p)) in unheld_keys),
         "folders_not_held": len(unheld),
         "first_not_held": unheld[0] if unheld else None,

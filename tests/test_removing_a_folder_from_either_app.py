@@ -326,6 +326,34 @@ class AnIndexInTheCli(unittest.TestCase):
         self.assertEqual((0, 0), self.held(self.meet), "the index of the folder above brought the removed folder back")
         self.assertEqual((2, 2), self.held(self.meet2))
 
+    def test_an_index_of_a_large_tree_asks_each_folder_once_whether_it_is_ignored(self):
+        """photo_index's 60,270 photos and 5 ignored folders: asked photo by photo, each ignored folder keyed four
+        times a photo, every index of the root paid 3.6 s before it read a photo (#3217). Each folder is asked once,
+        the ignored folders keyed once: fewer path keys than folders, nothing left in or out that was not before."""
+        ignored_folders = [os.path.join(self.season, "Ignored %d" % n) for n in range(5)]
+        for folder in ignored_folders:
+            os.makedirs(folder)
+        library = Library(self.library)
+        library_settings.of(library)
+        change = library_settings.change(library, {
+            library_settings.IGNORED: validation.FOLDER_SEPARATOR.join(ignored_folders)})
+        self.assertTrue(change.ok, change.message())
+        listing = {}
+        for n in range(60000):
+            photo = os.path.join(ignored_folders[n % 5], "Meet %d" % (n % 300), "p%05d.jpg" % n)
+            listing[paths.key(photo)] = (photo, 0.0, 1)
+        keyed, key = [], paths.key
+
+        def counted(path):
+            keyed.append(1)
+            return key(path)
+        with mock.patch.object(tagpup_cli.image_files, "stamps_under", return_value=listing), \
+                mock.patch.object(paths, "key", counted):
+            result = self.index(self.season)
+        self.assertEqual(0, result.exit_code, result.output)
+        self.assertIn("Left out 60000 image(s)", result.output)
+        self.assertLess(len(keyed), 1000, "a path keyed for each photo, not each folder")
+
     def test_a_removed_folder_added_again_is_held_indexed_and_listed_and_its_history_undoes_it(self):
         """The owner removes Meet 1 (Season, added with its subfolders, still covers it: it is ignored), then adds it
         again in TagTuner: it comes off the ignored list as one change of the settings, its index (the CLI, as the

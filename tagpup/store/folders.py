@@ -30,7 +30,17 @@ def ignored(conn):
 
 def is_ignored(folder, ignored_folders):
     """Is `folder` one of `ignored_folders`, or under one?"""
-    return any(paths.same(folder, other) or paths.is_under(folder, other) for other in ignored_folders)
+    return ignored_test(ignored_folders)(folder)
+
+
+def ignored_test(ignored_folders):
+    """is_ignored, for asking of many folders: `ignored_folders` keyed once, each folder asked keyed once."""
+    keys = [paths.key(other) for other in ignored_folders if other]
+
+    def test(folder):
+        mine = paths.key(folder)
+        return bool(mine) and any(mine == other or paths.keyed_under(mine, other) for other in keys)
+    return test
 
 
 def has_rows(conn, folder):

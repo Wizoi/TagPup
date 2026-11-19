@@ -380,8 +380,8 @@ def folder_suggest_start():
 
     def photos():
         # A folder's photos and its clips (scan_folder): a clip is offered tags alone (the suggester's face step).
-        return {key: meta for key, meta in _folder_photos(library, folder).items()
-                if not library_actions.is_ignored(meta["path"], ignored)}
+        in_ignored = library_actions.ignored_photos(ignored)
+        return {key: meta for key, meta in _folder_photos(library, folder).items() if not in_ignored(meta["path"])}
     runtime = state.runtime()
     work = suggestion_jobs.work_for(library, photos, runtime, runtime.index_queues.of(library), looking=looking,
                                     held_now=(lambda: not library_actions.suggest_how(library, folder, ignored)[1])

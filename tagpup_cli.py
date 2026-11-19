@@ -413,11 +413,12 @@ def index(ctx, directories, force_reembed: bool, reset: bool, skip_faces: bool, 
     # left out as sync and Suggest leave it: a folder removed while a folder above it stays added is ignored, and an
     # index of the folder above brought it back (record_indexed now refuses it, and would stop the whole run).
     on_disk, ignored, left_out = {}, settings.ignored, 0
+    in_ignored = library_actions.ignored_photos(ignored)
     for directory in directories:
         console.print(f"[bold cyan]Scanning directory:[/bold cyan] {directory}")
         for key, stamp in (image_files.stamps_in(directory) if no_subfolders
                            else image_files.stamps_under(directory)).items():
-            if ignored and library_actions.is_ignored(stamp[0], ignored):
+            if ignored and in_ignored(stamp[0]):
                 left_out += 1
                 continue
             on_disk.setdefault(key, stamp)
