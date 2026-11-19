@@ -167,9 +167,9 @@ class TestAutocompleteEndpoints(TagPupAPITestBase):
 
 class TestPhotoRotate(TagPupAPITestBase):
     @requires_exiftool
-    def test_rotate_left_and_right_are_accepted(self):
+    def test_rotate_left_right_and_mirror_are_accepted(self):
         photo = self.make_photo("a.jpg", [])
-        for direction in ("left", "right"):
+        for direction in ("left", "right", "mirror"):
             status, body = self.post(
                 "/api/photo/rotate", {"path": photo, "direction": direction}
             )

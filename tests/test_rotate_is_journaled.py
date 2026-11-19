@@ -173,6 +173,25 @@ class TheTurn(RotationCase):
         self.undo(second)
         self.assertEqual(self.orientation(path), 3)
 
+    def test_mirrored_twice_lands_where_it_started_and_undone_once_lands_mirrored(self):
+        path = self.make("a.jpg", orientation=6)
+        first = self.rotate(path, "mirror")
+        self.assertEqual((first.ok, first.details["orientation"], self.orientation(path)), (True, 5, 5))
+        change = first.details["change"]
+        self.assertEqual(self.rows("SELECT operation, json_extract(summary, '$.direction') FROM changes WHERE id = ?", (change,)),
+                         [("rotate", "mirror")], "one journaled rotate change, no kind of its own")
+        second = self.rotate(path, "mirror").details["change"]
+        self.assertEqual(self.orientation(path), 6)
+        self.undo(second)
+        self.assertEqual(self.orientation(path), 5)
+
+    def test_a_photo_with_no_orientation_is_mirrored_to_2_and_undone_to_none(self):
+        path = self.make("a.jpg")
+        change = self.rotate(path, "mirror").details["change"]
+        self.assertEqual(self.orientation(path), 2)
+        self.assertEqual(self.undo(change).changed, 1)
+        self.assertIsNone(self.orientation(path))
+
     def test_the_row_follows_the_file_and_the_vectors_go(self):
         # The vectors and the fingerprint go: each is of the upright decode the turn changes. Another photo's stay.
         path = self.make("a.jpg", orientation=6)
@@ -307,7 +326,7 @@ class WhatIsRefused(RotationCase):
         # The "rotate direction" kind (#224): the route checked it, the service took anything, and the file layer raised on it.
         path = self.make("a.jpg")
         result = self.rotate(path, "up")
-        self.assertEqual("Direction must be 'left' or 'right'", result.refused)
+        self.assertEqual("Direction must be 'left', 'right' or 'mirror'", result.refused)
         self.assertEqual((result.changed, result.errors), (0, []))
         self.assertEqual((self.orientation(path), self.rows("SELECT COUNT(*) FROM changes WHERE operation = 'rotate'")), (None, [(0,)]))
 

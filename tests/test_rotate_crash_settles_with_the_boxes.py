@@ -15,6 +15,9 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from test_file_journal import EXIFTOOL, Crash, crash_at  # noqa: E402
 from test_rotate_is_journaled import BOX, HEIGHT, MODEL, WIDTH, RotationCase, picture  # noqa: E402
 
+#: BOX on the WIDTH x HEIGHT picture flipped left to right: a mirror keeps the picture's size.
+MIRRORED_BOX = [WIDTH - BOX[2], BOX[1], WIDTH - BOX[0], BOX[3]]
+
 from tagpup.services import batches, file_changes, photos as photo_actions  # noqa: E402
 from tagpup.store import embeddings, faces_detected, file_journal  # noqa: E402
 from tagpup.store.faces import turned_box  # noqa: E402
@@ -104,6 +107,31 @@ class TheFaceBoxesTurnWithTheFile(RotationCase):
         self.assertEqual((self.orientation(path), self.boxes()), (None, [turned_box(BOX, "left", WIDTH, HEIGHT)]))
         self.assertEqual(self.settle(), 1)
         self.assertEqual((self.orientation(path), self.boxes(), self.status(change)), (None, [BOX], "undone"))
+
+    def test_a_tiff_mirrored_with_a_crash_after_the_file_is_settled_forward_its_boxes_flipped_and_undone_back(self):
+        path = self.make("scan.tif", fmt="TIFF")
+        self.face(path)
+        change = self.crash("file written", path, "mirror")
+        self.assertEqual((self.orientation(path), self.states(change), self.boxes()), (2, ["writing"], [BOX]))
+        self.assertEqual(self.settle(), 1)
+        self.assertEqual((self.states(change), self.status(change), self.boxes()), (["done"], "applied", [MIRRORED_BOX]))
+        self.assertEqual((self.orientation(path), self.settle(), self.boxes()), (2, 0, [MIRRORED_BOX]),
+                         "settled once: neither the file nor the boxes flipped twice")
+        self.undo(change)
+        self.assertEqual((self.orientation(path), self.boxes(), self.status(change)), (None, [BOX], "undone"))
+
+    def test_a_tiff_mirrored_then_turned_is_undone_turn_first_back_to_its_boxes(self):
+        path = self.make("scan.tif", fmt="TIFF")
+        self.face(path)
+        mirrored = self.rotate(path, "mirror")
+        self.assertEqual((mirrored.details["faces_turned"], self.boxes()), (1, [MIRRORED_BOX]))
+        turned = self.rotate(path, "left").details["change"]
+        self.assertEqual(self.orientation(path), 5)
+        self.assertEqual(self.boxes(), [turned_box(MIRRORED_BOX, "left", WIDTH, HEIGHT)])
+        self.undo(turned)
+        self.assertEqual((self.orientation(path), self.boxes()), (2, [MIRRORED_BOX]))
+        self.undo(mirrored.details["change"])
+        self.assertEqual((self.orientation(path), self.boxes()), (None, [BOX]))
 
 
 class ManyPhotos(RotationCase):

@@ -118,8 +118,10 @@ class AClipBesideAPhoto(unittest.TestCase):
         self.assertNotEqual(before, digest(titled), "the clip's XMP is patched")
         self.assertEqual(["Trips/Coast"], self.subjects(titled))
 
-    def test_a_turn_is_refused_with_the_sentence_and_the_clip_is_not_written(self):
-        self.assert_refused("photo/rotate", {"path": self.clip_path, "direction": "left"})
+    def test_a_turn_or_a_mirror_is_refused_with_the_sentence_and_the_clip_is_not_written(self):
+        for direction in ("left", "mirror"):
+            with self.subTest(direction=direction):
+                self.assert_refused("photo/rotate", {"path": self.clip_path, "direction": direction})
 
     def test_a_time_shift_over_a_folder_moves_the_photos_date_and_leaves_the_clip_byte_for_byte(self):
         reply = self.post("folder/time-shift", {"folder_path": self.folder, "camera_model": "All Cameras",
