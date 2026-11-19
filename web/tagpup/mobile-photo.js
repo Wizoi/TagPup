@@ -27,6 +27,22 @@ function indexIn(lib, place) {
     return lib.ids.indexOf(place.id);
 }
 
+/**
+ * Where a step of `delta` from the photo of `place` lands in the view held, or -1 (past either end, no view held): from
+ * that photo, or, when the view dropped it meanwhile (deleted on the PC: a card window's reply, library-source.js
+ * dropPhotos), from where it was, `at`, which the photo after it now holds.
+ */
+function landing(lib, place, delta) {
+    if (!lib || !place) return -1;
+    const at = indexIn(lib, place);
+    let next = at + delta;
+    if (at < 0) {
+        if (!Number.isInteger(place.at)) return -1;
+        next = delta > 0 ? place.at + delta - 1 : place.at + delta;
+    }
+    return next >= 0 && next < lib.ids.length ? next : -1;
+}
+
 /** Say why the photo is not shown, or '' for nothing to say. */
 function say(text) {
     byId('photo-problem').textContent = text;
@@ -118,9 +134,8 @@ export function showPhoto() {
 export function stepPhoto(delta) {
     if (state.screen !== 'photo') return;
     const lib = state.photos;
-    const at = indexIn(lib, state.place);
-    const next = at + delta;
-    if (at < 0 || next < 0 || next >= lib.ids.length) return;
+    const next = landing(lib, state.place, delta);
+    if (next < 0) return;
     // The photo open, as a tap sets it (mobile-grid.js): its card is brought into view when the Grid is shown again.
     lib.activeId = lib.ids[next];
     replacePlace({ id: lib.ids[next], at: next });

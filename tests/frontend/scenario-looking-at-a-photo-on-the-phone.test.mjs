@@ -8,6 +8,8 @@
  * - A swipe is the shared one (web/common/swipe.js): each lands one photo on, in the step the photo was opened in, so
  *   rapid swipes are as many photos and no extra Back; the first and the last photo go no further.
  * - A photo whose card the grid has not asked yet is read by id; a reply for a photo swiped past is dropped.
+ * - A photo deleted on the PC while it is looked at (a card window's empty reply drops it from the view): a swipe
+ *   still steps on, from where it was.
  * - Back after swipes is the grid, its ids not asked again, the card swiped to in view.
  * - A file that is gone, a picture the PC could not read, a card that could not be read, a clip that will not play: a
  *   sentence, and the swipe goes on.
@@ -57,8 +59,8 @@ function cardOf(id, extra = {}) {
 
 /**
  * The page on a library whose keyword holds `count` photos, the Grid given a phone's layout (jsdom has none): 3
- * columns, 600 px of view. `card(id)` answers each card; a read of one card alone (the Photo screen's) is held until
- * released when `holdOne`.
+ * columns, 600 px of view. `card(id)` answers each card, null for a photo the library no longer has; a read of one card
+ * alone (the Photo screen's) is held until released when `holdOne`.
  */
 async function phone(t, { count = 2000, card = (id) => cardOf(id), holdOne = false } = {}) {
   const held = [];
@@ -67,11 +69,11 @@ async function phone(t, { count = 2000, card = (id) => cardOf(id), holdOne = fal
     .on("/api/library/navigator?section=keywords", KEYWORDS)
     .on("/api/library/ids", () => {
       const ids = Array.from({ length: count }, (_, i) => i + 1);
-      return { ids, total: count, of: count, videos: ids.filter((id) => card(id).media === "video") };
+      return { ids, total: count, of: count, videos: ids.filter((id) => (card(id) || {}).media === "video") };
     })
     .on("/api/library/cards", (url) => {
       const ids = decodeURIComponent((url.match(/ids=([^&]+)/) || [])[1] || "").split(",").map(Number);
-      const body = { cards: ids.map(card) };
+      const body = { cards: ids.map(card).filter(Boolean) };
       return holdOne && ids.length === 1 ? new Promise((resolve) => held.push({ id: ids[0], go: () => resolve(body) })) : body;
     });
   const ctx = await loadApp("phone", { t, server, url: PAGE });
@@ -202,6 +204,30 @@ describe("looking at a photo on the phone", () => {
     await settle(ctx);
     assert.equal(el(ctx, "photo-name").textContent, "Rowan's Meet 101.jpg");
     assert.match(picture(ctx).getAttribute("src"), /Meet%20101\.jpg/);
+  });
+
+  test("a photo deleted on the PC while looked at, dropped from the view by a card window's reply: the swipe steps on", async (t) => {
+    let deleted = false;
+    const ctx = await phone(t, { card: (id) => (deleted && id === 250 ? null : cardOf(id)) });
+    await openPhoto(ctx, 1);
+    for (let i = 0; i < 249; i += 1) next(ctx);
+    await settle(ctx);
+    assert.equal(el(ctx, "photo-name").textContent, "Rowan's Meet 250.jpg");
+
+    deleted = true;                                  // on the PC
+    ctx.window.history.back();                       // the grid asks the window around it: its card is not there
+    await settle(ctx, 400);
+    assert.ok(!pageState(ctx).photos.ids.includes(250), "the view dropped it");
+    ctx.window.history.forward();
+    await settle(ctx);
+    assert.deepEqual({ ...pageState(ctx).place }, { id: 250, at: 249 });
+    assert.equal(said(ctx), "This photo is no longer in the library.");
+
+    next(ctx);
+    await settle(ctx);
+    assert.deepEqual({ ...pageState(ctx).place }, { id: 251, at: 249 }, "on, to the photo after it, now where it was");
+    assert.equal(el(ctx, "photo-name").textContent, "Rowan's Meet 251.jpg");
+    assert.equal(el(ctx, "photo-at").textContent, "250 of 1,999");
   });
 
   test("a tap opens the file whole in the zoom; a swipe that ends on the picture does not", async (t) => {
