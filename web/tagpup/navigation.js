@@ -3,7 +3,7 @@ import { state } from './state.js';
 import { dialogOpen } from './common/dialog.js';
 import { imageZoomOpen } from './common/image-zoom.js';
 import { inputAddPerson, inputAddTag, mainVideo, photoList, photoSearch } from './elements.js';
-import { hasUnsavedEdits, leavePhotoThen, openPhotoWrite } from './edits.js';
+import { hasUnsavedEdits, leavePhotoThen, letHeldMoveGo, openPhotoWrite } from './edits.js';
 import { carryTagsForward, openLibraryPhoto, selectPhoto } from './photo.js';
 import { libraryStepTarget } from './library-source.js';
 import { undoLastOperation } from './undo.js';
@@ -90,6 +90,11 @@ export function wireKeyboard() {
     document.addEventListener('keydown', (e) => {
         if (state.leavePrompt) return;   // "Save changes?" is open; its keys are its own
         if (dialogOpen()) return;        // so are any other dialog's (web/common/dialog.js)
+        // Escape lets a move waiting for the photo's save go, before it means anything else (edits.js).
+        if (e.key === 'Escape' && state.faceBoxes.open === null && !keystrokeBelongsToField(e.target) && letHeldMoveGo()) {
+            e.preventDefault();
+            return;
+        }
         if (keystrokeBelongsToField(document.activeElement) && !arrowStepsFromBox(e)) return;
 
         // Ctrl+D copies the previous photo's tags onto this one, so that tagging a

@@ -155,6 +155,9 @@ export const state = {
     // A clip playing when a write began: its id and where it was, so it plays on when the writes are done (media.js holdForWrite).
     heldForWrite: null,
     leavePrompt: null,
+    // The one move off the open photo waiting for its writes or the question, the last asked:
+    // { move, onStay, gone, note } (edits.js leavePhotoThen).
+    heldMove: null,
     // The last write queued for one photo, by pathKey: what leaving that photo waits
     // for, where detailSaveInFlight, the tail of the whole queue, has bulk writes too.
     photoWrites: {},
