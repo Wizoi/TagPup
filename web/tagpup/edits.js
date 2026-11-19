@@ -499,17 +499,9 @@ async function confirmLeavingPhoto(held) {
     // queued behind it may be about to write the very text the question below
     // would offer to discard. Not the bulk writes: they write no typed text.
     if (openPhotoWrite()) {
-        const name = baseName(state.activePhotoPath);
-        const shown = window.setTimeout(() => {
-            if (!held.gone) held.note = showMoveWaiting(name, letHeldMoveGo);
-        }, MOVE_WAIT_SHOWN_AFTER_MS);
-        try {
+        await whileWaiting(held, async () => {
             while (openPhotoWrite() && !held.gone) await openPhotoWrite();
-        } finally {
-            window.clearTimeout(shown);
-            hideMoveWaiting(held.note);
-            held.note = null;
-        }
+        });
     }
     if (held.gone) return false;
     if (!hasUnsavedEdits()) return true;
@@ -523,13 +515,30 @@ async function confirmLeavingPhoto(held) {
     } finally {
         state.leavePrompt = null;
     }
-    if (choice === 'save') return saveDetailEdits();
+    if (choice === 'save') return whileWaiting(held, saveDetailEdits);
     if (choice === 'discard') {
         discardDetailEdits();
         setStatus('ready', `Discarded changes to ${name}`);
         return true;
     }
     return false;
+}
+
+/** Wait for `work` (a write of the open photo) as the held move: a wait longer than a moment says so, and may be let go. */
+async function whileWaiting(held, work) {
+    const name = baseName(state.activePhotoPath);
+    held.waiting = true;
+    const shown = window.setTimeout(() => {
+        if (!held.gone) held.note = showMoveWaiting(name, letHeldMoveGo);
+    }, MOVE_WAIT_SHOWN_AFTER_MS);
+    try {
+        return await work();
+    } finally {
+        held.waiting = false;
+        window.clearTimeout(shown);
+        hideMoveWaiting(held.note);
+        held.note = null;
+    }
 }
 
 /**
@@ -560,7 +569,7 @@ export function leavePhotoThen(move, { onStay } = {}) {
         move();
         return true;
     }
-    const held = { move, onStay, gone: false, note: null };
+    const held = { move, onStay, gone: false, waiting: false, note: null };
     state.heldMove = held;
     moveWhenLeft(held);
     return false;
@@ -587,7 +596,7 @@ async function moveWhenLeft(held) {
  */
 export function letHeldMoveGo() {
     const held = state.heldMove;
-    if (!held || state.leavePrompt) return false;
+    if (!held || !held.waiting) return false;
     state.heldMove = null;
     held.gone = true;
     hideMoveWaiting(held.note);

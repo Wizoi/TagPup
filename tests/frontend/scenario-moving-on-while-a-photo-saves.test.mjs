@@ -170,4 +170,23 @@ describe("V27: moving on from a photo while its save is out", () => {
     assert.equal(seen, false, "a save answered at once flashed the note");
     assert.equal(ctx.active(), B.path);
   });
+
+  test("after Save in the question, a slow save shows the note, and Escape lets the move go (#3181)", async (t) => {
+    const ctx = await open(t);
+    const title = ctx.document.getElementById("input-photo-title");
+    title.value = "Sports day";
+    title.dispatchEvent(new ctx.window.Event("input", { bubbles: true }));
+    title.blur();
+    await ctx.key("ArrowDown");
+    ctx.document.querySelector('.unsaved-edits-modal.active [data-choice="save"]').click();
+    await flush(ctx.window, 6);
+    assert.equal(ctx.unanswered(), 1, "the save was not sent");
+    await ctx.wait(PAST_THE_MOMENT);
+    assert.ok(ctx.note(), "no note while the move waits for the save chosen in the question");
+    await ctx.key("Escape");
+    assert.equal(ctx.note(), null);
+    await ctx.answer();
+    await ctx.wait(60);
+    assert.equal(ctx.active(), A.path, "the move went after it was let go");
+  });
 });
