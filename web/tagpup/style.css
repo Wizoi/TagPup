@@ -1581,9 +1581,11 @@ button.detail-value.clickable {
     box-shadow: 0 2px 4px rgba(0,0,0,0.5);
 }
 
+/* Image Details alone, as wide as the picture's box above it and the analysis row below: the suggestions that once sat beside
+   it (2fr 1fr) are in the analysis row, and the details had kept two thirds of the width. */
 .details-and-suggestions-row {
     display: grid;
-    grid-template-columns: 2fr 1fr;
+    grid-template-columns: 1fr;
     gap: 24px;
     align-items: start;
 }
@@ -1622,15 +1624,6 @@ button.detail-value.clickable {
     }
 }
 
-.details-and-suggestions-row:has(#suggestions-section.hidden) {
-    grid-template-columns: 1fr;
-}
-
-@media (max-width: 768px) {
-    .details-and-suggestions-row {
-        grid-template-columns: 1fr;
-    }
-}
 
 /* Camera Time Shift Panel */
 .folder-view-timeshift-card {

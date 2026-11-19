@@ -5,6 +5,7 @@
  */
 import { test, afterEach } from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { loadApp, FakeServer, closeAllApps, openFolder, click, PHOTO_WRITES } from "./harness.mjs";
 import { loadViewPage, recordOf } from "./view-page.mjs";
 
@@ -128,6 +129,18 @@ test("the folder's name opens it in the library this page is on, and back to its
   await ctx.settle(100);
   assert.ok(ctx.document.getElementById("panel-content").classList.contains("hidden"), "the grid was not shown again");
   assert.equal(ctx.server.urls().slice(before).filter((url) => url.includes("/api/library/ids")).length, 0);
+});
+
+test("the Image Details box is as wide as the picture's box and the faces' below it", async (t) => {
+  // The row once held the suggestions beside the details (2fr 1fr); they moved to the analysis row and the details kept two thirds
+  // of the width. jsdom lays nothing out: the row's rule is read, and the row is seen to hold the details alone.
+  const css = readFileSync(new URL("../../web/tagpup/style.css", import.meta.url), "utf8");
+  const rules = [...css.matchAll(/\.details-and-suggestions-row(?::has\([^)]*\))?\s*\{([^}]*)\}/g)].map((m) => m[1]);
+  const tracks = rules.map((rule) => (rule.match(/grid-template-columns:\s*([^;]*);/) || [, "1fr"])[1].trim().split(/\s+/).length);
+  assert.ok(rules.length >= 1 && tracks.every((n) => n === 1), `the details take part of the width: ${tracks}`);
+  const page = await openWith(t, PHOTO);
+  const row = page.querySelector(".details-and-suggestions-row");
+  assert.deepEqual([...row.children].map((child) => child.className), ["details-section"]);
 });
 
 test("a photo's and a clip's size read on the Size line under Date taken, the camera under both only when the file names one", async (t) => {
