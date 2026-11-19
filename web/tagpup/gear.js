@@ -2,7 +2,9 @@
 // was the Manage Tags button, the settings of TagPup's own features (Suggest's words,
 // Smart Rename's format: web/common/settings-dialog.js), the library's history of
 // changes, each undoable (web/common/history-dialog.js), Name faces from tags in the whole
-// library (name-faces.js), and TagTuner on this library.
+// library (name-faces.js), adding and removing folders (web/common/folder-manager.js), and
+// TagTuner on this library.
+import { openFolderManager } from './common/folder-manager.js';
 import { wireGear } from './common/gear.js';
 import { wireTagEditor } from './common/tag-editor.js';
 import { openSettings } from './common/settings-dialog.js';
@@ -12,7 +14,7 @@ import { state } from './state.js';
 import { statusDot, statusText } from './elements.js';
 import { fetchKnownTagsAndPeople, loadTaxonomy } from './tags.js';
 import { scanFolder } from './folder.js';
-import { browseWholeLibrary, libraryViewOfFolder, syncLibraryMenu } from './library-view.js';
+import { browseWholeLibrary, libraryViewOfFolder, refreshLibraryView, syncLibraryMenu } from './library-view.js';
 import { startNamingFacesInLibrary } from './name-faces.js';
 
 /**
@@ -51,6 +53,18 @@ export function wireTagPupGear() {
             undone: () => {
                 fetchKnownTagsAndPeople();
                 if (state.scannedFolder) scanFolder(true);
+            },
+        }),
+        // Folders queued: the open folder is asked again whether it is the library's (membership.js). A folder
+        // removed: the navigator's counts and the view that is open are read again.
+        'manage-folders': () => openFolderManager({
+            queued: () => {
+                if (state.scannedFolder) upper.checkFolderMembership(state.scannedFolder);
+            },
+            removed: () => {
+                upper.navigatorCountsChanged();
+                if (state.library) refreshLibraryView();
+                else if (state.scannedFolder) scanFolder(true);
             },
         }),
     });
