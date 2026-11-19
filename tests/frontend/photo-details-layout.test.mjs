@@ -67,20 +67,21 @@ async function openWith(t, record) {
   return document;
 }
 
-test("a video's file size reads under its Date Taken, a photo's under its path", async (t) => {
-  const page = await openWith(t, { ...PHOTO, path: "D:\\Pictures\\Run\\a.mp4", filename: "a.mp4", media: "video", size: 3 * 1024 * 1024 });
-  const underDate = page.getElementById("detail-video-size");
-  assert.equal(underDate.textContent, "3.0 MB");
-  assert.ok(!underDate.classList.contains("hidden"));
-  assert.equal(underDate.closest(".detail-item"), page.getElementById("detail-date-taken").closest(".detail-item"));
-  assert.equal(page.getElementById("detail-file-size").textContent, "", "the size was also shown under the path");
-});
-
-test("a photo's file size stays under its path, none under the date", async (t) => {
-  const page = await openWith(t, { ...PHOTO, size: 820 * 1024 });
-  assert.equal(page.getElementById("detail-file-size").textContent, "820 KB");
-  assert.equal(page.getElementById("detail-video-size").textContent, "");
-  assert.ok(page.getElementById("detail-video-size").classList.contains("hidden"));
+test("a photo's and a clip's size read on the Size line under Date taken, the camera under both only when the file names one", async (t) => {
+  for (const [record, size, camera] of [
+    [{ ...PHOTO, size: 820 * 1024 }, "820 KB", "Tidewater TX R6m2"],
+    [{ ...PHOTO, path: "D:\\Pictures\\Run\\a.mp4", filename: "a.mp4", media: "video", size: 3 * 1024 * 1024, camera: "" }, "3.0 MB", null],
+  ]) {
+    const page = await openWith(t, record);
+    const lines = [...page.querySelectorAll(".detail-fact")].filter((line) => !line.classList.contains("hidden"));
+    assert.deepEqual(lines.map((line) => line.querySelector(".detail-fact-label").textContent),
+      camera ? ["Date taken:", "Size:", "Camera:"] : ["Date taken:", "Size:"], record.filename);
+    assert.equal(page.getElementById("detail-size").textContent, size);
+    assert.equal(new Set(lines.map((line) => line.closest(".detail-item"))).size, 1, "the lines are one column's");
+    if (camera) assert.equal(page.getElementById("detail-camera").textContent, camera);
+    assert.equal(page.getElementById("detail-path").closest(".detail-item").textContent.includes(size), false, "the size still floats under the path");
+    closeAllApps();
+  }
 });
 
 test("the Date Taken reads whole, as the photo stores it: no zone moves it, and a photo with none says so", async (t) => {

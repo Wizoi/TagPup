@@ -29,8 +29,7 @@
 import { api } from './common/api.js';
 import { videoRoute } from './common/file-addresses.js';
 import { clipActionsFollow, offerConvert } from './clip-convert.js';
-import { detailFileSize, detailVideoSize, mainImage, mainVideo, panelContent } from './elements.js';
-import { fileSizeSaid } from './format.js';
+import { mainImage, mainVideo, panelContent } from './elements.js';
 import { setStatus } from './status.js';
 import { state } from './state.js';
 
@@ -169,12 +168,4 @@ export function wireMedia() {
     }).observe(panelContent, { attributes: true, attributeFilter: ['class'] });
     mainVideo.addEventListener('error', videoFailed);
     mainVideo.addEventListener('loadeddata', pictureMissing);
-}
-
-/** The size sits under the path for a photo and under Date Taken for a video: one formatter, one of the two lines shown. */
-export function showFileSize(photo) {
-    const video = isVideo(photo), said = fileSizeSaid(photo.size);
-    detailFileSize.textContent = video ? '' : said;
-    detailVideoSize.textContent = video ? said : '';
-    detailVideoSize.classList.toggle('hidden', !video);
 }

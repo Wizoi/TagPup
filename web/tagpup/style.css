@@ -597,6 +597,21 @@ body {
     text-decoration: underline;
 }
 
+/* A labelled line of Image Details' second column: "Date taken: 3/27/21 12:00 AM", "Size: 820 KB", the camera (index.html).
+   It may shrink, so a long camera and lens line is cut with an ellipsis rather than widening the column. */
+.detail-fact {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-width: 0;
+}
+
+.detail-fact-label {
+    flex: none;
+    font-size: 12px;
+    color: var(--text-muted);
+}
+
 /* The path is a button (Tab reaches it) drawn as the text it was. */
 button.detail-value.clickable {
     background: none;
