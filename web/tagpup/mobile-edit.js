@@ -180,7 +180,6 @@ function drawRecord(record, keepTyped) {
     // Read again with the text kept, the sentence saying why (changed on the PC) stays over the read that went well.
     if (record.missing) say('This file is not where the library last saw it: moved or deleted on the PC.');
     else if (!keepTyped) say('');
-    byId('edit-when').classList.toggle('hidden', !(record.writes || []).includes('date'));
     if (keepTyped) return;
     byId('edit-title').value = record.title || '';
     const when = whenOf(record.taken);

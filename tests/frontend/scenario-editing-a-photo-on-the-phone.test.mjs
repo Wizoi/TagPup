@@ -387,7 +387,7 @@ describe("editing a photo on the phone", () => {
     assert.equal(ctx.held.title, "Wren's Last Lap");
   });
 
-  test("a clip's Date Taken is offered and saved; a record that says no date offers none", async (t) => {
+  test("a clip's Date Taken is offered and saved", async (t) => {
     const clip = "D:\\Photos\\Wren's Meet\\Wren's Meet 1.mp4";
     const ctx = await phone(t, { path: clip, media: "video", writes: CLIP_WRITES });
     await openSheet(ctx);
@@ -397,10 +397,6 @@ describe("editing a photo on the phone", () => {
     await settle(ctx);
     assert.equal(calls(ctx, "/api/photo/save-metadata")[0].body.date_taken, "2024-06-03T10:00:00");
     assert.equal(calls(ctx, "/api/photo/save-metadata")[0].body.path, clip);
-
-    const other = await phone(t, { writes: ["tags", "title"] });
-    await openSheet(other);
-    assert.ok(el(other, "edit-when").classList.contains("hidden"), "the record's writes leave out the date");
   });
 
   test("an add that fails says why and puts the text typed back", async (t) => {
