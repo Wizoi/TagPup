@@ -321,8 +321,7 @@ _FILES = {
             "test_settling_carries_vectors "
             "test_thumbnails "
             "test_what_counts_as_a_photo "
-            "tuner-picker-and-queue "
-            "tuner-remove-folder unsaved-edits write-queue-status"
+            "unsaved-edits write-queue-status"
         ),
         "guard": "test_photo_looks_have_one_owner test_the_block_editors_have_one_caller",
     },
