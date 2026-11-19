@@ -22,7 +22,7 @@ import web_client  # noqa: E402
 from tagpup.core.library import Library  # noqa: E402
 from tagpup.core.result import Result  # noqa: E402
 from tagpup.services import libraries as library_actions  # noqa: E402
-from tagpup.store import db  # noqa: E402
+from tagpup.store import added_folders, db  # noqa: E402
 
 
 class _Library(unittest.TestCase):
@@ -154,6 +154,31 @@ class RemovingAFolder:
         status, body = self.while_indexing(self.meet, lambda: self.remove(self.meet, "/meadow"))
         self.assertEqual((200, 1), (status, body["photos_removed"]), body)
         self.assertEqual((3, 2), (self.held(), self.held(meadow)))
+
+    def test_a_folder_a_parent_still_covers_says_so_when_it_cannot_be_ignored(self):
+        """Its rows went, but the ignored folders could not be changed: the reply is not a success, says why, and
+        counts what was removed (a write reports what it changed)."""
+        conn = db.connect(self.library.path)
+        try:
+            added_folders.record(conn, self.season, subfolders=True)
+            conn.commit()
+        finally:
+            conn.close()
+        failed = Result(errors=[("library", "the disk is full")])
+        with mock.patch("tagpup.services.settings.change", return_value=failed):
+            status, body = self.remove(self.meet)
+        self.assertEqual((500, False, 1), (status, body["success"], body.get("photos_removed")), body)
+        self.assertIn("could not be put in the ignored folders: the disk is full", body["error"])
+        self.assertEqual(2, self.held())
+
+    def test_the_picker_says_why_a_folder_windows_will_not_list_is_not_listed(self):
+        """The folder dialog (both apps) expands a folder the owner may not read."""
+        with mock.patch("tagpup.services.photos.subfolders", side_effect=PermissionError(13, "Access is denied")):
+            reply = self.client.get("/library/api/folder/subfolders", query_string={"path": self.season})
+        body = reply.get_json()
+        self.assertEqual((403, False), (reply.status_code, body["success"]), body)
+        self.assertIn("could not list the folders in", body["error"])
+        self.assertTrue(body["error"].endswith(": Access is denied"), body["error"])
 
 
 class FromTagPup(RemovingAFolder, _Library):
