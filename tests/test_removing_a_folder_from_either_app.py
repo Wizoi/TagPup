@@ -254,7 +254,8 @@ class FromTagTuner(RemovingAFolder, _Library):
 class AnIndexInTheCli(unittest.TestCase):
     """The owner indexes a folder with the CLI (how long indexes are run, CLAUDE.md) and removes it in an app while the
     run goes on. The server's queue cannot see the CLI's run, so the removal goes ahead; the folder stays gone, and the
-    run stops at its next batch, saying why (NotHeld), its rows and faces not made. The models are stood in for
+    run stops at its next batch, saying why in a sentence on one line, exit 1, not a traceback (NotHeld), its rows and
+    faces not made. The models are stood in for
     (test_an_index_reads_the_next_photos_ahead.StandIns)."""
 
     def setUp(self):
@@ -306,7 +307,9 @@ class AnIndexInTheCli(unittest.TestCase):
             self.assertFalse(added_folders.covers(conn, self.meet))
         finally:
             conn.close()
-        self.assertIsInstance(result.exception, NotHeld, result.output)
+        self.assertEqual(1, result.exit_code, result.output)
+        self.assertIsInstance(result.exception, SystemExit, "NotHeld left the CLI as a traceback")
+        self.assertIn("Error: %s" % NotHeld(paths.stored(self.meet)), result.output.splitlines())
         self.assertEqual(2, len(batches), "the index went on past the refusal")
         self.assertEqual(4, len(self.models.shown), "the index read on past the refusal")
 

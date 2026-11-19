@@ -208,7 +208,20 @@ def get_db_path(test_mode=False, cli_db=None):
 
     raise click.UsageError("Say which library: --db <name or path> (a file in the data folder, or a path)")
 
-@click.group()
+class _Commands(click.Group):
+    """The CLI's commands, a folder removed from the library while one runs answered as a sentence: NotHeld (a row
+    asked for in a folder the library no longer holds: removed in an app while an index of it ran) stops the run, and
+    leaves it as click's "Error: <sentence>" on one line, exit 1 -- the server's queue still sees a failure -- not as a
+    traceback whose last line is the sentence."""
+
+    def invoke(self, ctx):
+        try:
+            return super().invoke(ctx)
+        except NotHeld as e:
+            raise click.ClickException(str(e)) from None
+
+
+@click.group(cls=_Commands)
 @click.option("--db", type=str, help="The library to work on: a name in the data folder (e.g. 'my_photos') or a path. Required.")
 @click.option("--test", is_flag=True, help="Use test database paths to avoid cluttering production index.")
 @click.pass_context
