@@ -14,8 +14,8 @@
 import { api } from './common/api.js';
 import { buildElement } from './common/dom.js';
 import {
-    DEFAULT_MEDIA, LIBRARY_MEDIA, LIBRARY_ORDERS, cardAt, destroyLibrary, forgetCards, indexOfCardKey, libraryCardKey,
-    loadLibraryIds, mediaLabel, newLibrary, orderLabel, staleText, viewHeading
+    LIBRARY_MEDIA, LIBRARY_ORDERS, cardAt, destroyLibrary, forgetCards, indexOfCardKey, libraryCardKey,
+    loadLibraryIds, mediaLabel, newLibrary, orderLabel, staleText, viewCountSaid, viewHeading
 } from './library-source.js';
 import { createVGrid } from './vgrid.js';
 import { state } from './mobile-state.js';
@@ -33,21 +33,13 @@ const HOST = {
     dropped: () => {},
 };
 
-/** How many the view holds, as the line under its heading says it. */
-function countSaid(lib) {
-    if (lib.status === 'empty') return lib.message;
-    const shown = lib.ids.length;
-    const of = lib.media !== DEFAULT_MEDIA ? lib.of : lib.total;
-    if (shown === of) return `${shown.toLocaleString()} ${shown === 1 ? 'photo' : 'photos'}`;
-    return `Showing ${shown.toLocaleString()} of ${of.toLocaleString()}`;
-}
-
 /** The count line, and the problem with Try again when the ids or a window's cards could not be read. */
 function drawStatus() {
     const lib = state.photos;
     if (!lib) return;
     const failed = lib.status === 'error' || Boolean(lib.notice);
-    byId('grid-count').textContent = lib.status === 'loading' ? 'Loading...' : lib.status === 'error' ? '' : countSaid(lib);
+    byId('grid-count').textContent = lib.status === 'loading' ? 'Loading...' : lib.status === 'error' ? ''
+        : lib.status === 'empty' ? lib.message : viewCountSaid(lib);
     byId('grid-problem-text').textContent = lib.status === 'error' ? `Could not load photos. ${lib.message}`.trim()
         : 'Could not load photos.';
     byId('grid-problem').classList.toggle('hidden', !failed);

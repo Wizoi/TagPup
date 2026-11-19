@@ -165,7 +165,7 @@ describe("looking through a view's photos on the phone", () => {
     await choose(ctx, "grid-media", "video");
 
     assert.match(idsAsked(ctx).at(-1), /media=video/);
-    assert.equal(el(ctx, "grid-count").textContent, "Showing 2 of 5");
+    assert.equal(el(ctx, "grid-count").textContent, "2 videos (of 5)");
     assert.deepEqual(names(ctx), ["Clip 3.mp4", "Clip 5.mp4"]);
     assert.ok(cards(ctx)[0].querySelector(".phone-card-play"), "a clip says it is one");
     assert.equal(cards(ctx)[1].querySelector(".phone-card-stale").textContent, "missing");
@@ -195,6 +195,21 @@ describe("looking through a view's photos on the phone", () => {
     assert.equal(idsAsked(ctx).length, ids, "the view held is shown, not asked again");
     assert.equal(ctx.here.scrollTop, 3000, "where it was left");
     assert.ok(cards(ctx).some((c) => Number(c.dataset.id) === id));
+  });
+
+  test("the list of libraries opened over the grid and Back: the grid is where it was left, its ids not asked again (#3145)", async (t) => {
+    const ctx = await phone(t, { count: 2000 });
+    await openEvents(ctx);
+    await ctx.scrollTo(3000);
+    const ids = idsAsked(ctx).length;
+
+    await tap(ctx, el(ctx, "bar-library"));
+    assert.deepEqual(shown(ctx), ["library"]);
+    await back(ctx);
+
+    assert.deepEqual(shown(ctx), ["grid"]);
+    assert.equal(idsAsked(ctx).length, ids, "the view held is shown, not asked again");
+    assert.equal(ctx.here.scrollTop, 3000, "where it was left");
   });
 
   test("ids that could not be read say so with Try again, and Try again shows the photos", async (t) => {

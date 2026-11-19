@@ -28,7 +28,7 @@ import { isJustLooking } from './looking.js';
 import { hasUnsavedEdits, leavePhotoThen, openPhotoWrite } from './edits.js';
 import { leaveThen } from './pending.js';
 import {
-    openFolderView, scanFolder, updateCurrentFolderLabel, updateListStats, updatePhotoPosition, viewCountSaid
+    openFolderView, scanFolder, updateCurrentFolderLabel, updateListStats, updatePhotoPosition
 } from './folder.js';
 import { clearSelection } from './selected.js';
 import { forgetSelectionFaces } from './selection-faces.js';
@@ -38,7 +38,8 @@ import { lockBulkControls } from './bulk-run.js';
 import { forgetBanner } from './library-banner.js';
 import { clearSyncInfo, loadSyncInfo } from './sync-state.js';
 import {
-    destroyLibrary, forgetCards, loadLibraryIds, newLibrary, sameView, viewHeading, viewLabel, viewSearch, viewSpecFromSearch
+    destroyLibrary, forgetCards, loadLibraryIds, newLibrary, sameView, viewCountSaid, viewHeading, viewLabel, viewSearch,
+    viewSpecFromSearch
 } from './library-source.js';
 
 const SEARCH_OFF = 'A library view has no file list to filter: search the library from the Library pane’s search box.';

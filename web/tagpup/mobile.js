@@ -22,7 +22,6 @@ document.addEventListener('DOMContentLoaded', () => {
     wireBrowse();
     whenShown('browse', forgetGrid);
     whenShown('browse', showBrowse);
-    whenShown('library', forgetGrid);
     wireGrid();
     whenShown('grid', showGrid);
     whenShown('photo', showPhoto);

@@ -16,14 +16,14 @@ import {
     formatFriendlyDateSingle, getFolderDateStats, parseExifDateToLocalDate, takenOf
 } from './format.js';
 import { baseOf, photoChangedOnDisk, photoRenamed, queueWriteOf, stampOf, takeStamp } from './edits.js';
-import { countSaid, renderFileList, viewCountSaid, visiblePhotos } from './folder.js';
+import { countSaid, renderFileList, visiblePhotos } from './folder.js';
 import { openLibraryPhoto, photoFileUrl, selectPhoto } from './photo.js';
 import { isVideo } from './media.js';
 import { createVGrid } from './vgrid.js';
 import { cardLabel, settleRoving, wireGridKeys } from './grid-keys.js';
 import { markStale } from './stale.js';
 import {
-    applyEditedRecords, libraryCardKey, libraryCount, libraryIdOfPath, libraryIndexOfKey, libraryRecordAt
+    applyEditedRecords, libraryCardKey, libraryCount, libraryIdOfPath, libraryIndexOfKey, libraryRecordAt, viewCountSaid
 } from './library-source.js';
 import {
     addToSelection, clearIdSelection, invertIdSelection, isIdSelected, isPhotoSelected, isSelected, removeFromSelection,

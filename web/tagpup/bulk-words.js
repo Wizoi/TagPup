@@ -1,7 +1,7 @@
 // TagPup's page: what a bulk edit of a library view asks before it is written, and the words it names itself in, as plain functions
 // of numbers and names. How it goes and how it ends is the shared strip's (web/common/batch-strip.js).
 import { howLong, photosOf } from './common/batch-strip.js';
-import { kindsSaid } from './folder.js';
+import { kindsSaid } from './library-source.js';
 
 /** Photos a second the page assumes of a bulk edit: 9d-1 measured 15 to 23, and a write now reads each file to its end (about 53 ms a photo). */
 export const ASSUMED_PER_SECOND = 15;

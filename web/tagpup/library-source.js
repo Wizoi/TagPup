@@ -606,6 +606,23 @@ export function libraryKinds(lib) {
     return { photos: Math.max(0, lib.total - lib.videos.size), videos: lib.videos.size };
 }
 
+/** A count by kind, `{ photos, videos }`, as folder.js's countSaid spells one: a folder's records, or a library view's (#2569). */
+export function kindsSaid({ photos, videos }) {
+    const said = (n, one) => `${n.toLocaleString()} ${one}${n === 1 ? '' : 's'}`;
+    if (!videos) return said(photos, 'photo');
+    return photos ? `${said(photos, 'photo')}, ${said(videos, 'video')}` : said(videos, 'video');
+}
+
+/**
+ * The open library view's count, as the server counted it (libraryKinds): "9 photos, 3 videos"; under Show's Photos or Videos
+ * (filter-menu.js), what the source holds of either kind beside it once it is read: "3 videos (of 1,204)".
+ */
+export function viewCountSaid(lib) {
+    const said = lib.media === 'video' && !lib.total ? '0 videos' : kindsSaid(libraryKinds(lib));
+    const read = lib.status === 'ready' || lib.status === 'empty';
+    return lib.media !== DEFAULT_MEDIA && read ? `${said} (of ${lib.of.toLocaleString()})` : said;
+}
+
 // ---- The grid's source ----------------------------------------------------------------
 
 export function libraryCount() {

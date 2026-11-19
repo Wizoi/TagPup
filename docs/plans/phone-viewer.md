@@ -61,7 +61,7 @@ No new route, no migration, no schema change.
    `GET /api/library/navigator?section=`. A row opens its children one level at a time (a drill-down list with a Back bar
    and the path as breadcrumb), not a tree; "Show these photos" at every level (`recursive` for a folder).
 3. **Grid**: `lib` ids, cards in `createVGrid`, 3 columns at 390 px (2 for large type), sort and Photos/Clips only. A tap opens
-   the photo (no selection mode). Count and "Showing N of M" line.
+   the photo (no selection mode). Its count line is the desktop's one spelling (`viewCountSaid`, library-source.js: "57,357 photos, 2,913 videos", "2,913 videos (of 60,270)").
 4. **Photo**: the picture at `photo-file?size=1024` (about 150-300 KB; the desktop uses 800), swipe left or right through
    the grid's ids, a tap to zoom, a clip through `/api/video-file`. Under it the facts: Date Taken, title/caption, people,
    keywords, a sheet that slides up for editing.
