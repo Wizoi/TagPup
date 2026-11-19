@@ -64,7 +64,8 @@ No new route, no migration, no schema change.
    the photo (no selection mode). Its count line is the desktop's one spelling (`viewCountSaid`, library-source.js: "57,357 photos, 2,913 videos", "2,913 videos (of 60,270)").
 4. **Photo**: the picture at `photo-file?size=1024` (about 150-300 KB; the desktop uses 800), swipe left or right through
    the grid's ids, a tap to zoom, a clip through `/api/video-file`. Under it the facts: Date Taken, title/caption, people,
-   keywords, a sheet that slides up for editing.
+   keywords, a sheet that slides up for editing. Back with the zoom open leaves the photo (the zoom closes with it), not
+   only the zoom (decided 2026-11-19, review of cut 3a).
 5. **Edit sheet**: people and keywords as chips, the same x as the desktop on each chip but asks (or shows an Undo toast for
    five seconds) rather than removing on a stray touch; an add box with a list of matching tags as you type; Title/Caption
    text; Date Taken as the native date and time inputs; one Save. A dirty sheet says so before it closes.
