@@ -1,12 +1,13 @@
-"""TagTuner's Remove Folder picks from the library's folders, not the disk's (#47).
+"""Manage folders removes a folder picked from the library's folders, not the disk's (#47).
 
-It chose with the system folder dialog, which lists what is on disk, so a folder gone
-from disk -- the usual reason to remove one -- could not be chosen: a deleted training
-folder's rows stayed with no way to pick it. GET /api/folder/indexed lists each folder
-the library holds photos directly in, as the library spells it, with every photo under
-it (what removing it takes) and whether it is still on disk -- and the folders above
-them too, which hold none of their own: the native dialog could pick a parent, and
-removing one takes every folder under it (store.photos.remove_under).
+TagTuner's Remove Folder chose with the system folder dialog, which lists what is on disk,
+so a folder gone from disk -- the usual reason to remove one -- could not be chosen: a
+deleted training folder's rows stayed with no way to pick it. GET /api/folder/indexed lists
+each folder the library holds photos directly in, as the library spells it, with every
+photo under it (what removing it takes) -- and the folders above them too, which hold none
+of their own: the native dialog could pick a parent, and removing one takes every folder
+under it (store.photos.remove_under). Whether a folder is on disk is asked apart, of the
+rows the dialog shows (GET /api/folder/on-disk).
 """
 import os
 import shutil
