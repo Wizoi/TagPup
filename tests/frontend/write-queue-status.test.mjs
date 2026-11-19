@@ -78,13 +78,13 @@ describe("the status", () => {
 
   test("counts through the writes, and says one failed", async (t) => {
     const ctx = await loadSelected(t);
-    // A tag clicked while a write is out waits as its files' change, and goes as the next write.
+    // A tag clicked while a write is out waits as its files' change, and goes as the next write, queued at the click.
     click(ctx.window, chip(ctx, OFFERED[0]));
     await flush(ctx.window, 8);
     click(ctx.window, chip(ctx, OFFERED[1]));
     await flush(ctx.window, 8);
     assert.equal(box(ctx).hidden, false);
-    assert.equal(said(ctx), "Saving 1 of 1...");
+    assert.equal(said(ctx), "Saving 1 of 2...");
     await answer(ctx, { success: true, written: {} });
     assert.equal(said(ctx), "Saving 2 of 2...");
     await answer(ctx, { success: false, error: REFUSED, written: {} });
@@ -103,6 +103,19 @@ describe("the status", () => {
 });
 
 describe("the list", () => {
+  test("a write queued at a click behind one that fails sends nothing until Retry", async (t) => {
+    const ctx = await loadSelected(t);
+    click(ctx.window, chip(ctx, OFFERED[0]));
+    await flush(ctx.window, 8);
+    click(ctx.window, chip(ctx, OFFERED[1]));
+    await flush(ctx.window, 8);
+    await answer(ctx, { success: false, error: REFUSED, written: {} });
+    assert.equal(ctx.held.length, 0, "the write queued behind the failed one went by itself");
+    click(ctx.window, rows(ctx).find((r) => r.dataset.status === "failed").querySelector(".write-queue-retry"));
+    await flush(ctx.window, 8);
+    assert.equal(ctx.held.length, 1, "Retry sent nothing");
+  });
+
   test("names each write, its state, and a failure's reason", async (t) => {
     const ctx = await loadSelected(t);
     click(ctx.window, chip(ctx, OFFERED[0]));
@@ -111,8 +124,9 @@ describe("the list", () => {
     await flush(ctx.window, 8);
     const states = () => rows(ctx).map((r) => r.dataset.status);
     const labels = () => rows(ctx).map((r) => r.querySelector(".write-queue-label").textContent);
-    assert.deepEqual(states(), ["writing"]);
-    assert.deepEqual(labels(), [`Add ${OFFERED[0]} to 2 photos`]);
+    // The second click's write waits in the queue from the click; what it writes is named at its turn.
+    assert.deepEqual(states(), ["waiting", "writing"]);
+    assert.deepEqual(labels(), ["Write tag changes", `Add ${OFFERED[0]} to 2 photos`]);
     await answer(ctx, { success: true, written: {} });
     // Newest first.
     assert.deepEqual(states(), ["writing", "done"]);

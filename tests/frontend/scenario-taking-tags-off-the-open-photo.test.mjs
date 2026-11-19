@@ -145,6 +145,19 @@ describe("V20: taking tags off the open photo is answered at the click, the writ
     assert.equal(ctx.status(), "Ready");
   });
 
+  test("a pill taken off while another removal is out, then typed back: written in the order clicked, the tag stays", async (t) => {
+    const ctx = await open(t);
+    await ctx.takeOff("Cross Country");
+    await ctx.takeOff("Harbourside");
+    ctx.$("input-add-tag").value = "Harbourside";
+    ctx.$("btn-add-tag").click();
+    await flush(ctx.window, 8);
+    while (ctx.unanswered()) await ctx.answer();
+    assert.deepEqual(ctx.order(), ["bulk", "bulk", "save"], "the save went ahead of the removal clicked before it");
+    assert.deepEqual(ctx.file(A), ["Harbourside", "Kentridge"], "the removal clicked first undid the tag typed after it");
+    assert.deepEqual(sorted(ctx.pills()), ["Harbourside", "Kentridge"]);
+  });
+
   test("a removal and a save around it: neither undoes the other, and a title's save already out draws no pill again", async (t) => {
     const ctx = await open(t);
     await ctx.takeOff("Cross Country");

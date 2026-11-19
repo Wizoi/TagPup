@@ -156,7 +156,11 @@ export function deleteWaits(paths) {
     return true;
 }
 
-/** Queue the next chunk, unless one is queued, the drain is stopped by a failure, or nothing waits. */
+/**
+ * Queue the next chunk, unless one is queued and has not had its turn, the drain is stopped by a failure, or nothing waits.
+ * A click while a chunk is out queues the next at the click, so a save clicked after it goes after it (one queue, in the
+ * order clicked); the drain's own next chunk is queued when the one out is answered, behind whatever was queued meanwhile.
+ */
 function drain() {
     const pending = state.pending;
     if (pending.queued || pending.stopped || !pending.files.size) return;
@@ -265,7 +269,13 @@ function chunkLabel(chunk) {
 /** The queue's job: send the next chunk and take its reply; the drain goes on behind whatever was queued meanwhile. */
 async function sendChunk(entry) {
     let chunk = [];
+    state.pending.queued = false;
     try {
+        if (state.pending.stopped) {
+            // Queued at a click while the chunk before was out, and that one failed: the changes wait for its Retry.
+            entry.label = 'Tag changes: waiting for the failed write';
+            return true;
+        }
         const drops = state.pending.drops;
         chunk = takeChunk();
         state.pending.out = chunk;
@@ -291,7 +301,6 @@ async function sendChunk(entry) {
         return takeReply(chunk, data, entry, drops !== state.pending.drops);
     } finally {
         state.pending.out = null;
-        state.pending.queued = false;
         drain();
         pageFollows(new Set(chunk.map(item => pathKey(item.path))));
     }

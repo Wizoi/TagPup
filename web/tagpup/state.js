@@ -173,7 +173,7 @@ export const state = {
     // batchTotal and batchSettled count the writes since the queue was last empty.
     writeQueue: { entries: [], nextId: 1, batchTotal: 0, batchSettled: 0, open: false },
     // The tag changes not yet sent (pending.js): `files` by pathKey, each {path, add, remove, panel, token, actions, folder}, in
-    // the order they came; `queued` while a chunk's write is in the queue, `stopped` after one failed (until Retry or
+    // the order they came; `queued` while a chunk's write waits its turn in the queue, `stopped` after one failed (until Retry or
     // Cancel); `people` the tags a change named as people, whose leaves the records' `people` follow; `drops` how many
     // times the waiting changes were dropped (Cancel, leaving), so a chunk sent before neither gives back nor says Ready;
     // `out` the chunk whose write is out.

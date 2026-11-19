@@ -338,7 +338,8 @@ describe("a select-all of 1,000", () => {
     await addTags(ctx, "Trips/Coast");
     assert.ok(ctx.confirms.some((m) => m === "Add Trips/Coast to 1,000 photos?"), ctx.confirms.join("|"));
     await addTags(ctx, "Places/Harbour");
-    const label = ctx.document.querySelector(".write-queue-entry .write-queue-label").textContent;
+    // The later click queued the next chunk at the click (one queue, in the order clicked); the row out says what it writes.
+    const label = ctx.document.querySelector(".write-queue-entry[data-status='writing'] .write-queue-label").textContent;
     assert.equal(label, "Add Trips/Coast to 25 photos, 975 more pending");
     held.shift()({ success: true });
     for (let i = 0; i < 100 && writes(ctx).length < 41; i++) await flush(ctx.window, 2);
