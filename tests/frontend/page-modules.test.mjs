@@ -170,6 +170,16 @@ describe("what the page loader cannot take is refused", () => {
     assert.equal(pageModules(quiet.page, quiet.common).length, 2);
   });
 
+  test("a word in a template literal's text is a sentence, in its ${} expression a use", () => {   // #3080
+    const common = { "common/api.js": "export function libraryIn(p) { return p; }\nexport const api = {};\n" };
+    const text = site({
+      "page/main.js": 'import { api } from "./common/api.js";\nconst say = `no ${api.x} libraryIn check`;\n', ...common });
+    assert.equal(pageModules(text.page, text.common).length, 2);
+    const used = site({
+      "page/main.js": 'import { api } from "./common/api.js";\nconst say = `no ${api.x + `${libraryIn("/")}`}`;\n', ...common });
+    assert.throws(() => pageModules(used.page, used.common), /uses libraryIn from .*api\.js without importing it/);
+  });
+
   test("two modules importing each other", () => {
     const { page, common } = site({
       "page/main.js": 'import { a } from "./a.js";\n',
