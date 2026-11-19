@@ -213,6 +213,13 @@ class ThePageIsToldItsPathsAreOld(AfterAMove):
             "X-TagPup-Roots-Moved"))
 
 
+    def test_old_paths_in_a_selection_are_resolved_and_the_page_is_told(self):               # #3125
+        self.move()
+        reply = self.post("/api/library/selection/delete-check", {"selection": {"paths": [self.held[0]]}})
+        self.assertEqual(200, reply.status_code, reply.get_data(as_text=True))
+        self.assertEqual("pictures", reply.headers.get("X-TagPup-Roots-Moved"))
+
+
 class EachPhotosOwnChanges(AfterAMove):
     def test_old_paths_as_the_keys_of_changes_write_the_first_places_files_and_the_reply_names_them(self):
         # The page's queue of tag changes is keyed by the paths it holds; after a move they are the old place's.
