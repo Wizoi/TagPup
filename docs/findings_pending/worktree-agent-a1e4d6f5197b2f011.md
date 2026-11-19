@@ -1,0 +1,10 @@
+# Findings of a branch
+
+Provisional numbers `B-n`: `tools/add_findings.py --take` gives each row its number in
+docs/findings.md when the main session merges the branch, and removes this file.
+
+| # | Found | Finding | Status |
+|---|---|---|---|
+| B-1 | 2026-11-19 | low: Data: `/api/folder/remove` (tagpup.web.folder_routes) asks `IndexQueue.overlaps` and then removes, and the two are not one step: an index-start (or Add) of the same folder that lands between the answer and remove_folder's write is queued, and the removal then forgets the folder's added record and rows under it, so that index fails NotHeld at its first row (nothing lost; the owner sees a failed index and adds it again). user action: Add of a folder in one app and Remove of the same folder in the other within the same moment. Not built: closing it means remove_folder taking the queue's lock across its write, which would hold the indexer's worker behind a delete. | open |
+| B-2 | 2026-11-19 | low: Data: the removal refusal sees only this server's index queue: a `tagpup_cli.py index` of the folder in another process (how long indexes are run, CLAUDE.md) is not seen, and a Remove of the folder meanwhile goes ahead; that CLI index then fails NotHeld at its next row. user action: run `TagPup CLI.cmd` index on a folder and Remove the folder in an app while it runs. No cross-process record of a running CLI index exists to ask (the run's job_runs row could be one). | open |
+| B-3 | 2026-11-19 | low: Data: decided in cut 1 of manage-folders, not copied: `IndexQueue.overlaps` refuses a removal while the run's bake is under way too, where `indexing` (Suggest's wait) lets a baking run go (#2355): the bake writes the files of the folder's photos and their rows through file_changes.write_fields, which would find the rows gone. The subfolders listing answers an OSError (a folder there that Windows will not list) 403 with a sentence, chosen over 500 as not the server's fault. user action: Remove a folder in the minute its index is baking. | open |
