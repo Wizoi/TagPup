@@ -8,16 +8,40 @@
  *
  * A page opened afresh on a library puts the list of libraries under Browse: Back at the top of Browse opens the list,
  * not off the page, and that bottom step (`first`) has no Back of its own.
+ *
+ * A sheet over a screen (the Photo screen's Edit) is a step of its own too, its entry the screen's with `sheet`: Back
+ * closes the sheet before it leaves the screen, and Back or Forward onto that step opens it again (whenSheet).
  */
 import { state } from './mobile-state.js';
 
 /** What runs each time a screen is shown, by its name. */
 const onShow = new Map();
+/** What runs each time a history step is shown, told whether it has a sheet over its screen. */
+const onSheet = [];
 
 /** Run `fn` each time the screen `name` is shown, by a tap, Back or a reload. */
 export function whenShown(name, fn) {
     if (!onShow.has(name)) onShow.set(name, []);
     onShow.get(name).push(fn);
+}
+
+/** Run `fn(open)` each time a step is shown by Back, Forward or a reload: `open`, the step has the sheet over it. */
+export function whenSheet(fn) {
+    onSheet.push(fn);
+}
+
+function sheetIn(entry) {
+    for (const fn of onSheet) fn(Boolean(entry && entry.sheet));
+}
+
+/** A sheet opened over the screen shown, as a step: Back closes it first. */
+export function openSheetStep() {
+    window.history.pushState({ ...window.history.state, sheet: true }, '');
+}
+
+/** The sheet closed by its own button: its step goes too, so the next Back leaves the screen. */
+export function closeSheetStep() {
+    if (window.history.state && window.history.state.sheet) window.history.back();
 }
 
 function sectionOf(name) {
@@ -81,7 +105,13 @@ export function upAScreen() {
 
 /** Back goes up a screen: the browser's own Back and the bar's. */
 export function wireScreens() {
-    window.addEventListener('popstate', (event) => showScreen(screenIn(event.state), placeIn(event.state)));
+    window.addEventListener('popstate', (event) => {
+        const name = screenIn(event.state);
+        const place = placeIn(event.state);
+        // The same screen at the same place is only ever a sheet's step and the one under it: the screen stays.
+        if (name !== state.screen || !samePlace(place, state.place)) showScreen(name, place);
+        sheetIn(event.state);
+    });
     document.getElementById('bar-back').addEventListener('click', upAScreen);
 }
 
@@ -103,4 +133,5 @@ export function startScreens() {
     const kept = state.library ? screenIn(entry) : state.home;
     if (!entry || entry.screen !== kept) window.history.replaceState({ screen: kept, place: null }, '');
     showScreen(kept, placeIn(window.history.state));
+    sheetIn(window.history.state);
 }

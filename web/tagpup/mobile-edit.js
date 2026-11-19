@@ -10,7 +10,9 @@
  * with the stamp, which the server refuses when the file changed since it was read: nothing is written, the sheet says
  * so and reads the photo again, the text typed kept. Each write of the page waits for the one before it (state.writing).
  * A title or date typed and left by Back or another screen is kept (state.drafts) and put back when the photo's sheet
- * opens again; only Close lets it go, and asks first. The page going while one is kept asks first too.
+ * opens again; only Close lets it go, and asks first. The page going while one is kept asks first too. The sheet is a
+ * step of the history (mobile-screens.js): Back closes it, the text kept and a removal still behind its Undo, and a
+ * second Back leaves the photo.
  *
  * A chip taken off and a tag change waiting are the photo's, by its id, not the record read: the sheet read again (Edit
  * opened again, a Save refused and read again) still leaves the chip off, and the write lands on the record it shows.
@@ -21,6 +23,7 @@ import { postPhotoMetadata, takeWritten } from './common/photo-write.js';
 import { baseName, pathKey } from './common/paths.js';
 import { PeopleDirectory, leafOf, photoAlreadyHas, rootOf, sortedTags } from './common/vocabulary.js';
 import { state } from './mobile-state.js';
+import { closeSheetStep, openSheetStep, whenSheet } from './mobile-screens.js';
 
 const byId = (id) => document.getElementById(id);
 const UNDO_MS = 5000;
@@ -223,9 +226,16 @@ function readVocabulary() {
         }, () => {});
 }
 
-export function openEdit() {
+/** Edit tapped: the sheet, a step of the history. */
+function openEdit() {
+    if (state.edit || !showEdit()) return;
+    openSheetStep();
+}
+
+/** The sheet over the photo shown, read as its file is now; false when no photo is shown. */
+function showEdit() {
     const place = state.place;
-    if (state.screen !== 'photo' || !place || !Number.isInteger(place.id)) return;
+    if (state.screen !== 'photo' || !place || !Number.isInteger(place.id)) return false;
     state.edit = { id: place.id, record: null, saving: false };
     byId('edit-sheet').classList.remove('hidden');
     for (const id of ['edit-people', 'edit-keywords', 'edit-matches']) replaceContent(byId(id));
@@ -233,6 +243,7 @@ export function openEdit() {
     say('Reading this photo...');
     readVocabulary();
     readRecord();
+    return true;
 }
 
 function closeEdit() {
@@ -240,12 +251,26 @@ function closeEdit() {
     byId('edit-sheet').classList.add('hidden');
 }
 
-/** Another photo or screen is shown, or the page goes: every removal waiting is sent in its turn, the sheet closes. */
-export function leaveEdit() {
+/** The title and date typed and not saved, kept by the photo's id for its sheet's next opening. */
+function keepDraft() {
     if (state.edit && editDirty()) state.drafts.set(state.edit.id, Object.fromEntries(TYPED.map((id) => [id, byId(id).value])));
     else if (state.edit) state.drafts.delete(state.edit.id);
+}
+
+/** Another photo or screen is shown, or the page goes: every removal waiting is sent in its turn, the sheet closes. */
+export function leaveEdit() {
+    keepDraft();
     state.removals.slice().forEach(sendRemoval);
     closeEdit();
+}
+
+/** Back onto the sheet's step opens it again; Back off it closes it, the text typed kept, each removal behind its Undo. */
+function sheetStep(open) {
+    if (open && !state.edit) showEdit();
+    else if (!open && state.edit) {
+        keepDraft();
+        closeEdit();
+    }
 }
 
 /** The one Save: the title and the Date Taken, named by the stamp of the file as it was read. */
@@ -296,6 +321,7 @@ export function wireEdit() {
         if (editDirty() && !window.confirm('Close without saving the title and date?')) return;
         state.drafts.delete(state.edit.id);
         closeEdit();
+        closeSheetStep();
     });
     byId('edit-add').addEventListener('input', drawMatches);
     byId('edit-matches').addEventListener('click', (event) => {
@@ -308,6 +334,7 @@ export function wireEdit() {
             if (x && state.edit && state.edit.record) removeLater(x.dataset.tag);
         });
     }
+    whenSheet(sheetStep);
     window.addEventListener('pagehide', leaveEdit);
     // Another library or a reload with a title or date typed and not saved: the browser asks first, as Close does.
     window.addEventListener('beforeunload', (event) => {

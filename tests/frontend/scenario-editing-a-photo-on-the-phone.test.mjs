@@ -3,6 +3,8 @@
  * photo, taps Edit, and changes its people, keywords, title and Date Taken from the sheet (web/tagpup/mobile-edit.js).
  *
  * - A tag added or taken off is one path's change through /api/photos/bulk-tags, against what the file holds: no stamp.
+ * - The sheet is a step of the history: Back closes it, the text typed kept, and a second Back leaves the photo; Back
+ *   to it from another screen opens it again.
  * - A chip's x waits behind its own Undo; an Undo in time sends nothing; leaving the photo (a swipe, Back, the Libraries
  *   button) or the page (pagehide, keepalive) sends what is still waiting; behind a Save still out (itself keepalive),
  *   it goes after the Save, never beside it, and names the file by the name a title gave it.
@@ -205,8 +207,9 @@ describe("editing a photo on the phone", () => {
   });
 
   for (const [how, leave] of [
-    ["a swipe to the next photo", (ctx) => {
+    ["a swipe to the next photo", async (ctx) => {
       click(ctx.window, el(ctx, "edit-close"));       // the sheet open, a swipe is not taken
+      await settle(ctx);
       const stage = el(ctx, "photo-stage");
       for (const [type, x] of [["pointerdown", 200], ["pointerup", 80]]) {
         const event = new ctx.window.MouseEvent(type, { bubbles: true, clientX: x, clientY: 300, button: 0 });
@@ -215,7 +218,11 @@ describe("editing a photo on the phone", () => {
         stage.dispatchEvent(event);
       }
     }],
-    ["Back", (ctx) => ctx.window.history.back()],
+    ["Back out of the photo (the sheet, then the photo)", async (ctx) => {
+      ctx.window.history.back();
+      await settle(ctx);
+      ctx.window.history.back();
+    }],
     ["the Libraries button", (ctx) => click(ctx.window, el(ctx, "bar-library"))],
     ["the page going", (ctx) => ctx.window.dispatchEvent(new ctx.window.Event("pagehide"))],
   ]) {
@@ -223,7 +230,7 @@ describe("editing a photo on the phone", () => {
       const ctx = await phone(t);
       await openSheet(ctx);
       click(ctx.window, chipX(ctx, COAST));
-      leave(ctx);
+      await leave(ctx);
       await settle(ctx);
       assert.deepEqual(tagWrites(ctx), [{ [PATH]: { remove: [COAST] } }], "sent at once, not after the Undo's time");
       assert.ok(ctx.sent.find((s) => s.url.includes("/api/photos/bulk-tags")).keepalive, "a write that outlives the page");
@@ -431,16 +438,55 @@ describe("editing a photo on the phone", () => {
     assert.equal(sheetOpen(ctx), false);
   });
 
+  test("Back with the sheet open closes the sheet, not the photo, the text typed kept; the next Back leaves the photo", async (t) => {
+    const ctx = await phone(t);
+    await openSheet(ctx);
+    click(ctx.window, el(ctx, "edit-close"));          // Close lets its step go: no Back is spent on a sheet shut
+    await settle(ctx);
+    click(ctx.window, el(ctx, "photo-edit"));
+    await settle(ctx);
+    const asked = [];
+    ctx.window.confirm = (text) => { asked.push(text); return false; };
+    type(ctx, "edit-title", "Wren's Last Lap");
+
+    ctx.window.history.back();
+    await settle(ctx);
+    assert.equal(sheetOpen(ctx), false);
+    assert.deepEqual(shown(ctx), ["photo"], "the photo stays");
+    assert.equal(asked.length, 0, "nothing asked: the text typed is kept");
+    click(ctx.window, el(ctx, "photo-edit"));
+    await settle(ctx);
+    assert.equal(el(ctx, "edit-title").value, "Wren's Last Lap");
+
+    click(ctx.window, el(ctx, "bar-back"));           // the bar's Back as the phone's
+    await settle(ctx);
+    assert.equal(sheetOpen(ctx), false);
+    assert.deepEqual(shown(ctx), ["photo"]);
+    ctx.window.history.back();
+    await settle(ctx);
+    assert.deepEqual(shown(ctx), ["grid"]);
+    assert.equal(calls(ctx, "/api/photo/save-metadata").length, 0);
+  });
+
   for (const [how, leave] of [
-    ["Back", async (ctx) => { ctx.window.history.back(); await settle(ctx); }],
+    ["Back out of the photo (the sheet, then the photo)", async (ctx) => {
+      ctx.window.history.back();
+      await settle(ctx);
+      ctx.window.history.back();
+      await settle(ctx);
+    }],
     ["the Libraries button", async (ctx) => {
       click(ctx.window, el(ctx, "bar-library"));
       await settle(ctx);
       assert.deepEqual(shown(ctx), ["library"]);
       ctx.window.history.back();
       await settle(ctx);
-      ctx.window.history.back();
-      await settle(ctx);
+      assert.ok(sheetOpen(ctx), "Back to the photo's step opens its sheet again");
+      assert.equal(el(ctx, "edit-title").value, "Wren's Last Lap");
+      for (let step = 0; step < 2; step += 1) {
+        ctx.window.history.back();
+        await settle(ctx);
+      }
     }],
   ]) {
     test(`a title and date typed are kept through ${how}: the photo's Edit shows them again`, async (t) => {
@@ -462,7 +508,10 @@ describe("editing a photo on the phone", () => {
       click(ctx.window, el(ctx, "edit-save"));
       await settle(ctx);
       assert.equal(ctx.held.title, "Wren's Last Lap");
-      await openPhotoEdit(ctx);
+      ctx.window.history.back();                       // the sheet shut, the photo still shown
+      await settle(ctx);
+      click(ctx.window, el(ctx, "photo-edit"));
+      await settle(ctx);
       assert.equal(said(ctx), "", "a draft saved is not offered again");
     });
   }
