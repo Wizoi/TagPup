@@ -177,7 +177,8 @@ describe("looking through a view's photos on the phone", () => {
     const ctx = await phone(t, { count: 2000 });
     await openEvents(ctx);
     await ctx.scrollTo(3000);
-    const card = cards(ctx).find((c) => c.querySelector("img"));
+    // A card in view (the grid draws some above it too): a finger reaches only those.
+    const card = cards(ctx).find((c) => c.querySelector("img") && 120 + Math.floor(Number(c.dataset.at) / 3) * 134 >= 3000);
     const id = Number(card.dataset.id);
     const steps = ctx.window.history.length;
     const ids = idsAsked(ctx).length;

@@ -155,6 +155,19 @@ describe("looking at a photo on the phone", () => {
     assert.ok(cards(ctx).some((c) => Number(c.dataset.id) === 80));
   });
 
+  test("the photo tapped is the view's open photo, as on the desktop; Back keeps it so, the grid where it was", async (t) => {
+    const ctx = await phone(t);
+    await openPhoto(ctx, 4);
+    assert.equal(pageState(ctx).photos.activeId, 4, "the tap names the photo open, not only a swipe");
+    const top = ctx.here.scrollTop;
+
+    ctx.window.history.back();
+    await settle(ctx);
+    assert.deepEqual(shown(ctx), ["grid"]);
+    assert.equal(pageState(ctx).photos.activeId, 4, "still the photo last open: Back does not forget it");
+    assert.equal(ctx.here.scrollTop, top, "its card in view already: the scroll is kept");
+  });
+
   test("the first photo goes no further back and the last no further on", async (t) => {
     const ctx = await phone(t, { count: 3 });
     await openPhoto(ctx, 1);

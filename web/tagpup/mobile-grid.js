@@ -69,11 +69,10 @@ export function showGrid() {
     if (held && held.status !== 'error' && samePlace(viewOf(held), view)) {
         drawStatus();
         state.grid.render();
-        // The photo swiped to: its card in view, the scroll kept when it already is (vgrid.js, 'nearest'); once, so the
-        // list of libraries opened over the Grid and closed again leaves the scroll alone.
-        const left = held.activeId === null ? -1 : held.ids.indexOf(held.activeId);
-        held.activeId = null;
-        if (left >= 0) state.grid.scrollToIndex(left);
+        // The photo last open (`activeId`, as the desktop's view means it: tapped here, or swiped to in mobile-photo.js):
+        // its card in view, the scroll kept when it already is (vgrid.js, 'nearest').
+        const open = held.activeId === null ? -1 : held.ids.indexOf(held.activeId);
+        if (open >= 0) state.grid.scrollToIndex(open);
         return;
     }
     readView(view);
@@ -148,7 +147,9 @@ export function wireGrid() {
     });
     byId('grid-cards').addEventListener('click', (event) => {
         const card = event.target.closest('.phone-card[data-id]');
-        if (card) openScreen('photo', { id: Number(card.dataset.id), at: Number(card.dataset.at) });
+        if (!card) return;
+        if (state.photos) state.photos.activeId = Number(card.dataset.id);    // the photo open, as a swipe sets it
+        openScreen('photo', { id: Number(card.dataset.id), at: Number(card.dataset.at) });
     });
     byId('grid-retry').addEventListener('click', tryAgain);
 }

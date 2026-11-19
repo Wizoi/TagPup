@@ -121,7 +121,7 @@ export function stepPhoto(delta) {
     const at = indexIn(lib, state.place);
     const next = at + delta;
     if (at < 0 || next < 0 || next >= lib.ids.length) return;
-    // The photo swiped to: its card is brought into view when the Grid is shown again (one opened by a tap is in view).
+    // The photo open, as a tap sets it (mobile-grid.js): its card is brought into view when the Grid is shown again.
     lib.activeId = lib.ids[next];
     replacePlace({ id: lib.ids[next], at: next });
 }
