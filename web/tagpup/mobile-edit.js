@@ -5,7 +5,8 @@
  * It edits the photo as /api/library/photo reads it when the sheet opens (the file's stamp and what it holds), not the
  * Grid's card. A chip's x waits five seconds behind an Undo before anything is sent; leaving the photo (a swipe, Back,
  * another screen) or the page puts it in its turn then: after a Save still out, never beside it (the Save would be
- * refused as changed on the PC), each write keepalive so the page going does not cancel it. A tag is added or taken off through /api/photos/bulk-tags,
+ * refused as changed on the PC); each write is keepalive, but a removal behind a Save still out when the page really
+ * unloads is not sent (accepted, #3172). A tag is added or taken off through /api/photos/bulk-tags,
  * against what the file holds, so no stamp; the title and Date Taken through save-metadata (web/common/photo-write.js)
  * with the stamp, which the server refuses when the file changed since it was read: nothing is written, the sheet says
  * so and reads the photo again, the text typed kept. Each write of the page waits for the one before it (state.writing).
@@ -253,8 +254,9 @@ function closeEdit() {
 
 /** The title and date typed and not saved, kept by the photo's id for its sheet's next opening. */
 function keepDraft() {
-    if (state.edit && editDirty()) state.drafts.set(state.edit.id, Object.fromEntries(TYPED.map((id) => [id, byId(id).value])));
-    else if (state.edit) state.drafts.delete(state.edit.id);
+    if (!state.edit || !state.edit.record) return;    // still reading: nothing typed or read, a draft kept stays
+    if (editDirty()) state.drafts.set(state.edit.id, Object.fromEntries(TYPED.map((id) => [id, byId(id).value])));
+    else state.drafts.delete(state.edit.id);
 }
 
 /** Another photo or screen is shown, or the page goes: every removal waiting is sent in its turn, the sheet closes. */
