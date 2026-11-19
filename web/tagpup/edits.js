@@ -303,7 +303,7 @@ export function photosRenamed(renames) {
 /** After a write: redraw the panel for this photo, but only if it is still the one open; its faces follow the write's `reply`. */
 export function redrawIfShowing(photo, reply) {
     if (!samePath(state.activePhotoPath, photo.path)) return;
-    upper.renderTags(photo.tags);
+    upper.renderTags();
     upper.renderSuggestionsPanel(photo.path);
     upper.updateCarryForwardState();
     upper.facesFollowReply(photo.path, reply);
@@ -468,7 +468,7 @@ export function refreshAfterDetailSave(photo, path, newTitle, added, reply) {
         upper.selectPhoto(photo.path);
     }
     if (samePath(state.activePhotoPath, photo.path)) {
-        upper.renderTags(photo.tags);
+        upper.renderTags();
         upper.facesFollowReply(photo.path, reply);
     }
     if (newTitle !== null) {

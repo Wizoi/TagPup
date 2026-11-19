@@ -10,9 +10,10 @@
 // or Cancel: it never loops by itself. The map is this page's memory only (closing the page loses what is not sent).
 //
 // The open photo's own removals (its pills, a face's person: removePhotoTags) enter the map too, first in line, and are
-// answered at the click: the panel stops drawing them at once (takenOffOf), and a write of them that fails puts them back
-// rather than waiting for Retry. Any other change waiting for a photo makes its panel read-only until it is written
-// (pendingOf; stale.js offerWrites): the panel draws the record, which follows the reply, not the map.
+// answered at the click, and a write of them that fails puts them back rather than waiting for Retry. Any other change
+// waiting for a photo makes its panel read-only until it is written (pendingOf; stale.js offerWrites). The record follows
+// the reply, not the map; what the page shows of a photo's tags, and decides by, is the record with the map's changes for
+// it applied (shownTags), redrawn whenever the map changes for a photo of the page (pageFollows).
 import { api } from './common/api.js';
 import { pathKey, samePath } from './common/paths.js';
 import { leafOf } from './common/vocabulary.js';
@@ -67,7 +68,7 @@ export function pendChanges(list, { people = false, panel = false } = {}) {
     }
     if (!action.left.size) resolve({ written: 0, failed: 0, skipped: 0 });
     if (pending.stopped) setStatus('error', 'Tag changes wait for the failed write: Retry or Cancel it (bottom right).', { transient: false });
-    openPhotoFollows(new Set(list.map(({ path }) => pathKey(path))));
+    pageFollows(new Set(list.map(({ path }) => pathKey(path))));
     drain();
     return settled;
 }
@@ -96,18 +97,37 @@ export function pendingOf(photo) {
     return entriesOf(photo).reduce((n, entry) => n + [...entry.add, ...entry.remove].filter(tag => !entry.panel.has(tag)).length, 0);
 }
 
-/** The tags taken off `photo` by its panel and not written yet, normalized: renderTags does not draw them. */
-export function takenOffOf(photo) {
-    return new Set(entriesOf(photo).flatMap(entry => [...entry.panel].filter(tag => entry.remove.has(tag)).map(normalizeTag)));
+/**
+ * The tags `photo` shows: its record (what its file held at the last reply) with the changes not written yet applied, the
+ * chunk out's then the map's (the later op wins), compared as tags are (normalizeTag). The one answer for whatever draws a
+ * photo's tags or decides by them: its pills, the list's count, the suggestions not yet on it, Ctrl+D's copy. A write
+ * builds on the record, which is what the file holds.
+ */
+export function shownTags(photo) {
+    let tags = ((photo && photo.tags) || []).slice();
+    for (const entry of entriesOf(photo).reverse()) {
+        const off = new Set([...entry.remove].map(normalizeTag));
+        tags = tags.filter(tag => !off.has(normalizeTag(tag)));
+        const have = new Set(tags.map(normalizeTag));
+        entry.add.forEach(tag => { if (!have.has(normalizeTag(tag))) tags.push(tag); });
+    }
+    return tags;
 }
 
-/** The open photo's panel follows a change of the map for any of `keys`: its pills, and whether it is read-only. */
-function openPhotoFollows(keys) {
+/**
+ * The page follows a change of the map for any of `keys`: the list (its counts are of the tags shown), Ctrl+D's offer,
+ * and the open photo's pills, suggestions, and whether it is read-only.
+ */
+function pageFollows(keys) {
+    if (!state.folderPhotos.some(p => keys.has(pathKey(p.path)))) return;
+    upper.renderFileList();
+    upper.updateCarryForwardState();
     const path = state.activePhotoPath;
     if (!path || !keys.has(pathKey(path))) return;
     const photo = state.folderPhotos.find(p => samePath(p.path, path));
     if (!photo) return;
-    upper.renderTags(photo.tags);
+    upper.renderTags();
+    upper.renderSuggestionsPanel(photo.path);
     offerWrites(photo, pendingOf(photo));
 }
 
@@ -153,7 +173,7 @@ function dropPending(only = null) {
     state.writeQueue.entries.forEach(row => { if (row.cancel === cancelPending) { row.retry = null; row.cancel = null; } });
     renderWriteQueue();
     dropped.forEach(([, entry]) => settle(entry, 'failed'));
-    openPhotoFollows(new Set(dropped.map(([key]) => key)));
+    pageFollows(new Set(dropped.map(([key]) => key)));
     return dropped.length;
 }
 
@@ -263,7 +283,7 @@ async function sendChunk(entry) {
         state.pending.out = null;
         state.pending.queued = false;
         drain();
-        openPhotoFollows(new Set(chunk.map(item => pathKey(item.path))));
+        pageFollows(new Set(chunk.map(item => pathKey(item.path))));
     }
 }
 
@@ -324,8 +344,7 @@ function takeReply(chunk, data, entry, dropped) {
         state.pending.stopped = kept.length > 0;
     }
     if (written.length) {
-        upper.updateSelectedThumbnailsCount();
-        upper.renderFileList();
+        upper.updateSelectedThumbnailsCount();   // the list follows in sendChunk's pageFollows
         upper.renderThumbnails();
         updateTagsDatalist();
         if (chunk.some(e => [...e.add, ...e.remove].some(t => state.pending.people.has(t)))) updatePeopleDatalist();

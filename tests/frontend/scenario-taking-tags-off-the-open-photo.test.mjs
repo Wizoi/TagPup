@@ -7,7 +7,9 @@
  * undo the other, nor does a title's save already out draw the removed pill again; a write that fails draws its own tags
  * again, says so, offers no Retry, and the next removal still goes; another photo chosen meanwhile shows only its own tags,
  * and the first photo, opened again, its tags as written; a pill taken off by the keyboard leaves the focus on the next pill,
- * or on the add box when it was the last. The panel's own removals never make it read-only (owner's V20 request).
+ * or on the add box when it was the last. The panel's own removals never make it read-only (owner's V20 request). A tag
+ * taken off and not written yet is gone wherever the page shows the photo's tags or decides by them (pending.js shownTags):
+ * the list's count, and Ctrl+D on the next photo, which copies what the photo before shows when its turn comes.
  *
  * Every write is held until the test answers it, oldest first, as the routes answer it: the server keeps a model of each
  * file's tags, and a bulk-tags reply's `written` (a save-metadata reply's `base`) is what the file holds after it.
@@ -105,6 +107,14 @@ async function open(t) {
     return row && row.getAttribute("data-path");
   };
   ctx.editable = () => !$("btn-edit-tags").hasAttribute("inert");
+  ctx.tagCount = (photo) => {
+    const count = ctx.document.querySelector(`li[data-path="${photo.path.replace(/\\/g, "\\\\")}"] .photo-item-tagcount`);
+    return count ? count.textContent : "";
+  };
+  ctx.carry = async () => {
+    ctx.document.dispatchEvent(new ctx.window.KeyboardEvent("keydown", { key: "d", ctrlKey: true, bubbles: true, cancelable: true }));
+    await flush(ctx.window, 8);
+  };
   await ctx.select(A);
   return ctx;
 }
@@ -211,5 +221,24 @@ describe("V20: taking tags off the open photo is answered at the click, the writ
     assert.equal(ctx.document.activeElement.id, "input-add-tag");
     while (ctx.unanswered()) await ctx.answer();
     assert.deepEqual(ctx.file(A), []);
+  });
+});
+
+describe("V20: a tag taken off is gone wherever the page shows or copies the photo's tags", () => {
+  test("Ctrl+D on the next photo while the removal is out copies the tags shown, not the one taken off", async (t) => {
+    const ctx = await open(t);
+    assert.equal(ctx.tagCount(A), "3");
+    await ctx.takeOff("Cross Country");
+    assert.equal(ctx.tagCount(A), "2", "the list counted the tag taken off");
+    await ctx.select(B);
+    assert.equal(ctx.$("btn-carry-forward").title, "Copy 2 tag(s) from a.jpg  (Ctrl+D)", "the button offered the tag taken off");
+    await ctx.carry();
+    assert.equal(ctx.unanswered(), 1, "the copy did not wait behind the removal");
+    while (ctx.unanswered()) await ctx.answer();
+    assert.deepEqual(ctx.order(), ["bulk", "save"]);
+    assert.deepEqual(sorted(ctx.saves()[0].tags), ["Harbourside", "Kentridge"], "the copy carried the tag the pill took off");
+    assert.equal(ctx.status(), "Copied 2 tag(s) from a.jpg");
+    assert.deepEqual(ctx.file(B), ["Harbourside", "Kentridge"]);
+    assert.deepEqual(ctx.file(A), ["Harbourside", "Kentridge"]);
   });
 });

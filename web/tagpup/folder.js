@@ -17,7 +17,7 @@ import { forgetSelectionFaces } from './selection-faces.js';
 import { CACHE_TTL_MS, CACHE_VERSION, folderCacheKey, saveToLocalStorageCache } from './cache.js';
 import { updatePeopleDatalist, updateTagsDatalist } from './tags.js';
 import { discardDetailEdits, hasUnsavedEdits, leavePhotoThen } from './edits.js';
-import { leaveThen } from './pending.js';
+import { leaveThen, shownTags } from './pending.js';
 import { clearPhotoFaces } from './face-boxes.js';
 import { kindsSaid, libraryPosition, viewCountSaid } from './library-source.js';
 import { replaceAddress } from './history-entries.js';
@@ -460,7 +460,7 @@ export function showScannedFolder(path, data) {
  */
 export function isPhotoTagged(photo) {
     if (!photo) return false;
-    return (photo.tags || []).length > 0
+    return shownTags(photo).length > 0
         || (photo.people || []).length > 0
         || (photo.title || '').trim().length > 0;
 }
@@ -497,7 +497,7 @@ export function visiblePhotos() {
         const fname = photo.filename || baseName(photo.path) || '';
         return fname.toLowerCase().includes(query)
             || (photo.title && photo.title.toLowerCase().includes(query))
-            || (photo.tags || []).some(t => t.toLowerCase().includes(query));
+            || shownTags(photo).some(t => t.toLowerCase().includes(query));
     });
 }
 
@@ -576,7 +576,7 @@ export function renderFileList() {
         }
         li.appendChild(nameSpan);
 
-        const tagCount = (photo.tags || []).length;
+        const tagCount = shownTags(photo).length;   // as the photo shows them (pending.js)
         if (tagCount) {
             const count = document.createElement('span');
             count.className = 'photo-item-tagcount';
