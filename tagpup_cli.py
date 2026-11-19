@@ -120,6 +120,10 @@ READ_THREADS = 2
 READ_AHEAD = 3
 READ_AHEAD_BYTES = 1 << 30
 
+#: How many photos the index records in one transaction (PhotoIndex.build_or_update), their faces in the next:
+#: what a stop loses at most.
+PHOTO_CHUNK = 100
+
 
 def read_ahead_bytes(width, height, clip=None, faces=None):
     """What a photo of `width` x `height` is reserved while it is read ahead: the larger of what each half it goes
@@ -811,8 +815,8 @@ def index(ctx, directories, force_reembed: bool, reset: bool, skip_faces: bool, 
                 # The nodes of the tags and people a photo names are made where the batch is recorded
                 # (derived.make_nodes, taxonomy.ensure_node): the one writer of them.
 
-                # Save progress incrementally in batches of 100
-                if len(batch_embeddings) >= 100:
+                # Save progress incrementally in batches of PHOTO_CHUNK
+                if len(batch_embeddings) >= PHOTO_CHUNK:
                     _read_again(photo_index.conn, batch_metas, given, exiftool_path)
                     photo_index.build_or_update(batch_embeddings, batch_metas, dim=len(batch_embeddings[0]))
                     _recorded(batch_metas, touched, handed)
