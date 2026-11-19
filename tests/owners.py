@@ -321,7 +321,7 @@ _FILES = {
             "test_settling_carries_vectors "
             "test_thumbnails "
             "test_what_counts_as_a_photo "
-            "unsaved-edits write-queue-status"
+            "tuner-index-progress unsaved-edits write-queue-status"
         ),
         "guard": "test_photo_looks_have_one_owner test_the_block_editors_have_one_caller",
     },
@@ -357,7 +357,7 @@ _FILES = {
         "unit": (
             "activity-page add-folder-dialog apply-all-failure-undo banner-cost batch-strip cache-version database-routing "
             "delete-key delete-while-folder-changes dialog-frames dialogs-keep-the-keys dom-output video-keys folder-keeps-history-position "
-            "folder-opening folder-picker gear history-dialog image-zoom images-after-an-update library-memory "
+            "folder-manager folder-opening gear history-dialog image-zoom images-after-an-update library-memory "
             "library-picker open-photo page-state progress-polling roots-dialog server-replaced server-update "
             "settings-dialog stale-record test_a_request_is_decoded_once "
             "test_activity_page_replies test_activity_routes test_add_findings test_retro_metrics test_stale_findings test_an_empty_folder_is_scanned_again test_background_tasks "
