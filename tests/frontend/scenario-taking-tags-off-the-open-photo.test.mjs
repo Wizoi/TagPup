@@ -242,6 +242,19 @@ describe("V20: a tag taken off is gone wherever the page shows or copies the pho
     assert.deepEqual(ctx.file(A), ["Harbourside", "Kentridge"]);
   });
 
+  test("Delete while the photo's own removal is out is refused, as the selection's is (#3203)", async (t) => {
+    const ctx = await open(t);
+    ctx.confirms = [];
+    ctx.window.confirm = (text) => { ctx.confirms.push(text); return true; };
+    await ctx.takeOff("Cross Country");
+    ctx.$("btn-delete-photo").click();
+    await flush(ctx.window, 4);
+    assert.deepEqual(ctx.alerts, ["Tag changes for this photo are not written yet: wait for them, or cancel them in the list of writes, then delete."]);
+    assert.deepEqual(ctx.confirms, []);
+    while (ctx.unanswered()) await ctx.answer();
+    assert.deepEqual(ctx.file(A), ["Harbourside", "Kentridge"]);
+  });
+
   test("Ctrl+D on a photo read-only under another change waiting for it does nothing (#3204)", async (t) => {
     const ctx = await open(t);
     await ctx.takeOff("Cross Country");

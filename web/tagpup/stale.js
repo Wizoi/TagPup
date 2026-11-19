@@ -18,7 +18,8 @@
 // button is inert only while the file is missing.
 //
 // A photo with tag changes waiting for it (pending.js pendingOf) is read-only until they are written: every `data-writes`
-// control is inert, with a sentence saying how many wait. Viewing it, the arrows and moving on stay free.
+// control is inert, with a sentence saying how many wait. Viewing it, the arrows and moving on stay free; its Delete
+// is offered, and refused with a sentence while any tag change for it is not written (pending.js deleteWaits).
 import { buildElement } from './common/dom.js';
 import { state } from './state.js';
 import { mainImage, photoMissingNote } from './elements.js';

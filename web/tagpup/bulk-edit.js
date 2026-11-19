@@ -18,7 +18,7 @@ import { bulkBusy, busySentence, justLookingDeleteSaid, runBulk } from './bulk-r
 import { confirmSentence, deleteQuestion, describeDelete, describeTags, forGoodQuestion, itemsOf } from './bulk-words.js';
 import { isVideo, showMedia, stopVideo } from './media.js';
 import { leavePhotoThen } from './edits.js';
-import { pendingAmong } from './pending.js';
+import { deleteWaits } from './pending.js';
 import { isJustLooking } from './looking.js';
 
 const NOTHING_SELECTED = 'Select some photos first — nothing is selected';
@@ -162,12 +162,7 @@ function playAgainIfKept(clip) {
  * Cancel stops the delete). Resolves whether the delete goes on.
  */
 function folderMayDelete(picked) {
-    const waiting = pendingAmong(picked.selection.paths);
-    if (waiting) {
-        alert(`Tag changes for ${waiting.toLocaleString()} of these photos are not written yet: wait for them, or cancel them in the `
-            + 'list of writes, then delete.');
-        return Promise.resolve(false);
-    }
+    if (deleteWaits(picked.selection.paths)) return Promise.resolve(false);
     const open = openRecord();
     if (!open || !isPhotoSelected(open)) return Promise.resolve(true);
     return new Promise(resolve => leavePhotoThen(() => resolve(true), { onStay: () => resolve(false) }));

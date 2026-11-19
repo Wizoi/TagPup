@@ -281,7 +281,7 @@ describe("the open photo while its tag changes wait", () => {
     await flush(ctx.window, 8);
   };
 
-  test("a bulk click that includes it makes it read-only, saying so; viewing and the arrows go on; written, it is editable", async (t) => {
+  test("a bulk click that includes it makes it read-only, saying so; viewing and the arrows go on; written, it is editable; its Delete waits", async (t) => {
     const ctx = await folderOf(t, 50);
     await arrow(ctx);
     assert.equal(active(ctx), pathOf(0));
@@ -291,6 +291,12 @@ describe("the open photo while its tag changes wait", () => {
     await arrow(ctx);
     assert.equal(active(ctx), pathOf(1), "the arrows stopped while changes wait");
     assert.deepEqual(panel(ctx), { editable: false, deletes: true, said: WAITING_ONE });
+    // Its Delete is offered, and refused with the selection's rule while the change waits (pending.js deleteWaits).
+    ctx.document.getElementById("btn-delete-photo").click();
+    await flush(ctx.window, 4);
+    assert.deepEqual(ctx.alerts, ["Tag changes for this photo are not written yet: wait for them, or cancel them in the list of writes, then delete."]);
+    assert.deepEqual(ctx.confirms, [], "the delete was asked about while its tag change waits");
+    assert.equal(ctx.server.calls.filter((c) => c.url.includes("/api/photo/delete")).length, 0);
     await answer(ctx);
     assert.deepEqual(panel(ctx), { editable: true, deletes: true, said: "" }, "the photo stayed read-only once its file was written");
     assert.ok(ctx.document.querySelector("#detail-tags .tag-pill"), "the written tag is not drawn");

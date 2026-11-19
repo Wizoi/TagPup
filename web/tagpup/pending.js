@@ -136,14 +136,24 @@ function unsentCount() {
     return state.pending.files.size;
 }
 
-/**
- * How many of `paths` have tag changes not written yet: waiting here, or in the chunk out (a Delete of them waits for them:
- * bulk-edit.js deleteSelection, else a chunk would write, or give back the ops of, a file that is gone).
- */
-export function pendingAmong(paths) {
+/** How many of `paths` have tag changes not written yet: waiting here, or in the chunk out. */
+function pendingAmong(paths) {
     const pending = state.pending;
     const out = new Set((pending.out || []).map(entry => pathKey(entry.path)));
     return paths.filter(path => pending.files.has(pathKey(path)) || out.has(pathKey(path))).length;
+}
+
+/**
+ * A Delete of `paths` waits for their tag changes (the selection's, bulk-edit.js, and the open photo's, photo.js
+ * deleteActivePhoto): else a chunk would write, or give back the ops of, a file that is gone, and the page would call a
+ * photo deleted on purpose missing. Says so and answers true while any is not written; false when the delete may go on.
+ */
+export function deleteWaits(paths) {
+    const waiting = pendingAmong(paths);
+    if (!waiting) return false;
+    const which = paths.length === 1 ? 'this photo' : `${waiting.toLocaleString()} of these photos`;
+    alert(`Tag changes for ${which} are not written yet: wait for them, or cancel them in the list of writes, then delete.`);
+    return true;
 }
 
 /** Queue the next chunk, unless one is queued, the drain is stopped by a failure, or nothing waits. */

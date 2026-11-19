@@ -26,7 +26,7 @@ import { pictureCheckSaid, whereWritten } from './write-queue.js';
 import { forgetCachedPhoto, saveToLocalStorageCache } from './cache.js';
 import { fileSizeSaid, takenOf, takenSaid } from './format.js';
 import { namesAPerson, normalizeTag } from './tags.js';
-import { pendingOf, removePhotoTags, shownTags } from './pending.js';
+import { deleteWaits, pendingOf, removePhotoTags, shownTags } from './pending.js';
 import {
     leavePhotoThen, photoChangedOnDisk, queueWriteOf, redrawIfShowing, saveDetailEdits,
     updateSaveButton
@@ -835,6 +835,8 @@ export function deleteActivePhoto() {
 
     const index = state.folderPhotos.findIndex(p => p.path === path);
     if (index === -1) return;
+    // Not while a tag change for it waits or is out, the selection's Delete's rule (pending.js).
+    if (deleteWaits([path])) return;
 
     // The record asked about, in hand: by the time the reply comes the folder may be another (findings #532).
     const asked = state.folderPhotos[index];
