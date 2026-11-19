@@ -355,7 +355,7 @@ _FILES = {
     "apps": {
         "unit": (
             "activity-page add-folder-dialog apply-all-failure-undo banner-cost batch-strip cache-version database-routing "
-            "delete-while-folder-changes dialog-frames dialogs-keep-the-keys dom-output video-keys folder-keeps-history-position "
+            "delete-key delete-while-folder-changes dialog-frames dialogs-keep-the-keys dom-output video-keys folder-keeps-history-position "
             "folder-opening folder-picker gear history-dialog image-zoom images-after-an-update library-memory "
             "library-picker open-photo page-state progress-polling roots-dialog server-replaced server-update "
             "settings-dialog stale-record test_a_request_is_decoded_once "
