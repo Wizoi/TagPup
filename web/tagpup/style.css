@@ -814,11 +814,23 @@ button.detail-value.clickable {
    view and Sort by, and beside it the header card's actions, the card's own title and count hidden (they said the same).
    It sticks at the very top of the scroller (top: minus the scroller's 20 px padding), so no card shows above it; a card
    scrolled to by the keys is put below it (grid.js topInset). Everything in it wraps: never a page that scrolls sideways.
-   In Organize the wrapper is a plain block and the card is as it always was. */
+   In Organize the wrapper holds the one rounded card and is transparent; the card paints its own opaque
+   background (the page colour under its tint), so nothing shows through when it sticks and no square corner shows (#3186). */
 .folder-view-top {
     position: sticky;
     top: -20px;
     z-index: 5;
+}
+
+.folder-view-top:not(.in-library-view) {
+    border-radius: 12px;
+}
+
+.folder-view-top:not(.in-library-view) .folder-view-header-card {
+    background: linear-gradient(rgba(15, 23, 42, 0.4), rgba(15, 23, 42, 0.4)), var(--bg-secondary);
+}
+
+.folder-view-top.in-library-view {
     background: var(--bg-secondary);
 }
 

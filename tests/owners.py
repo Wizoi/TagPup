@@ -327,7 +327,7 @@ _FILES = {
     },
     "views": {
         "unit": (
-            "details-panel folder-view-clips grid-keys grid-window library-header-strip-toolbar library-moves library-photo-back "
+            "details-panel folder-view-clips grid-keys grid-window library-header-strip-toolbar library-moves library-photo-back organize-step-keeps-clear-of-header "
             "library-selection library-selection-jumps library-tally library-view looking-suggestions navigator "
             "navigator-multi photo-camera photo-details-layout photo-position photo-suggestions-panel search-page selection "
             "selection-follows-the-photo selection-panel selection-suggestions stale-cards suggest-cancel suggestions-follow-a-saved-photo "

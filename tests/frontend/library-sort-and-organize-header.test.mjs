@@ -101,7 +101,11 @@ describe("#713: one floating header for a library view", () => {
     const base = rule(".folder-view-top");
     assert.match(base, /position: sticky;/);
     assert.match(base, /top: -20px;/);
-    assert.match(base, /background: var\(--bg-secondary\)/, "the grid does not show through it");
+    // The grid does not show through it: the library view's strip is opaque, Organize's card paints its own opaque
+    // background and the wrapper behind its rounded corners stays transparent (#3186).
+    assert.doesNotMatch(base, /background/, "no square plate behind the rounded card");
+    assert.match(rule(".folder-view-top.in-library-view"), /background: var\(--bg-secondary\)/);
+    assert.match(rule(".folder-view-top:not(.in-library-view) .folder-view-header-card"), /var\(--bg-secondary\)/);
     assert.doesNotMatch(rule(".folder-view-top.in-library-view"), /position: sticky;/, "no second mechanism");
     assert.ok(el(ctx, "rename-panel").closest("#folder-view-main") === el(ctx, "folder-view-main"), "the panels scroll below it, in the same scroller");
     assert.ok(!top(ctx).contains(el(ctx, "rename-panel")), "an opened Organize panel is not inside the header");

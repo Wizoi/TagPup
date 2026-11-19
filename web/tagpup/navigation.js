@@ -1,5 +1,6 @@
 // TagPup's page: moving between photos, by key, swipe or drag.
 import { state } from './state.js';
+import { pathKey } from './common/paths.js';
 import { dialogOpen } from './common/dialog.js';
 import { imageZoomOpen } from './common/image-zoom.js';
 import { inputAddPerson, inputAddTag, mainVideo, photoList, photoSearch } from './elements.js';
@@ -46,7 +47,10 @@ export function stepPhoto(delta) {
     if (nextIndex === currentIndex) return false;
 
     selectPhoto(items[nextIndex].getAttribute('data-path'));
-    items[nextIndex].scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+    // Through the grid, which keeps the card below the header floating over it (#3185); the card's place in the grid is
+    // its place among the shown photos, which the filter shares with the list.
+    const at = state.shownIndex.get(pathKey(items[nextIndex].getAttribute('data-path')));
+    if (at !== undefined) state.grid.scrollToIndex(at, 'nearest');
     return true;
 }
 
