@@ -56,7 +56,6 @@ function stopClip() {
     if (!clip.getAttribute('src')) return;
     clip.pause();
     clip.removeAttribute('src');
-    delete clip.dataset.route;
     clip.load();
 }
 
@@ -92,11 +91,8 @@ function draw(card) {
     delete picture.dataset.photo;
     const clip = byId('photo-clip');
     clip.classList.remove('hidden');
-    const route = videoRoute(card);
-    if (clip.dataset.route === route && !clip.error) return;    // the same clip again: it plays on
-    clip.dataset.route = route;
     clip.poster = card.thumb ? api.image(card.thumb) : '';
-    clip.src = api.url(route);
+    clip.src = api.url(videoRoute(card));
 }
 
 /** Show the photo of the Photo screen's place, and where it is in the view. */
