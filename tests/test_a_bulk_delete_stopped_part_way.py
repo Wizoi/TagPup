@@ -165,6 +165,16 @@ class ABulkDeleteStoppedPartWay(Delete):
         self.assertEqual(0, self.settle())
         self.assertEqual(self.coast[batches.CHUNK:], self.held(self.coast), "nothing more deleted at the next start")
 
+    def test_an_update_and_then_the_cancel_in_one_chunk_is_the_owners_cancel(self):
+        self.stop_at(10, lambda: (batches.stop_all(), self.cancel()))
+        done = self.start({"ids": self.coast})
+        self.assertEqual((batches.CHUNK, 30 - batches.CHUNK), (done["changed"], done["error_count"]))
+        self.assertEqual({photo_actions.STOPPED_NOT_DELETED}, {error["why"] for error in done["errors"]})
+        self.assertEqual(([], []), (self.changes(), self.planned()), "the cancelled photos are withdrawn, not left planned")
+        batches.reopen()
+        self.assertEqual(0, self.settle())
+        self.assertEqual(self.coast[batches.CHUNK:], self.held(self.coast), "nothing more deleted at the next start")
+
     def test_killed_during_the_resume_the_next_start_deletes_nothing_more(self):
         self.stop_at(10, batches.stop_all)
         self.start({"ids": self.coast})
