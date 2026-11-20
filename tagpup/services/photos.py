@@ -772,7 +772,7 @@ def shift_date_taken(library, photo_paths, minutes, exiftool_path):
 
 
 @roots_service.canonical_args("photo_path")
-def delete(library, photo_path, for_good=False, fresh=True):
+def delete(library, photo_path, exiftool_path, for_good=False, fresh=True):
     """Send a photo or a clip to the Recycle Bin, and forget it: its row, faces, cached
     embedding (a clip's frames with it) and thumbnail or poster. Clicking Delete in Organize's
     panel (a library view's bulk Delete is delete_in_chunks).
@@ -797,7 +797,9 @@ def delete(library, photo_path, for_good=False, fresh=True):
     it, and of two Deletes of one photo the second finds it gone and is refused. A held photo's Delete is one change of
     the journal (plan_deletes, file_journal.DELETE: internal, never listed nor undone; delete_planned): a stop between
     its file and its rows is finished by the next settle (settle_delete). A photo of a folder the library does not hold
-    has no record: it has no row to forget.
+    has no record: it has no row to forget. A held photo's Delete first settles what a process no longer running left half done
+    (file_changes.settle, as a write and a rename do), so it never plans over a change left on that photo (#3263); a share that
+    does not answer leaves that change for the next settle, and the Delete goes on as it would.
 
     details: `removed`, the rows removed from each table (None for such a photo);
     `file_only` and `with_rows`, 1 for the way it was done; `through_this_pc`, `no_bin_reason`
@@ -806,11 +808,13 @@ def delete(library, photo_path, for_good=False, fresh=True):
     """
     result = Result(attempted=1)
     with file_changes.exclusively():
+        held, loose = libraries.split(library, [photo_path])
+        if held:
+            file_changes.settle(library, exiftool_path)
         why = recycle_bin.problem(photo_path)
         if why:
             result.refuse(why)
             return result
-        _held, loose = libraries.split(library, [photo_path])
         if loose:
             result = file_only.delete(photo_path, for_good, fresh)
             result.details.update({file_only.FILE_ONLY: result.changed, file_only.WITH_ROWS: 0})

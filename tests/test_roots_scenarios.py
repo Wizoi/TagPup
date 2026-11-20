@@ -193,7 +193,7 @@ class TheOwnersFlows(Twins):
                 os.remove(path)
                 return True
             with mock.patch("tagpup.files.recycle_bin.send_to_recycle_bin", side_effect=recycle):
-                result = photo_actions.delete(side.library, side.real[0])
+                result = photo_actions.delete(side.library, side.real[0], None)
             return [result.attempted, result.changed, result.errors, result.details.get("removed"), self.seen(side)]
         found = self.both(flow)
         self.assertEqual({"faces": 1, "photos": 1}, found[3])
