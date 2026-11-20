@@ -989,7 +989,7 @@ def photo_delete():
     if refused:
         return refused
     try:
-        result = photo_actions.delete(library, photo_path, body.get("for_good") is True)
+        result = photo_actions.delete(library, photo_path, state.exiftool(library), body.get("for_good") is True)
         if result.refused:
             # A file its drive's Recycle Bin would not keep: named (`not_kept`), for the page to ask, then send `for_good`.
             not_kept = result.details.get("not_kept")

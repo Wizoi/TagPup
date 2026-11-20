@@ -113,7 +113,7 @@ class ADeleteCutShort(unittest.TestCase):
         return file_changes.settle(self.library, None)
 
     def delete(self, path):
-        return photo_actions.delete(self.library, path)
+        return photo_actions.delete(self.library, path, None)
 
     # ---- the scenarios ----------------------------------------------------------------------
 
@@ -137,6 +137,20 @@ class ADeleteCutShort(unittest.TestCase):
         self.assertFalse(self.held(self.local_id))
         self.assertEqual(([], []), (self.changes(), self.files()))
         self.assertEqual([self.local], self.binned, "sent once")
+
+    def test_a_delete_of_a_photo_a_dead_process_left_writing_finishes_that_change_first_and_leaves_nothing_behind(self):
+        # #3263: the Delete settles before it plans, so a change a dead process left on the photo is not planned over.
+        with mock.patch.object(photo_actions, "_reached", side_effect=crash_at("delete writing")):
+            with self.assertRaises(Crash):
+                self.delete(self.local)
+        self.assertEqual(["writing"], [state for (state,) in self.files()])
+        self.died()
+        result = self.delete(self.local)
+        self.assertFalse(result.ok, "the first Delete's settle sent it: the second finds it gone")
+        self.assertEqual(0, result.changed)
+        self.assertEqual([self.local], self.binned, "sent once")
+        self.assertFalse(self.held(self.local_id))
+        self.assertEqual(([], []), (self.changes(), self.files()), "the dead change is finished, not left beside a new one")
 
     def test_killed_after_the_copy_is_in_the_bin_and_before_the_original_goes_it_is_sent_again(self):
         self.crash_in_bin = True
