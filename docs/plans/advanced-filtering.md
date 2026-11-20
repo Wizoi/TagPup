@@ -123,7 +123,7 @@ history and leaving the filter. 1b starts after 1a merges.
 - **What turns Filter mode on from an address:** DECIDED (a): remember the toggle in this browser (localStorage, as
   `details-panel.js` does), nothing in the address. No `filter=1` parameter (it would touch `VIEW_PARAMS` and every spec rebuild).
 
-## Typed grammar (owner's addition, 2026-11-19): DESIGN, not yet decided
+## Typed grammar (owner's addition, 2026-11-19): TABLED by the owner the same day; not part of cuts 1-2, no cut 3 until raised again
 
 One text box that takes a query, with a `?` icon that opens the grammar with examples. It is the same filter as the chips (the
 chips show what the text means; editing either updates the other) and it is the phone page's way in, since the phone needs no
