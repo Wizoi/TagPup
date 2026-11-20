@@ -18,6 +18,7 @@ import { BULK_LIMIT, clearSelection, selectedRecords } from './selected.js';
 import { whereWritten } from './write-queue.js';
 import { photosRenamed } from './edits.js';
 import { isVideo } from './media.js';
+import { isJustLooking } from './looking.js';
 
 /**
  * Why a Smart Rename grouping cannot be used, or null if it can: the server's rule
@@ -211,7 +212,9 @@ export function applyTimeShift() {
         `Camera: ${cameraModel}`,
         `Photos affected: ${affected}`,
         '',
-        'This rewrites the timestamp inside each photo file and CANNOT be undone from here.',
+        isJustLooking()
+            ? 'This rewrites the timestamp inside each photo file and CANNOT be undone from here.'
+            : 'This rewrites the timestamp inside each photo file; it can be undone from History.',
     ].join('\n');
     if (!confirm(promptMsg)) return;
 
