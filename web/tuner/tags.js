@@ -1,5 +1,6 @@
 // Review Tags.
 import { api } from './common/api.js';
+import { photoFileUrl } from './common/file-addresses.js';
 import { buildElement, replaceContent } from './common/dom.js';
 import { sortedTags, tagProblem } from './common/vocabulary.js';
 import { state } from './state.js';
@@ -196,7 +197,7 @@ function tagPhotoCard(photo) {
     card.title = photo.path;
 
     const img = document.createElement('img');
-    img.src = api.image(`/api/photo-file?path=${encodeURIComponent(photo.path)}&size=300&upright=1`);   // TagPup's grid size; no face boxes, so upright
+    img.src = photoFileUrl(photo, 300, { upright: true });   // TagPup's grid size; no face boxes, so upright
     img.alt = photo.filename;
     img.loading = 'lazy';
     card.appendChild(img);
