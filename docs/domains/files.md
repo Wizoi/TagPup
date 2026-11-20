@@ -99,6 +99,14 @@ exceptions, each unjournaled by decision:
   fingerprint the mint changed. Forward only (#1959); a renamed file minted before 2026-10-29 stays refused.
 - **Just look**: `services/file_only.py`, the files of a folder the library does not hold (#527).
 
+A photo's Delete (`services/photos.delete`) is not a write and is journaled too, as an INTERNAL change
+(`file_journal.DELETE`: never listed by History nor undone; UNDO_CHECKS says the Recycle Bin is the way back): planned,
+its file marked `writing` with the stamp of the file there, sent to the Bin, and done in the transaction that removes the
+photo's rows (`store.photos.forget_photo`'s `also`), all under the lock of changes of photo files. A stop between them is
+settled by `photos.settle_delete` (`file_changes._finish`): a file still `planned` is withdrawn, nothing deleted; one left
+`writing` is forgotten if gone, sent again if it is still the file stamped, withdrawn if another file is at its path, and
+waited for on a share that does not answer. A Just-look photo's Delete has no record.
+
 Every photo's file is baked with no command (owner, 2026-10-28): a current vector with no fingerprint row
 (`photo_fingerprints.NO_FINGERPRINT`: Suggest's or a re-embedding pass's) is work sync owes the index, whose bake after
 the index writes the file with no model (the row follows the write) or, for a file holding its bake or one marked
