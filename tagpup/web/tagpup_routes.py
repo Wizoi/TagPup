@@ -31,6 +31,7 @@ from tagpup.services import file_changes, file_only
 from tagpup.services import libraries as library_actions
 from tagpup.services import library_view
 from tagpup.services import people as people_service
+from tagpup.services import photo_writes
 from tagpup.services import photos as photo_actions
 from tagpup.services import selection as selection_service
 from tagpup.services import tagging as tagging_actions
@@ -1123,49 +1124,47 @@ def photo_smart_rename():
                     "updated_paths": result.details["updated_paths"], **_where(result), **_stamp_reply(left)})
 
 
+def _set_fields(sent):
+    """({"title", "tags", "date_taken", "stamp", "base"} of one photo's save, as tagging.save_photo takes them, None), or
+    (None, why it cannot be read): of `save-metadata`'s body, and of a `set`'s entry. A page names what it read (`base`,
+    null for a photo it could not read); a call with neither `base` nor `stamp` is no check."""
+    stamp, why = _stamp_of(sent.get("stamp"))
+    if why:
+        return None, why
+    base = tagging_actions.NO_BASE
+    if "base" in sent or stamp is not None:
+        base, why = _base_of(sent.get("base"))
+        if why:
+            return None, why
+    return {"title": sent.get("title"), "tags": sent.get("tags", []), "date_taken": sent.get("date_taken"),
+            "stamp": stamp, "base": base}, None
+
+
 @routes.post("/api/photo/save-metadata")
 def photo_save_metadata():
+    """One photo's title, tags and Date Taken as a panel saves it: a caller of the one entry point (_write, op `set`) that
+    answers as it always did, until the pages send to /api/photos/write (plan one-write-path, cut 2c deletes it)."""
     library = state.require()
     body = request.get_json(silent=True) or {}
     photo_path = body.get("path")
-    title = body.get("title")
-    tags = body.get("tags", [])
-    date_taken = body.get("date_taken")
     refused = responses.file_refused(photo_path)
     if refused:
         return refused
     photo_path = paths.stored(photo_path)
-    stamp, why = _stamp_of(body.get("stamp"))
+    own, why = _set_fields(body)
     if why:
         return responses.error(400, why)
-    # A page names what it read (`base`, null for a photo it could not read); a call with neither is no check.
-    base = tagging_actions.NO_BASE
-    if "base" in body or stamp is not None:
-        base, why = _base_of(body.get("base"))
-        if why:
-            return responses.error(400, why)
     try:
-        result = tagging_actions.save_photo(library, photo_path, title, tags, date_taken,
-                                            state.exiftool(library), state.rename_format(library), stamp, base)
+        result, stamps = _write(library, photo_writes.SET, {photo_path: (None, own)})
         if result.refused:
             return responses.refused(result)
         if not result.ok:
             logger.error("Error saving metadata for %s: %s", photo_path, result.message())
             return responses.error(500, result.message())
-        new_path, renamed, tags = result.details["new_path"], result.details["renamed"], result.details["tags"]
-        # The stamp the write recorded, taken after it; a rename, or a file not written, is looked at once.
-        left = result.details.get("stamp") or photo_actions.file_stamp(new_path)
-        for record in _followed_rename(library, [(photo_path, new_path, renamed)], stamps={paths.key(new_path): left}):
-            raw_meta = photo_actions.record_written(
-                library, record, new_path, tags, result.details["flat"], result.details["hierarchical"],
-                result.details["dates"])
-            record["tags"] = vocabulary.extract_tags(raw_meta)
-            record["captions"] = [title] if title else []
-            record["title"] = title
     except Exception as e:
         logger.error("Error saving metadata for %s: %s", photo_path, e)
         return responses.error(500, str(e))
-    reply = {"success": True, "new_path": new_path, **_where(result), **_stamp_reply(left),
+    reply = {"success": True, "new_path": result.details["new_path"], **_where(result), **_stamp_reply(stamps[photo_path]),
              "base": result.details.get("base"), **_faces_unnamed(result), **_pictures_refused(result)}
     if result.details["taken"]:
         reply["taken"] = result.details["taken"]   # the date as the library spells it: the page shows this, spells nothing
@@ -1178,21 +1177,21 @@ def photo_save_metadata():
 
 @routes.post("/api/photos/bulk-tags")
 def photos_bulk_tags():
+    """Each photo's own tags added and taken off, as the page's queue sends a chunk (web/tagpup/pending.js): a caller of
+    the one entry point (_write, op `tags`) that answers as it always did, stopping at the first photo it cannot write,
+    until the page sends to /api/photos/write (plan one-write-path, cut 2c deletes it)."""
     library = state.require()
     body = request.get_json(silent=True) or {}
-    # Each photo's own tags to add and take off (web/tagpup/pending.js); a body without them is refused by the shape.
+    # A body without them is refused by the shape.
     changes, why = _tag_changes(body.get("changes"))
     if why:
         return responses.error(400, why)
     try:
-        # What is added is checked, not what is removed (tagpup.services.tagging). The
-        # page's records are told in the order the files were written.
-        with file_changes.batch_exclusively(library, "bulk tags", len(changes)):
-            # `group`: the token of the one action of the page's this request is a chunk of (History's one line).
-            result = tagging_actions.change_tags_of(library, changes, state.exiftool(library), group=body.get("group"))
-            if result.refused:
-                return _refused_after_writing(library, result)
-            stamps = records_written(library, result)
+        # What is added is checked, not what is removed (tagpup.services.tagging).
+        # `group`: the token of the one action of the page's this request is a chunk of (History's one line).
+        result, stamps = _write(library, photo_writes.TAGS, changes, group=body.get("group"), stop_at_first_error=True)
+        if result.refused:
+            return _refused_reply(result)
     except responses.ANSWERED as why:
         # Conflict: too many batches wait ahead (tagpup.services.batches); Refused: more photos than a write may name
         # (file_changes.too_many), or cancelled before its turn. Nothing was written.
@@ -1211,23 +1210,130 @@ def photos_bulk_tags():
                     **_faces_unnamed(result)})
 
 
+@routes.post("/api/photos/write")
+def photos_write():
+    """The one entry point of a page's write of photo files (plan one-write-path; tagpup.services.photo_writes): `op`
+    (`tags` or `set`), `group`, `changes` {path: {"id": photo id or null, the op's fields}}. Answered in one envelope
+    whatever the op (_envelope): 200 when the write ran, a photo that failed among its `errors` and the others written;
+    a refusal as its kind is answered (responses.refused: 409 `changed_on_disk` for a stale record or an id no longer at
+    its path), the envelope beside the error."""
+    library = state.require()
+    body = request.get_json(silent=True) or {}
+    op = body.get("op")
+    if op not in photo_writes.OPERATIONS:
+        return responses.error(400, "op must be one of: %s." % ", ".join(photo_writes.OPERATIONS))
+    changes, why = _tag_changes(body.get("changes"), with_id=True) if op == photo_writes.TAGS \
+        else _set_change(body.get("changes"))
+    if why:
+        return responses.error(400, why)
+    if op == photo_writes.SET:
+        refused = responses.file_refused(next(iter(changes)))
+        if refused:
+            return refused
+    try:
+        result, stamps = _write(library, op, changes, group=body.get("group"))
+    except responses.ANSWERED as why:
+        return responses.of(why)
+    except Exception as e:
+        logger.error("Error in a write of photo files: %s", e, exc_info=True)
+        return responses.error(500, str(e))
+    reply = _envelope(op, changes, result, stamps)
+    if result.refused:
+        return responses.refused(result, **reply)
+    return jsonify(reply)
+
+
+def _write(library, op, changes, group=None, stop_at_first_error=False):
+    """The one write of photo files a page asks (POST /api/photos/write, and the routes that call it until the page sends
+    there): the service's write (tagpup.services.photo_writes) and, once, here, what the server keeps of the photos told
+    what it wrote (_told). A batch (over batches.CHUNK photos) takes its turn before the lock, and more than a write may
+    name is refused before it (file_changes.batch_exclusively); the records are told under the lock, in the order the
+    files were written. (the Result, {path: (mtime, size) or None} of each photo written). Raises responses.ANSWERED."""
+    with file_changes.batch_exclusively(library, photo_writes.OPERATIONS[op], len(changes)):
+        result = photo_writes.write(library, op, changes, state.exiftool(library),
+                                    state.rename_format(library) if op == photo_writes.SET else None,
+                                    group=group, stop_at_first_error=stop_at_first_error)
+        return result, _told(library, op, changes, result)
+
+
+def _told(library, op, changes, result):
+    """The server's records of the photos `result` wrote take what their files hold now: a tag write's (records_written,
+    the photos written before a failure or a stop included), a save's followed to the name a caption gave it
+    (_followed_rename) with its title. {path as asked: its stamp after the write} of each photo written."""
+    if op == photo_writes.TAGS:
+        return records_written(library, result) if result.details.get("written") else {}
+    if not result.ok:
+        return {}
+    ((asked, (_id, own)),) = changes.items()
+    photo_path = paths.stored(asked)
+    new_path, renamed, tags = result.details["new_path"], result.details["renamed"], result.details["tags"]
+    # The stamp the write recorded, taken after it; a rename, or a file not written, is looked at once.
+    left = result.details.get("stamp") or photo_actions.file_stamp(new_path)
+    for record in _followed_rename(library, [(photo_path, new_path, renamed)], stamps={paths.key(new_path): left}):
+        raw_meta = photo_actions.record_written(
+            library, record, new_path, tags, result.details["flat"], result.details["hierarchical"],
+            result.details["dates"])
+        record["tags"] = vocabulary.extract_tags(raw_meta)
+        record["captions"] = [own["title"]] if own["title"] else []
+        record["title"] = own["title"]
+    return {asked: left}
+
+
+def _envelope(op, changes, result, stamps):
+    """The one reply of POST /api/photos/write, whatever its op: `success` (nothing failed or was refused), `changed`,
+    `attempted`, `skipped_missing` and `skipped` [{"path", "why"}], `error_count` and `errors` [{"path", "id", "why"}],
+    `stopped` ({"after", "of"} when a stop ended it part-way, else null), `change` (the journal's, null for a file-only
+    write), `file_only` and `with_rows`, `written` {path: {"tags", "mtime", "size"}, and a set's "base", "new_path",
+    "taken", "rename_failed"}, and `pictures_refused` and the faces it changed when there are any. What was written, not
+    attempted."""
+    ids = {paths.key(path): photo_id for path, (photo_id, _own) in changes.items()}
+    details = result.details
+    if op == photo_writes.TAGS:
+        written = {path: {"tags": list(tags), **_stamp_reply(stamps.get(path))}
+                   for path, (tags, _flat, _hierarchical) in details.get("written", {}).items()}
+    else:
+        written = {asked: {"tags": details["tags"], "base": details["base"], "new_path": details["new_path"],
+                           "taken": details["taken"], "rename_failed": details.get("rename_failed"),
+                           **_stamp_reply(stamp)} for asked, stamp in stamps.items()}
+    return {"success": result.ok, "changed": result.changed, "attempted": result.attempted,
+            "skipped_missing": details.get(tagging_actions.SKIPPED_MISSING, 0),
+            "skipped": [{"path": what, "why": why} for what, why in result.skipped],
+            "error_count": len(result.errors),
+            "errors": [{"path": what, "id": ids.get(paths.key(what)), "why": why} for what, why in result.errors],
+            "stopped": details.get("stopped"), "change": details.get("change"), **_where(result), "written": written,
+            **_pictures_refused(result), **_faces_unnamed(result)}
+
+
 #: What one photo of a bulk tag write's `changes` may say: the tags to add and the tags to take off.
 CHANGE_KEYS = ("add", "remove")
 
+#: What one photo of a write's `set` may say, beside its `id` (tagpup.services.photo_writes).
+SET_KEYS = ("title", "tags", "date_taken", "stamp", "base")
 
-def _tag_changes(changes):
-    """({path: ([tags to add], [tags to take off])}, None) of a bulk tag write's `changes`, {path: {"add": [tag],
-    "remove": [tag]}} (a list left out is none), or (None, the sentence that refuses it). Nothing is checked of the tags
-    here: what is added is the service's to check (tagpup.services.tagging.change_tags_of)."""
-    shape = 'Send changes as {path: {"add": [tags], "remove": [tags]}}, one entry for each photo.'
+
+def _photo_id(sent):
+    """(the photo id a write names a photo by, None for none; why it cannot be read)."""
+    if sent is None or (isinstance(sent, int) and not isinstance(sent, bool)):
+        return sent, None
+    return None, "id must be a photo id or null."
+
+
+def _tag_changes(changes, with_id=False):
+    """({path: (id or None, {"add": [tags to add], "remove": [tags to take off]})}, None) of a tag write's `changes`,
+    {path: {"add": [tag], "remove": [tag]}} (a list left out is none; `with_id`, the entry may name the photo's "id"), or
+    (None, the sentence that refuses it). Nothing is checked of the tags here: what is added is the service's to check
+    (tagpup.services.tagging.change_tags_of)."""
+    shape = ('Send changes as {path: {%s"add": [tags], "remove": [tags]}}, one entry for each photo.'
+             % ('"id": photo id or null, ' if with_id else ""))
     if not isinstance(changes, dict):
         return None, shape
     if not changes:
         return None, "The bulk tag write names no photo. " + shape
+    allowed = set(CHANGE_KEYS) | ({"id"} if with_id else set())
     found = {}
     named = set()
     for path, change in changes.items():
-        if not path or not isinstance(change, dict) or set(change) - set(CHANGE_KEYS):
+        if not path or not isinstance(change, dict) or set(change) - allowed:
             return None, shape
         if paths.key(path) in named:
             return None, "A photo is named once in a request: %s is named twice. " % os.path.basename(path) + shape
@@ -1235,8 +1341,30 @@ def _tag_changes(changes):
         lists = tuple(change.get(key, []) for key in CHANGE_KEYS)
         if not all(isinstance(tags, list) and all(isinstance(tag, str) for tag in tags) for tags in lists):
             return None, shape
-        found[path] = lists
+        photo_id, why = _photo_id(change.get("id"))
+        if why:
+            return None, why + " " + shape
+        found[path] = (photo_id, dict(zip(CHANGE_KEYS, lists)))
     return found, None
+
+
+def _set_change(changes):
+    """({path: (id or None, its fields: _set_fields)}, None) of a `set`'s `changes`, ONE photo's, or (None, the sentence
+    that refuses it)."""
+    shape = ('Send changes as {path: {"id": photo id or null, "title": text, "tags": [tags], "date_taken": text, '
+             '"stamp": {"mtime": number, "size": number}, "base": {"tags": [tags], "title": text}}}, one photo.')
+    if not isinstance(changes, dict) or len(changes) != 1:
+        return None, shape
+    ((path, change),) = changes.items()
+    if not path or not isinstance(change, dict) or set(change) - {"id", *SET_KEYS}:
+        return None, shape
+    photo_id, why = _photo_id(change.get("id"))
+    if why:
+        return None, why + " " + shape
+    own, why = _set_fields(change)
+    if why:
+        return None, why
+    return {path: (photo_id, own)}, None
 
 
 def _faces_unnamed(result):
@@ -1285,11 +1413,18 @@ def _written_tags(result):
 
 
 def _refused_after_writing(library, result):
-    """The reply to a bulk write that was refused. One that stopped half-way (its roots changed) has written
-    some files: the page is told which, and the cached records say so, as for a failure -- the one owner of that
-    answer for the bulk tag write and Apply All (findings #878)."""
+    """The reply to Apply All refused: the cached records of what it wrote before it was say so (records_written), as
+    for a failure, and the reply says which (_refused_reply)."""
     if result.details.get("written"):
         records_written(library, result)
+    return _refused_reply(result)
+
+
+def _refused_reply(result):
+    """The reply to a bulk write that was refused. One that stopped half-way (its roots changed) has written
+    some files: the page is told which -- the one owner of that answer for the bulk tag write and Apply All
+    (findings #878); the records were told by the write's caller."""
+    if result.details.get("written"):
         return responses.refused(result, written=_written_tags(result), change=result.details.get("change"))
     return responses.refused(result)
 
