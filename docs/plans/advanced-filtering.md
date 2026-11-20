@@ -101,6 +101,37 @@ real library, and the person side stays the tag-tree node id.
 
 Steady-state writer: not applicable (read-only, writes nothing). One-offs: none.
 
+## Typed grammar (owner's addition, 2026-11-19): DESIGN, not yet decided
+
+One text box that takes a query, with a `?` icon that opens the grammar with examples. It is the same filter as the chips (the
+chips show what the text means; editing either updates the other) and it is the phone page's way in, since the phone needs no
+tri-state tree.
+
+```
+rowan AND ada                      both people
+rowan AND (ada OR mina) NOT beach  rowan, with ada or mina, but not beach
+person:rowan year:2019 -screenshots   typed prefixes, minus as NOT
+```
+
+Grammar: `AND` (also a space), `OR`, `NOT` or a leading `-`, parentheses, `"quoted phrases"`, an optional `kind:` prefix
+(`person:` `tag:` `folder:` `year:` `month:`; a bare word with none searches the words as today and offers the matches).
+
+- **ONE parser, on the server** (Views owner, `tagpup/services/`, e.g. `library_query.parse`), never a copy in the desktop page and
+  another in the phone page. A route returns the spec plus how each word was understood (`rowan` -> person Rowan Thackeray) or
+  that it was ambiguous or unknown, so both pages show chips and a clear "no tag called x" instead of an empty grid.
+- **It builds the same `kind=search` spec**, so no new view kind and no new SQL.
+- **Limit of the model, to say in the `?` text:** the server's search is "all of these, any of those, none of these". It can
+  express `A AND (B OR C) NOT D`, but not an OR of ANDs, `(A AND B) OR (C AND D)`. Supporting that is a server change (a nested
+  expression tree in `_search_scope`) and a larger one-way choice; recommended to refuse it with a plain message now, and
+  build the tree only if the owner hits a real need.
+- Autocomplete for names while typing (people, tags, folders) uses the vocabulary already loaded; failures stay on the status line.
+
+Cut order: the grammar is cut 3, after the chips (cut 1) and the narrowed counts (cut 2); the parser needs the chip strip to
+show its result. It replaces the "words box" idea. Questions:
+1. Is "refuse an OR of ANDs for now" acceptable, or do you want the nested tree from the start?
+2. A bare word: search words as today (recommended), or look for a person/tag of that name first and ask?
+3. The phone page gets the text box first, before it gets Filter mode chips? (recommended: yes, the box is the phone's whole filter UI)
+
 ## Owner's answers (2026-11-19)
 
 1. A: the Filter toggle on the navigator.
