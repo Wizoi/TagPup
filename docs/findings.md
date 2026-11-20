@@ -35,3 +35,4 @@ Findings fixed before 2026-09-23 are in the git log (`git log --grep="^fix"`). T
 
 | # | Found | Finding | Status |
 |---|---|---|---|
+| 3250 | 2026-11-19 | low: filterKey (navigator-model.js) keeps the case of a tag or person while memberKey (search-model.js) folds it, so a hand-edited address naming one person must and not in two cases reads as a two-row filter; live: 0 (case-variant tags: 0 in photo_index, 0 in kr-track; only a hand-edited address makes one), 1b chips use filterKey | decided: no live instance, not built |
