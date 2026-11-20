@@ -54,9 +54,9 @@ function build() {
   return { server, held };
 }
 
-async function loadSelected(t) {
+async function loadSelected(t, before) {
   const { server, held } = build();
-  const ctx = await loadApp("tagpup", { t, url: "http://localhost:8090/photo_index/", server });
+  const ctx = await loadApp("tagpup", { t, url: "http://localhost:8090/photo_index/", server, before });
   await openFolder(ctx, FOLDER);
   for (const box of ctx.document.querySelectorAll(".thumbnail-checkbox")) click(ctx.window, box);
   await flush(ctx.window, 6);
@@ -110,6 +110,21 @@ describe("tags clicked quickly on a selection", () => {
     for (const name of OFFERED) {
       assert.ok(held.some((c) => c.includes(`${name} (2)`)), `${name} not shown on both: ${held}`);
     }
+    assert.deepEqual(ctx.alerts, []);
+  });
+
+  test("go from a page opened over plain http from another computer, where crypto.randomUUID is missing", async (t) => {
+    // `tagpup_web.py --listen lan` opened by another PC's address: not a secure context, so the browser has no randomUUID.
+    const ctx = await loadSelected(t, (window) => {
+      Object.defineProperty(window.crypto, "randomUUID", { value: undefined, configurable: true });
+    });
+    click(ctx.window, chip(ctx, OFFERED[0]));
+    await flush(ctx.window, 8);
+
+    assert.equal(writes(ctx).length, 1, "the click sent nothing");
+    assert.equal(typeof writes(ctx)[0].body.group, "string");
+    assert.ok(writes(ctx)[0].body.group.length >= 16, "the group token is too short to be one action's own");
+    await answer(ctx, { success: true });
     assert.deepEqual(ctx.alerts, []);
   });
 
