@@ -9,7 +9,8 @@ from tagpup.core.result import Conflict, NotFound, Refused, Result, Unavailable
 from tagpup.files import convertible, field_values, images, metadata, names, recycle_bin, shares, video_frames
 from tagpup.services import file_changes, file_only, libraries, rotation, thumbnails
 from tagpup.services import roots as roots_service
-from tagpup.store import db, faces, generations, photos, taxonomy
+from tagpup.store import db, faces, file_journal, generations, photos, taxonomy
+from tagpup.store import roots as store_roots
 from tagpup.store import folders as store_folders
 
 logger = logging.getLogger(__name__)
@@ -792,6 +793,11 @@ def delete(library, photo_path, for_good=False, fresh=True):
     only once the file is. `fresh` (recycle_bin.delete_file's): False for each file of a bulk Delete, whose start asked the
     Bins once.
 
+    A held photo's Delete is one change of the journal (plan_deletes, file_journal.DELETE: internal, never listed nor
+    undone), carried out under the lock of changes of photo files (delete_planned): a Delete waits for a write under way,
+    and a write for it. A stop between its file and its rows is finished by the next settle (settle_delete). A photo of
+    a folder the library does not hold has no record: it has no row to forget.
+
     details: `removed`, the rows removed from each table (None for such a photo);
     `file_only` and `with_rows`, 1 for the way it was done; `through_this_pc`, `no_bin_reason`
     (why its place has no Bin, as a phrase), `copy` (where its copy was put, and so where the
@@ -807,15 +813,129 @@ def delete(library, photo_path, for_good=False, fresh=True):
         result = file_only.delete(photo_path, for_good, fresh)
         result.details.update({file_only.FILE_ONLY: result.changed, file_only.WITH_ROWS: 0})
         return result
-    if file_only.send(photo_path, for_good, result, fresh) is None:
-        return result
-    result.changed = 1
-    # The thumbnail goes with the photo: its id is read first, while the row is there to name it.
-    ids = thumbnails.ids_of(library, [photo_path])
-    result.details["removed"] = photos.forget_photo(library.path, photo_path)
-    thumbnails.forget(library, ids)
-    result.details.update({file_only.FILE_ONLY: 0, file_only.WITH_ROWS: 1})
+    with file_changes.exclusively():
+        change_id, rows = plan_deletes(library, [photo_path], for_good)
+        try:
+            delete_planned(library, rows, result, fresh)
+        except Exception:
+            end_deletes(library, change_id)
+            raise
+        end_deletes(library, change_id)
+    if result.changed:
+        result.details.update({file_only.FILE_ONLY: 0, file_only.WITH_ROWS: 1})
     return result
+
+
+# ---- A Delete's record -----------------------------------------------------------------------
+
+#: The steps of a Delete of a held photo, in order; `_reached` is told of each.
+DELETE_STEPS = ("delete planned", "delete writing", "delete sent")
+
+
+def _reached(step):
+    """A step of a Delete is done (DELETE_STEPS). Nothing happens here; the tests stop a Delete at each by patching it."""
+
+
+def plan_deletes(library, photo_paths, for_good=False):
+    """Commit ONE change of file_journal.DELETE, owned by this process: a row `planned` for each of `photo_paths`
+    (photos of folders the library holds), naming its photo by id where it has a row (the id its thumbnail goes by),
+    and `for_good` in its fields_after, for a settle that sends it again. Returns (change id, [FileRow]). The caller
+    holds the lock of changes of photo files, and ends the change (end_deletes)."""
+    conn = db.connect(db.readonly_uri(library.path), uri=True)
+    try:
+        ids = [store_roots.photo_ids_at(conn, [path]) for path in photo_paths]
+    finally:
+        conn.close()
+    files = [{"photo_id": found[0] if found else None, "path": path, "after": {"for_good": bool(for_good)}}
+             for path, found in zip(photo_paths, ids)]
+    planned = file_journal.plan(library.path, file_journal.DELETE, files, summary={"photos": len(files)})
+    _reached("delete planned")
+    return planned
+
+
+def delete_planned(library, rows, result, fresh=True):
+    """Carry out the Deletes `rows` (plan_deletes), one at a time: each marked `writing`, sent to the Recycle Bin
+    (file_only.send, `fresh` its), then forgotten (_forget), its rows removed in the transaction that marks it done. One
+    the Bin step did not send is settled by what is at its path (_by_look): gone, forgotten; there, taken out of the
+    change, nothing deleted; on a share that does not answer, left `writing` for a settle. `result` is told of each.
+    The caller holds the lock of changes of photo files, and ends the change (end_deletes)."""
+    for row in rows:
+        file_journal.writing(library.path, row.id, None)
+        _reached("delete writing")
+        if file_only.send(row.path, row.after.get("for_good", False), result, fresh) is None:
+            _by_look(library, row, result, redo=False)
+            continue
+        _reached("delete sent")
+        _forget(library, row, result)
+
+
+def _forget(library, row, result):
+    """The photo of the Delete `row` has left its folder: its rows go (store.photos.forget_photo) in the transaction
+    that marks `row` done, then its thumbnail (by the id the plan read while the row was there). `result` counts it."""
+    result.details["removed"] = photos.forget_photo(
+        library.path, row.path, also=lambda conn: file_journal.set_state(conn, row.id, "done"))
+    thumbnails.forget(library, [row.photo_id] if row.photo_id is not None else [])
+    result.changed += 1
+
+
+def _by_look(library, row, result, redo):
+    """Settle the Delete `row`, `writing`, by what is at its path now (shares.stamp_of). Gone: its rows go (_forget).
+    On a share that does not answer: left `writing`, never decided on, and False. There: with `redo` (a settle: a stop
+    came before the Bin step or between the Bin's copy and the original's removal) it is sent to the Bin again and
+    forgotten, else -- the Bin step failed and said why -- it is taken out of the change, nothing deleted. True when
+    the row is settled."""
+    stamp = shares.stamp_of(row.path)
+    if stamp is shares.UNANSWERED:
+        return False
+    if stamp is None:
+        _forget(library, row, result)
+        return True
+    if redo:
+        if file_only.send(row.path, row.after.get("for_good", False), result) is not None:
+            _forget(library, row, result)
+            return True
+        return _by_look(library, row, result, redo=False)
+    file_journal.withdraw(library.path, [row.id])
+    return True
+
+
+def end_deletes(library, change_id, resume_later=False):
+    """The Deletes of change `change_id` end, done or stopped: each file still `planned` is taken out of it, nothing
+    deleted -- unless `resume_later` (a clean stop: left planned, released, for the next settle_delete to delete) --
+    and the change finishes, erased (file_journal.INTERNAL), or, a file left `writing` or planned, is released for
+    the next settle."""
+    if not resume_later:
+        file_journal.withdraw(library.path, [row.id for row in file_journal.files_of(library.path, change_id)
+                                             if row.state == "planned"])
+    if file_journal.finish(library.path, change_id) is None:
+        file_journal.release(library.path, change_id)
+
+
+def settle_delete(library, change):
+    """Settle a Delete `change` a stop left (file_changes._finish routes it here). A file still `planned` was never
+    begun: after a clean stop -- the change released, its `owner` None -- it is deleted now; after an unclean one --
+    its owner a process that died -- it is taken out, nothing deleted, and a warning names the change and how many,
+    no path. Each file `writing` is settled by a look (_by_look, redo): gone, its rows go; there, it is sent to the
+    Bin again; on a share that does not answer, left for the next settle. True when the change is finished."""
+    rows = file_journal.files_of(library.path, change.id)
+    planned = [row for row in rows if row.state == "planned"]
+    if planned and change.owner is not None:
+        logger.warning("%s: change %d (%s): %d photo(s) were still to be deleted when TagPup stopped without finishing; "
+                       "they were not deleted", library.path, change.id, change.operation, len(planned))
+        file_journal.withdraw(library.path, [row.id for row in planned])
+        planned = []
+    elif planned:
+        logger.info("%s: change %d (%s): %d photo(s) left to delete when TagPup stopped are deleted now",
+                    library.path, change.id, change.operation, len(planned))
+    result = Result(attempted=len(rows))
+    with file_changes.exclusively():
+        delete_planned(library, planned, result)
+        for row in rows:
+            if row.state == "writing":
+                _by_look(library, row, result, redo=True)
+    if not result.ok:
+        logger.warning("%s: change %d (%s): %s", library.path, change.id, change.operation, result.message())
+    return file_journal.finish(library.path, change.id) is not None
 
 
 def rotate_plan(direction):
