@@ -532,9 +532,9 @@ function wireSection(name) {
 
 function buildPanels() {
     const toggle = buildElement('button', {
-        className: 'nav-filter-toggle', id: 'nav-filter-toggle', text: 'Filter',
+        className: 'nav-filter-toggle', id: 'nav-filter-toggle', text: 'Tree filter',
         attrs: { type: 'button', 'aria-pressed': 'false' },
-        title: 'Filter mode: a click marks a row + any of, & must, - not; off, a click shows the row',
+        title: 'Tree filter: a click on a row marks it + any of, & must, - not, or off, to combine folders, tags, people and dates. Off, a click shows the row',
     });
     toggle.addEventListener('click', toggleFilterMode);
     sidebarPaneLibrary.appendChild(buildElement('div', { className: 'nav-head' }, [
