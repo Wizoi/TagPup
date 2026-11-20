@@ -7,7 +7,8 @@ named by its path and by its row's id when it has one. The reply is one envelope
 through: an update stopping the server's batches while a write is asked (nothing begins, nothing is written); two writes
 at once (both land, one after the other); a share that does not answer (that photo is its error at once, the others are
 written, nothing waits on it), or stops answering part-way through a shift (the change ends there, `written` naming the
-photos that landed); a page whose record is stale (its base, or its id now naming another file, is refused 409 and
+photos that landed), or does not give a held folder's listing when its Time Shift answers (the folder's photos are
+answered as the write read them back, never scanned again); a page whose record is stale (its base, or its id now naming another file, is refused 409 and
 nothing is written); a photo of a folder the library does not hold, which has no row and is named by its path alone. A
 library view's bulk edit goes through the same service and still lets a waiting save in between its chunks: that one is
 tests/test_batches.py's (ASaveBetweenTwoChunks), on the fake ExifTool, as it needs three chunks of photos.
@@ -33,6 +34,7 @@ from tagpup.core import paths  # noqa: E402
 from tagpup.files import field_values, shares  # noqa: E402
 from tagpup.files.exiftool_session import ExifToolSession  # noqa: E402
 from tagpup.services import batches  # noqa: E402
+from tagpup.services import photos as photo_actions  # noqa: E402
 from tagpup.store import db, journal  # noqa: E402
 
 ROUTE = "/api/photos/write"
@@ -263,6 +265,27 @@ class AWriteThroughTheOneEntryPoint(unittest.TestCase):
         self.assertEqual([self.photos[0]], list(reply["written"]), "what landed, not what was asked")
         self.assertEqual(["2020:06:01 10:30:00", TAKEN, TAKEN], [taken_in(path) for path in self.photos])
         self.assertEqual([("time shift", "applied")], [(change["operation"], change["status"]) for change in self.changes()])
+
+    def test_a_held_folders_time_shift_answers_every_photo_shifted_when_its_listing_does_not_answer(self):
+        # The owner opens a held folder and moves its Date Taken; the share is slow by the time the shift answers. The
+        # reply is the folder as the write read it back: every photo, shifted, and no scan of a listing that does not
+        # answer (which would empty the page's folder under "Time shift applied") nor a 500 for a journaled write.
+        date(self.photos)
+        status, opened = self.lib.get("/api/folder/scan", {"path": self.held})
+        self.assertEqual((200, 3), (status, len(opened)), opened)
+        with mock.patch.object(shares, "listing", return_value=shares.UNANSWERED), \
+                mock.patch.object(photo_actions, "scan_folder", wraps=photo_actions.scan_folder) as scan:
+            status, reply = self.lib.post("/api/folder/time-shift", {
+                "folder_path": self.held, "camera_model": "All Cameras", "shift_minutes": 30})
+        self.assertEqual(200, status, reply)
+        self.assertEqual((3, 3), (reply["updated_count"], reply["requested_count"]))
+        self.assertEqual(sorted(paths.key(path) for path in self.photos),
+                         sorted(paths.key(record["path"]) for record in reply["updated_photos"]))
+        self.assertEqual(["2020:06:01 10:30:00"] * 3, [taken_in(path) for path in self.photos])
+        self.assertEqual({os.stat(path).st_mtime for path in self.photos},
+                         {record["mtime"] for record in reply["updated_photos"]}, "each record as read back after the write")
+        self.assertEqual(0, scan.call_count, "a shift's answer is never a scan of the folder")
+        self.assertEqual(["time shift"], [change["operation"] for change in self.changes()])
 
     def test_a_body_that_means_nothing_is_refused_400(self):
         photo, photo_id = self.photos[0], self.ids[0]

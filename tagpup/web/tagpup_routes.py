@@ -76,8 +76,9 @@ class FolderCache:
     content.
 
     A write to a photo of a folder the library does not hold is its file's only and moves no
-    counter: its records are patched (`entries_for`), which is also what the reply of a time
-    shift sends. A scan stores its whole recursive walk under the scanned folder's key, so a
+    counter: its records are patched (`entries_for`, `move`). A time shift's reply is the folder's
+    map as its write patched it (`snapshot`), held folder or not: never a scan, which a listing
+    that does not answer would empty. A scan stores its whole recursive walk under the scanned folder's key, so a
     photo in a subfolder is filed under an ancestor, not under its own directory; `entries_for`
     finds every map holding a photo, since a folder and a subfolder of it may both have been
     scanned. A map's keys change only here (`move`, `forget`) and are read as a copy (`snapshot`), all under the lock:
@@ -460,6 +461,7 @@ def folder_time_shift():
     # lower-cased key itself, so every path it found -- and every path it sent back to
     # the page -- was lower case.
     folder = paths.stored(folder)
+    cache = folders.of(library)
     try:
         photos = _folder_photos(library, folder)
     except Exception as e:
@@ -485,9 +487,13 @@ def folder_time_shift():
     except Exception as e:
         logger.error("Error applying time shift to %s: %s", folder, e)
         return responses.error(500, str(e))
-    # The folder as the cache holds it now, each photo's record as the write told it (_told); scanned again if the cache
-    # let the folder go meanwhile.
-    return jsonify({"success": True, "updated_photos": _sorted(_folder_photos(library, folder)),
+    # The folder as the cache holds it now, each photo's record as the write read it back (_told patched every map holding
+    # it); the map read before the write, patched the same way, if the cache let the folder go meanwhile. Never a scan:
+    # the change is journaled, and a listing that does not answer would answer an empty folder (or a 500) for it.
+    held = cache.snapshot(folder)
+    if held is None:
+        held = {**photos, **{paths.key(path): record for path, record in _shifted(result)}}
+    return jsonify({"success": True, "updated_photos": _sorted(held),
                     "updated_count": result.changed, "requested_count": result.attempted,
                     **_where(result)})
 
@@ -1270,10 +1276,7 @@ def _told(library, op, changes, result):
     if op == photo_writes.TAGS:
         return records_written(library, result) if result.details.get("written") else {}
     if op == photo_writes.SHIFT:
-        cache = folders.of(library)
-        for meta in result.details.get("records", []):
-            path = paths.stored(meta["path"])
-            cache.move(path, path, photo_actions.page_record(path, meta, meta["mtime"], meta["size"]))
+        folders.of(library).move_all([(path, path, record) for path, record in _shifted(result)])
         asked = {paths.key(path): path for path in changes}
         return {asked.get(paths.key(path), path): stamp
                 for path, stamp in (_stamps_after(result) if result.details.get("written") else {}).items()}
@@ -1292,6 +1295,12 @@ def _told(library, op, changes, result):
         record["captions"] = [own["title"]] if own["title"] else []
         record["title"] = own["title"]
     return {asked: left}
+
+
+def _shifted(result):
+    """[(path, its page record)] of each photo a shift read back after its write (`records`, photos.shift_date_taken)."""
+    return [(path, photo_actions.page_record(path, meta, meta["mtime"], meta["size"]))
+            for meta in result.details.get("records", []) for path in (paths.stored(meta["path"]),)]
 
 
 def _envelope(op, changes, result, stamps):
