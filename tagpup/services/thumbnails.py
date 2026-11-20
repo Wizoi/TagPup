@@ -246,18 +246,16 @@ def forget(library, photo_ids):
     return removed
 
 
-def ids_of(library, photo_paths=(), folder=None):
-    """The ids of the photos at `photo_paths` -- or under `folder` -- as the library holds them now: read before
-    a delete, to say to `forget` afterwards. A library that cannot be read has none to name."""
+def ids_of(library, folder):
+    """The ids of the photos under `folder` as the library holds them now: read before the folder's rows go, to say to
+    `forget` afterwards (a photo's own Delete reads its id in its plan: tagpup.services.photos.plan_deletes). A library
+    that cannot be read has none to name."""
     try:
         conn = _look(library)
     except Exception:
         return []
     try:
-        found = store_roots.photo_ids_at(conn, photo_paths) if photo_paths else []
-        if folder:
-            found += store_photos.ids_under(conn, folder)
-        return found
+        return store_photos.ids_under(conn, folder)
     except Exception as why:
         logger.warning("Could not find the photos whose thumbnails go: %s", why)
         return []
