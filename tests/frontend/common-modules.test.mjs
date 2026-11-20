@@ -55,6 +55,19 @@ describe("each shared helper is written once", () => {
       assert.deepEqual(offenders, [], "these are web/common/'s; import them instead");
     });
 
+    // A save of one photo names its stamp and base, which the server refuses a write over when the file changed: the
+    // PC page's title in the grid and its Save spelled that request beside postPhotoMetadata (#3163).
+    test(`${app}: a photo's save-metadata request is spelled only by web/common/photo-write.js`, () => {
+      const offenders = [];
+      for (const module of pageModules(path.join(REPO_ROOT, APPS[app].dir))) {
+        if (module.file.startsWith(COMMON_DIR)) continue;
+        fs.readFileSync(module.file, "utf8").split(/\r?\n/).forEach((line, i) => {
+          if (/['"`]\/api\/photo\/save-metadata/.test(line)) offenders.push(`${path.basename(module.file)}:${i + 1}`);
+        });
+      }
+      assert.deepEqual(offenders, [], "send it through postPhotoMetadata");
+    });
+
     test(`${app}: the page loads the shared modules it needs`, () => {
       const loaded = pageModules(path.join(REPO_ROOT, APPS[app].dir)).map((m) => path.basename(m.file));
       for (const file of ["api.js", "library.js", "paths.js", "vocabulary.js"]) {

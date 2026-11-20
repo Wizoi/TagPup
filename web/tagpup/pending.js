@@ -49,7 +49,9 @@ export function pendChanges(list, { people = false, panel = false } = {}) {
     let resolve;
     const settled = new Promise(r => { resolve = r; });
     const action = { left: new Set(), written: 0, failed: 0, skipped: 0, resolve, panel };
-    const token = crypto.randomUUID();
+    // getRandomValues, not randomUUID: a page opened over plain http from another computer (`--listen lan`) is not a
+    // secure context and has no randomUUID (#3097).
+    const token = Array.from(crypto.getRandomValues(new Uint32Array(4)), n => n.toString(16).padStart(8, '0')).join('');
     for (const { path, add = [], remove = [] } of list) {
         const key = pathKey(path);
         let entry = pending.files.get(key);

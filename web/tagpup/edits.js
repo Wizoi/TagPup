@@ -1,10 +1,9 @@
 // TagPup's page: Image Details' unsaved edits, saving them, and the queue every write to
 // a photo goes through.
-import { api } from './common/api.js';
 import { dialogOpen, holdFocus, releaseFocus } from './common/dialog.js';
 import { buildElement, replaceContent } from './common/dom.js';
 import { baseName, pathKey, samePath } from './common/paths.js';
-import { UNREADABLE_SAVE, baseOf, stampOf, takeStamp } from './common/photo-write.js';
+import { UNREADABLE_SAVE, postPhotoMetadata } from './common/photo-write.js';
 import { leafOf, photoAlreadyHas, tagProblem, textProblem } from './common/vocabulary.js';
 import { upper } from './hooks.js';
 import { state } from './state.js';
@@ -390,22 +389,7 @@ export async function writeDetailEdits(fields, { intent = null, taken = null, pa
     setStatus('busy', 'Saving...');
     let data;
     try {
-        const res = await api.fetch('/api/photo/save-metadata', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                path,
-                title: newTitle === null ? photo.title : newTitle,
-                tags,
-                stamp: stampOf(photo),
-                base: baseOf(photo),
-            })
-        });
-        data = await res.json();
-        if (!data.success) {
-            if (data.changed_on_disk) photoChangedOnDisk(photo);
-            throw new Error(data.error || 'Failed to save');
-        }
+        data = await postPhotoMetadata(photo, { title: newTitle === null ? photo.title : newTitle, tags }, photoChangedOnDisk);
     } catch (err) {
         console.error(err);
         setStatus('error', `Not saved: ${err.message}`, { transient: false });
@@ -413,7 +397,6 @@ export async function writeDetailEdits(fields, { intent = null, taken = null, pa
         return false;
     }
 
-    takeStamp(photo, data);
     photo.tags = tags;
     if (newTitle !== null) {
         photo.title = newTitle;
