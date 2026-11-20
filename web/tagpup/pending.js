@@ -179,17 +179,26 @@ function unwritten() {
 /**
  * A Delete of `paths` waits for their tag changes (a folder's selection, bulk-edit.js, and the open photo's, photo.js
  * deleteActivePhoto): else a chunk would write, or give back the ops of, a file that is gone, and the page would call a
- * photo deleted on purpose missing. A library view's selection is ids (every photo of the view, with Select all), which
- * the page cannot match to the files waiting without their cards: it is asked with no `paths`, and waits for every change
- * (in a view only the open photo's removals and an Undo, written in a moment). Says so and answers true while any is not
- * written; false when the delete may go on.
+ * photo deleted on purpose missing. So for a single write of one of them queued or out (a save, a card's title, a rotate:
+ * edits.js queueWriteOf, state.photoWrites), which would land on a file about to go or fail "file gone" after it. A library
+ * view's selection is ids (every photo of the view, with Select all), which the page cannot match to the files waiting
+ * without their cards: it is asked with no `paths`, and waits for every change and write (in a view only the open photo's,
+ * and an Undo, written in a moment). Refused with a sentence naming what waits, never waited for: answers true while any
+ * is not written; false when the delete may go on.
  */
 export function deleteWaits(paths = null) {
-    const keys = unwritten();
-    const waiting = paths ? paths.filter(path => keys.has(pathKey(path))).length : keys.size;
-    if (!waiting) return false;
-    const which = !paths ? photosWord(waiting) : paths.length === 1 ? 'this photo' : `${waiting.toLocaleString()} of these photos`;
-    alert(`Tag changes for ${which} are not written yet: wait for them, or cancel them in the list of writes, then delete.`);
+    const among = (keys) => (paths ? paths.filter(path => keys.has(pathKey(path))).length : keys.size);
+    const which = (n) => (!paths ? photosWord(n) : paths.length === 1 ? 'this photo' : `${n.toLocaleString()} of these photos`);
+    const waiting = among(unwritten());
+    if (waiting) {
+        alert(`Tag changes for ${which(waiting)} are not written yet: wait for them, or cancel them in the list of writes, then delete.`);
+        return true;
+    }
+    const saving = among(new Set(Object.keys(state.photoWrites)));
+    if (!saving) return false;
+    const one = saving === 1;
+    alert(`${one ? 'A save' : 'Saves'} of ${which(saving)} ${one ? 'is' : 'are'} not written yet: wait for ${one ? 'it' : 'them'}`
+        + ' (the list of writes, bottom right), then delete.');
     return true;
 }
 

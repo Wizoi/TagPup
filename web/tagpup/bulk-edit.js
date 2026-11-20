@@ -157,8 +157,8 @@ function playAgainIfKept(clip) {
 }
 
 /**
- * A folder's Delete, before anything is asked of the server: refused with a sentence while tag changes of a selected photo are
- * not written (pending.js), and the open photo's typed edits, when it is selected, asked about first (Save or Discard goes on,
+ * A folder's Delete, before anything is asked of the server: refused with a sentence while tag changes or a save of a selected
+ * photo are not written (pending.js deleteWaits), and the open photo's typed edits, when it is selected, asked about first (Save or Discard goes on,
  * Cancel stops the delete). Resolves whether the delete goes on.
  */
 function folderMayDelete(picked) {
