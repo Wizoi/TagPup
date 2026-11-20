@@ -1265,19 +1265,18 @@ def _told(library, op, changes, result):
     """The server's records of the photos `result` wrote take what their files hold now: a tag write's (records_written,
     the photos written before a failure or a stop included), a save's followed to the name a caption gave it
     (_followed_rename) with its title, a shift's each as read back after it (every map holding it: its folder's, an
-    ancestor's scan that walked into it). {path as asked: its stamp after the write} of each photo written."""
+    ancestor's scan that walked into it). {path as asked: its stamp after the write} of each photo written (a tag
+    write's and a shift's `written`: _stamps_after)."""
     if op == photo_writes.TAGS:
         return records_written(library, result) if result.details.get("written") else {}
     if op == photo_writes.SHIFT:
-        cache, told = folders.of(library), {}
-        asked = {paths.key(path): path for path in changes}
-        left = {paths.key(what) for what, _why in [*result.errors, *result.skipped]}
+        cache = folders.of(library)
         for meta in result.details.get("records", []):
             path = paths.stored(meta["path"])
             cache.move(path, path, photo_actions.page_record(path, meta, meta["mtime"], meta["size"]))
-            if paths.key(path) not in left:
-                told[asked.get(paths.key(path), path)] = (meta["mtime"], meta["size"])
-        return told
+        asked = {paths.key(path): path for path in changes}
+        return {asked.get(paths.key(path), path): stamp
+                for path, stamp in (_stamps_after(result) if result.details.get("written") else {}).items()}
     if not result.ok:
         return {}
     ((asked, (_id, own)),) = changes.items()
