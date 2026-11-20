@@ -7,8 +7,9 @@ the lock of changes of photo files, so a Delete waits for a chunk of a write und
 Bin and the rows, or between the Bin's copy (a share with no Bin goes through this PC) and the original's removal; or a
 share stops answering part-way; or an update stops a Delete it had planned and not begun. The next settle looks at each
 file the Delete left `writing`: gone, its rows go; there, it is sent again; on a share that does not answer, it waits. A
-Delete planned and never begun by a process that died is withdrawn, nothing deleted (the owner's answer 4); one a clean
-stop released is carried out. A photo of a folder the library does not hold (Just look) has no record.
+Delete planned and never begun is withdrawn, nothing deleted (the owner's answer 4), whoever released it: a settle stopped
+by an update releases one a dead process planned, as a clean stop would (#3256; a bulk Delete's resume after a clean stop is
+cut 1b's, by a marker of its own). A photo of a folder the library does not hold (Just look) has no record.
 
 Fails on the old code: tagpup.services.photos had no `_reached`, no plan and no lock -- the kill tests stop nowhere, a
 Delete beside a held lock runs at once (test_a_delete_waits_for_the_chunk_that_holds_the_lock), and a Delete whose rows
@@ -29,7 +30,7 @@ from view_library import ViewLibrary, make_jpeg  # noqa: E402
 
 from tagpup.core import paths  # noqa: E402
 from tagpup.files import recycle_bin, shares  # noqa: E402
-from tagpup.services import file_changes  # noqa: E402
+from tagpup.services import batches, file_changes  # noqa: E402
 from tagpup.services import journal as journal_service  # noqa: E402
 from tagpup.services import photos as photo_actions  # noqa: E402
 from tagpup.store import db, file_journal, journal  # noqa: E402
@@ -150,15 +151,32 @@ class ADeleteCutShort(unittest.TestCase):
         self.assertTrue(self.held(self.local_id))
         self.assertEqual(([], [], []), (self.changes(), self.files(), self.binned))
 
-    def test_planned_then_a_clean_stop_is_deleted_by_the_next_settle(self):
-        with file_changes.exclusively():
-            change_id, _rows = photo_actions.plan_deletes(self.library, [self.local])
-        file_journal.release(self.library.path, change_id)
-        self.assertEqual([(change_id, file_journal.DELETE, None)], self.changes())
-        self.assertEqual(1, self.settle())
-        self.assertFalse(os.path.exists(self.local))
-        self.assertFalse(self.held(self.local_id))
-        self.assertEqual(([], []), (self.changes(), self.files()))
+    def test_planned_by_a_process_that_died_then_put_aside_by_a_stopped_settle_is_withdrawn_not_deleted(self):
+        # A process planned the Delete and died. This one's settle took the change (its owner overwritten) and an update
+        # stopped it before it began: put aside, released, its owner NULL as a clean stop would leave it. Never begun, it
+        # is withdrawn at the next start, nothing deleted.
+        with mock.patch.object(photo_actions, "_reached", side_effect=crash_at("delete planned")):
+            with self.assertRaises(Crash):
+                self.delete(self.local)
+        self.died()
+        self.addCleanup(batches.reopen)
+        batches.stop_all()
+        thread = file_changes._settle_on_a_thread(self.library, None)
+        thread.join(30)
+        batches.reopen()
+        [(change_id, _operation, owner)] = self.changes()
+        self.assertIsNone(owner, "put aside: released, as a clean stop would leave it")
+        # The next start: what this process put off is the old process's, gone with it.
+        mine = (self.library.key, change_id)
+        file_changes._put_off.discard(mine)
+        for key in [key for key, whose in file_changes._unsettled.items() if whose == mine]:
+            del file_changes._unsettled[key]
+        with self.assertLogs(photo_actions.logger, "WARNING") as said:
+            self.assertEqual(1, self.settle())
+        self.assertIn("1 photo(s) were still to be deleted", said.output[0])
+        self.assertTrue(os.path.exists(self.local))
+        self.assertTrue(self.held(self.local_id))
+        self.assertEqual(([], [], []), (self.changes(), self.files(), self.binned))
 
     def test_a_delete_waits_for_the_chunk_that_holds_the_lock(self):
         done = []

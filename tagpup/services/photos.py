@@ -900,37 +900,32 @@ def _by_look(library, row, result, redo):
     return True
 
 
-def end_deletes(library, change_id, resume_later=False):
+def end_deletes(library, change_id):
     """The Deletes of change `change_id` end, done or stopped: each file still `planned` is taken out of it, nothing
-    deleted -- unless `resume_later` (a clean stop: left planned, released, for the next settle_delete to delete) --
-    and the change finishes, erased (file_journal.INTERNAL), or, a file left `writing` or planned, is released for
-    the next settle."""
-    if not resume_later:
-        file_journal.withdraw(library.path, [row.id for row in file_journal.files_of(library.path, change_id)
-                                             if row.state == "planned"])
+    deleted, and the change finishes, erased (file_journal.INTERNAL), or, a file left `writing`, is released for the
+    next settle."""
+    file_journal.withdraw(library.path, [row.id for row in file_journal.files_of(library.path, change_id)
+                                         if row.state == "planned"])
     if file_journal.finish(library.path, change_id) is None:
         file_journal.release(library.path, change_id)
 
 
 def settle_delete(library, change):
     """Settle a Delete `change` a stop left (file_changes._finish routes it here). A file still `planned` was never
-    begun: after a clean stop -- the change released, its `owner` None -- it is deleted now; after an unclean one --
-    its owner a process that died -- it is taken out, nothing deleted, and a warning names the change and how many,
-    no path. Each file `writing` is settled by a look (_by_look, redo): gone, its rows go; there, it is sent to the
-    Bin again; on a share that does not answer, left for the next settle. True when the change is finished."""
+    begun, and is never begun now, whoever released the change -- a settle put aside releases one a dead process
+    planned, as a clean stop would, so its `owner` says nothing of how it stopped --: it is taken out, nothing deleted,
+    and a warning names the change and how many, no path (a bulk Delete's resume after a clean stop is cut 1b's, by a
+    marker of its own in the change). Each file `writing` is settled by a look (_by_look, redo): gone, its rows go;
+    there, it is sent to the Bin again; on a share that does not answer, left for the next settle. True when the change
+    is finished."""
     rows = file_journal.files_of(library.path, change.id)
-    planned = [row for row in rows if row.state == "planned"]
-    if planned and change.owner is not None:
-        logger.warning("%s: change %d (%s): %d photo(s) were still to be deleted when TagPup stopped without finishing; "
-                       "they were not deleted", library.path, change.id, change.operation, len(planned))
-        file_journal.withdraw(library.path, [row.id for row in planned])
-        planned = []
-    elif planned:
-        logger.info("%s: change %d (%s): %d photo(s) left to delete when TagPup stopped are deleted now",
-                    library.path, change.id, change.operation, len(planned))
+    planned = [row.id for row in rows if row.state == "planned"]
+    if planned:
+        logger.warning("%s: change %d (%s): %d photo(s) were still to be deleted when TagPup stopped; they were not "
+                       "deleted", library.path, change.id, change.operation, len(planned))
+        file_journal.withdraw(library.path, planned)
     result = Result(attempted=len(rows))
     with file_changes.exclusively():
-        delete_planned(library, planned, result)
         for row in rows:
             if row.state == "writing":
                 _by_look(library, row, result, redo=True)

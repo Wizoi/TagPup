@@ -44,19 +44,21 @@ Steady-state writer: a photo changed afterwards goes through the same entry poin
      `also(conn)` so the row's `set_state(done)` commits in the same transaction that removes the row and faces. In
      `services/photos.py`: `plan_deletes`, `delete_planned` (`file_journal.writing`, `file_only.send`, then `_forget`: forget_photo,
      `thumbnails.forget`), `_by_look(redo)` using `shares.stamp_of` (UNANSWERED: stay `writing`, unsettled; gone: `_forget`; there:
-     `redo` runs the Bin step then `_forget`, else withdraw), `end_deletes(library, change_id, resume_later)`, and
+     `redo` runs the Bin step then `_forget`, else withdraw), `end_deletes(library, change_id)`, and
      `settle_delete(library, change)` reached from `file_changes._finish` by a lazy import as convert's `settle_change` is. `delete()`
      runs under `file_changes.exclusively()` (the panel's Delete holds no lock today: #3203's last piece); a loose (Just-look) path goes
      to `file_only.delete` with no record; a held path is one planned row.
-   - **Clean vs unclean, one mechanism:** a clean stop is a change released with `owner` NULL (`file_journal.release`); an unclean
-     one has a dead `owner` (`owner_alive`, as `_take` asks). A `planned` Delete row with owner set and dead is withdrawn with a
-     warning naming the change and a count, no paths (answer 4); with owner NULL it is marked `writing` and resumed; every `writing`
-     row goes to `_by_look(redo=True)`. The live path withdraws its planned rows on any exception before releasing, so "planned
-     with owner NULL" means only a clean stop. Telling an update's `stop_all` from the owner's Cancel needs a public
-     `batches.closing()` returning `_closing`.
+   - **Clean vs unclean (as built, after review #3256):** the `owner` column cannot tell them apart: `file_journal.release`
+     sets it NULL after a clean stop, and ALSO after a settle that took a dead process's change was put aside (`_put_aside`,
+     `_settle_taken`). So in 1a `settle_delete` withdraws EVERY `planned` Delete row, whatever its owner, with a warning naming
+     the change and a count, no paths (answer 4); every `writing` row goes to `_by_look(redo=True)`, which sends it again only
+     while it is the file whose stamp `file_journal.writing` recorded (#3257). The clean-stop resume of a bulk Delete is 1b's,
+     marked by a marker of its own in the change (not the owner column). Telling an update's `stop_all` from the owner's
+     Cancel needs a public `batches.closing()` returning `_closing`.
    - **1b, Files:** `services/bulk_edit.py _delete` (already under `exclusively` around its loop, line ~279) plans all photos as one
      change, runs `delete_planned(fresh=False)`, on a stop with `batches.closing()` leaves the rest planned and released (the
-     photo's error says it is deleted when TagPup starts again), otherwise withdraws them ("stopped as asked: not deleted");
+     photo's error says it is deleted when TagPup starts again) with a marker of its own in the change that `settle_delete`
+     reads to resume them (never `owner` NULL, #3256), otherwise withdraws them ("stopped as asked: not deleted");
      `end_deletes` in a `finally`; fix the docstring saying a delete is "not journaled". The time-shift sentence
      (`web/tagpup/rename.js applyTimeShift`): `shift_date_taken` journals a held folder (`UNDO_CHECKS["time shift"]` is None) but a
      Just-look folder goes through `file_only.write_fields` with no journal, so the text says "can be undone from History" only for
@@ -66,7 +68,8 @@ Steady-state writer: a photo changed afterwards goes through the same entry poin
      log and in each photo's error text, no page sentence (the batches list hides INTERNAL changes by design).
    - **Tests (Files scenarios, `photo_rows.add_read`, a `_reached` hook in photos.py to stop between steps):** killed after the Bin
      step and before the row step; killed after the copy and before `os.remove`; planned, never begun, then an unclean stop
-     (dead pid): withdrawn, nothing deleted; planned then a clean stop (owner NULL): resumed; Delete while a chunk holds the lock:
+     (dead pid): withdrawn, nothing deleted; planned, then put aside by a stopped settle (owner NULL): withdrawn too (#3256; the
+     clean-stop resume is 1b's); killed after the Bin step, another file put at the path: not sent (#3257); Delete while a chunk holds the lock:
      waits; a share that does not answer: row stays `writing`, released, settled once it answers; two Deletes of one photo at
      once; a Just-look path with no record; History lists nothing and Undo says the UNDO_CHECKS sentence.
 2. **Integration, about 400:** `POST /api/photos/write`; `bulk-tags`, `save-metadata`, `time-shift`, `bulk-edit` call it, old
