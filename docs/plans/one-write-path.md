@@ -75,6 +75,27 @@ Steady-state writer: a photo changed afterwards goes through the same entry poin
      once; a Just-look path with no record; History lists nothing and Undo says the UNDO_CHECKS sentence.
 2. **Integration, about 400:** `POST /api/photos/write`; `bulk-tags`, `save-metadata`, `time-shift`, `bulk-edit` call it, old
    bodies deleted; the base check for typed tags (answer 9); id-or-path addressing (answer 5).
+   **Cut 2 is split (Integration owner's design view, 2026-11-20; the four routes sit over four services with four reply shapes the
+   pages read, so the old routes stay as thin reshapers until cut 3 moves the page, then are deleted):**
+   - **2a, Integration, ~700:** `tagpup/services/photo_writes.py` (a dispatcher only: op `tags` = per-photo add/remove with `group`
+     -> `tagging.change_tags_of`; op `set` = ONE photo's title/tags/date with stamp+base -> `tagging.save_photo`; no multi-photo `set`,
+     no user action makes it) + `POST /api/photos/write` + its guards (`name_faces_routes.GUARDED`, `roots_ingress.KEYS`,
+     `security.THIS_PC_ONLY`, SPEC_TAGPUP_GUI, `tests/test_write_routes_are_classified.py`, the new module named Integration's in
+     `docs/OWNERS.md` and the owner agent's scope in the same commit). `bulk-tags` and `save-metadata` become callers that reshape to
+     today's replies. `records_written` / `_followed_rename` run once, in the entry point. The base check STAYS in
+     `tagging.save_photo` (no ExifTool read in the route layer); the route only parses.
+   - **Request:** `{"op", "group", "changes": {path: {"id": int|null, ...op fields}}, "params"}`; keyed by path, `id` inside when the
+     row exists (answer 5), refused 409 if that id's path is no longer this path. **Reply, one envelope:** `success, changed,
+     attempted, skipped_missing, skipped[{path,why}], error_count, errors[{path,id,why}], stopped, change, file_only, with_rows,
+     written{path:{mtime,size,tags,base,new_path,taken,rename_failed}}, pictures_refused?, named/unnamed/renamed_faces?,
+     changed_on_disk (409)`. The reshapers keep every field the pages read today (pending.js, photo.js, photo-write.js, edits.js,
+     grid.js, mobile-edit.js, rename.js, bulk-run.js).
+   - **2b, Integration, ~500:** op `shift` (paths + minutes; the camera filter stays in the time-shift caller until cut 3) and
+     bulk-edit's `tags`/`people` by resolved ids. **Delete stays `bulk_edit._delete` / `photos.delete`** (no field write; its own token
+     contract), not a caller of the entry point.
+   - **#3263 is Files', not the route's:** `file_changes._write_fields` and `rename` already settle first; Delete's path gets
+     `file_changes.settle` inside its `exclusively` block in `services/photos.py` (~10 lines + one test), beside 2a.
+   - **2c, after cut 3:** delete the four old routes and reshapers; spec and page fixtures follow.
 3. **Views, about 800:** `queuePhotoWrite` and `pending.js` become one client of the entry point; the page keeps its map.
    After it: re-read whether B is needed.
 
