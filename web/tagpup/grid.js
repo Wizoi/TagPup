@@ -17,7 +17,7 @@ import {
     formatFriendlyDateSingle, getFolderDateStats, parseExifDateToLocalDate, takenOf
 } from './format.js';
 import { photoChangedOnDisk, photoRenamed, queueWriteOf } from './edits.js';
-import { baseOf, stampOf, takeStamp } from './common/photo-write.js';
+import { postPhotoMetadata } from './common/photo-write.js';
 import { countSaid, renderFileList, visiblePhotos } from './folder.js';
 import { openLibraryPhoto, selectPhoto } from './photo.js';
 import { isVideo } from './media.js';
@@ -509,40 +509,31 @@ function buildThumbnailCard(photo) {
 
             // Queued with every other write to a photo, so the tags it sends
             // are the photo's tags when it runs, not a copy from before.
-            queueWriteOf(photo.path, () => api.json('/api/photo/save-metadata', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ path: photo.path, title: newTitle, tags: photo.tags, stamp: stampOf(photo), base: baseOf(photo) })
-            })
+            // A refusal rejects with the server's sentence, after photoChangedOnDisk when the file changed since it was read.
+            queueWriteOf(photo.path, () => postPhotoMetadata(photo, { title: newTitle }, photoChangedOnDisk)
             .then(data => {
-                if (data.changed_on_disk) photoChangedOnDisk(photo);
-                if (data.success) {
-                    const oldPath = photo.path;
-                    takeStamp(photo, data);
-                    photo.title = newTitle;
-                    photo.captions = newTitle ? [newTitle] : [];
+                const oldPath = photo.path;
+                photo.title = newTitle;
+                photo.captions = newTitle ? [newTitle] : [];
 
-                    if (data.new_path && data.new_path !== oldPath) {
-                        photoRenamed(photo, data.new_path);
-                        if (state.activePhotoPath === oldPath) {
-                            state.activePhotoPath = data.new_path;
-                        }
+                if (data.new_path && data.new_path !== oldPath) {
+                    photoRenamed(photo, data.new_path);
+                    if (state.activePhotoPath === oldPath) {
+                        state.activePhotoPath = data.new_path;
                     }
-
-                    renderFileList();
-                    renderThumbnails();
-
-                    if (state.activePhotoPath === photo.path) {
-                        inputPhotoTitle.value = newTitle;
-                    }
-
-                    statusDot.className = data.rename_failed ? 'status-indicator-dot error' : 'status-indicator-dot';
-                    statusText.textContent = data.rename_failed
-                        ? `Saved the title, but could not rename the photo: ${data.rename_failed}` : 'Ready';
-                    saveToLocalStorageCache();
-                } else {
-                    throw new Error(data.error || 'Failed to save');
                 }
+
+                renderFileList();
+                renderThumbnails();
+
+                if (state.activePhotoPath === photo.path) {
+                    inputPhotoTitle.value = newTitle;
+                }
+
+                statusDot.className = data.rename_failed ? 'status-indicator-dot error' : 'status-indicator-dot';
+                statusText.textContent = data.rename_failed
+                    ? `Saved the title, but could not rename the photo: ${data.rename_failed}` : 'Ready';
+                saveToLocalStorageCache();
             })
             .catch(err => {
                 console.error(err);
