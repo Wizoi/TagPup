@@ -69,6 +69,8 @@ from tagpup.core import gpu_turns
 from tagpup.core import paths
 from tagpup.core import read_ahead
 from tagpup.core import runs as run_tags
+from tagpup import logs as tagpup_logs
+from tagpup.services.indexing import INDEXER_LOG
 from tagpup.store import db as tagpup_db
 from tagpup import config as tagpup_config
 from tagpup import runtime as runtimes
@@ -299,7 +301,8 @@ INDEX_STOPPED = "the index stopped before it finished; the console said why"
 
 
 def _recorded_as_an_index(command):
-    """A run of `index` typed by hand is a run of the job `index` in the library's job_runs, as one the server's queue
+    """Claimed once `_holds_the_roots` has let the command begin: a run refused before it starts leaves no row.
+    A run of `index` typed by hand is a run of the job `index` in the library's job_runs, as one the server's queue
     starts is (that one claimed by the queue: its index tag in this process's environment, runs.process_tags). Claimed
     before the command records its folders added, so a removal of a folder in an app meanwhile is refused while it runs
     (tagpup.services.libraries.removal_refusal), and ended as the command ends; the Activity page lists it. Not
@@ -312,6 +315,8 @@ def _recorded_as_an_index(command):
                 or any(tag.startswith("index:") for tag in run_tags.process_tags())):
             return command(ctx, *args, **kwargs)
         tag = run_tags.index_tag(library.name)
+        # Its lines in the file the Activity page's "Logs for this run" is sent to (tagpup.logs.run_log), as a queued run's.
+        own = tagpup_logs.to_file(tagpup_logs.run_log(INDEXER_LOG, tag), quiet=True)
         with run_tags.running(tag), job_runs.run(library, job_runs.INDEX, library.name, stopped=INDEX_STOPPED,
                                                  changed={"run": tag, "folders": len(kwargs.get("directories") or ())}):
             try:
@@ -319,6 +324,9 @@ def _recorded_as_an_index(command):
             except SystemExit as stop:
                 if stop.code:
                     raise
+            finally:
+                logging.getLogger().handlers[:] = [each for each in logging.getLogger().handlers
+                                                   if getattr(each, "baseFilename", None) != own]
     return run
 
 
@@ -394,8 +402,8 @@ def _folders_now(ctx, param, directories):
               help="Only the photos directly in each DIRECTORY, not in its subfolders.")
 @click.pass_context
 @_needs_ffmpeg()
-@_recorded_as_an_index
 @_holds_the_roots
+@_recorded_as_an_index
 def index(ctx, directories, force_reembed: bool, reset: bool, skip_faces: bool, no_subfolders: bool = False):
     """Phase 1: Scan and index a tagged photo library: one or more DIRECTORIES, in one run
     (sync hands it every folder of new files at once, so one indexer loads the models; the server, in --folders-file)."""
