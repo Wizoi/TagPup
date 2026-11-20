@@ -16,9 +16,14 @@
 // as that tree, `compress` turns the rows selected into the fewest sources that hold the same photos (a row whose every
 // row below is selected is its whole), and `selectedRows` turns a view's sources back into the rows -- so the address
 // holds the selection and Back, Forward and a bookmark restore it.
+//
+// FILTER MODE (docs/plans/advanced-filtering.md): each row is off or one of three states -- `+` any of (OR with the other `+`
+// rows of its tab), `&` must, `-` not -- and the states are one search (`specFromRowStates`): a union per tab of its `+` rows,
+// ANDed with every `&` row, none of the `-` rows. `rowStatesFromSpec` reads the states back from a search, so the address holds
+// the filter as it holds a selection; a search made elsewhere (words, an Any-of list, Within) is no filter.
 import { baseName, pathKey } from './common/paths.js';
 import { compareTagNames, leafOf } from './common/vocabulary.js';
-import { UNTAGGED } from './library-source.js';
+import { searchValue, searchWords, UNTAGGED } from './library-source.js';
 
 /** The most rows one section draws; the rest are said in a line and reached by the filter. */
 export const NAV_MAX_ROWS = 1500;
@@ -539,6 +544,86 @@ export function specOfMembers(members) {
     if (!members.length) return null;
     if (members.length === 1) return { kind: members[0].kind, value: members[0].value, recursive: Boolean(members[0].recursive) };
     return { kind: 'any_of', value: members.map(m => ({ kind: m.kind, value: m.value, recursive: Boolean(m.recursive) })), recursive: false };
+}
+
+// ---- Filter mode: a row's state, and the search the states are -------------------------------------
+
+/** The tabs in the order a filter's search names them, so one filter has one address. */
+const FILTER_FACETS = ['folders', 'keywords', 'people', 'dates'];
+/** A row's states, as its marker shows them, and where each goes: `+` any of (its tab's union), `&` must (all_of), `-` not (none_of). */
+const FILTER_PARTS = { '+': 'any', '&': 'must', '-': 'not' };
+
+/**
+ * Is this source one a row of a tab opens, so that a filter can hold it: a folder with its subfolders, a keyword with the tags
+ * under it, No tag, a person, a year, a month, a year's Other (the rows' `spec` and `rowTree`'s whole).
+ */
+function isFilterMember(member) {
+    if (member.kind === 'folder') return member.recursive === true;
+    return ['keyword', 'untagged', 'person', 'year', 'month', 'year_other'].includes(member.kind);
+}
+
+/** The key of a row's source in a filter's states: one spelling for one source (a year 2024 or '2024' alike). */
+export function filterKey(member) {
+    const value = member.value === null || member.value === undefined ? null : String(member.value);
+    return JSON.stringify({ kind: member.kind, value, recursive: Boolean(member.recursive) });
+}
+
+/** The source a filter's key names: { kind, value, recursive }. */
+export function filterMember(key) {
+    return JSON.parse(key);
+}
+
+/**
+ * The search a filter's rows are: `states` a Map of filterKey -> '+', '&' or '-'. Each tab with `+` rows is one union in
+ * all_of, even of one row (so a lone `+` and a lone `&` are two addresses and Back restores the marker), each `&` row its own
+ * member of all_of, the `-` rows none_of; the tabs in FILTER_FACETS order, the rows of a tab in the Map's. No any_of, no words.
+ * null when no row is on.
+ */
+export function specFromRowStates(states) {
+    const facets = new Map(FILTER_FACETS.map(facet => [facet, { any: [], must: [], not: [] }]));
+    for (const [key, state] of states || []) {
+        const member = filterMember(key);
+        facets.get(sectionOf(member))[FILTER_PARTS[state]].push(member);
+    }
+    const allOf = [];
+    const noneOf = [];
+    for (const { any, must, not } of facets.values()) {
+        if (any.length) allOf.push({ kind: 'any_of', value: any, recursive: false });
+        allOf.push(...must);
+        noneOf.push(...not);
+    }
+    if (!allOf.length && !noneOf.length) return null;
+    return { kind: 'search', value: searchValue({ all_of: allOf, none_of: noneOf }), recursive: false };
+}
+
+/**
+ * The rows' states a search is, as a Map of filterKey -> '+', '&' or '-' (specFromRowStates' inverse), or null when the search
+ * is no filter: it has words or an any_of list; a union in all_of holds rows of two tabs (Within's union) or is a tab's second;
+ * a source is not one a row opens (a folder without its subfolders, a keyword alone); or a source is named twice.
+ */
+export function rowStatesFromSpec(spec) {
+    if (!spec || spec.kind !== 'search' || !spec.value) return null;
+    const { all_of: allOf = [], any_of: anyOf = [], none_of: noneOf = [], words = '' } = spec.value;
+    if (searchWords(words) || anyOf.length) return null;
+    const states = new Map();
+    const mark = (member, state) => {
+        if (!isFilterMember(member) || states.has(filterKey(member))) return false;
+        states.set(filterKey(member), state);
+        return true;
+    };
+    const unions = new Set();
+    for (const member of allOf) {
+        if (member.kind !== 'any_of') {
+            if (!mark(member, '&')) return null;
+            continue;
+        }
+        const facet = sectionOf(member);
+        if (unions.has(facet)) return null;
+        unions.add(facet);
+        if (!member.value.every(each => sectionOf(each) === facet && mark(each, '+'))) return null;
+    }
+    if (!noneOf.every(member => mark(member, '-'))) return null;
+    return states.size ? states : null;
 }
 
 /**
