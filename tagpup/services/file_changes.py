@@ -1683,6 +1683,10 @@ def _finish(library, change, exiftool_path):
         # One clip, settled by where its copy is (tagpup.services.convert); never undone (journal.UNDO_CHECKS).
         from tagpup.services import convert
         return convert.settle_change(library, change, exiftool_path)
+    if change.operation == file_journal.DELETE:
+        # Photos sent to the Recycle Bin, settled by a look at each (tagpup.services.photos); never undone.
+        from tagpup.services import photos as photo_service
+        return photo_service.settle_delete(library, change)
     renames, changed = _pending(library, change)
     try:
         with _settle_turn(library, change, len(changed)) as stop:
