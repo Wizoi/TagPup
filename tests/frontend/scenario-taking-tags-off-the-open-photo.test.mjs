@@ -10,8 +10,8 @@
  * or on the add box when it was the last. The panel's own removals never make it read-only (owner's V20 request). A tag
  * taken off and not written yet is gone wherever the page shows the photo's tags or decides by them (pending.js shownTags):
  * the list's count, Ctrl+D on the next photo, which copies what the photo before shows when its turn comes, the person's face
- * card, and the selection's chips. In a library view a photo read from the library while its removal is out, and answered
- * after the write's reply,
+ * card, and the selection's chips. A failed removal's words stay on the status line until its row in the list of writes is
+ * dismissed. In a library view a photo read from the library while its removal is out, and answered after the write's reply,
  * shows the tags the file holds now (pending.js readHeld).
  *
  * Every write is held until the test answers it, oldest first, as the routes answer it: the server keeps a model of each
@@ -205,6 +205,11 @@ describe("V20: taking tags off the open photo is answered at the click, the writ
     assert.equal(ctx.unanswered(), 1, "the removal clicked behind the failed one did not go");
     while (ctx.unanswered()) await ctx.answer();
     assert.deepEqual(ctx.bulks()[1].changes[A.path], { add: [], remove: ["Harbourside"] }, "the failed tag was sent again");
+    // The failure stays on the status line until its row is dismissed: the next write's "Writing tags..." and "Ready" do not
+    // say over it (#3221).
+    assert.equal(ctx.status(), "Not taken off Cross Country: The share did not answer", "the next write said over the failure");
+    const { dismissEntry } = pageExports(ctx.window, "web/tagpup/write-queue.js");
+    dismissEntry(row);
     await ctx.takeOff("Kentridge");
     while (ctx.unanswered()) await ctx.answer();
     assert.deepEqual(ctx.file(A), ["Cross Country"]);
@@ -212,6 +217,14 @@ describe("V20: taking tags off the open photo is answered at the click, the writ
     assert.equal(ctx.status(), "Ready");
   });
 
+  test("a second failure replaces the first on the status line", async (t) => {
+    const ctx = await open(t);
+    await ctx.takeOff("Cross Country");
+    await ctx.takeOff("Harbourside");
+    await ctx.answer("The share did not answer");
+    await ctx.answer("The file is locked");
+    assert.equal(ctx.status(), "Not taken off Harbourside: The file is locked");
+  });
 
   test("a failed write of a pill's removal with another change of the photo says the tag is not taken off, and keeps the other for Retry", async (t) => {
     const ctx = await open(t);

@@ -71,7 +71,7 @@ export function pendChanges(list, { people = false, panel = false } = {}) {
         action.left.add(key);
     }
     if (!action.left.size) resolve({ written: 0, failed: 0, skipped: 0 });
-    if (pending.stopped && !panel) setStatus('error', STOPPED, { transient: false });
+    if (pending.stopped && !panel) say('error', STOPPED);
     pageFollows(new Set(list.map(({ path }) => pathKey(path))));
     drain();
     return settled;
@@ -232,7 +232,7 @@ function dropPending(only = null) {
 /** Cancel: drop the changes not sent, and say how many photos it leaves unwritten. */
 function cancelPending() {
     const n = dropPending();
-    if (n) setStatus('error', `${n.toLocaleString()} ${n === 1 ? "photo's" : "photos'"} tag changes were not written.`, { transient: false });
+    if (n) say('error', `${n.toLocaleString()} ${n === 1 ? "photo's" : "photos'"} tag changes were not written.`, state.pending.failed);
 }
 
 /**
@@ -266,6 +266,17 @@ export function wirePending() {
     window.addEventListener('pagehide', () => {
         new Set((state.pending.out || []).map(item => item.folder).filter(Boolean)).forEach(forgetCachedFolder);
     });
+}
+
+/**
+ * The drain's words on the status line. A failure (`failed`: its row in the list of writes) stands until that row is
+ * dismissed or retried, or another failure is said: the next write's "Writing tags..." and "Ready" do not say over it.
+ */
+function say(kind, message, failed = null) {
+    const standing = state.pending.failed;
+    if (!failed && standing && state.writeQueue.entries.includes(standing)) return;
+    state.pending.failed = failed;
+    setStatus(kind, message, { transient: kind !== 'error' });
 }
 
 function settle(entry, how, which = () => true) {
@@ -334,7 +345,7 @@ async function sendChunk(entry) {
         entry.label = chunkLabel(chunk);
         entry.cancel = cancelPending;
         renderWriteQueue();
-        setStatus('busy', 'Writing tags...');
+        say('busy', 'Writing tags...');
         const changes = Object.fromEntries(chunk.map(e => [e.path, { add: [...e.add], remove: [...e.remove] }]));
         let data;
         try {
@@ -425,35 +436,35 @@ function takeReply(chunk, data, entry, dropped) {
         entry.error = data.error || 'not written';
         if (dropped) {
             // Dropped while out: its row lost Retry and Cancel (dropPending) and stays failed until dismissed.
-            setStatus('error', `Tags not written to ${back.length.toLocaleString()} more ${back.length === 1 ? 'photo' : 'photos'}: ${entry.error}`, { transient: false });
+            say('error', `Tags not written to ${back.length.toLocaleString()} more ${back.length === 1 ? 'photo' : 'photos'}: ${entry.error}`, entry);
             return false;
         }
         if (!kept.length) {
             // Only the open photo's own removals: they are drawn again, and nothing waits for a Retry or a Cancel.
             entry.retry = null;
             entry.cancel = null;
-            setStatus('error', `Not taken off ${putBack.join(', ')}: ${entry.error}`, { transient: false });
+            say('error', `Not taken off ${putBack.join(', ')}: ${entry.error}`, entry);
             alert(`Not taken off ${putBack.join(', ')}: ${entry.error}`);
             return false;
         }
         // The panel's own removals among them are drawn again now, and are not part of the Retry: said by name.
         const notOff = putBack.length ? ` Not taken off ${putBack.join(', ')}.` : '';
-        setStatus('error', `Tags not written to ${photosWord(kept.length)}.${notOff}`, { transient: false });
+        say('error', `Tags not written to ${photosWord(kept.length)}.${notOff}`, entry);
         alert(`Tags not written to ${photosWord(kept.length)}: ${entry.error}.${notOff} Retry or Cancel it in the list of writes (bottom right).`);
         return false;
     }
     if (dropped) return true;
     if (state.pending.stopped) {
-        setStatus('error', STOPPED, { transient: false });
+        say('error', STOPPED);
         return true;
     }
     // Photos missing on disk are said once, when each owner action they belong to is done (counted over its chunks).
     const finished = new Set(chunk.flatMap(item => [...item.actions].filter(action => !action.left.size)));
     const gone = [...finished].reduce((n, action) => n + action.skipped, 0);
     if (gone) {
-        setStatus('ready', `${gone.toLocaleString()} ${gone === 1 ? 'photo is' : 'photos are'} missing on disk and ${gone === 1 ? 'was' : 'were'} left out.${whereWritten(data)}`);
+        say('ready', `${gone.toLocaleString()} ${gone === 1 ? 'photo is' : 'photos are'} missing on disk and ${gone === 1 ? 'was' : 'were'} left out.${whereWritten(data)}`);
     } else {
-        setStatus('ready', data.file_only ? `Saved.${whereWritten(data)}` : 'Ready');
+        say('ready', data.file_only ? `Saved.${whereWritten(data)}` : 'Ready');
     }
     return true;
 }
