@@ -182,7 +182,8 @@ class AWriteThroughTheOneEntryPoint(unittest.TestCase):
                                                                self.photos[0]: (self.ids[0], ["Places/Quay"])}))
             took = time.monotonic() - began
             set_status, set_reply = self.lib.post(ROUTE, {"op": "set", "changes": {asleep: {
-                "id": asleep_id, "title": "", "tags": EXISTING + ["Places/Quay"]}}})
+                "id": asleep_id, "title": "", "tags": EXISTING + ["Places/Quay"],
+                "base": {"tags": EXISTING, "title": ""}}}})
         self.assertEqual(200, status, reply)
         self.assertFalse(reply["success"])
         self.assertEqual(1, reply["error_count"])
@@ -201,7 +202,8 @@ class AWriteThroughTheOneEntryPoint(unittest.TestCase):
                      {"op": "tags", "changes": {photo: {"id": photo_id, "title": "x"}}},
                      {"op": "set", "changes": {photo: {"id": photo_id, "title": "", "tags": []},
                                                self.photos[1]: {"id": self.ids[1], "title": "", "tags": []}}},
-                     {"op": "set", "changes": {photo: {"id": photo_id, "title": "", "tags": [], "base": "x"}}}):
+                     {"op": "set", "changes": {photo: {"id": photo_id, "title": "", "tags": [], "base": "x"}}},
+                     {"op": "set", "changes": {photo: {"id": photo_id, "title": "", "tags": []}}}):
             with self.subTest(body=body):
                 status, reply = self.lib.post(ROUTE, body)
                 self.assertEqual(400, status, reply)

@@ -1350,13 +1350,14 @@ def _tag_changes(changes, with_id=False):
 
 def _set_change(changes):
     """({path: (id or None, its fields: _set_fields)}, None) of a `set`'s `changes`, ONE photo's, or (None, the sentence
-    that refuses it)."""
+    that refuses it). A set names the `base` its record read, always: save-metadata's call with neither stamp nor base
+    (no check) has no page that sends it, and is not carried here."""
     shape = ('Send changes as {path: {"id": photo id or null, "title": text, "tags": [tags], "date_taken": text, '
              '"stamp": {"mtime": number, "size": number}, "base": {"tags": [tags], "title": text}}}, one photo.')
     if not isinstance(changes, dict) or len(changes) != 1:
         return None, shape
     ((path, change),) = changes.items()
-    if not path or not isinstance(change, dict) or set(change) - {"id", *SET_KEYS}:
+    if not path or not isinstance(change, dict) or set(change) - {"id", *SET_KEYS} or "base" not in change:
         return None, shape
     photo_id, why = _photo_id(change.get("id"))
     if why:
