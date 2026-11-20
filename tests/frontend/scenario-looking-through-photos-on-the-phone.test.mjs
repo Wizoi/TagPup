@@ -16,25 +16,15 @@
  */
 import { test, describe, afterEach } from "node:test";
 import assert from "node:assert/strict";
-import { loadApp, FakeServer, flush, click, closeAllApps, pageExports } from "./harness.mjs";
+import { loadApp, FakeServer, click, closeAllApps } from "./harness.mjs";
+import { PHONE_PAGE, el, shown, pageState, settle, phoneLayout } from "./phone-page.mjs";
 
-const PAGE = "http://localhost:8090/alpha/mobile.html";
 const KEYWORDS = { keywords: [{ tag: "Events", name: "Events", parent: null, count: 40000 }], untagged: 0 };
 const VIEW = 40000;
 
-const el = (ctx, id) => ctx.document.getElementById(id);
-const shown = (ctx) =>
-  [...ctx.document.querySelectorAll("[data-screen]")].filter((s) => !s.classList.contains("hidden")).map((s) => s.dataset.screen);
-const pageState = (ctx) => pageExports(ctx.window, "web/tagpup/mobile-state.js").state;
 const cards = (ctx) => [...el(ctx, "grid-cards").querySelectorAll(".phone-card[data-id]")];
 const names = (ctx) => cards(ctx).map((c) => c.querySelector(".phone-card-name").textContent);
 const idsAsked = (ctx) => ctx.server.urls().filter((u) => u.includes("/api/library/ids"));
-const wait = (window, ms) => new Promise((resolve) => window.setTimeout(resolve, ms));
-
-async function settle(ctx, ms = 50) {
-  await wait(ctx.window, ms);
-  await flush(ctx.window, 6);
-}
 
 async function tap(ctx, element) {
   click(ctx.window, element);
@@ -73,18 +63,8 @@ async function phone(t, { count = VIEW, videos = [], cardsReply, hold = false } 
       };
       return hold ? new Promise((resolve) => held.push(() => resolve(body))) : body;
     });
-  const ctx = await loadApp("phone", { t, server, url: PAGE });
-  const section = ctx.document.querySelector('[data-screen="grid"]');
-  const here = { scrollTop: 0, viewport: 600, columns: 3, cardHeight: 130, rowGap: 4, gridTop: 120, cardWidth: 120, columnGap: 4 };
-  Object.defineProperty(section, "scrollTop", { get: () => here.scrollTop, set: (v) => { here.scrollTop = v; }, configurable: true });
-  Object.defineProperty(section, "clientHeight", { get: () => (section.classList.contains("hidden") ? 0 : here.viewport), configurable: true });
-  pageState(ctx).grid.setMeasure(() => {
-    if (section.classList.contains("hidden")) {
-      here.scrollTop = 0;       // the browser forgets a hidden element's scroll offset
-      return { ...here, viewport: 0 };
-    }
-    return { ...here };
-  });
+  const ctx = await loadApp("phone", { t, server, url: PHONE_PAGE });
+  const { here, section } = phoneLayout(ctx);
   return Object.assign(ctx, {
     asked, here, section,
     release: async () => {

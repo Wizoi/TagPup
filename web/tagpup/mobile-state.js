@@ -28,7 +28,8 @@ export const state = {
     // The Photo screen's read of the cards around the photo open, while it is out: { lib, ids (a Set), reply }; a swipe
     // onto a photo it names waits for it rather than asking again (mobile-photo.js).
     cardsAsked: null,
-    // The Edit sheet open (mobile-edit.js): { id, record (as /api/library/photo read it), saving }; null when shut.
+    // The Edit sheet's photo (mobile-edit.js): { id, record (as /api/library/photo read it), saving, letGo }; null when
+    // shut. Drawn from the history step shown, the one record of whether the sheet is open (mobile-screens.js sheetShown).
     edit: null,
     // The tail of the page's writes, one at a time in the order sent; null when none is out.
     writing: null,
