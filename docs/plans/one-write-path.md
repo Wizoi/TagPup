@@ -53,10 +53,11 @@ Steady-state writer: a photo changed afterwards goes through the same entry poin
      `_settle_taken`). So in 1a `settle_delete` withdraws EVERY `planned` Delete row, whatever its owner, with a warning naming
      the change and a count, no paths (answer 4); every `writing` row goes to `_by_look(redo=True)`, which sends it again only
      while it is the file whose stamp `file_journal.writing` recorded (#3257). The clean-stop resume of a bulk Delete is 1b's,
-     marked by a marker of its own in the change (not the owner column). Telling an update's `stop_all` from the owner's
-     Cancel needs a public `batches.closing()` returning `_closing`.
+     marked by a marker of its own in the change (not the owner column). An update's `stop_all` is told from the owner's
+     Cancel by a `for_an_update` flag on the batch (set by `stop_all`, cleared by `cancel`; Cancel wins in either order), not
+     by `batches.closing()`.
    - **1b, Files:** `services/bulk_edit.py _delete` (already under `exclusively` around its loop, line ~279) plans all photos as one
-     change, runs `delete_planned(fresh=False)`, on a stop with `batches.closing()` leaves the rest planned and released (the
+     change, runs `delete_planned(fresh=False)`, on a stop with `batch.for_an_update` leaves the rest planned and released (the
      photo's error says it is deleted when TagPup starts again) with a marker of its own in the change that `settle_delete`
      reads to resume them (never `owner` NULL, #3256), otherwise withdraws them ("stopped as asked: not deleted");
      `end_deletes` in a `finally`; fix the docstring saying a delete is "not journaled". The time-shift sentence
