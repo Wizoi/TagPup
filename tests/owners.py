@@ -105,6 +105,11 @@ SCENARIOS = {
             "search the server reads as said (two people ANDed, one NOT another, a tab's any of ANDed with a year, a folder "
             "with its subfolders, nothing found), the address read back (Back, a bookmark, one naming a tag deleted since) "
             "gives the same marks, and a search made elsewhere (words, an Any-of list, Within's union of two tabs) marks no row."),
+    "V29": ("views", "Somebody turns Filter mode on and clicks rows: off it is Browse, on is remembered; rapid clicks on one "
+            "row cycle its mark in one place of the history and the last leaves it once; Ctrl-click sets any of; Back and a "
+            "bookmark give the marks and chips, a tag deleted since struck through; a filter finding nothing keeps its chips; "
+            "Clear all, the search box's Clear or the toggle clicked twice before Back arrives goes back once; a list past "
+            "the server's cap is refused with a sentence; unsaved edits in the open photo ask before any mark."),
     "I1": ("apps", "Switching library in the middle of a folder shows no card of the first."),
     "I2": ("apps", "A write through a server update is waited out and not repeated."),
     "I3": ("apps", "An update by a launch and by an install hands one server over to the next without killing its work."),
@@ -244,6 +249,7 @@ _SCENARIO_FILES = {
     "V26": "scenario-editing-a-photo-on-the-phone",
     "V27": "scenario-moving-on-while-a-photo-saves",
     "V28": "test_filtering_the_library_by_rows scenario-filtering-the-library-by-rows",
+    "V29": "scenario-filtering-the-library-in-filter-mode",
 }
 
 #: owner -> kind -> the unit, migration and guard files, a .mjs without its ".test.mjs".
