@@ -317,6 +317,21 @@ class AWriteThroughTheOneEntryPoint(unittest.TestCase):
                 self.assertEqual(400, status, reply)
         self.assertEqual([], self.changes())
 
+    def test_each_op_reads_its_photos_by_one_parser_and_refuses_them_in_one_sentence(self):
+        # A page's changes are read the same way whatever the op (_entries): a write naming no photo, or an id that is
+        # not a photo's, is refused by the same sentence, nothing written.
+        photo = self.photos[0]
+        own = {"tags": {"add": ["Places/Quay"]}, "shift": {},
+               "set": {"title": "", "tags": [], "base": {"tags": [], "title": ""}}}
+        for op in ("tags", "set", "shift"):
+            for changes, sentence in (({}, "The write names no photo."),
+                                      ({photo: {"id": "one", **own[op]}}, "id must be a photo id or null.")):
+                with self.subTest(op=op, changes=changes):
+                    status, reply = self.lib.post(ROUTE, {"op": op, "changes": changes, "params": {"minutes": 30}})
+                    self.assertEqual(400, status, reply)
+                    self.assertTrue(reply["error"].startswith(sentence), reply["error"])
+        self.assertEqual([], self.changes())
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -1401,18 +1401,18 @@ def _shift_change(changes, params):
 
 def _set_change(changes):
     """({path: (id or None, its fields: _set_fields)}, None) of a `set`'s `changes`, ONE photo's, or (None, the sentence
-    that refuses it). A set names the `base` its record read, always: save-metadata's call with neither stamp nor base
-    (no check) has no page that sends it, and is not carried here."""
+    that refuses it). Its photo read as every op's are (_entries). A set names the `base` its record read, always:
+    save-metadata's call with neither stamp nor base (no check) has no page that sends it, and is not carried here."""
     shape = ('Send changes as {path: {"id": photo id or null, "title": text, "tags": [tags], "date_taken": text, '
              '"stamp": {"mtime": number, "size": number}, "base": {"tags": [tags], "title": text}}}, one photo.')
-    if not isinstance(changes, dict) or len(changes) != 1:
+    if isinstance(changes, dict) and len(changes) > 1:
         return None, shape
-    ((path, change),) = changes.items()
-    if not path or not isinstance(change, dict) or set(change) - {"id", *SET_KEYS} or "base" not in change:
-        return None, shape
-    photo_id, why = _photo_id(change.get("id"))
+    found, why = _entries(changes, ("id", *SET_KEYS), shape)
     if why:
-        return None, why + " " + shape
+        return None, why
+    ((path, (photo_id, change)),) = found.items()
+    if "base" not in change:
+        return None, shape
     own, why = _set_fields(change)
     if why:
         return None, why
