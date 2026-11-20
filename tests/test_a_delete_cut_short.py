@@ -10,8 +10,9 @@ file the Delete left `writing`: gone, its rows go; there, it is sent again; on a
 Delete planned and never begun is withdrawn, nothing deleted (the owner's answer 4), whoever released it: a settle stopped
 by an update releases one a dead process planned, as a clean stop would (#3256; a bulk Delete's resume after a clean stop is
 cut 1b's, by a marker of its own). A file left `writing` is sent again only while it is the file the Delete stamped:
-another put at its path meanwhile is withdrawn, its row and faces kept (#3257). A photo of a folder the library does not
-hold (Just look) has no record.
+another put at its path meanwhile is withdrawn, its row and faces kept (#3257). A Delete the share stopped answering for
+says, in the route's reply the page shows, that it is done when the share answers (#3258). A photo of a folder the library
+does not hold (Just look) has no record.
 
 Fails on the old code: tagpup.services.photos had no `_reached`, no plan and no lock -- the kill tests stop nowhere, a
 Delete beside a held lock runs at once (test_a_delete_waits_for_the_chunk_that_holds_the_lock), and a Delete whose rows
@@ -28,7 +29,7 @@ from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import face_rows  # noqa: E402
-import own_home  # noqa: E402
+import web_client  # noqa: E402
 from view_library import ViewLibrary, make_jpeg  # noqa: E402
 
 from tagpup.core import paths  # noqa: E402
@@ -55,7 +56,7 @@ def crash_at(step):
 
 class ADeleteCutShort(unittest.TestCase):
     def setUp(self):
-        self.home = own_home.for_test(self)
+        self.app, self.home = web_client.app_for(self, "tagpup")
         self.vl = ViewLibrary(self, "library", home=self.home)
         self.library = self.vl.library
         self.share = os.path.join(self.vl.pictures, "Share")
@@ -233,6 +234,7 @@ class ADeleteCutShort(unittest.TestCase):
             result = self.delete(self.local)
         self.assertFalse(result.ok)
         self.assertEqual(0, result.changed)
+        self.assertIn("is deleted when the share answers", result.message())
         [(change_id, operation, owner)] = self.changes()
         self.assertEqual((file_journal.DELETE, None), (operation, owner), "released, for a settle")
         self.assertEqual(["writing"], [state for (state,) in self.files()])
@@ -253,6 +255,16 @@ class ADeleteCutShort(unittest.TestCase):
         self.assertFalse(os.path.exists(self.local))
         self.assertFalse(self.held(self.local_id))
         self.assertEqual(([], []), (self.changes(), self.files()))
+
+    def test_the_page_is_told_a_delete_the_share_did_not_answer_for_is_done_when_it_answers(self):
+        # The route's reply is what the page's alert shows ("Error deleting photo: " + its error; web/tagpup/photo.js).
+        with mock.patch.object(recycle_bin, "send_to_recycle_bin", side_effect=self.away):
+            reply = self.app.test_client().post("/library/api/photo/delete", json={"path": self.local})
+        body = reply.get_json()
+        self.assertFalse(body["success"])
+        self.assertIn("is deleted when the share answers", body["error"])
+        self.assertTrue(os.path.exists(self.local))
+        self.assertEqual(["writing"], [state for (state,) in self.files()])
 
     def test_a_bin_that_refuses_keeps_the_photo_and_leaves_no_record(self):
         def held_open(path):

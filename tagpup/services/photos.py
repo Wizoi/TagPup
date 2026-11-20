@@ -832,6 +832,11 @@ def delete(library, photo_path, for_good=False, fresh=True):
 #: The steps of a Delete of a held photo, in order; `_reached` is told of each.
 DELETE_STEPS = ("delete planned", "delete writing", "delete sent")
 
+#: What a Delete whose share stopped answering at its Bin step is told (the route's error, the page's alert): its file is
+#: left `writing`, and the next settle sends it once the share answers, if it is still the file the Delete stamped.
+DELETED_WHEN_THE_SHARE_ANSWERS = ("The share did not answer: the photo is deleted when the share answers, unless another "
+                                  "file has taken its place.")
+
 
 def _reached(step):
     """A step of a Delete is done (DELETE_STEPS). Nothing happens here; the tests stop a Delete at each by patching it."""
@@ -883,7 +888,8 @@ def _forget(library, row, result):
 
 def _by_look(library, row, result, redo):
     """Settle the Delete `row`, `writing`, by what is at its path now (shares.stamp_of). Gone: its rows go (_forget).
-    On a share that does not answer: left `writing`, never decided on, and False. There: with `redo` (a settle: a stop
+    On a share that does not answer: left `writing`, never decided on, `result` failed with DELETED_WHEN_THE_SHARE_ANSWERS,
+    and False. There: with `redo` (a settle: a stop
     came before the Bin step or between the Bin's copy and the original's removal) it is sent to the Bin again and
     forgotten -- only while it is the file the Delete stamped (`row.stamp`): another file put at its path meanwhile is
     taken out of the change, nothing deleted, its row left as it is, and skipped in `result`, as _settle_files holds out
@@ -891,6 +897,7 @@ def _by_look(library, row, result, redo):
     nothing deleted. True when the row is settled."""
     stamp = shares.stamp_of(row.path)
     if stamp is shares.UNANSWERED:
+        result.fail(row.path, DELETED_WHEN_THE_SHARE_ANSWERS)
         return False
     if stamp is None:
         _forget(library, row, result)
