@@ -15,7 +15,7 @@ import { backToView } from './view-left.js';
 export function showPhotoPath(photo) {
     const folder = folderOf(photo.path);
     detailFolder.textContent = baseName(folder);
-    detailFolder.title = `Show this folder in the library: ${folder}`;
+    detailFolder.title = state.library ? `Show this folder in the library: ${folder}` : `Back to this folder's grid: ${folder}`;
     detailFileName.textContent = baseName(photo.path);
     // A clip is not opened in the default app (the server refuses a video): its name is a label, its whole path in the tooltip.
     detailFileName.disabled = isVideo(photo);
@@ -29,7 +29,8 @@ export function showPhotoPath(photo) {
 function showFolder() {
     const folder = folderOf(state.activePhotoPath);
     const lib = state.library;
-    if (lib && lib.kind === 'folder' && samePath(lib.value, folder)) backToView();
+    // Opened in Organize (no library view): the grid it came from, not a library view that would replace Organize.
+    if (!lib || (lib.kind === 'folder' && samePath(lib.value, folder))) backToView();
     else upper.openLibraryView({ kind: 'folder', value: folder, recursive: true });
 }
 
