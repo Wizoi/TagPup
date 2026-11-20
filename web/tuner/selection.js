@@ -1,5 +1,6 @@
 // Selecting faces in the Identify grid, and the selected face's details.
 import { api } from './common/api.js';
+import { photoFileUrl } from './common/file-addresses.js';
 import { attachPersonFaces } from './common/person-faces.js';
 import { personLabelOf, personTitleOf, sortedTags } from './common/vocabulary.js';
 import { buildElement, replaceContent } from './common/dom.js';
@@ -108,7 +109,7 @@ export function showFaceDetails(faceId) {
     matchingDetailImg.onload = () => placePaneBox(face);
 
     // Load original preview
-    matchingDetailImg.src = api.image(`/api/photo-file?path=${encodeURIComponent(face.photo_path)}&size=512`);
+    matchingDetailImg.src = photoFileUrl({ path: face.photo_path, mtime: face.mtime }, 512);
     // A cached image can already be complete, in which case the load event never
     // arrives and the box stays zero-sized -- with its 9999px shadow dimming the
     // whole preview behind it. Position it directly when there is nothing to wait for.

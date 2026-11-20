@@ -6,9 +6,13 @@
  */
 import { api } from './api.js';
 
-/** The photo's file, upright, at `size` pixels on its long side (none: the file whole), for an img's src. */
-export function photoFileUrl(photo, size = 0) {
+/**
+ * The photo's file at `size` pixels on its long side (none: the file whole), for an img's src. TagPup's route turns it
+ * upright always; TagTuner's route keeps the stored pixels its face boxes are in unless `upright` asks.
+ */
+export function photoFileUrl(photo, size = 0, { upright = false } = {}) {
     return api.image(`/api/photo-file?path=${encodeURIComponent(photo.path)}${size ? `&size=${size}` : ''}`
+        + (upright ? '&upright=1' : '')
         + `&v=${encodeURIComponent(photo.mtime || 0)}`);
 }
 

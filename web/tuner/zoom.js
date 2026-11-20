@@ -2,14 +2,14 @@
 // the Face Crop Details pane's photo, with the face's box drawn on it, and the Original
 // Image of the photo being tuned. Both show a small copy (512 and 1024 pixels); the zoom
 // asks for the file itself, from the same route, with no size.
-import { api } from './common/api.js';
+import { photoFileUrl } from './common/file-addresses.js';
 import { openImageZoom, wireImageZoom } from './common/image-zoom.js';
 import { state } from './state.js';
 
 /** Open `image` (a small copy on the page) in the zoom: its original, `box` over it. */
-function zoomPhoto(image, photoPath, box) {
+function zoomPhoto(image, photoPath, box, mtime) {
     if (!image.getAttribute('src') || !photoPath) return;
-    openImageZoom(api.image(`/api/photo-file?path=${encodeURIComponent(photoPath)}`),
+    openImageZoom(photoFileUrl({ path: photoPath, mtime }),
         { preview: image.src, box, opener: image });
 }
 
@@ -17,13 +17,13 @@ function zoomPhoto(image, photoPath, box) {
 function onActivate(image, what) {
     image.addEventListener('click', () => {
         const target = what();
-        zoomPhoto(image, target.path, target.box);
+        zoomPhoto(image, target.path, target.box, target.mtime);
     });
     image.addEventListener('keydown', (e) => {
         if (e.key !== 'Enter' && e.key !== ' ') return;
         e.preventDefault();                       // Space would scroll the pane
         const target = what();
-        zoomPhoto(image, target.path, target.box);
+        zoomPhoto(image, target.path, target.box, target.mtime);
     });
 }
 
@@ -35,7 +35,7 @@ export function wireZoom() {
         // the stored pixels of the file, which is what the zoom's original is.
         onActivate(pane, () => {
             const face = state.detailFace;
-            return { path: face && face.photo_path, box: face && face.box };
+            return { path: face && face.photo_path, box: face && face.box, mtime: face && face.mtime };
         });
     }
     const original = document.getElementById('main-image');
@@ -44,6 +44,7 @@ export function wireZoom() {
         onActivate(original, () => ({
             path: original.getAttribute('src') ? new URL(original.src).searchParams.get('path') : null,
             box: null,
+            mtime: original.getAttribute('src') ? new URL(original.src).searchParams.get('v') : 0,
         }));
     }
 }

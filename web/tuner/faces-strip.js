@@ -1,5 +1,6 @@
 // A photo's details and the strip of its faces.
 import { api } from './common/api.js';
+import { photoFileUrl } from './common/file-addresses.js';
 import { attachPersonFaces } from './common/person-faces.js';
 import { buildElement, replaceContent } from './common/dom.js';
 import { samePath } from './common/paths.js';
@@ -101,7 +102,7 @@ function renderPhotoDetails(details) {
     panelContent.classList.remove('hidden');
 
     // Main original image (loaded as optimized preview size to speed up UI)
-    mainImage.src = api.image(`/api/photo-file?path=${encodeURIComponent(details.path)}&size=1024`);
+    mainImage.src = photoFileUrl(details, 1024);
     mainImage.alt = details.filename;
 
     // Metadata details

@@ -21,7 +21,7 @@ function face(id, box) {
     filename: `photo${id}.jpg`,
     box,
     prob: 0.99,
-    mtime: 0,
+    mtime: 1700000000 + id,
     year: 2026,
     similarity: 0.0,
     cluster_id: -1,
@@ -183,6 +183,15 @@ describe("zooming the Face Crop Details photo", () => {
     assert.equal(src.searchParams.get("path"), "D:\\xc\\photo1.jpg");
     assert.equal(src.searchParams.has("size"), false, "the zoom loads a smaller copy");
     assert.match(img.style.backgroundImage, /size=512/);
+  });
+
+  test("a photo turned in TagPup is a new address in the pane and the zoom (#3154)", async (t) => {
+    const { window, document } = await open(t);
+    await selectFace(window, document, 1);
+    assert.equal(new URL(pane(document).src).searchParams.get("v"), "1700000001");
+    click(window, pane(document));
+    const src = new URL(document.getElementById("image-zoom-img").src);
+    assert.equal(src.searchParams.get("v"), "1700000001");
   });
 
   test("Enter and Space on the focused photo open it", async (t) => {

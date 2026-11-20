@@ -319,6 +319,7 @@ def photo_details(library, photo_path, named):
         "caption": caption,
         "faces": found,
         "year": shown_year(year_taken),
+        "mtime": mtime,
         "size": photos_service.box_shape(photo_path)["size"],
     }
 

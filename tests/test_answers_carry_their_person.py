@@ -172,6 +172,7 @@ class TheAnswers(Library):
         self.assertEqual(self.person(WREN), faces[self.wren_face]["person"])
         self.assertIsNone(faces[self.stranger]["person"], "an unnamed face is nobody")
         self.assertEqual(["Sam", "Wren"], sorted(details["people"]), "the photo's list of names is as it was")
+        self.assertIsInstance(details["mtime"], float, "the page's address for the file carries it (#3154)")
 
     def test_the_face_panel_names_a_face_and_what_it_suggests(self):
         panel = face_service.panel(self.library, self.path, lambda: identify.named_faces(self.library)[1])
