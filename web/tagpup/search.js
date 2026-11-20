@@ -30,7 +30,7 @@ import {
 } from './elements.js';
 import { leaveSearch, openLibraryView } from './library-view.js';
 import {
-    MAX_MEMBERS, MAX_WORDS, SEARCH_LISTS, addressTooLong, searchAsksSomething, searchValue, searchWords, termSaysSomething,
+    MAX_MEMBERS, MAX_WORDS, SEARCH_LISTS, addressTooLong, listOverCap, searchAsksSomething, searchValue, searchWords, termSaysSomething,
     viewLabel
 } from './library-source.js';
 import { readSectionIndex } from './navigator.js';
@@ -266,7 +266,7 @@ export function runSearch() {
         else say('Type words to look for, or add a tag or a person under Filters.');
         return;
     }
-    const tooMany = SEARCH_LISTS.find(list => (value[list] || []).length > MAX_MEMBERS);
+    const tooMany = listOverCap(value);
     if (tooMany) {
         refuse(`${LIST_NAMES[tooMany]} holds at most ${MAX_MEMBERS.toLocaleString()} tags and people at once.`);
         return;

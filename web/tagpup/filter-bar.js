@@ -7,14 +7,14 @@
 // is turned on; off, the navigator is Browse as it always was. The first mark made from a view that is no filter is a new place in
 // the history (Back returns to that view); each later mark replaces it. A filter emptied -- its last mark taken off, a chip's x,
 // Clear all, or Filter turned off with one open -- is left as the search box's Clear leaves a search, through library-view.js
-// leaveSearch, once however fast the clicks come. A filter holds at most MAX_MEMBERS rows and an address the page can be reloaded
-// by: a click past either is refused with a sentence on the tab's status line (navigator.js paints `notice`). What it holds is
-// `state.nav.filter`.
+// leaveSearch, once however fast the clicks come. A filter holds at most MAX_MEMBERS rows in each list of its search, as the server
+// takes (library-source.js listOverCap), and an address the page can be reloaded by: a click past either is refused with a
+// sentence on the tab's status line (navigator.js paints `notice`). What it holds is `state.nav.filter`.
 import { buildElement, replaceContent } from './common/dom.js';
 import { state } from './state.js';
 import { btnFilterBarClear, filterBar, filterBarChips } from './elements.js';
 import { leaveSearch, openLibraryView } from './library-view.js';
-import { MAX_MEMBERS, addressTooLong, memberLabel, viewLabel } from './library-source.js';
+import { MAX_MEMBERS, addressTooLong, listOverCap, memberLabel, viewLabel } from './library-source.js';
 import { FILTER_PARTS, filterKey, filterMember, rowStatesFromSpec, specFromRowStates } from './navigator-model.js';
 import { chipKnown, chipLabel } from './search-model.js';
 
@@ -44,8 +44,8 @@ export function shownMarks() {
 
 /**
  * Show the filter these marks are: the view of their search, a new place from a view that is no filter (`replace` false), else
- * in the filter's own place; no mark left leaves the filter. Refused, with the sentence in `notice`, past MAX_MEMBERS rows or an
- * address too long to reload.
+ * in the filter's own place; no mark left leaves the filter. Refused, with the sentence in `notice`, past MAX_MEMBERS rows in one
+ * list of the search or an address too long to reload.
  */
 function showMarks(marks, replace) {
     const filter = state.nav.filter;
@@ -55,8 +55,10 @@ function showMarks(marks, replace) {
         leaveSearch();
         return;
     }
-    if (marks.size > MAX_MEMBERS) {
-        filter.notice = `A filter holds at most ${MAX_MEMBERS.toLocaleString()} rows: take one off before marking another.`;
+    const over = listOverCap(spec.value);
+    if (over) {
+        const rows = over === 'none_of' ? 'marked - not' : 'marked & must, or + any of in one tab';
+        filter.notice = `A filter holds at most ${MAX_MEMBERS.toLocaleString()} rows ${rows}: take one off before marking another.`;
         return;
     }
     if (addressTooLong({ ...spec, order: state.nav.order })) {

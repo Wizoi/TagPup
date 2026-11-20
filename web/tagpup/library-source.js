@@ -445,6 +445,18 @@ export function emptySentence(spec) {
     return `The library holds no ${spec.kind === 'year' ? 'photo of the year' : 'photo of'} ${spec.value}.`;
 }
 
+/**
+ * The list of a search's value that names more sources than the server takes in one (services.library_view.search_of): each
+ * list, and each union in a list, holds at most MAX_MEMBERS. 'all_of', 'any_of' or 'none_of', or null when none does.
+ */
+export function listOverCap(value) {
+    const over = named => named.length > MAX_MEMBERS;
+    return SEARCH_LISTS.find(list => {
+        const named = value[list] || [];
+        return over(named) || named.some(member => member.kind === 'any_of' && over(member.value || []));
+    }) || null;
+}
+
 /** Is the address of this view too long to be read again (MAX_ADDRESS)? */
 export function addressTooLong(spec) {
     return viewSearch(spec).length > MAX_ADDRESS;
