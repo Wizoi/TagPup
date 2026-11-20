@@ -24,6 +24,8 @@ WRITES = {"POST", "PUT", "PATCH", "DELETE"}
 BATCHES = {
     "/api/library/bulk-edit": "bulk_edit.run takes the claim first (a delete is a batch too, with the same chunks)",
     "/api/photos/bulk-tags": "file_changes.batch_exclusively takes the claim before the lock, and refuses over the cap before it",
+    "/api/photos/write": "the entry point's _write: file_changes.batch_exclusively takes the claim before the lock, and refuses "
+                         "over the cap before it, as bulk-tags (which calls it)",
     "/api/folder/auto-apply": "file_changes.batch_exclusively takes the claim before the lock",
     "/api/folder/time-shift": "write_fields takes the claim; over the cap it is refused",
     "/api/folder/rename-photos": "the original names are written by write_fields under Smart Rename's lock (a batch waiting ahead "

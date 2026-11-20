@@ -50,7 +50,7 @@ OPEN = {
         "/api/people-with-counts /api/person-faces /api/person/rename /api/photo-details /api/photo-faces "
         "/api/photo-faces/suggestions /api/photo-file /api/photo/automatch /api/photo/delete /api/photo/rotate "
         "/api/photo/save-metadata /api/photo/smart-rename /api/photo/smart-rename-parts /api/photo/unmatch-all "
-        "/api/photos /api/photos/bulk-tags /api/rules /api/settings /api/sync /api/sync/review "
+        "/api/photos /api/photos/bulk-tags /api/photos/write /api/rules /api/settings /api/sync /api/sync/review "
         "/api/sync/review/ignore /api/sync/review/include /api/tags /api/tags/list /api/tags/merge /api/tags/photos "
         "/api/taxonomy/create /api/taxonomy/delete-check /api/taxonomy/delete-confirm /api/taxonomy/rename "
         "/api/taxonomy/tree /api/taxonomy/update /api/unmatched-faces/build-status /api/unmatched-faces/people "
