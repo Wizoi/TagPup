@@ -3,7 +3,7 @@
 import { dialogOpen, holdFocus, releaseFocus } from './common/dialog.js';
 import { buildElement, replaceContent } from './common/dom.js';
 import { baseName, pathKey, samePath } from './common/paths.js';
-import { UNREADABLE_SAVE, postPhotoMetadata } from './common/photo-write.js';
+import { UNREADABLE_SAVE, inTurn, postPhotoMetadata } from './common/photo-write.js';
 import { leafOf, photoAlreadyHas, tagProblem, textProblem } from './common/vocabulary.js';
 import { upper } from './hooks.js';
 import { state } from './state.js';
@@ -215,9 +215,8 @@ export function openPhotoWrite() {
  * So a job runs only after every write queued before it, and computes what it
  * writes from the photo's tags as they are then. It redraws only when its photo
  * is still the one shown (redrawIfShowing). detailSaveInFlight is the tail of the
- * whole queue; leaving a photo waits only for that photo's writes (queueWriteOf).
- * Resolves to the job's
- * result, or false if it threw; the queue carries on either way.
+ * whole queue (photo-write.js inTurn, the phone's line too); leaving a photo waits only for that photo's writes
+ * (queueWriteOf). Resolves to the job's result, or false if it threw; the queue carries on either way.
  */
 /**
  * Queue `job`, a write to photo files, behind every write queued before it. A photo of a
@@ -231,12 +230,11 @@ export function queuePhotoWrite(job, label = 'Save a photo', again = () => queue
     // false failed; Retry queues it again, as `again` says (a write of one photo is queued again as that photo's).
     const entry = queueEntry(label);
     entry.retry = () => again(entry);
-    const before = state.detailSaveInFlight || Promise.resolve();
-    const run = before.then(() => {
+    const run = inTurn(state, 'detailSaveInFlight', () => {
         markEntry(entry, 'writing');
         upper.holdForWrite();   // a clip playing lets go of its file for the write, and plays on after the last one
         return job(entry);
-    }).then(result => {
+    }, () => upper.resumeAfterWrite()).then(result => {
         markEntry(entry, result === false ? 'failed' : 'done');
         return result;
     }, err => {
@@ -247,14 +245,7 @@ export function queuePhotoWrite(job, label = 'Save a photo', again = () => queue
         entry.error = entry.error || err.message;
         markEntry(entry, 'failed');
         return false;
-    }).finally(() => {
-        if (state.detailSaveInFlight === run) {
-            state.detailSaveInFlight = null;
-            upper.resumeAfterWrite();
-        }
-        updateSaveButton();
-    });
-    state.detailSaveInFlight = run;
+    }).finally(updateSaveButton);
     updateSaveButton();
     return run;
 }

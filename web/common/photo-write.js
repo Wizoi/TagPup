@@ -28,6 +28,24 @@ export function baseOf(photo) {
 
 export const UNREADABLE_SAVE = 'This photo could not be read just now: reopen it.';
 
+/**
+ * Both pages' one write at a time: run `job` after every job put in turn before it on `holder[key]`, which holds the tail
+ * of the line (null when nothing is out). Resolves what `job` resolves and rejects with its failure; the line goes on
+ * either way, and `idle()` runs when the last job in it settles. What a failure means is the caller's: the phone says it
+ * on the sheet, the PC's queue (edits.js queuePhotoWrite) marks its entry failed and resolves false.
+ */
+export function inTurn(holder, key, job, idle = () => {}) {
+    const run = (holder[key] || Promise.resolve()).then(() => job());
+    const tail = run.then(() => {}, () => {});
+    holder[key] = tail;
+    tail.then(() => {
+        if (holder[key] !== tail) return;
+        holder[key] = null;
+        idle();
+    });
+    return run;
+}
+
 /** After a write: the record is of the file as it is now, and the next write names that. */
 export function takeStamp(photo, stamp) {
     if (!photo || !stamp) return;

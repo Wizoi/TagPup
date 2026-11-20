@@ -16,7 +16,7 @@
 // it applied (shownTags), redrawn whenever the map changes for a photo of the page (pageFollows); a record read from the
 // library while a write is out takes the replies that came back meanwhile (readHeld).
 import { api } from './common/api.js';
-import { pathKey, samePath } from './common/paths.js';
+import { folderOf, pathKey, samePath } from './common/paths.js';
 import { leafOf } from './common/vocabulary.js';
 import { upper } from './hooks.js';
 import { state } from './state.js';
@@ -57,7 +57,7 @@ export function pendChanges(list, { people = false, panel = false } = {}) {
         const key = pathKey(path);
         let entry = pending.files.get(key);
         // A file already waiting keeps the token of the action that put it here first (the plan's cut 3 rule), and the
-        // folder it was clicked in, whose records this browser keeps (cache.js) if the folder is left before it is written.
+        // folder it was clicked in, which leaving another way does not ask about (leaveThen).
         if (!entry) {
             entry = { path, add: new Set(), remove: new Set(), panel: new Set(), token, actions: new Set(), folder: state.scannedFolder || null };
             pending.files.set(key, entry);
@@ -179,17 +179,26 @@ function unwritten() {
 /**
  * A Delete of `paths` waits for their tag changes (a folder's selection, bulk-edit.js, and the open photo's, photo.js
  * deleteActivePhoto): else a chunk would write, or give back the ops of, a file that is gone, and the page would call a
- * photo deleted on purpose missing. A library view's selection is ids (every photo of the view, with Select all), which
- * the page cannot match to the files waiting without their cards: it is asked with no `paths`, and waits for every change
- * (in a view only the open photo's removals and an Undo, written in a moment). Says so and answers true while any is not
- * written; false when the delete may go on.
+ * photo deleted on purpose missing. So for a single write of one of them queued or out (a save, a card's title, a rotate:
+ * edits.js queueWriteOf, state.photoWrites), which would land on a file about to go or fail "file gone" after it. A library
+ * view's selection is ids (every photo of the view, with Select all), which the page cannot match to the files waiting
+ * without their cards: it is asked with no `paths`, and waits for every change and write (in a view only the open photo's,
+ * and an Undo, written in a moment). Refused with a sentence naming what waits, never waited for: answers true while any
+ * is not written; false when the delete may go on.
  */
 export function deleteWaits(paths = null) {
-    const keys = unwritten();
-    const waiting = paths ? paths.filter(path => keys.has(pathKey(path))).length : keys.size;
-    if (!waiting) return false;
-    const which = !paths ? photosWord(waiting) : paths.length === 1 ? 'this photo' : `${waiting.toLocaleString()} of these photos`;
-    alert(`Tag changes for ${which} are not written yet: wait for them, or cancel them in the list of writes, then delete.`);
+    const among = (keys) => (paths ? paths.filter(path => keys.has(pathKey(path))).length : keys.size);
+    const which = (n) => (!paths ? photosWord(n) : paths.length === 1 ? 'this photo' : `${n.toLocaleString()} of these photos`);
+    const waiting = among(unwritten());
+    if (waiting) {
+        alert(`Tag changes for ${which(waiting)} are not written yet: wait for them, or cancel them in the list of writes, then delete.`);
+        return true;
+    }
+    const saving = among(new Set(Object.keys(state.photoWrites)));
+    if (!saving) return false;
+    const one = saving === 1;
+    alert(`${one ? 'A save' : 'Saves'} of ${which(saving)} ${one ? 'is' : 'are'} not written yet: wait for ${one ? 'it' : 'them'}`
+        + ' (the list of writes, bottom right), then delete.');
     return true;
 }
 
@@ -261,10 +270,10 @@ export function wirePending() {
         e.preventDefault();
         e.returnValue = '';
     });
-    // A page left with a chunk out abandons its fetch, written or not: the folders it came from forget the records kept of
-    // them (their stamps may be older than the files), so opened again they are scanned rather than refused a save.
+    // A page left with a chunk out abandons its fetch, written or not: the photos' folders forget the records kept of them
+    // (their stamps may be older than the files), so opened again they are scanned rather than refused a save.
     window.addEventListener('pagehide', () => {
-        new Set((state.pending.out || []).map(item => item.folder).filter(Boolean)).forEach(forgetCachedFolder);
+        new Set((state.pending.out || []).map(item => folderOf(item.path))).forEach(forgetCachedFolder);
     });
 }
 
@@ -367,8 +376,9 @@ async function sendChunk(entry) {
 
 /**
  * The reply into the records: each file written takes the stamp and the tags its file holds now, in any record of it
- * the page holds (heldRecords) and, its folder left since, in the records this browser kept of that folder (whatever the page shows
- * meanwhile: a library view may show one of its photos); a file gone was skipped and keeps its record. A failed chunk's
+ * the page holds (heldRecords) and, its folder not the one open, in the records this browser kept of the photo's own folder
+ * (whatever the page shows meanwhile: a library view, another folder where an Undo of it was pressed); a file gone was
+ * skipped and keeps its record. A failed chunk's
  * unwritten files go back to the front of the map and the drain stops, unless the changes were dropped while it was out
  * (`dropped`): then they are not written, and Cancel's message stands.
  */
@@ -381,7 +391,7 @@ function takeReply(chunk, data, entry, dropped) {
     heldRecords().forEach(p => photos.set(pathKey(p.path), [...(photos.get(pathKey(p.path)) || []), p]));
     const back = [];
     const written = [];
-    const left = new Map();   // folder left since -> its items written
+    const left = new Map();   // a photo's folder not open -> its items written
     const take = (photo, item) => {
         const key = pathKey(item.path);
         takeWritten(photo, stamps.get(key), held.get(key));
@@ -398,8 +408,9 @@ function takeReply(chunk, data, entry, dropped) {
                 take(photo, item);
                 written.push(photo);
             });
-            if (item.folder && !(state.scannedFolder && samePath(item.folder, state.scannedFolder))) {
-                left.set(item.folder, [...(left.get(item.folder) || []), item]);
+            const home = folderOf(item.path);
+            if (!(state.scannedFolder && samePath(home, state.scannedFolder))) {
+                left.set(home, [...(left.get(home) || []), item]);
             }
             forReads(item);
             settle(item, 'written');

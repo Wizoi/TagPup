@@ -134,6 +134,31 @@ describe("I13: deleting the selected photos of a folder", () => {
     assert.equal(statusLine(ctx), stripSaid(ctx), "the status line says how it ended, not Ready");
   });
 
+  test("a card's title saved and not written yet: the Delete of its photo is refused naming the save, nothing sent; written, it goes", async (t) => {
+    const ctx = await organize(t);
+    let answer;
+    ctx.server.first("/api/photo/save-metadata", () => new Promise((resolve) => { answer = resolve; }));
+    const card = [...ctx.document.querySelectorAll("#thumbnails-grid [data-path]")].find((each) => each.getAttribute("data-path") === at("IMG_0003.jpg"));
+    click(ctx.window, card.querySelector(".thumbnail-filename"));
+    const input = card.querySelector(".thumbnail-filename-input");
+    input.value = "Harbour lights";
+    input.dispatchEvent(new ctx.window.KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+    await ctx.until(() => calls(ctx, "/api/photo/save-metadata").length === 1);
+    assert.notEqual(ctx.state.activePhotoPath, at("IMG_0003.jpg"), "the photo saved is not the open one");
+    pick(ctx, "IMG_0003.jpg", "IMG_0004.jpg");
+    click(ctx.window, button(ctx));
+    await ctx.settle(20);
+    assert.deepEqual(ctx.alerts, ["A save of 1 of these photos is not written yet: wait for it (the list of writes, bottom right), then delete."]);
+    assert.equal(calls(ctx, "/selection/delete-check").length, 0, "nothing asked of the server");
+    assert.equal(ctx.questions.length, 0);
+    answer({ success: true, mtime: 1700000000, size: 2048 });
+    await ctx.until(() => !Object.keys(ctx.state.photoWrites).length);
+    serverDeletes(ctx, ["IMG_0003.jpg", "IMG_0004.jpg"], served.deleted);
+    click(ctx.window, button(ctx));
+    await ctx.until(() => listed(ctx).length === 3);
+    assert.equal(ctx.alerts.length, 1, "written, the delete goes on");
+  });
+
   test("a file not indexed yet is said in the question and left; a photo on a share that did not answer stays listed and selected", async (t) => {
     const ctx = await organize(t);
     pick(ctx, "IMG_0001.jpg", "IMG_0002.jpg", "IMG_0003.jpg");
