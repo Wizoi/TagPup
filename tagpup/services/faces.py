@@ -19,7 +19,7 @@ import os
 
 import numpy as np
 
-from tagpup.core import clustering, orientation, paths, validation
+from tagpup.core import clustering, orientation, validation
 from tagpup.files import images, shares
 from tagpup.core.result import Conflict, NotFound, Refused, Result
 from tagpup.services import identify
@@ -333,7 +333,7 @@ def automatch_folder(library, folder, named, rehearse=False):
     return result
 
 
-def remove_folder(library, folder):
+def remove_folder(library, folder, refused=None):
     """Take a folder's photos and faces out of the library -- the folders under it too.
     The photo files are never touched. This does discard face work for those photos,
     manual names and exclusions included, so the Result says what it cost.
@@ -343,12 +343,20 @@ def remove_folder(library, folder):
     in the library's ignored folders, a journaled change of its settings, as the owner's
     own Ignore is (tagpup.services.settings.change). details["ignored"] says whether it was.
 
+    `refused(conn)`, when given, is asked first inside the write, the library's write lock held: a sentence raises
+    Conflict with it, nothing removed (tagpup.services.libraries.remove).
+
     details: `photos_removed`, `faces_removed`, `manual_lost`, `excluded_lost`, `ignored`.
     """
     from tagpup.services import settings   # settings reaches sync, which reaches the faces
     result = Result(attempted=1)
 
     def remove(conn):
+        if refused is not None:
+            db.begin(conn, immediate=True)
+            why = refused(conn)
+            if why:
+                raise Conflict(why)
         return photos.remove_under(conn, folder)
 
     # Their thumbnails go with them (tagpup.services.thumbnails): the ids are read before the rows go.
@@ -363,8 +371,7 @@ def remove_folder(library, folder):
         conn.close()
     result.details["ignored"] = False
     if still:
-        ignored = settings.of(library).ignored + [paths.stored(folder)]
-        change = settings.change(library, {settings.IGNORED: validation.FOLDER_SEPARATOR.join(ignored)})
+        change = settings.ignore_folder(library, folder)
         if change.ok:
             result.details["ignored"] = True
         else:

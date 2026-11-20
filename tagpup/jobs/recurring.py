@@ -160,7 +160,7 @@ def _snapshots(library, run):
 
 
 #: The daily catch-up sync, and the job the folder watcher's sync of a whole library is claimed as (sync_whole).
-SYNC = "sync"
+SYNC = job_runs.SYNC
 
 
 @JOBS.job(SYNC, DAILY, reason=CATCH_UP, failed=sync_service.could_not_look)

@@ -11,7 +11,6 @@ from flask import Blueprint, jsonify, request
 from tagpup import runtime as runtimes
 from tagpup.core import paths
 from tagpup.jobs import suggestions as suggestion_jobs
-from tagpup.services import faces as faces_service
 from tagpup.services import libraries as library_actions
 from tagpup.services import photos as photo_actions
 from tagpup.web import responses, state
@@ -79,24 +78,19 @@ def folder_remove():
     """Take a folder's photos and faces out of this library
     (tagpup.services.faces.remove_folder). The photo files are never touched.
 
-    Refused, 409, while the folder, a folder above it or one below it waits in this library's index queue or is being
-    indexed (IndexQueue.overlaps): the run would otherwise be refused at its next batch (store.photos.record_indexed,
-    NotHeld: no rows made) and stop, failed, part-way. What the queue cannot see -- a CLI index in another process, a
-    removal between a run's end and the re-run of what it missed -- goes ahead, and that index is refused the same way
-    at its next batch. Another library's queue is its own: a library holding the same folder removes it."""
+    Refused, 409 with the sentence the dialog shows as it is, while the folder may not be removed just now
+    (tagpup.services.libraries.removal_refusal: it is being indexed, or waits to be, in this library; another process
+    indexes the library; a sync of it is under way). Another library's queue is its own: a library holding the same
+    folder removes it."""
     library = state.require()
     body = request.get_json(silent=True) or {}
     folder_path = body.get("folder_path")
     if not folder_path:
         return responses.error(400, "Missing folder_path")
-    busy = state.runtime().index_queues.of(library).overlaps(folder_path)
-    if busy:
-        if busy["status"] == "running":
-            return responses.error(409, "Not removed: %s is being indexed in this library just now. Remove the "
-                                        "folder when its index has finished." % busy["folder"])
-        return responses.error(409, "Not removed: %s waits to be indexed in this library. Cancel it, or remove the "
-                                    "folder when its index has finished." % busy["folder"])
-    result = faces_service.remove_folder(library, folder_path)
+    try:
+        result = library_actions.remove(library, folder_path, state.runtime().index_queues.of(library))
+    except responses.ANSWERED as why:
+        return responses.of(why)
     if not result.ok:
         # Its rows went (photos_removed says how many), but a step after them failed: the reply says which.
         return responses.error(500, result.message(), **result.details)
