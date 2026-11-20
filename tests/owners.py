@@ -126,8 +126,8 @@ SCENARIOS = {
     "I14": ("apps", "On a phone the owner opens TagPup's phone page: an address naming no library opens the one this browser opened last while the server lists it, else the list; Back goes up a screen; another library is the phone's page on it; a server updated meanwhile says so in the banner; a list that could not be read says so with Try again; a slow first reply never draws over a newer one."),
     "I15": ("apps", "Somebody tags photos, or saves one photo's title and tags, and the page sends it to the one entry point "
             "of a write of photo files: one envelope whatever the op; an update stopping the batches begins nothing; two "
-            "writes at once both land, one after the other; a share that does not answer is answered as the old route "
-            "answered it; a stale record, or an id now naming another file, is refused 409 and nothing is written; a photo "
+            "writes at once both land, one after the other; a photo on a share that does not answer is its error at "
+            "once and the others are written; a stale record, or an id now naming another file, is refused 409 and nothing is written; a photo "
             "of a folder the library does not hold is named by its path alone."),
 }
 
