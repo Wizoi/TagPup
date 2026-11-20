@@ -101,6 +101,28 @@ real library, and the person side stays the tag-tree node id.
 
 Steady-state writer: not applicable (read-only, writes nothing). One-offs: none.
 
+## Cut 1 design as found in the code (2026-11-19; the first worker ran out of budget reading, so cut 1 is split)
+
+Split: **1a** the model and its tests (pure, `navigator-model.js`, node tests, no DOM); **1b** the toggle, row markers, chip strip,
+history and leaving the filter. 1b starts after 1a merges.
+
+- Server needs no change: `_search_of` keeps an `any_of` inside `all_of` as one member; a union of one is its member.
+- **Spec from rows:** each facet with `+` rows becomes one `{kind:'any_of', value:[...]}` in `all_of`, even for one row (so a lone
+  `+` and a lone `&` differ and Back restores the right marker); each `&` row is its own `all_of` member; `-` rows go in
+  `none_of`; `any_of:[]`, no words. Beside `specOfMembers`.
+- **Rows from spec:** a Map of member key -> `+`/`&`/`-`, or null when the search is not a filter. It is a filter when: no words,
+  empty `any_of`, each union in `all_of` holds one facet only with at most one union per facet, every member is a kind a row can be
+  (folder only with subfolders; `keyword` not `keyword_only`), no member in two states. (Within's cross-facet union is thus not a filter.)
+- **A search made elsewhere** (words, Any-of list, Within): no marks, chip strip hidden; a click starts a new filter, pushed as a
+  new place. The search page is unchanged.
+- **History (1b):** first filter click from a non-filter view pushes a place (`searchBack`), later clicks replace; Back goes to the
+  Browse view before. An emptied filter or Filter off with a filter open leaves through ONE shared function in `library-view.js`
+  that `search.js clearSearch` also uses, with a `leaving` guard in `state.nav.filter` (the search box's Clear has the same race
+  today: a `low` finding to file). Clicks cycle off, `+`, `&`, `-`, off; Ctrl-click sets `+`; a grouping row only opens/closes.
+- **Chips:** deleted tags/people use the existing `chipKnown` (`search-model.js`).
+- **What turns Filter mode on from an address:** DECIDED (a): remember the toggle in this browser (localStorage, as
+  `details-panel.js` does), nothing in the address. No `filter=1` parameter (it would touch `VIEW_PARAMS` and every spec rebuild).
+
 ## Typed grammar (owner's addition, 2026-11-19): DESIGN, not yet decided
 
 One text box that takes a query, with a `?` icon that opens the grammar with examples. It is the same filter as the chips (the
