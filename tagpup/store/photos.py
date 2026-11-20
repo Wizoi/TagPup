@@ -91,8 +91,9 @@ def _describes_before(row_mtime, row_size, before):
     return describes(row_mtime, row_size, before)
 
 
-def forget_photo(db_path, photo_path):
-    """Remove a deleted photo's row and its faces; its vectors go with the row.
+def forget_photo(db_path, photo_path, also=None):
+    """Remove a deleted photo's row and its faces; its vectors go with the row. `also(conn)` writes in the same
+    transaction (the Delete's journal row marked done, tagpup.services.photos).
 
     Returns how many rows of each were removed. The faces are deleted explicitly
     rather than left to the foreign key's cascade: db.connect() does not turn foreign
@@ -103,6 +104,8 @@ def forget_photo(db_path, photo_path):
         where, params = store_roots.sql_equals(conn, "path", photo_path)
         removed["photos"] = conn.execute("DELETE FROM photos WHERE " + where, params).rowcount
         derived.prune(conn)   # the photo's rows went with it; the folders it emptied do not
+        if also is not None:
+            also(conn)
         return removed
 
     removed = db.write_with_connection(

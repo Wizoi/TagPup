@@ -140,6 +140,13 @@ def stop_all():
     return _stop(lambda batch: True)
 
 
+def closing():
+    """Is this process handing over to a new version (stop_all, until reopen)? What tells an update's stop from the
+    owner's Cancel: a write stopped by it leaves what it had planned for the next start (tagpup.services.photos'
+    Deletes)."""
+    return _closing
+
+
 def reopen():
     """The server takes work again (a drain given up): batches begin as usual."""
     global _closing

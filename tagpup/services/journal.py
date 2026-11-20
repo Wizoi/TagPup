@@ -43,7 +43,7 @@ from tagpup.services import (
     tags_from_faces,
 )
 from tagpup.services import settings as library_settings
-from tagpup.store import db, journal
+from tagpup.store import db, file_journal, journal
 
 logger = logging.getLogger(__name__)
 
@@ -117,6 +117,9 @@ UNDO_CHECKS = {
     # write of fields as Save's.
     convert.OPERATION: "change %(change)d (%(operation)s): not undone, the original is deleted",
     convert.CARRIED: None,
+    # A Delete (file_journal.INTERNAL): its record lasts only while it is under way, and the photo is in the Bin.
+    file_journal.DELETE: ("change %(change)d (%(operation)s): a Delete is not undone; restore the photo from the "
+                          "Recycle Bin"),
 }
 UNDO_CHECKS.update({operation: None for operation in bulk_edit.OPERATIONS.values()})
 UNDO_CHECKS.update({operation: None for operation in face_batch.DESCRIPTIONS.values()})

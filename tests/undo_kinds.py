@@ -7,7 +7,7 @@ from tagpup.services import baking, bulk_edit, convert, face_batch, face_people,
 from tagpup.services import journal as journal_service
 from tagpup.services import settings as library_settings
 from tagpup.services import tags_from_faces
-from tagpup.store import journal
+from tagpup.store import file_journal, journal
 
 #: Each kind of change a row of the matrix makes, by its UNDO_CHECKS key, and the rows (the matrix's BUILT and WRITERS)
 #: making it. A kind no code makes any more (journal_service.RETIRED) is here where a row makes it as its deleted writer
@@ -72,4 +72,6 @@ LEFT = {
     convert.CARRIED: AS_SAVE,
     convert.OPERATION: ("a clip's conversion, planned by file_journal.plan and never undone (its sentence: the original "
                         "is deleted)"),
+    file_journal.DELETE: ("a Delete's crash record (file_journal.INTERNAL), never listed nor undone (its sentence): "
+                          "tests/test_a_delete_cut_short.py"),
 }

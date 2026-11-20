@@ -20,7 +20,7 @@ could put back is. `changes.owner` names the process carrying a change out, so a
 another live process is writing is not taken for one a crash left (tagpup.services.
 file_changes.settle).
 
-A change of an INTERNAL operation (the index's bake) is the record a crash needs and no
+A change of an INTERNAL operation (the index's bake, a Delete) is the record a crash needs and no
 more: it is erased, its files and itself, when it finishes forward -- but for a file of it
 that ended a conflict the doctor counts (a note of NOTES), which is kept with its change
 (owner, 2026-11-03, narrowed by the main session to the doctor's notes); no history lists
@@ -62,8 +62,14 @@ CHUNK = 500
 #: holds), and once finished it is erased, all but its conflicts (finish). Spelt here, the lowest layer that tells it apart; tagpup.services.
 #: baking names it INDEX_OPERATION. The 'bake photos' changes of the backfill are not internal and stay as they are.
 INDEX_BAKE = "index bake"
+#: The operation of a photo sent to the Recycle Bin and forgotten (tagpup.services.photos.delete): one file, its row
+#: planned, `writing` once its Bin step begins, done in the transaction that removes the photo's rows
+#: (store.photos.forget_photo's `also`). The crash record a Delete needs between its file and its rows, never an
+#: operation History lists or undoes (tagpup.services.journal.UNDO_CHECKS); settled by tagpup.services.photos.
+#: settle_delete (file_changes._finish), which looks at each file it left `writing`. `fields_after` holds {"for_good"}.
+DELETE = "delete photo"
 #: The operations whose changes are internal: listed by no history, met by no undo's check of newer changes.
-INTERNAL = (INDEX_BAKE,)
+INTERNAL = (INDEX_BAKE, DELETE)
 ERASED = "erased"      # what `finish` returns for a change that wrote nothing and is gone, as None says files are left
 #: The operations that rename photo files (tagpup.services.file_changes.rename refuses another): the changes whose files a
 #: rename left under a new name, known there by their fingerprint (follow_renamed). By the operation, the change_files of a
