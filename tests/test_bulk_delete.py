@@ -1,5 +1,6 @@
 """Delete of a library view's selection (#674): a bulk edit of op `delete` (POST /api/library/bulk-edit, tagpup.services.bulk_edit) that
-deletes each photo as the folder view's Delete does (tagpup.services.photos.delete), and the question's answer before it -- how many,
+deletes each photo as the folder view's Delete does (tagpup.services.photos.delete_in_chunks: the whole selection one change of the
+journal; stopped part way: test_a_bulk_delete_stopped_part_way), and the question's answer before it -- how many,
 and how many with no Recycle Bin (POST /api/library/selection/delete-check, tagpup.services.selection.where_deleted).
 
 The Recycle Bin is the test's: `send_to_recycle_bin` removes the file and says so, and which folders have none is the test's to

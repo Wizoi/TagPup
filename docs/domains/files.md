@@ -105,7 +105,12 @@ its file marked `writing` with the stamp of the file there, sent to the Bin, and
 photo's rows (`store.photos.forget_photo`'s `also`), all under the lock of changes of photo files. A stop between them is
 settled by `photos.settle_delete` (`file_changes._finish`): a file still `planned` is withdrawn, nothing deleted; one left
 `writing` is forgotten if gone, sent again if it is still the file stamped, withdrawn if another file is at its path, and
-waited for on a share that does not answer. A Just-look photo's Delete has no record.
+waited for on a share that does not answer. A Just-look photo's Delete has no record. A library view's bulk Delete
+(`photos.delete_in_chunks`) is ONE such change, each file planned with the look the start took of it, carried out a chunk
+at a time: stopped by Cancel, the rest are withdrawn; stopped by an update (`batches.closing`), they stay `planned` and the
+change says how many in its summary (`LEFT_FOR_THE_NEXT_START`, never its `owner`, #3256), which the next start's
+`settle_delete` deletes, each only while it is the file looked at; the count is taken off before the first is begun, so a
+kill during that resume withdraws the rest (owner's answer 4).
 
 Every photo's file is baked with no command (owner, 2026-10-28): a current vector with no fingerprint row
 (`photo_fingerprints.NO_FINGERPRINT`: Suggest's or a re-embedding pass's) is work sync owes the index, whose bake after

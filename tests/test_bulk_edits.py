@@ -684,17 +684,6 @@ class ASelectionByPath(Bulk):
         self.assertEqual((self.ids[1], "p001.jpg", file_changes.AWAY_WHY), tuple(done["errors"][0][key] for key in ("id", "name", "why")))
         self.assertEqual([self.ids[1]], self.held(self.ids[:3]))
 
-    def test_cancel_part_way_stops_after_the_chunk_and_the_rest_stay(self):
-        def cancel(n):
-            if n == 10:
-                ticket = self.client.get("/api/activity/batches").get_json()["batches"][0]["ticket"]
-                self.app.test_client().post("/api/activity/batches/cancel", json={"library": self.library.name, "ticket": ticket})
-        self.on_recycle = cancel
-        done = self.delete({"paths": [self.native(photo_id) for photo_id in self.ids]})
-        self.assertEqual((batches.CHUNK, self.PHOTOS - batches.CHUNK), (done["changed"], done["error_count"]))
-        self.assertIn("stopped as asked", done["errors"][0]["why"])
-        self.assertEqual(self.ids[batches.CHUNK:], self.held(self.ids), "the first chunk went, the rest are kept")
-
 
 if __name__ == "__main__":
     unittest.main()
