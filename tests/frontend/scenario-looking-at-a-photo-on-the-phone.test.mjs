@@ -22,22 +22,12 @@
 import { test, describe, afterEach } from "node:test";
 import assert from "node:assert/strict";
 import { loadApp, FakeServer, flush, click, closeAllApps, pageExports } from "./harness.mjs";
+import { PHONE_PAGE, el, shown, pageState, wait, settle, phoneCard, phoneLayout } from "./phone-page.mjs";
 
-const PAGE = "http://localhost:8090/alpha/mobile.html";
 const KEYWORDS = { keywords: [{ tag: "Events", name: "Events", parent: null, count: 2000 }], untagged: 0 };
 
-const el = (ctx, id) => ctx.document.getElementById(id);
-const shown = (ctx) =>
-  [...ctx.document.querySelectorAll("[data-screen]")].filter((s) => !s.classList.contains("hidden")).map((s) => s.dataset.screen);
-const pageState = (ctx) => pageExports(ctx.window, "web/tagpup/mobile-state.js").state;
 const cards = (ctx) => [...el(ctx, "grid-cards").querySelectorAll(".phone-card[data-id]")];
 const idsAsked = (ctx) => ctx.server.urls().filter((u) => u.includes("/api/library/ids"));
-const wait = (window, ms) => new Promise((resolve) => window.setTimeout(resolve, ms));
-
-async function settle(ctx, ms = 50) {
-  await wait(ctx.window, ms);
-  await flush(ctx.window, 6);
-}
 
 /** Wait for `done()`, at most 10 s. */
 async function until(ctx, done, what) {
@@ -49,21 +39,12 @@ async function until(ctx, done, what) {
   await flush(ctx.window, 6);
 }
 
-/** The card the library sends: its path, its stamp (`mtime`, also in its thumbnail's address), `media`, as tagpup.services.library_view. */
-function cardOf(id, extra = {}) {
-  const mtime = extra.mtime ?? 1718000000.5;
-  return {
-    id, name: `Rowan's Meet ${id}.jpg`, path: `D:\\Photos\\Rowan's Meet\\Rowan's Meet ${id}.jpg`, taken: "2024:06:01 10:00:00",
-    thumb: `/api/photo-thumb?id=${id}&v=${mtime}`, mtime, media: "photo", ...extra,
-  };
-}
-
 /**
  * The page on a library whose keyword holds `count` photos, the Grid given a phone's layout (jsdom has none): 3
  * columns, 600 px of view. `card(id)` answers each card, null for a photo the library no longer has; a read of cards
  * sent while the Photo screen shows is held until released when `holdOne`.
  */
-async function phone(t, { count = 2000, card = (id) => cardOf(id), holdOne = false } = {}) {
+async function phone(t, { count = 2000, card = (id) => phoneCard(id), holdOne = false } = {}) {
   const held = [];
   let page = null;
   const onPhoto = () => Boolean(page) && !page.document.querySelector('[data-screen="photo"]').classList.contains("hidden");
@@ -79,19 +60,9 @@ async function phone(t, { count = 2000, card = (id) => cardOf(id), holdOne = fal
       const body = { cards: ids.map(card).filter(Boolean) };
       return holdOne && onPhoto() ? new Promise((resolve) => held.push({ id: ids[0], ids, go: () => resolve(body) })) : body;
     });
-  const ctx = await loadApp("phone", { t, server, url: PAGE });
+  const ctx = await loadApp("phone", { t, server, url: PHONE_PAGE });
   page = ctx;
-  const section = ctx.document.querySelector('[data-screen="grid"]');
-  const here = { scrollTop: 0, viewport: 600, columns: 3, cardHeight: 130, rowGap: 4, gridTop: 120, cardWidth: 120, columnGap: 4 };
-  Object.defineProperty(section, "scrollTop", { get: () => here.scrollTop, set: (v) => { here.scrollTop = v; }, configurable: true });
-  Object.defineProperty(section, "clientHeight", { get: () => (section.classList.contains("hidden") ? 0 : here.viewport), configurable: true });
-  pageState(ctx).grid.setMeasure(() => {
-    if (section.classList.contains("hidden")) {
-      here.scrollTop = 0;       // the browser forgets a hidden element's scroll offset
-      return { ...here, viewport: 0 };
-    }
-    return { ...here };
-  });
+  const { here } = phoneLayout(ctx);
   return Object.assign(ctx, { here, held });
 }
 
@@ -216,7 +187,7 @@ describe("looking at a photo on the phone", () => {
 
   test("a photo deleted on the PC while looked at, dropped from the view by a card window's reply: the swipe steps on", async (t) => {
     let deleted = false;
-    const ctx = await phone(t, { card: (id) => (deleted && id === 250 ? null : cardOf(id)) });
+    const ctx = await phone(t, { card: (id) => (deleted && id === 250 ? null : phoneCard(id)) });
     await openPhoto(ctx, 1);
     deleted = true;                                  // on the PC, before the phone reads its card
     for (let i = 0; i < 249; i += 1) next(ctx);
@@ -259,8 +230,8 @@ describe("looking at a photo on the phone", () => {
   });
 
   test("a missing file, a picture the PC could not read, a card that could not be read and a clip each say so; the swipe goes on", async (t) => {
-    const card = (id) => (id === 2 ? cardOf(id, { stale: "missing" })
-      : id === 4 ? cardOf(id, { name: "Wren's Kite.mp4", media: "video" }) : cardOf(id));
+    const card = (id) => (id === 2 ? phoneCard(id, { stale: "missing" })
+      : id === 4 ? phoneCard(id, { name: "Wren's Kite.mp4", media: "video" }) : phoneCard(id));
     const ctx = await phone(t, { count: 300, card });
     // A read naming photo 300 fails: the last photo's card, and those read with it, cannot be read.
     ctx.server.first(/\/api\/library\/cards\?ids=(?:\d+,)*300(?:,|$)/, { error: "The library is busy." }, { status: 500 });

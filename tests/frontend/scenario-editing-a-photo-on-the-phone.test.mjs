@@ -27,8 +27,8 @@
 import { test, describe, afterEach } from "node:test";
 import assert from "node:assert/strict";
 import { loadApp, FakeServer, flush, click, closeAllApps, pageExports, PEOPLE_ROUTE, PHOTO_WRITES, CLIP_WRITES } from "./harness.mjs";
+import { PHONE_PAGE, el, shown, pageState, settle, phoneCard, phoneLayout } from "./phone-page.mjs";
 
-const PAGE = "http://localhost:8090/alpha/mobile.html";
 const KEYWORDS = { keywords: [{ tag: "Events", name: "Events", parent: null, count: 20 }], untagged: 0 };
 const UNDO = 200;
 const PATH = "D:\\Photos\\Wren's Meet\\Wren's Meet 1.jpg";
@@ -39,23 +39,7 @@ const COVE = "Trips/Cove Walk";
 const TAGS = [WREN, JUNIPER, COAST, COVE, "Events/Harvest", "Places/Harvest", "Events/Relay"];
 const PEOPLE = [{ id: 1, name: "Wren O'Malley", tag: WREN }, { id: 2, name: "Juniper Okafor", tag: JUNIPER }];
 
-const el = (ctx, id) => ctx.document.getElementById(id);
-const pageState = (ctx) => pageExports(ctx.window, "web/tagpup/mobile-state.js").state;
 const vocabulary = (ctx) => pageExports(ctx.window, "web/common/vocabulary.js");
-const wait = (window, ms) => new Promise((resolve) => window.setTimeout(resolve, ms));
-const shown = (ctx) =>
-  [...ctx.document.querySelectorAll("[data-screen]")].filter((s) => !s.classList.contains("hidden")).map((s) => s.dataset.screen);
-
-async function settle(ctx, ms = 30) {
-  await wait(ctx.window, ms);
-  await flush(ctx.window, 6);
-}
-
-function cardOf(id) {
-  const name = id === 1 ? "Wren's Meet 1.jpg" : `Wren's Meet ${id}.jpg`;
-  return { id, name, path: `D:\\Photos\\Wren's Meet\\${name}`, taken: "2024:06:01 10:00:00",
-    thumb: `/api/photo-thumb?id=${id}&v=1718000000.5`, mtime: 1718000000.5, media: "photo" };
-}
 
 /**
  * The page on a library of 20 photos, the first a file `file` that the fake server writes as the real one does: a tag
@@ -72,7 +56,7 @@ async function phone(t, file = {}) {
     .on("/api/library/navigator?section=keywords", KEYWORDS)
     .on("/api/library/ids", { ids: Array.from({ length: 20 }, (_, i) => i + 1), total: 20, of: 20, videos: [] })
     .on("/api/library/cards", (url) => ({
-      cards: decodeURIComponent((url.match(/ids=([^&]+)/) || [])[1] || "").split(",").map(Number).map(cardOf) }))
+      cards: decodeURIComponent((url.match(/ids=([^&]+)/) || [])[1] || "").split(",").map((id) => phoneCard(Number(id), {}, "Wren's Meet")) }))
     .on("/api/library/photo", () => ({ photo: record() }))
     .on("/api/tags", TAGS)
     .on(PEOPLE_ROUTE, PEOPLE)
@@ -93,12 +77,8 @@ async function phone(t, file = {}) {
       held.mtime += 1;
       return { success: true, mtime: held.mtime, size: held.size, taken: held.taken, base: { tags: held.tags.slice(), title: held.title } };
     });
-  const ctx = await loadApp("phone", { t, server, url: PAGE });
-  const section = ctx.document.querySelector('[data-screen="grid"]');
-  const here = { scrollTop: 0, viewport: 600, columns: 3, cardHeight: 130, rowGap: 4, gridTop: 120, cardWidth: 120, columnGap: 4 };
-  Object.defineProperty(section, "scrollTop", { get: () => here.scrollTop, set: (v) => { here.scrollTop = v; }, configurable: true });
-  Object.defineProperty(section, "clientHeight", { get: () => (section.classList.contains("hidden") ? 0 : 600), configurable: true });
-  pageState(ctx).grid.setMeasure(() => (section.classList.contains("hidden") ? { ...here, viewport: 0 } : { ...here }));
+  const ctx = await loadApp("phone", { t, server, url: PHONE_PAGE });
+  phoneLayout(ctx);
   // What each request asked of the browser: a write sent as the page goes must outlive it (keepalive).
   const sent = [];
   const fetch = ctx.window.fetch;
