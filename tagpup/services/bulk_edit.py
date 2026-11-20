@@ -9,8 +9,9 @@ An EDIT is what is done to every photo of a selection (at most batches.MAX_BATCH
   file already names (by the id of their node: two people called alike are two) is not added again, and no node of the tag
   tree is made;
 * `delete`: send each photo's file to the Recycle Bin and forget its row, faces and thumbnail, as the folder view's Delete
-  does it (tagpup.services.photos.delete, the one owner: not journaled, as that is not; a photo whose place has no Recycle Bin
-  goes through this PC's, #694), `{"token": text}` -- the token of the photos the question named (selection.where_deleted: the
+  does it (tagpup.services.photos.delete, the one owner: each photo's Delete journaled as an INTERNAL crash record,
+  file_journal.DELETE, that a settle finishes and History never lists; a photo whose place has no Recycle Bin goes through
+  this PC's, #694), `{"token": text}` -- the token of the photos the question named (selection.where_deleted: the
   request is refused when the selection no longer resolves to exactly them, #691).
 
 `prepare` reads and checks one up front and refuses with a sentence, before a photo is touched. `run` does it to the photos,
