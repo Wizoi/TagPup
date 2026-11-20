@@ -793,10 +793,11 @@ def delete(library, photo_path, for_good=False, fresh=True):
     only once the file is. `fresh` (recycle_bin.delete_file's): False for each file of a bulk Delete, whose start asked the
     Bins once.
 
-    A held photo's Delete is one change of the journal (plan_deletes, file_journal.DELETE: internal, never listed nor
-    undone), carried out under the lock of changes of photo files (delete_planned): a Delete waits for a write under way,
-    and a write for it. A stop between its file and its rows is finished by the next settle (settle_delete). A photo of
-    a folder the library does not hold has no record: it has no row to forget.
+    Under the lock of changes of photo files, the file judged in it: a Delete waits for a write under way, a write for
+    it, and of two Deletes of one photo the second finds it gone and is refused. A held photo's Delete is one change of
+    the journal (plan_deletes, file_journal.DELETE: internal, never listed nor undone; delete_planned): a stop between
+    its file and its rows is finished by the next settle (settle_delete). A photo of a folder the library does not hold
+    has no record: it has no row to forget.
 
     details: `removed`, the rows removed from each table (None for such a photo);
     `file_only` and `with_rows`, 1 for the way it was done; `through_this_pc`, `no_bin_reason`
@@ -804,16 +805,16 @@ def delete(library, photo_path, for_good=False, fresh=True):
     Bin restores it) and `for_good` (it was deleted for good, confirmed).
     """
     result = Result(attempted=1)
-    why = recycle_bin.problem(photo_path)
-    if why:
-        result.refuse(why)
-        return result
-    _held, loose = libraries.split(library, [photo_path])
-    if loose:
-        result = file_only.delete(photo_path, for_good, fresh)
-        result.details.update({file_only.FILE_ONLY: result.changed, file_only.WITH_ROWS: 0})
-        return result
     with file_changes.exclusively():
+        why = recycle_bin.problem(photo_path)
+        if why:
+            result.refuse(why)
+            return result
+        _held, loose = libraries.split(library, [photo_path])
+        if loose:
+            result = file_only.delete(photo_path, for_good, fresh)
+            result.details.update({file_only.FILE_ONLY: result.changed, file_only.WITH_ROWS: 0})
+            return result
         change_id, rows = plan_deletes(library, [photo_path], for_good)
         try:
             delete_planned(library, rows, result, fresh)
