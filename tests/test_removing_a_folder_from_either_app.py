@@ -17,6 +17,8 @@ its removal from the other (two libraries holding one folder).
 The index runs here on the test's own thread (IndexQueue.run_pending, its worker held back), and the removal is asked
 from inside the index, while it runs: no sleep, and a thread only for an Add landing as a removal begins (joined).
 """
+import json
+import logging
 import os
 import socket
 import sqlite3
@@ -37,7 +39,10 @@ from test_an_index_reads_the_next_photos_ahead import photo as jpeg  # noqa: E40
 
 import tagpup_cli  # noqa: E402
 
+from tagpup import logs  # noqa: E402
 from tagpup.core import paths, processes, validation  # noqa: E402
+from tagpup.services.roots import Unplaced  # noqa: E402
+from tagpup.services.indexing import INDEXER_LOG  # noqa: E402
 from tagpup.core.library import Library  # noqa: E402
 from tagpup.core.result import NotHeld, Result  # noqa: E402
 from tagpup.services import job_runs, thumbnails  # noqa: E402
@@ -447,6 +452,33 @@ class AnIndexInTheCli(unittest.TestCase):
         self.assertEqual(0, result.exit_code, result.output)
         self.assertEqual(5, self.held(self.meet)[0], "the index did not finish")
         self.assertEqual(5, self.remove(self.meet)["photos_removed"], "once the index ended it is removed")
+
+    def runs_of_the_index(self):
+        conn = db.connect(db.readonly_uri(self.library), uri=True)
+        try:
+            return conn.execute("SELECT outcome, changed FROM job_runs WHERE job = ?", (job_runs.INDEX,)).fetchall()
+        finally:
+            conn.close()
+
+    def test_an_index_refused_before_it_starts_leaves_no_failed_run_for_needs_you(self):
+        """#3244: the folder is one this machine does not place: the CLI says "Not run", exit 1, and no run of the
+        job `index` is left failed for Activity to list as an unexpected error."""
+        self.photos(self.meet, 1)
+        with mock.patch.object(tagpup_cli, "_resolve_directories", side_effect=Unplaced("not placed")):
+            result = self.index(self.meet)
+        self.assertEqual(1, result.exit_code, result.output)
+        self.assertIn("Not run: not placed", result.output)
+        self.assertEqual([], self.runs_of_the_index())
+
+    def test_a_run_the_cli_claims_writes_the_log_activity_offers_for_it(self):
+        """#3245: "Logs for this run" names indexer-<library>-<run>.log (tagpup.logs.run_log); the CLI's run writes it."""
+        self.photos(self.meet, 1)
+        self.assertEqual(0, self.index(self.meet).exit_code)
+        (_, changed), = self.runs_of_the_index()
+        name = logs.run_log(INDEXER_LOG, json.loads(changed)["run"])
+        self.assertTrue(os.path.exists(os.path.join(logs.log_dir(), name)), name)
+        self.assertFalse([each for each in logging.getLogger().handlers
+                          if os.path.basename(getattr(each, "baseFilename", "")) == name], "the file stayed attached")
 
     def test_an_index_whose_run_was_not_recorded_is_removed_past_and_stops_saying_why(self):
         """The CLI's claim was not recorded (another writer held the library longer than the claim tries: "busy"); the
