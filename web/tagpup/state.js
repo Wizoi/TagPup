@@ -176,8 +176,9 @@ export const state = {
     // the order they came; `queued` while a chunk's write waits its turn in the queue, `stopped` after one failed (until Retry or
     // Cancel); `people` the tags a change named as people, whose leaves the records' `people` follow; `drops` how many
     // times the waiting changes were dropped (Cancel, leaving), so a chunk sent before neither gives back nor says Ready;
-    // `out` the chunk whose write is out.
-    pending: { files: new Map(), queued: false, stopped: false, people: new Set(), drops: 0, out: null },
+    // `out` the chunk whose write is out; `reads` the replies taken while each library read is out (readHeld); `failed` the
+    // row of the failure the status line says, which the drain's next words do not say over until it is dismissed.
+    pending: { files: new Map(), queued: false, stopped: false, people: new Set(), drops: 0, out: null, reads: new Set(), failed: null },
 
     // The title showPhoto last put in the field, and for which photo. A refresh shows
     // the same photo again; if the field no longer holds what was put there, somebody

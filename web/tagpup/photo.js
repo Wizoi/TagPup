@@ -26,7 +26,7 @@ import { pictureCheckSaid, whereWritten } from './write-queue.js';
 import { forgetCachedPhoto, saveToLocalStorageCache } from './cache.js';
 import { fileSizeSaid, takenOf, takenSaid } from './format.js';
 import { namesAPerson, normalizeTag } from './tags.js';
-import { deleteWaits, pendingOf, removePhotoTags, shownTags } from './pending.js';
+import { deleteWaits, pendingOf, readHeld, removePhotoTags, shownTags } from './pending.js';
 import {
     leavePhotoThen, photoChangedOnDisk, queueWriteOf, redrawIfShowing, saveDetailEdits,
     updateSaveButton
@@ -212,9 +212,10 @@ function drawPhotoFaces(photoPath, data) {
         // the face. Only a card that would change nothing is settled.
         const namesSomebody = face.name ? (facePerson || face.name) : suggestedWho;
         const shownSomebody = face.name ? personLabelOf(face) : suggestedLabel;
+        // As the photo shows its tags (pending.js shownTags): a person whose pill was just taken off is offered again.
         const alreadyTagged = namesSomebody
-            && photoAlreadyHas(photoRecord, typeof namesSomebody === 'object' ? namesSomebody.tag : namesSomebody,
-                namesAPerson, state.people);
+            && photoAlreadyHas(photoRecord && { tags: shownTags(photoRecord) },
+                typeof namesSomebody === 'object' ? namesSomebody.tag : namesSomebody, namesAPerson, state.people);
 
         if (namesSomebody && !face.excluded && (!alreadyTagged || !face.name)) {
             card.classList.add('face-card-actionable');
@@ -283,12 +284,13 @@ function focusFaceAgain(faceId) {
 /**
  * The open photo's faces drawn again from the page's own copy (the boxes' `faces`), with no request: a face named here is
  * shown named at once, before the server has written it (face-boxes.js nameFaceAs), and shown as it was if the write fails.
+ * `readStands`: only the tags it shows changed (pending.js pageFollows), and a read of its faces under way still draws.
  */
-export function renderPhotoFacesHere(photoPath) {
+export function renderPhotoFacesHere(photoPath, { readStands = false } = {}) {
     const box = state.faceBoxes;
     if (!facesSection || !facesStrip || !box.path || !samePath(box.path, photoPath)) return;
     // A reply to an earlier request is no longer the picture.
-    state.facesRequestToken += 1;
+    if (!readStands) state.facesRequestToken += 1;
     drawPhotoFaces(photoPath, {
         faces: box.faces, shown_size: box.size, unmatched: box.faces.filter(each => !each.name && !each.excluded).length,
     });
@@ -322,6 +324,9 @@ function openPhoto(path) {
 /**
  * Put a library photo's record in the panel: the page's only full record.
  */
+/** A library photo's record, read held against the tag writes out meanwhile (pending.js readHeld). */
+const readLibraryRecord = (id) => readHeld(() => fetchLibraryRecord(id));
+
 function showLibraryRecord(lib, record) {
     state.folderPhotos = [record];
     lib.activeId = record.id;
@@ -339,7 +344,7 @@ function showLibraryRecord(lib, record) {
 function readPreviousOf(lib, id) {
     const index = lib.ids.indexOf(id);
     if (index <= 0) return;
-    fetchLibraryRecord(lib.ids[index - 1]).then(record => {
+    readLibraryRecord(lib.ids[index - 1]).then(record => {
         if (!record || lib !== state.library || lib.activeId !== id) return;
         lib.previous = { of: id, record, from: record.filename || baseName(record.path) };
         updateCarryForwardState();
@@ -354,7 +359,7 @@ function readPreviousOf(lib, id) {
 export function reloadChangedPhoto(photo, after = () => {}) {
     const lib = state.library;
     if (lib && photo.id !== undefined) {
-        return fetchLibraryRecord(photo.id).then(record => {
+        return readLibraryRecord(photo.id).then(record => {
             if (!record || lib !== state.library) return;
             if (state.activePhotoPath === photo.path) showLibraryRecord(lib, record);
             else state.folderPhotos = [record];
@@ -378,7 +383,7 @@ export function openLibraryPhoto(id) {
     lib.wantedId = id;
     const token = lib.openToken;
     const done = () => { if (token === lib.openToken) lib.wantedId = null; };
-    return fetchLibraryRecord(id).then(record => {
+    return readLibraryRecord(id).then(record => {
         if (!record || lib !== state.library || token !== lib.openToken) {
             done();
             return false;

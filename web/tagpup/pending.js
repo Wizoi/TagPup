@@ -13,7 +13,8 @@
 // are answered at the click, and a write of them that fails puts them back rather than waiting for Retry. Any other change
 // waiting for a photo makes its panel read-only until it is written (pendingOf; stale.js offerWrites). The record follows
 // the reply, not the map; what the page shows of a photo's tags, and decides by, is the record with the map's changes for
-// it applied (shownTags), redrawn whenever the map changes for a photo of the page (pageFollows).
+// it applied (shownTags), redrawn whenever the map changes for a photo of the page (pageFollows); a record read from the
+// library while a write is out takes the replies that came back meanwhile (readHeld).
 import { api } from './common/api.js';
 import { pathKey, samePath } from './common/paths.js';
 import { leafOf } from './common/vocabulary.js';
@@ -70,7 +71,7 @@ export function pendChanges(list, { people = false, panel = false } = {}) {
         action.left.add(key);
     }
     if (!action.left.size) resolve({ written: 0, failed: 0, skipped: 0 });
-    if (pending.stopped && !panel) setStatus('error', STOPPED, { transient: false });
+    if (pending.stopped && !panel) say('error', STOPPED);
     pageFollows(new Set(list.map(({ path }) => pathKey(path))));
     drain();
     return settled;
@@ -103,8 +104,10 @@ export function pendingOf(photo) {
 /**
  * The tags `photo` shows: its record (what its file held at the last reply) with the changes not written yet applied, the
  * chunk out's then the map's (the later op wins), compared as tags are (normalizeTag). The one answer for whatever draws a
- * photo's tags or decides by them: its pills, the list's count, the suggestions not yet on it, Ctrl+D's copy. A write
- * builds on the record, which is what the file holds.
+ * photo's tags or decides by them: its pills, the list's count, the suggestions not yet on it, Ctrl+D's copy, its face
+ * cards, a folder's selection chips. A change a failed chunk gave back is waiting like any other (its Retry writes it), and
+ * is shown: the panel is read-only saying so, and Cancel draws the record again. A write builds on the record, which is
+ * what the file holds.
  */
 export function shownTags(photo) {
     let tags = ((photo && photo.tags) || []).slice();
@@ -128,12 +131,29 @@ function heldRecords() {
 }
 
 /**
- * The page follows a change of the map for any of `keys`: the list (its counts are of the tags shown), Ctrl+D's offer,
- * and the open photo's pills, suggestions, and whether it is read-only.
+ * A record read from the library while a write may be out (photo.js: a library view's open photo, and the one before it for
+ * Ctrl+D): the one place such a read is held against the writes' replies. The server may have read the file before a write
+ * whose reply came back while the read was out, and that reply found no record of it to reach (heldRecords); so every reply
+ * taken meanwhile is applied to the record the read answers, in the order taken. `read` gives a promise of the record or null.
+ */
+export function readHeld(read) {
+    const replies = [];
+    state.pending.reads.add(replies);
+    return read().then(record => {
+        if (record) replies.filter(reply => reply.key === pathKey(record.path)).forEach(reply => reply.take(record));
+        return record;
+    }).finally(() => state.pending.reads.delete(replies));
+}
+
+/**
+ * The page follows a change of the map for any of `keys`: the list (its counts are of the tags shown), a folder's selection
+ * (a view's is counted by the server, after the file is written: takeReply), Ctrl+D's offer, and the open photo's pills,
+ * suggestions, face cards, and whether it is read-only.
  */
 function pageFollows(keys) {
     if (!heldRecords().some(p => keys.has(pathKey(p.path)))) return;
     upper.renderFileList();
+    if (!state.library && state.selectedThumbnails.length) upper.updateSelectedThumbnailsCount();
     upper.updateCarryForwardState();
     const path = state.activePhotoPath;
     if (!path || !keys.has(pathKey(path))) return;
@@ -141,6 +161,7 @@ function pageFollows(keys) {
     if (!photo) return;
     upper.renderTags();
     upper.renderSuggestionsPanel(photo.path);
+    upper.renderPhotoFacesHere(photo.path, { readStands: true });
     offerWrites(photo, pendingOf(photo));
 }
 
@@ -211,7 +232,7 @@ function dropPending(only = null) {
 /** Cancel: drop the changes not sent, and say how many photos it leaves unwritten. */
 function cancelPending() {
     const n = dropPending();
-    if (n) setStatus('error', `${n.toLocaleString()} ${n === 1 ? "photo's" : "photos'"} tag changes were not written.`, { transient: false });
+    if (n) say('error', `${n.toLocaleString()} ${n === 1 ? "photo's" : "photos'"} tag changes were not written.`, state.pending.failed);
 }
 
 /**
@@ -245,6 +266,17 @@ export function wirePending() {
     window.addEventListener('pagehide', () => {
         new Set((state.pending.out || []).map(item => item.folder).filter(Boolean)).forEach(forgetCachedFolder);
     });
+}
+
+/**
+ * The drain's words on the status line. A failure (`failed`: its row in the list of writes) stands until that row is
+ * dismissed or retried, or another failure is said: the next write's "Writing tags..." and "Ready" do not say over it.
+ */
+function say(kind, message, failed = null) {
+    const standing = state.pending.failed;
+    if (!failed && standing && state.writeQueue.entries.includes(standing)) return;
+    state.pending.failed = failed;
+    setStatus(kind, message, { transient: kind !== 'error' });
 }
 
 function settle(entry, how, which = () => true) {
@@ -313,7 +345,7 @@ async function sendChunk(entry) {
         entry.label = chunkLabel(chunk);
         entry.cancel = cancelPending;
         renderWriteQueue();
-        setStatus('busy', 'Writing tags...');
+        say('busy', 'Writing tags...');
         const changes = Object.fromEntries(chunk.map(e => [e.path, { add: [...e.add], remove: [...e.remove] }]));
         let data;
         try {
@@ -355,6 +387,8 @@ function takeReply(chunk, data, entry, dropped) {
         takeWritten(photo, stamps.get(key), held.get(key));
         applyOps(photo, item, held.get(key));
     };
+    // A library read out meanwhile may answer with the file as it was before this write (readHeld).
+    const forReads = (item) => state.pending.reads.forEach(replies => replies.push({ key: pathKey(item.path), take: (photo) => take(photo, item) }));
     for (const item of chunk) {
         const key = pathKey(item.path);
         if (skipped.has(key)) {
@@ -367,6 +401,7 @@ function takeReply(chunk, data, entry, dropped) {
             if (item.folder && !(state.scannedFolder && samePath(item.folder, state.scannedFolder))) {
                 left.set(item.folder, [...(left.get(item.folder) || []), item]);
             }
+            forReads(item);
             settle(item, 'written');
         } else {
             back.push(item);
@@ -390,7 +425,7 @@ function takeReply(chunk, data, entry, dropped) {
         state.pending.stopped = state.pending.stopped || kept.length > 0;   // stopped already: own removals sent meanwhile
     }
     if (written.length) {
-        upper.updateSelectedThumbnailsCount();   // the list follows in sendChunk's pageFollows
+        if (state.library) upper.updateSelectedThumbnailsCount();   // a folder's, and the list, follow in sendChunk's pageFollows
         upper.renderThumbnails();
         updateTagsDatalist();
         if (chunk.some(e => [...e.add, ...e.remove].some(t => state.pending.people.has(t)))) updatePeopleDatalist();
@@ -401,35 +436,35 @@ function takeReply(chunk, data, entry, dropped) {
         entry.error = data.error || 'not written';
         if (dropped) {
             // Dropped while out: its row lost Retry and Cancel (dropPending) and stays failed until dismissed.
-            setStatus('error', `Tags not written to ${back.length.toLocaleString()} more ${back.length === 1 ? 'photo' : 'photos'}: ${entry.error}`, { transient: false });
+            say('error', `Tags not written to ${back.length.toLocaleString()} more ${back.length === 1 ? 'photo' : 'photos'}: ${entry.error}`, entry);
             return false;
         }
         if (!kept.length) {
             // Only the open photo's own removals: they are drawn again, and nothing waits for a Retry or a Cancel.
             entry.retry = null;
             entry.cancel = null;
-            setStatus('error', `Not taken off ${putBack.join(', ')}: ${entry.error}`, { transient: false });
+            say('error', `Not taken off ${putBack.join(', ')}: ${entry.error}`, entry);
             alert(`Not taken off ${putBack.join(', ')}: ${entry.error}`);
             return false;
         }
         // The panel's own removals among them are drawn again now, and are not part of the Retry: said by name.
         const notOff = putBack.length ? ` Not taken off ${putBack.join(', ')}.` : '';
-        setStatus('error', `Tags not written to ${photosWord(kept.length)}.${notOff}`, { transient: false });
+        say('error', `Tags not written to ${photosWord(kept.length)}.${notOff}`, entry);
         alert(`Tags not written to ${photosWord(kept.length)}: ${entry.error}.${notOff} Retry or Cancel it in the list of writes (bottom right).`);
         return false;
     }
     if (dropped) return true;
     if (state.pending.stopped) {
-        setStatus('error', STOPPED, { transient: false });
+        say('error', STOPPED);
         return true;
     }
     // Photos missing on disk are said once, when each owner action they belong to is done (counted over its chunks).
     const finished = new Set(chunk.flatMap(item => [...item.actions].filter(action => !action.left.size)));
     const gone = [...finished].reduce((n, action) => n + action.skipped, 0);
     if (gone) {
-        setStatus('ready', `${gone.toLocaleString()} ${gone === 1 ? 'photo is' : 'photos are'} missing on disk and ${gone === 1 ? 'was' : 'were'} left out.${whereWritten(data)}`);
+        say('ready', `${gone.toLocaleString()} ${gone === 1 ? 'photo is' : 'photos are'} missing on disk and ${gone === 1 ? 'was' : 'were'} left out.${whereWritten(data)}`);
     } else {
-        setStatus('ready', data.file_only ? `Saved.${whereWritten(data)}` : 'Ready');
+        say('ready', data.file_only ? `Saved.${whereWritten(data)}` : 'Ready');
     }
     return true;
 }

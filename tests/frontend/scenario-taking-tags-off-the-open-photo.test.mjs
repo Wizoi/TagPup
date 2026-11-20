@@ -9,7 +9,10 @@
  * and the first photo, opened again, its tags as written; a pill taken off by the keyboard leaves the focus on the next pill,
  * or on the add box when it was the last. The panel's own removals never make it read-only (owner's V20 request). A tag
  * taken off and not written yet is gone wherever the page shows the photo's tags or decides by them (pending.js shownTags):
- * the list's count, and Ctrl+D on the next photo, which copies what the photo before shows when its turn comes.
+ * the list's count, Ctrl+D on the next photo, which copies what the photo before shows when its turn comes, the person's face
+ * card, and the selection's chips. A failed removal's words stay on the status line until its row in the list of writes is
+ * dismissed. In a library view a photo read from the library while its removal is out, and answered after the write's reply,
+ * shows the tags the file holds now (pending.js readHeld).
  *
  * Every write is held until the test answers it, oldest first, as the routes answer it: the server keeps a model of each
  * file's tags, and a bulk-tags reply's `written` (a save-metadata reply's `base`) is what the file holds after it.
@@ -37,7 +40,7 @@ const B = photoRecord({ filename: "b.jpg" });
 /** What a write leaves in a file holding `tags`: a bulk-tags change `{add, remove}`. */
 const changed = (tags, { add = [], remove = [] }) => [...tags.filter((t) => !remove.includes(t)), ...add.filter((t) => !tags.includes(t))];
 
-async function open(t, { b = [] } = {}) {
+async function open(t, { b = [], faces = { faces: [], total: 0, unmatched: 0 } } = {}) {
   const held = [];
   // The files as the server would hold them; a write changes its file when it is answered, in the order it was sent.
   const files = new Map([[A.path, TAGS.slice()], [B.path, b.slice()]]);
@@ -52,7 +55,7 @@ async function open(t, { b = [] } = {}) {
     .on("/api/folder/suggest-status", { status: "idle" })
     .on("/api/folder/index-status", { status: "completed", percent: 100, message: "Ready" })
     .on("/api/folder/scan", [{ ...A, tags: TAGS.slice() }, { ...B, tags: b.slice() }])
-    .on("/api/photo-faces", { faces: [], total: 0, unmatched: 0 })
+    .on("/api/photo-faces", faces)
     .on("/api/photos/bulk-tags", hold("bulk"))
     .on("/api/photo/save-metadata", hold("save"));
   const ctx = await loadApp("tagpup", { t, url: "http://localhost:8090/photo_index/", server });
@@ -202,11 +205,25 @@ describe("V20: taking tags off the open photo is answered at the click, the writ
     assert.equal(ctx.unanswered(), 1, "the removal clicked behind the failed one did not go");
     while (ctx.unanswered()) await ctx.answer();
     assert.deepEqual(ctx.bulks()[1].changes[A.path], { add: [], remove: ["Harbourside"] }, "the failed tag was sent again");
+    // The failure stays on the status line until its row is dismissed: the next write's "Writing tags..." and "Ready" do not
+    // say over it (#3221).
+    assert.equal(ctx.status(), "Not taken off Cross Country: The share did not answer", "the next write said over the failure");
+    const { dismissEntry } = pageExports(ctx.window, "web/tagpup/write-queue.js");
+    dismissEntry(row);
     await ctx.takeOff("Kentridge");
     while (ctx.unanswered()) await ctx.answer();
     assert.deepEqual(ctx.file(A), ["Cross Country"]);
     assert.deepEqual(ctx.pills(), ["Cross Country"]);
     assert.equal(ctx.status(), "Ready");
+  });
+
+  test("a second failure replaces the first on the status line", async (t) => {
+    const ctx = await open(t);
+    await ctx.takeOff("Cross Country");
+    await ctx.takeOff("Harbourside");
+    await ctx.answer("The share did not answer");
+    await ctx.answer("The file is locked");
+    assert.equal(ctx.status(), "Not taken off Harbourside: The file is locked");
   });
 
   test("a failed write of a pill's removal with another change of the photo says the tag is not taken off, and keeps the other for Retry", async (t) => {
@@ -338,6 +355,33 @@ describe("V20: a tag taken off is gone wherever the page shows or copies the pho
     assert.deepEqual(ctx.file(A), ["Harbourside", "Kentridge"]);
   });
 
+  test("a person's pill taken off: their face card offers them again at once, and again settled if the write fails", async (t) => {
+    const named = { id: 1, box: [400, 300, 800, 700], shown_box: [400, 300, 800, 700], area: 160000, name: "Rowan Ashby", prob: 0.99,
+      excluded: false, suggestion: null, similarity: null };
+    const ctx = await open(t, { b: ["People/Rowan Ashby"], faces: { faces: [named], total: 1, unmatched: 0, size: [4000, 3000], shown_size: [4000, 3000] } });
+    await ctx.select(B);
+    const card = () => ctx.document.querySelector(".face-card");
+    assert.ok(card().classList.contains("face-card-settled"));
+    await ctx.takeOff("People/Rowan Ashby");
+    assert.ok(card().classList.contains("face-card-actionable"), "the face card still said the person is on the photo");
+    await ctx.answer("The share did not answer");
+    assert.ok(card().classList.contains("face-card-settled"), "the failed removal left the card offering the person");
+  });
+
+  test("a tag taken off the whole selection leaves its chips at the click, before the write is answered", async (t) => {
+    const ctx = await open(t, { b: ["Kentridge"] });
+    ctx.$("btn-select-all-thumbnails").click();
+    await flush(ctx.window, 8);
+    const chips = () => Array.from(ctx.document.querySelectorAll("#selection-tags-list .selection-summary-chip")).map((c) => c.textContent);
+    assert.ok(chips().some((c) => c.includes("Kentridge")));
+    pageExports(ctx.window, "web/tagpup/selection.js").removeTagFromAllSelected("Kentridge", false);
+    await flush(ctx.window, 4);
+    assert.equal(ctx.unanswered(), 1);
+    assert.ok(!chips().some((c) => c.includes("Kentridge")), "the selection's chips counted the tag taken off");
+    while (ctx.unanswered()) await ctx.answer();
+    assert.ok(!chips().some((c) => c.includes("Kentridge")));
+  });
+
   test("Delete while the photo's own removal is out is refused, as the selection's is (#3203)", async (t) => {
     const ctx = await open(t);
     ctx.confirms = [];
@@ -371,9 +415,23 @@ describe("V20: a tag taken off is gone wherever the page shows or copies the pho
 describe("V20: in a library view", () => {
   async function view(t) {
     const files = new Map([[11, ["Cross Country", "Harbourside"]], [12, []]]);
-    const ctx = await loadViewPage(t, { search: "?view=all", onPhoto: (id) => ({ photo: recordOf(id, { tags: (files.get(id) || []).slice() }) }) });
+    // A read of a photo in `held` is read now (what its file holds now) and answered when the test says (`answerReads`).
+    const held = new Set();
+    const reads = [];
+    const onPhoto = (id) => {
+      const photo = recordOf(id, { tags: (files.get(id) || []).slice() });
+      return held.has(id) ? new Promise((resolve) => reads.push(() => resolve({ photo }))) : { photo };
+    };
+    const ctx = await loadViewPage(t, { search: "?view=all", onPhoto });
     ctx.out = [];
     ctx.files = files;
+    ctx.holdReads = (...ids) => ids.forEach((id) => held.add(id));
+    ctx.answerReads = async () => {
+      held.clear();
+      reads.splice(0).forEach((answer) => answer());
+      await ctx.settle(80);
+    };
+    ctx.pills = () => Array.from(ctx.document.querySelectorAll("#detail-tags .tag-pill, #detail-people .tag-pill")).map((each) => each.textContent);
     ctx.server.first("/api/photos/bulk-tags", () => new Promise((resolve) => ctx.out.push({ body: ctx.server.calls.at(-1).body, resolve })));
     ctx.answerWrite = async () => {
       const { body, resolve } = ctx.out.shift();
@@ -410,6 +468,32 @@ describe("V20: in a library view", () => {
     ctx.document.dispatchEvent(new ctx.window.KeyboardEvent("keydown", { key: "d", ctrlKey: true, bubbles: true, cancelable: true }));
     await ctx.settle(80);
     assert.deepEqual(ctx.saves().map((s) => s.tags), [["Harbourside"]], "Ctrl+D copied the tag the pill took off");
+  });
+
+  test("the photo before, read while its removal is out and answered after the write: Ctrl+D offers what its file holds (#3225)", async (t) => {
+    const ctx = await view(t);
+    await ctx.openPhoto(11);
+    await ctx.takeOff("Cross Country");
+    ctx.holdReads(11);
+    await ctx.openPhoto(12);
+    await ctx.answerWrite();
+    await ctx.answerReads();
+    assert.deepEqual(ctx.files.get(11), ["Harbourside"]);
+    assert.equal(ctx.document.getElementById("btn-carry-forward").title, "Copy 1 tag(s) from IMG_11.jpg  (Ctrl+D)",
+      "the photo before was read before the write and kept the tag taken off");
+  });
+
+  test("a pill taken off, away and straight back as the write lands: the photo shows what its file holds (#3227)", async (t) => {
+    const ctx = await view(t);
+    await ctx.openPhoto(11);
+    await ctx.takeOff("Cross Country");
+    await ctx.openPhoto(12);
+    ctx.holdReads(11);
+    await ctx.openPhoto(11);
+    await ctx.answerWrite();
+    await ctx.answerReads();
+    assert.deepEqual(ctx.files.get(11), ["Harbourside"]);
+    assert.deepEqual(ctx.pills(), ["Harbourside"], "the photo read before the write showed the tag taken off");
   });
 
   test("the selection's Delete while the open photo's removal is out is refused, as a folder's is (#3203)", async (t) => {

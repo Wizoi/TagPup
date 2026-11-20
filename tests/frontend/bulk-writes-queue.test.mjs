@@ -13,7 +13,7 @@
  */
 import { test, describe, afterEach } from "node:test";
 import assert from "node:assert/strict";
-import { loadApp, FakeServer, photoRecord, flush, click, openFolder, closeAllApps } from "./harness.mjs";
+import { loadApp, FakeServer, photoRecord, flush, click, openFolder, closeAllApps, pageExports } from "./harness.mjs";
 
 const FOLDER = "D:/Library/2020";
 
@@ -154,7 +154,8 @@ describe("tags clicked quickly on a selection", () => {
 });
 
 describe("a bulk write that stops part-way", () => {
-  test("the photos it wrote show the tag, the rest do not", async (t) => {
+  // The rest wait for Retry, and the page shows them as it shows any change waiting (pending.js shownTags); Cancel drops it.
+  test("the photos it wrote hold the tag; the rest show it while they wait for Retry, and not after Cancel", async (t) => {
     const ctx = await loadSelected(t);
     click(ctx.window, chip(ctx, "Cross Country"));
     await flush(ctx.window, 8);
@@ -164,10 +165,15 @@ describe("a bulk write that stops part-way", () => {
       written: { [PHOTOS[0].path]: ["Cross Country"] },
     });
     assert.equal(ctx.alerts.length, 1, "the failure was not reported");
-    const held = [...ctx.document.querySelectorAll("#selection-tags-list .selection-summary-chip")]
+    const held = () => [...ctx.document.querySelectorAll("#selection-tags-list .selection-summary-chip")]
       .map((c) => c.textContent);
-    assert.ok(held.some((c) => c.includes("Cross Country (1)")),
-      `the photo written is not shown holding it: ${held}`);
+    assert.ok(held().some((c) => c.includes(`Cross Country (${PHOTOS.length})`)),
+      `the photos waiting for Retry are not shown with the change: ${held()}`);
+    const row = pageExports(ctx.window, "web/tagpup/state.js").state.writeQueue.entries.find((e) => e.cancel);
+    row.cancel();
+    await flush(ctx.window, 8);
+    assert.ok(held().some((c) => c.includes("Cross Country (1)")),
+      `the photo written is not shown holding it: ${held()}`);
   });
 });
 

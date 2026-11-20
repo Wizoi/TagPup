@@ -152,7 +152,7 @@ describe("clicks that take each other back", () => {
     await addTags(ctx, "Trips/Gone");
     const gone = [...ctx.document.querySelectorAll("#selection-tags-list .selection-summary-chip")]
       .find((c) => c.textContent.includes("Trips/Gone"));
-    assert.equal(gone, undefined, "a tag not yet written is shown as held");
+    assert.ok(gone, "a tag waiting to be written is not shown on the selection (pending.js shownTags)");
     const { removeTagFromAllSelected } = pageExports(ctx.window, "web/tagpup/selection.js");
     removeTagFromAllSelected("Trips/Gone", false);
     await flush(ctx.window, 4);
