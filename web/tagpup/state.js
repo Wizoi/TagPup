@@ -35,6 +35,9 @@ export const state = {
     // (People's branches start open). `order` is the order views are read in, as last chosen or opened (#671); `media` what they
     // show, the same way (filter-menu.js: 'both', 'photo' or 'video'; a page loaded opens on 'both'). `pending`: the
     // section's read under way, for another feature waiting on it (the search's picker, navigator.js readSectionIndex).
+    // `filter` is Filter mode (filter-bar.js): `on` as this browser remembers it, `leaving` while a search is being left
+    // (library-view.js leaveSearch; navigatorFollows clears it, so a second click cannot go back twice), and `notice`, the
+    // sentence refusing the last mark (too many rows). The marks themselves are the view open's, never kept here.
     nav: {
         shown: 'folder',
         choice: { library: 'library', folder: 'folder' },
@@ -43,6 +46,7 @@ export const state = {
         order: 'taken',
         media: 'both',
         timer: null,
+        filter: { on: false, leaving: false, notice: '' },
         sections: {
             folders: { status: 'idle', message: '', notice: '', index: null, expanded: new Set(), filter: '', filterTimer: null, currentId: null, anchor: null, rows: [], asked: 0, stale: false, reveal: false, opened: false, pending: null },
             keywords: { status: 'idle', message: '', notice: '', index: null, expanded: new Set(), filter: '', filterTimer: null, currentId: null, anchor: null, rows: [], asked: 0, stale: false, reveal: false, opened: false, pending: null },

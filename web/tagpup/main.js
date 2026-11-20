@@ -35,6 +35,7 @@ import { restoreViewAsLeft, showGrid, wireViewLeft } from './view-left.js';
 import { deleteSelection } from './bulk-edit.js';
 import { checkFolderMembership, wireMembership } from './membership.js';
 import { choosePane, navigatorCountsChanged, navigatorFollows, wireNavigator } from './navigator.js';
+import { filterFollows, wireFilterBar } from './filter-bar.js';
 import { showSortOrder, wireSortMenu } from './sort-menu.js';
 import { showMediaFilter, wireFilterMenu } from './filter-menu.js';
 import { searchFollows, searchVocabularyChanged, wireSearch } from './search.js';
@@ -77,7 +78,7 @@ import { wireClipConvert } from './clip-convert.js';
 // What a feature calls in a module above it (hooks.js).
 Object.assign(upper, {
     addedFromView, applySuggestedTagsDirect, checkFolderMembership, checkSuggestionsStatus, choosePane,
-    facesFollowReply, forgetFolderSuggestions, holdForWrite, resumeAfterWrite,
+    facesFollowReply, filterFollows, forgetFolderSuggestions, holdForWrite, resumeAfterWrite,
     populateCameraModelsDropdown, recordUndo, removePhotoTags,
     renderFileList, renderPhotoFaces, renderPhotoFacesHere, renderSuggestionsPanel, renderSyncInfo, renderTags, renderThumbnails, searchFollows, searchVocabularyChanged,
     selectPhoto,
@@ -162,6 +163,8 @@ document.addEventListener('DOMContentLoaded', () => {
     // Views of the library: the strip above the grid, and Back and Forward between views and folders.
     wireLibraryView();
 
+    // Filter mode as this browser remembers it, and its chips above the grid: before the navigator, which draws its toggle.
+    wireFilterBar();
     // The navigator beside the grid, the move between a folder and its view, and the banner for photos the library lacks.
     wireNavigator();
     wireSearch();

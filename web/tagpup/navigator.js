@@ -21,6 +21,10 @@
 // hides it, and when another tab is shown; Ctrl-click in another tab adds its rows to the same union; a plain click anywhere
 // starts again. A click that would leave nothing selected leaves the selection as it is.
 //
+// FILTER MODE (docs/plans/advanced-filtering.md; filter-bar.js): the toggle above the tabs. On, a click on a row with a source
+// changes its mark -- off, + any of, & must, - not, off -- Ctrl-click makes it +, and a row that only groups opens or closes; the
+// marks drawn are the open filter's. Off, every click above is as it was.
+//
 // The sort is the view's header's Sort by (sort-menu.js, #714; it was one control above the tabs, #671): the order a view was
 // opened in is the one the next view is opened in (state.nav.order), whichever tab it is opened from.
 import { api } from './common/api.js';
@@ -33,9 +37,10 @@ import {
 import { openLibraryView } from './library-view.js';
 import { DEFAULT_ORDER, MAX_MEMBERS, addressTooLong } from './library-source.js';
 import {
-    compress, indexSection, membersOf, peopleGroupIds, rowTree, sectionOf, sectionRows, selectedRows, specOfMembers,
-    withRowsUnder
+    compress, filterKey, filterMember, indexSection, membersOf, peopleGroupIds, rowTree, sectionOf, sectionRows, selectedRows,
+    specOfMembers, withRowsUnder
 } from './navigator-model.js';
+import { filterFollows, markOf, markRow, setFilterMode, shownMarks } from './filter-bar.js';
 import { paintRows, rowElement, tabKeyTarget, treeKeyAction } from './navigator-tree.js';
 
 const NAV_ORDER = ['folders', 'keywords', 'people', 'dates'];
@@ -99,14 +104,24 @@ function paintSection(name) {
     }
     const { rows, hidden } = sectionRows(name, sec.index, sec.expanded, sec.filter);
     sec.rows = rows;
-    paintRows(tree, rows, { selected: chosen.rows, currentId: sec.currentId, tree: cfg.tree });
+    const shown = shownMarks();
+    const marks = new Map();
+    if (shown) {
+        for (const row of rows) {
+            const sign = row.spec ? shown.get(filterKey(row.spec)) : null;
+            if (sign) marks.set(row.id, markOf(sign));
+        }
+    }
+    paintRows(tree, rows, { selected: chosen.rows, currentId: sec.currentId, tree: cfg.tree, marks });
     const wanted = sec.filter.trim();
+    const refused = state.nav.filter.on ? state.nav.filter.notice : '';
     let said = '';
     if (sec.status === 'loading' && !sec.index) said = cfg.loading;
     else if (sec.message) said = sec.message;
+    else if (refused) said = refused;
     else if (sec.notice) said = sec.notice;
     else if (sec.index && rows.length === 0) said = wanted ? `Nothing matches “${wanted}”.` : cfg.empty;
-    setSaid(status, said, Boolean(sec.message || sec.notice));
+    setSaid(status, said, Boolean(sec.message || refused || sec.notice));
     let more = '';
     if (hidden > 0) more = `${hidden.toLocaleString()} more are not shown. Type in the filter to narrow the list.`;
     else if (name === 'dates' && sec.index && sec.index.undated > 0 && !wanted) {
@@ -174,6 +189,7 @@ function loadSection(name, quiet) {
                 sec.opened = true;
             }
             paintIfShown(name);
+            if (name === 'keywords' || name === 'people') filterFollows();   // a chip's tag or person, still there or not
         })
         .catch(err => {
             if (token !== sec.asked) return;
@@ -281,6 +297,7 @@ function selectTab(name, { focus = false, load = true } = {}) {
 export function navigatorFollows() {
     const nav = state.nav;
     const lib = state.library;
+    nav.filter.leaving = false;   // the search left is gone: the next click acts on what is open now
     nav.followed = lib && !lib.invalid ? { kind: lib.kind, value: lib.value, recursive: lib.recursive } : null;
     if (lib && !lib.invalid) {
         nav.order = lib.order || DEFAULT_ORDER;
@@ -292,6 +309,35 @@ export function navigatorFollows() {
     // A Ctrl-click in one tab keeps the tab: the union may start in another.
     if (target && !touched.has(nav.tab)) selectTab(target, { load: false });
     showPane(lib ? nav.choice.library : nav.choice.folder);
+    readForMarks();
+}
+
+/** The keywords or the people read, once, when a chip of the filter shown names one: the chip says whether it is still there. */
+function readForMarks() {
+    const marks = shownMarks();
+    if (!marks) return;
+    const named = new Set([...marks.keys()].map(key => sectionOf(filterMember(key))));
+    for (const name of ['keywords', 'people']) {
+        const sec = state.nav.sections[name];
+        if (named.has(name) && !sec.index && !sec.pending && sec.status !== 'error') readSectionIndex(name);
+    }
+}
+
+/** The toggle, the hint beside it and the rows say whether Filter mode is on. */
+function paintFilterMode() {
+    const on = state.nav.filter.on;
+    const toggle = document.getElementById('nav-filter-toggle');
+    toggle.setAttribute('aria-pressed', on ? 'true' : 'false');
+    toggle.classList.toggle('active', on);
+    document.getElementById('nav-filter-help').classList.toggle('hidden', !on);
+    sidebarPaneLibrary.classList.toggle('filter-mode', on);
+}
+
+function toggleFilterMode() {
+    setFilterMode(!state.nav.filter.on);
+    paintFilterMode();
+    readForMarks();
+    paintIfShown(state.nav.tab);
 }
 
 // ---- Rows: opening, expanding, the keys ---------------------------------------------------------
@@ -309,6 +355,10 @@ function setExpanded(name, id, open) {
  * what is selected, in the fewest sources (navigator-model.js compress). A plain click also opens a closed branch.
  */
 function chooseRow(name, id, { ctrl = false, shift = false } = {}) {
+    if (state.nav.filter.on) {
+        markThisRow(name, id, ctrl);
+        return;
+    }
     const sec = state.nav.sections[name];
     const tree = rowTree(name, sec.index);
     const row = sec.rows.find(each => each.id === id);
@@ -364,10 +414,27 @@ function chooseRow(name, id, { ctrl = false, shift = false } = {}) {
     openLibraryView(spec);
 }
 
-/** Ctrl+A: every row drawn, and the rows under them. */
+/**
+ * Filter mode: a row with a source changes its mark (Ctrl: any of, filter-bar.js markRow); a row that only groups (a branch of
+ * people, the junk years) opens or closes.
+ */
+function markThisRow(name, id, ctrl) {
+    const sec = state.nav.sections[name];
+    const row = sec.rows.find(each => each.id === id);
+    if (!row) return;
+    sec.currentId = id;
+    if (!row.spec) {
+        if (row.expandable) setExpanded(name, id, !row.expanded);
+        return;
+    }
+    markRow(row.spec, { ctrl });
+    paintSection(name);
+}
+
+/** Ctrl+A: every row drawn, and the rows under them. Not in Filter mode, where a row is marked one at a time. */
 function chooseAllRows(name) {
     const sec = state.nav.sections[name];
-    if (!sec.rows.length) return;
+    if (!sec.rows.length || state.nav.filter.on) return;
     const first = sec.rows[0].id;
     const last = sec.rows.at(-1).id;
     sec.anchor = first;
@@ -464,6 +531,19 @@ function wireSection(name) {
 }
 
 function buildPanels() {
+    const toggle = buildElement('button', {
+        className: 'nav-filter-toggle', id: 'nav-filter-toggle', text: 'Filter',
+        attrs: { type: 'button', 'aria-pressed': 'false' },
+        title: 'Filter mode: a click marks a row + any of, & must, - not; off, a click shows the row',
+    });
+    toggle.addEventListener('click', toggleFilterMode);
+    sidebarPaneLibrary.appendChild(buildElement('div', { className: 'nav-head' }, [
+        toggle,
+        buildElement('span', {
+            className: 'nav-filter-help hidden', id: 'nav-filter-help',
+            text: 'Click: + any of, & must, - not, off. Ctrl-click: +',
+        }),
+    ]));
     const tabs = buildElement('div', {
         className: 'nav-tabs', id: 'nav-tabs',
         attrs: { role: 'tablist', 'aria-label': 'Browse the library by', 'data-own-keys': true },
@@ -507,6 +587,7 @@ function buildPanels() {
         wireSection(name);
     }
     selectTab(state.nav.tab, { load: false });
+    paintFilterMode();
 }
 
 /** Build the navigator's panels and wire the switch between the sidebar's panes. Starts nothing: a section is read when it is shown. */

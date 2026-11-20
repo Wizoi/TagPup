@@ -10,7 +10,8 @@
 // folders, and a bookmark opens one. A `?view` wins over a `?path`. The navigator (navigator.js) opens views
 // through here and follows them (phase 9c): `upper.navigatorFollows` as one opens or closes; so does the search box
 // (search.js, phase 9e-2: `upper.searchFollows`). A search's place in the history says how many places back the view before
-// it is (`searchBack`), so clearing the search returns to that view.
+// it is (`searchBack`), so clearing the search returns to that view: the search box's Clear and an emptied filter (filter-bar.js)
+// both leave through leaveSearch, once.
 import { api } from './common/api.js';
 import { VIEW_PARAMS } from './common/library.js';
 import { baseName, samePath } from './common/paths.js';
@@ -33,7 +34,10 @@ import {
 import { clearSelection } from './selected.js';
 import { forgetSelectionFaces } from './selection-faces.js';
 import { positionOf, pushEntry } from './history-entries.js';
-import { backArrived, backToView, bestEffortScroll, forgetViewLeft, leavePhotoPlace, onPhotoPlace, photoPlaceMoved, saveScroll } from './view-left.js';
+import {
+    backArrived, backToView, bestEffortScroll, forgetViewLeft, leavePhotoPlace, onPhotoPlace, photoPlaceMoved, saveScroll,
+    searchPlacesBack
+} from './view-left.js';
 import { lockBulkControls } from './bulk-run.js';
 import { forgetBanner } from './library-banner.js';
 import { clearSyncInfo, loadSyncInfo } from './sync-state.js';
@@ -163,6 +167,7 @@ export function libraryChanged() {
     updateListStats();
     updatePhotoPosition();
     upper.searchFollows();   // the search box shows the search that is open, and what the library said of it
+    upper.filterFollows();   // and the filter's chips, the filter that is open
 }
 
 // ---- The address ---------------------------------------------------------------------------
@@ -214,6 +219,7 @@ export function openLibraryView(spec, { history = 'push', scrollTop = 0 } = {}) 
 
 /** The person stayed on the photo: the address goes back to the place the page is still at, and the search box with it. */
 function keepAddress() {
+    state.nav.filter.leaving = false;
     const lib = state.library;
     if (lib && !lib.invalid) writeAddress(lib, 'replace');
     upper.searchFollows({ force: true });
@@ -226,6 +232,7 @@ function keepAddress() {
  * the view's own state, less `searchBack`, which no longer says where the view before the search is (Clear then closes the view).
  */
 function stayAfterMove(from, to) {
+    state.nav.filter.leaving = false;   // the search was not left: a click may leave it again
     if (from !== null && to !== null && from !== to) {
         window.history.go(from - to);
         upper.searchFollows({ force: true });
@@ -324,6 +331,7 @@ export function closeLibraryView({ folder = '' } = {}) {
     lockBulkControls();
     upper.navigatorFollows();   // no source is open: the sidebar goes back to the pane a folder view has
     upper.searchFollows();      // and the search box, if it showed a search, is empty
+    upper.filterFollows();      // and the filter's chips are gone
     if (folder) {
         folderPathInput.value = folder;
         scanFolder(false, { asked: true });   // every caller asked before the view went (pending.js leaveThen)
@@ -361,14 +369,33 @@ export function closeViewOntoFolder(folder) {
  * before in this page (it was opened by its address). Asks first about edits in the open photo.
  */
 export function closeViewAsNewPlace() {
+    const settled = () => { state.nav.filter.leaving = false; };
     leavePhotoThen(() => {
-        if (!state.library) return;
+        if (!state.library) {
+            settled();
+            return;
+        }
         const url = new URL(window.location.href);
         for (const name of VIEW_PARAMS) url.searchParams.delete(name);
         saveScroll();
         pushEntry({}, url);
         closeLibraryView();
-    });
+    }, { onStay: settled });
+}
+
+/**
+ * Leave the search open for the view before it (`searchBack` places back), or, for one opened by its address, close it as a
+ * new place: the search box's Clear (search.js) and a filter emptied or turned off (filter-bar.js). Once: `leaving` holds until
+ * the next view is followed (navigator.js navigatorFollows) or the person stays on the photo, so a second click before Back
+ * has arrived does not go back twice.
+ */
+export function leaveSearch() {
+    const filter = state.nav.filter;
+    if (filter.leaving) return;
+    filter.leaving = true;
+    const back = searchPlacesBack();
+    if (back > 0) window.history.go(-back);
+    else closeViewAsNewPlace();
 }
 
 /** Ask the library for this view's order again, keeping the place near the same photo. */

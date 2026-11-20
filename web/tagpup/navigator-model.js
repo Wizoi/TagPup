@@ -551,7 +551,7 @@ export function specOfMembers(members) {
 /** The tabs in the order a filter's search names them, so one filter has one address. */
 const FILTER_FACETS = ['folders', 'keywords', 'people', 'dates'];
 /** A row's states, as its marker shows them, and where each goes: `+` any of (its tab's union), `&` must (all_of), `-` not (none_of). */
-const FILTER_PARTS = { '+': 'any', '&': 'must', '-': 'not' };
+export const FILTER_PARTS = { '+': 'any', '&': 'must', '-': 'not' };
 
 /**
  * Is this source one a row of a tab opens, so that a filter can hold it: a folder with its subfolders, a keyword with the tags

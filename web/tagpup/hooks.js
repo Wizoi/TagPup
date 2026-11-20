@@ -12,6 +12,7 @@ export const upper = {
     checkSuggestionsStatus: null,
     choosePane: null,
     facesFollowReply: null,
+    filterFollows: null,
     forgetFolderSuggestions: null,
     holdForWrite: null,
     landOnAnchor: null,

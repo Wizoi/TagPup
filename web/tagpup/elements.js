@@ -200,6 +200,9 @@ export const libraryStrip = document.getElementById('library-strip');
 export const libraryStripSource = document.getElementById('library-strip-source');
 export const libraryStripTotal = document.getElementById('library-strip-total');
 export const libraryStripStatus = document.getElementById('library-strip-status');
+export const filterBar = document.getElementById('filter-bar');
+export const filterBarChips = document.getElementById('filter-bar-chips');
+export const btnFilterBarClear = document.getElementById('btn-filter-bar-clear');
 export const btnLibraryRefresh = document.getElementById('btn-library-refresh');
 // The search box of the Library pane (search.js, phase 9e-2)
 export const librarySearchWords = document.getElementById('library-search-words');

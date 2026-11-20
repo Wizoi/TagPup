@@ -16,6 +16,7 @@ const drawn = new WeakMap();   // the container -> Map(row id -> its element): b
 function makeRow(role) {
     return buildElement('div', { className: 'nav-row', attrs: { role, tabindex: '-1' } }, [
         buildElement('span', { className: 'nav-twisty', attrs: { 'aria-hidden': 'true' } }),
+        buildElement('span', { className: 'nav-mark', attrs: { 'aria-hidden': 'true' } }),
         buildElement('span', { className: 'nav-label' }),
         buildElement('span', { className: 'nav-hint' }),
         buildElement('span', { className: 'nav-count' }),
@@ -26,21 +27,23 @@ function setText(el, text) {
     if (el.textContent !== text) el.textContent = text;
 }
 
-function patchRow(el, row, selected, current, tree) {
+function patchRow(el, row, selected, current, tree, mark) {
     el.dataset.row = row.id;
     el.style.setProperty('--nav-level', String(row.level));
     if (tree) el.setAttribute('aria-level', String(row.level));
     if (row.expandable) el.setAttribute('aria-expanded', row.expanded ? 'true' : 'false');
     else el.removeAttribute('aria-expanded');
     el.setAttribute('aria-selected', selected ? 'true' : 'false');
-    el.setAttribute('aria-label', row.aria);
+    el.setAttribute('aria-label', mark ? `${row.aria} (${mark.said})` : row.aria);
     el.tabIndex = current ? 0 : -1;
     el.classList.toggle('current', selected);
     el.classList.toggle('grouping', !row.spec);
+    for (const part of ['any', 'must', 'not']) el.classList.toggle(`mark-${part}`, Boolean(mark) && mark.part === part);
     if (el.title !== row.title) el.title = row.title;
-    const [twisty, label, hint, count] = el.children;
+    const [twisty, marker, label, hint, count] = el.children;
     setText(twisty, row.expandable ? (row.expanded ? '▾' : '▸') : '');
     twisty.classList.toggle('empty', !row.expandable);
+    setText(marker, mark ? mark.sign : '');
     setText(label, row.label);
     setText(hint, row.hint || '');
     hint.classList.toggle('hidden', !row.hint);
@@ -52,9 +55,9 @@ function patchRow(el, row, selected, current, tree) {
  * went; the DOM in the rows' order, moving only what is out of place (a moved element loses its focus).
  * `selected` is the Set of rows the open view is made of (or `selectedId`, one); `currentId` the one the arrow keys
  * are on (the tab stop), or else the first selected one drawn, else the first. `tree`: the container is a tree
- * (levels), else a listbox.
+ * (levels), else a listbox. `marks`: Filter mode's, a Map of row id -> { sign, part, said } (filter-bar.js markOf).
  */
-export function paintRows(container, rows, { selectedId = null, selected = null, currentId = null, tree = true } = {}) {
+export function paintRows(container, rows, { selectedId = null, selected = null, currentId = null, tree = true, marks = null } = {}) {
     let held = drawn.get(container);
     if (!held) {
         held = new Map();
@@ -69,7 +72,7 @@ export function paintRows(container, rows, { selectedId = null, selected = null,
     const next = new Map();
     for (const row of rows) {
         const el = held.get(row.id) || makeRow(role);
-        patchRow(el, row, isSelected(row.id), row.id === stop, tree);
+        patchRow(el, row, isSelected(row.id), row.id === stop, tree, marks ? marks.get(row.id) || null : null);
         next.set(row.id, el);
     }
     for (const [id, el] of held) if (!next.has(id)) el.remove();

@@ -2749,6 +2749,112 @@ body.just-looking #faces-strip {
     font-style: italic;
 }
 
+/* Filter mode (filter-bar.js): the toggle above the tabs, and each row's mark -- + any of, & must, - not. */
+.nav-head {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 12px 0;
+}
+
+.nav-filter-toggle {
+    padding: 2px 10px;
+    font-family: var(--font-body);
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--text-muted);
+    background: transparent;
+    border: 1px solid var(--border-color);
+    border-radius: 12px;
+    cursor: pointer;
+}
+
+.nav-filter-toggle.active {
+    color: var(--text-primary);
+    background-color: var(--accent-glow);
+    border-color: var(--accent);
+}
+
+.nav-filter-toggle:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 1px;
+}
+
+.nav-filter-help {
+    font-size: 11px;
+    color: var(--text-muted);
+}
+
+.nav-mark {
+    flex: none;
+    width: 12px;
+    font-weight: 700;
+    text-align: center;
+}
+
+.nav-mark:empty {
+    display: none;
+}
+
+.filter-mode .nav-mark:empty {
+    display: inline-block;
+}
+
+.nav-row.mark-any .nav-mark,
+.filter-chip-any .filter-chip-mark {
+    color: var(--accent);
+}
+
+.nav-row.mark-must .nav-mark,
+.filter-chip-must .filter-chip-mark {
+    color: var(--badge-matched);
+}
+
+.nav-row.mark-not .nav-mark,
+.filter-chip-not .filter-chip-mark {
+    color: #f87171;
+}
+
+.nav-row.mark-not .nav-label {
+    text-decoration: line-through;
+}
+
+/* The filter's chips, under the view's strip: the search box's chips (.library-search-chip), each one button. */
+.filter-bar {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 6px;
+    padding: 4px 0;
+}
+
+.filter-bar-label {
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--text-muted);
+}
+
+.filter-bar-chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+    flex: 1;
+    min-width: 0;
+}
+
+.filter-chip {
+    color: var(--text-primary);
+    font-family: var(--font-body);
+    cursor: pointer;
+}
+
+.filter-chip-mark {
+    font-weight: 700;
+    margin-right: 2px;
+}
+
 .nav-twisty {
     flex: none;
     width: 14px;

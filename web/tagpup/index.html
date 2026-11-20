@@ -381,6 +381,13 @@
                                     </span>
                                 </span>
                             </div>
+                            <!-- Filter mode's filter (web/tagpup/filter-bar.js): a chip for each row marked in the navigator, shown
+                                 while the view open is the filter; a chip clicked takes its row off, Clear all leaves the filter. -->
+                            <div id="filter-bar" class="filter-bar hidden">
+                                <span class="filter-bar-label">Filter</span>
+                                <div id="filter-bar-chips" class="filter-bar-chips" role="list" aria-label="The rows the filter marks"></div>
+                                <button type="button" id="btn-filter-bar-clear" class="btn btn-secondary btn-sm" title="Take every mark off: back to the view before the filter">Clear all</button>
+                            </div>
                             <div class="folder-view-header-card">
                                 <div class="folder-view-heading">
                                     <div class="folder-title-stats">
