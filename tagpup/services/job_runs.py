@@ -41,6 +41,10 @@ logger = logging.getLogger(__name__)
 
 DONE, FAILED, RUNNING = job_runs.DONE, job_runs.FAILED, job_runs.RUNNING
 INDEX = job_runs.INDEX
+
+#: The recurring job a whole sync of a library is a run of: the daily catch-up, and the folder watcher's sync of a whole
+#: library (tagpup.jobs.recurring.sync_whole).
+SYNC = "sync"
 Run = job_runs.Run
 stamp = job_runs.stamp
 seconds = job_runs.seconds

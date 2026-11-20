@@ -142,7 +142,7 @@ class Here:
     which this layer does not reach)."""
     queues: dict = field(default_factory=dict)
     syncing: Optional[dict] = None
-    sync_job: str = "sync"
+    sync_job: str = runs_service.SYNC
     logs_of: Callable = lambda tag, children=None: []
 
 

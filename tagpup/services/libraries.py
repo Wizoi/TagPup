@@ -19,7 +19,8 @@ from tagpup.core.result import Result
 from tagpup.files import images, recycle_bin, shares
 from tagpup.services import job_runs, settings
 from tagpup.services import roots as roots_service
-from tagpup.store import added_folders, db, photos, schema, taxonomy
+from tagpup.store import added_folders, db, file_journal, photos, schema, taxonomy
+from tagpup.store import job_runs as run_rows
 from tagpup.store import folders as store_folders
 
 logger = logging.getLogger(__name__)
@@ -409,15 +410,80 @@ def _addable(folders):
 def _take_off_ignored(library, folders):
     """Take each entry of the library's ignored folders that is one of `folders`, or a folder above one, off them, as
     one journaled change of its settings (tagpup.services.settings.change: the History lists it and undoes it). An
-    entry below a folder, or beside it, stays. (the entries taken off, as the settings held them; the change's Result,
-    or None when none was)."""
-    from tagpup.services import settings   # settings reaches sync, which reaches this module
-    held = settings.read(library).ignored
-    covering = [entry for entry in held if any(store_folders.is_ignored(folder, [entry]) for folder in folders)]
-    if not covering:
-        return [], None
-    kept = [entry for entry in held if entry not in covering]
-    return covering, settings.change(library, {settings.IGNORED: validation.FOLDER_SEPARATOR.join(kept)})
+    entry below a folder, or beside it, stays. The entries are those the change reads (settings.edit_ignored): an Ignore
+    saved by the other app meanwhile is kept, or the change refused. (the entries taken off, as the settings held them;
+    the change's Result, or None when none was)."""
+    covering = []
+
+    def edit(held):
+        covering[:] = [entry for entry in held if any(store_folders.is_ignored(folder, [entry]) for folder in folders)]
+        return [entry for entry in held if entry not in covering] if covering else None
+    change = settings.edit_ignored(library, edit)
+    return (covering, change) if covering else ([], None)
+
+
+#: What a removal of a folder waits for while a live process runs it for the library, its row in job_runs any process's:
+#: a whole sync, which queues the folders of the new files it finds, and an index of another process's (the CLI's `index`
+#: or `sync --apply`; this process's are its queue's, asked folder by folder). A run's row names no folder (counts only),
+#: so either holds the whole library. The sentence each is refused with, shown as it is.
+REMOVAL_WAITS = {
+    job_runs.SYNC: "Not removed: a sync of this library is under way. Remove the folder when it has finished.",
+    job_runs.INDEX: ("Not removed: this library is being indexed by another TagPup process (the CLI, say) just now. "
+                     "Remove the folder when that index has finished."),
+}
+
+_changing_guard = threading.Lock()
+_changing = {}
+
+
+def _folders_changing(library):
+    """The lock an Add holds from recording its folders to queueing them, and a removal from its answer to its write:
+    one of them at a time for a library in this process, so neither lands in the other's gap (#3228)."""
+    with _changing_guard:
+        return _changing.setdefault(library.key, threading.Lock())
+
+
+def removal_refusal(library, folder, queue, conn, alive):
+    """Why `folder` may not be removed from `library` just now -- the sentence, shown as it is -- or None. While it, a
+    folder above it or one below it waits in `queue` (this process's index queue for the library) or is being indexed,
+    its bake included (IndexQueue.overlaps): the index would be refused at its next batch (store.photos.record_indexed
+    raises NotHeld) and stop, failed, part-way. While a live process runs a job of REMOVAL_WAITS for the library: its
+    row in job_runs, read on `conn` (the removal's own write, `remove`), `alive` whether each owner lives
+    (store.job_runs.owners_alive, asked before the write); a row whose process has ended (a crash, a CLI closed) is not
+    waited for. This library's queue and runs only: another library holding the folder is its own. The one answer to
+    "may this folder be removed now?"."""
+    busy = queue.overlaps(folder)
+    if busy and busy["status"] == "running":
+        return ("Not removed: %s is being indexed in this library just now. Remove the folder when its index has "
+                "finished." % busy["folder"])
+    if busy:
+        return ("Not removed: %s waits to be indexed in this library. Cancel it, or remove the folder when its index "
+                "has finished." % busy["folder"])
+    me = file_journal.owner()
+    for _run_id, job, owner in run_rows.running_of(conn, tuple(REMOVAL_WAITS)):
+        if job == job_runs.INDEX and owner == me:
+            continue   # this process's queue's, answered above folder by folder
+        if run_rows.lives(owner, alive):
+            return REMOVAL_WAITS[job]
+    return None
+
+
+def remove(library, folder, queue):
+    """Take `folder`'s photos and faces out of `library` (tagpup.services.faces.remove_folder, its Result), or raise
+    Conflict with removal_refusal's sentence, nothing removed. Asked inside the removal's write and under the lock an
+    Add holds (_folders_changing): an Add in this process, or a run another process claims (a CLI index claims its row
+    before it records its folders added), lands before the answer or after the write, never between (#3228, #3229)."""
+    from tagpup.services import faces as faces_service   # faces reaches settings, which reaches this module
+    conn = db.connect(db.readonly_uri(library.path), uri=True)
+    try:
+        # Asked before the write lock is taken: it may read the process list (store.job_runs.claim).
+        alive = run_rows.owners_alive([(run_id, owner) for run_id, _job, owner
+                                       in run_rows.running_of(conn, tuple(REMOVAL_WAITS))])
+    finally:
+        conn.close()
+    with _folders_changing(library):
+        return faces_service.remove_folder(
+            library, folder, refused=lambda write: removal_refusal(library, folder, queue, write, alive))
 
 
 def _taken_off(entries):
@@ -459,9 +525,10 @@ def add(library, folders, queue):
     if unignored:
         result.details["note"] = _taken_off(unignored)
     # Before the queue: its worker may start at once, and a Suggest asked for as soon as
-    # this returns must find the folder the library's.
-    made = _record(library, wanted)
-    outcome = queue(folders)
+    # this returns must find the folder the library's. Recorded and queued as one step against a removal (remove).
+    with _folders_changing(library):
+        made = _record(library, wanted)
+        outcome = queue(folders)
     result.details.update(outcome.details)
     result.details.update(added=made)
     result.changed = made

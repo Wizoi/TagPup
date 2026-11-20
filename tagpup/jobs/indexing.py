@@ -262,9 +262,9 @@ class IndexQueue:
         `folder` the job's folder that overlaps; None when none does. What a removal of the folder is refused for
         (tagpup.web.folder_routes): the index would be refused at its next batch (store.photos.record_indexed raises
         NotHeld; the batch makes no rows) and stop, failed, part-way, and its bake would write the files of photos whose
-        rows are gone. It sees only this queue: a CLI index in another process is not here, and a removal landing
-        between a run's end (`_progress` cleared) and its `_queue_what_was_missed` passes it, the re-run then refused
-        the same way. pending() and active() name a batch by its first folder only, so they cannot answer this."""
+        rows are gone. A folder asked for again while it is indexed waits too (`_missed`). It sees only this queue: a
+        run of another process's is its row's (tagpup.services.libraries.removal_refusal). pending() and active() name
+        a batch by its first folder only, so they cannot answer this."""
         return self._job_of(folder, overlapping=True)
 
     def _job_of(self, folder, overlapping):
@@ -288,6 +288,12 @@ class IndexQueue:
                 if hit is not None:
                     return {"status": "queued", "message": "Waiting to be indexed...",
                             "folder": hit if overlapping else job["folder"]}
+            # Asked for again while it was indexed: queued as that run ends (_queue_what_was_missed, in one hold of
+            # this lock), so it waits from now on -- a removal between the run's end and that queueing was let by (#3228).
+            hit = next((ask["folder"] for ask in self._missed.values() if covers(ask["folder"])),
+                       None) if overlapping else None
+            if hit is not None:
+                return {"status": "queued", "message": "Waiting to be indexed...", "folder": hit}
         return None
 
     def status(self, folder):

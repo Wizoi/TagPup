@@ -140,16 +140,24 @@ def abandon(conn, note, at=None, run_ids=None):
     return conn.execute(sql, params).rowcount
 
 
-def _owners_alive(rows):
+def owners_alive(rows):
     """{owner: whether its process lives} of the (id, owner) `rows`: asked before the write lock is taken -- it may read
     the process list, seconds on a busy machine, which every writer of the library waited for."""
     return {owner: file_journal.owner_alive(owner) for owner in {owner for _, owner in rows if owner}}
 
 
-def _lives(owner, alive):
-    """Does the run of `owner` belong to a live process, as `alive` (_owners_alive) found? A run with no owner does not;
+def lives(owner, alive):
+    """Does the run of `owner` belong to a live process, as `alive` (owners_alive) found? A run with no owner does not;
     one whose owner was not asked -- claimed after the look -- does."""
     return bool(owner) and alive.get(owner, True)
+
+
+def running_of(conn, jobs):
+    """(id, job, owner) of each run of `jobs` still `running` in the library open on `conn`, oldest first: what a write
+    asks inside its own transaction, whose owners' lives were asked before it (owners_alive; a removal of a folder,
+    tagpup.services.libraries.remove)."""
+    return conn.execute("SELECT id, job, owner FROM job_runs WHERE outcome = 'running' AND job IN (%s) ORDER BY id"
+                        % ",".join("?" * len(jobs)), tuple(jobs)).fetchall()
 
 
 def _last_ended(conn, job, library):
@@ -191,15 +199,15 @@ def claim(db_path, job, library, now, due=None, parent=None, changed=None):
     # and the rows read again under it: a run that appeared meanwhile is its owner's.
     conn = db.connect(db.readonly_uri(db_path), uri=True)
     try:
-        alive = _owners_alive(_running(conn, job, library))
+        alive = owners_alive(_running(conn, job, library))
     finally:
         conn.close()
 
     def work(conn):
         db.begin(conn, immediate=True)
         running = _running(conn, job, library)
-        abandoned = abandon(conn, ENDED, now, [run_id for run_id, owner in running if not _lives(owner, alive)])
-        holder = next((owner for _, owner in running if _lives(owner, alive)), None)
+        abandoned = abandon(conn, ENDED, now, [run_id for run_id, owner in running if not lives(owner, alive)])
+        holder = next((owner for _, owner in running if lives(owner, alive)), None)
         if holder and not records_only:
             return Claim(why="running", abandoned=abandoned, holder=holder)
         if due is not None and not due(_last_ended(conn, job, library)):
@@ -241,12 +249,12 @@ def sweep_abandoned(db_path, now):
         conn.close()
     if not running:
         return 0
-    alive = _owners_alive(running)
+    alive = owners_alive(running)
 
     def work(conn):
         db.begin(conn, immediate=True)
         found = conn.execute("SELECT id, owner FROM job_runs WHERE outcome = 'running'").fetchall()
-        return abandon(conn, STOPPED, now, [run_id for run_id, owner in found if not _lives(owner, alive)])
+        return abandon(conn, STOPPED, now, [run_id for run_id, owner in found if not lives(owner, alive)])
 
     return db.write_with_connection(db_path, work, label="sweep the abandoned runs")
 

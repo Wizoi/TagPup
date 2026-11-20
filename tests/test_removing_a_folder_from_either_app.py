@@ -4,16 +4,25 @@ Both apps serve the one route (tagpup.web.folder_routes): the folder's rows and 
 folder, or a folder above it, waits in the library's index queue or is being indexed, the removal is refused with a
 sentence and nothing goes: the run would otherwise be refused at its next batch (store.photos.record_indexed, NotHeld:
 no rows made) and stop, failed, part-way. A folder a parent's add still covers is put in the library's ignored folders;
-adding it again takes it off them, one journaled change the History undoes, and says so (owner, 2026-11-19). A CLI index in another process is not in the queue: the removal goes ahead,
-and the index stops at its next batch, saying why (AnIndexInTheCli). A second library holding the same folder is its own: an index of the folder in one never refuses
+adding it again takes it off them, one journaled change the History undoes, and says so (owner, 2026-11-19).
+
+Whether the folder may be removed now is one answer (tagpup.services.libraries.removal_refusal), asked inside the
+removal's write: an Add landing meanwhile waits for the write and lands after it; a folder asked for again while it is
+indexed waits from then; a whole sync of the library under way, or an index in another process (the CLI's, its row in
+job_runs), refuses it too, with the sentence the dialog shows; a run a dead process left running does not. A CLI index
+whose run could not be recorded is not seen: the removal goes ahead, and the index stops at its next batch, saying why
+(AnIndexInTheCli). A second library holding the same folder is its own: an index of the folder in one never refuses
 its removal from the other (two libraries holding one folder).
 
 The index runs here on the test's own thread (IndexQueue.run_pending, its worker held back), and the removal is asked
-from inside the index, while it runs: no thread, no sleep.
+from inside the index, while it runs: no sleep, and a thread only for an Add landing as a removal begins (joined).
 """
 import os
+import socket
 import sqlite3
 import sys
+import threading
+import time
 import unittest
 from unittest import mock
 
@@ -28,12 +37,15 @@ from test_an_index_reads_the_next_photos_ahead import photo as jpeg  # noqa: E40
 
 import tagpup_cli  # noqa: E402
 
-from tagpup.core import paths, validation  # noqa: E402
+from tagpup.core import paths, processes, validation  # noqa: E402
 from tagpup.core.library import Library  # noqa: E402
 from tagpup.core.result import NotHeld, Result  # noqa: E402
+from tagpup.services import job_runs, thumbnails  # noqa: E402
 from tagpup.services import libraries as library_actions  # noqa: E402
 from tagpup.services import settings as library_settings  # noqa: E402
-from tagpup.store import added_folders, db  # noqa: E402
+from tagpup.store import added_folders, db, file_journal  # noqa: E402
+from tagpup.store import job_runs as run_rows  # noqa: E402
+from tagpup.store import settings as store_settings  # noqa: E402
 from tagpup.store import roots as store_roots  # noqa: E402
 
 
@@ -241,6 +253,83 @@ class RemovingAFolder:
         self.assertEqual(3, self.held())
 
 
+    def test_an_add_landing_as_the_removal_begins_stays_held_and_queued(self):
+        """The owner removes Meet 1 in one app as the other adds it (#3228): the Add, posted once the removal has its
+        answer, waits for the removal's write and lands after it, the folder held and queued. It landed between them,
+        and the removal forgot the folder the Add had just recorded."""
+        ids_of, adds, replies = thumbnails.ids_of, [], []
+
+        def add_meanwhile(*args, **kwargs):
+            adding = threading.Thread(target=lambda: replies.append(
+                self.app.test_client().post(self.add_route, json={"folder_path": self.meet})))
+            adds.append(adding)
+            adding.start()
+            adding.join(0.5)
+            return ids_of(*args, **kwargs)
+        with mock.patch("tagpup.jobs.indexing.IndexQueue._ensure_runner"), \
+                mock.patch("tagpup.services.thumbnails.ids_of", side_effect=add_meanwhile):
+            status, body = self.remove(self.meet)
+            adds[0].join(10)
+        self.assertFalse(adds[0].is_alive(), "the Add never finished")
+        self.assertEqual((200, 1), (status, body.get("photos_removed")), body)
+        self.assertEqual(200, replies[0].status_code, replies[0].get_json())
+        self.assertTrue(library_actions.holds(self.library, self.meet), "the removal forgot the folder the Add recorded")
+        self.assertEqual("queued", (self.queue().overlaps(self.meet) or {}).get("status"), "the Add's index is gone")
+        self.queue().cancel([], everything=True)
+
+    def test_is_refused_between_a_run_and_the_re_run_of_the_folder_asked_for_again_during_it(self):
+        """Meet 1, asked for again while it is indexed (a watcher's sync of a file that arrived in it), is queued once
+        more as the run ends (_queue_what_was_missed): a removal between the run's end and that queueing waits too
+        (#3228). It went ahead, and the re-run was refused at its first batch."""
+        queue, answered = self.queue(), []
+        requeue = queue._queue_what_was_missed
+
+        def index(_folder, _report):
+            if not answered:
+                queue.start([self.meet], index)
+            return Result(attempted=1, changed=1)
+
+        def removed_first(job, status):
+            if not answered:
+                answered.append(self.remove(self.meet))
+            return requeue(job, status)
+        with mock.patch("tagpup.jobs.indexing.IndexQueue._ensure_runner"), \
+                mock.patch.object(queue, "_queue_what_was_missed", removed_first):
+            queue.start([self.meet], index)
+            queue.run_pending()
+        status, body = answered[0]
+        self.assertEqual((409, False), (status, body["success"]), body)
+        self.assertEqual("Not removed: %s waits to be indexed in this library. Cancel it, or remove the folder when its "
+                         "index has finished." % paths.stored(self.meet), body["error"])
+        self.assertEqual(3, self.held())
+
+    def test_is_refused_while_a_sync_of_the_library_is_under_way_and_another_library_removes_it(self):
+        """A whole sync (the daily catch-up, the watcher's sync of a library) queues the folders of the new files it
+        finds: while its run is under way the removal waits (#3200). A second library holding the folder is its own."""
+        meadow = self.home.library("meadow.db")
+        library_actions.create(meadow)
+        self.seed(meadow)
+        claimed = job_runs.claim(self.library, job_runs.SYNC, self.library.name, time.time())
+        self.assertTrue(claimed, claimed.why)
+        status, body = self.remove(self.meet)
+        self.assertEqual((409, False), (status, body["success"]), body)
+        self.assertEqual(library_actions.REMOVAL_WAITS[job_runs.SYNC], body["error"])
+        self.assertEqual(3, self.held(), "a folder removed while its library's sync ran")
+        status, body = self.remove(self.meet, "/meadow")
+        self.assertEqual((200, 1), (status, body["photos_removed"]), body)
+
+    def test_a_run_a_dead_process_left_running_does_not_refuse_it(self):
+        """A sync or a CLI index that crashed, or whose console was closed, leaves its row running; its process (this
+        one's id, another start: the one that had the id before) has ended, so nothing waits for it."""
+        dead = "%s:%d:1" % (socket.gethostname(), os.getpid())
+        with mock.patch.object(file_journal, "owner", return_value=dead):
+            for job in (job_runs.SYNC, job_runs.INDEX):
+                claimed = job_runs.claim(self.library, job, self.library.name, time.time())
+                self.assertTrue(claimed, claimed.why)
+        status, body = self.remove(self.meet)
+        self.assertEqual((200, 1), (status, body["photos_removed"]), body)
+
+
 class FromTagPup(RemovingAFolder, _Library):
     kind = "tagpup"
     add_route = "/library/api/folder/add"
@@ -251,11 +340,44 @@ class FromTagTuner(RemovingAFolder, _Library):
     add_route = "/library/api/folder/index-start"
 
 
+class TheOtherAppIgnoresAFolderAsAnAddReadsTheList(_Library):
+    """TagTuner's Ignore of Other is saved while TagPup's Add of Meet 1 reads the ignored folders to take Season off
+    them (#3234). The Add's change is of the list as that change reads it, so the Ignore is kept and the Add refused,
+    saying why. It wrote the list it had read before, and the other app's Ignore was dropped, silently."""
+    kind = "tagpup"
+
+    def test_the_other_apps_ignore_is_kept_and_the_add_refused(self):
+        self.ignore(self.season)
+        landed = []
+
+        def stale(real):
+            """The settings as they were read, the other app's Ignore saved just after."""
+            def once(*args, **kwargs):
+                value = real(*args, **kwargs)
+                if not landed:
+                    landed.append(True)
+                    landed.append(library_settings.ignore_folder(self.library, self.other))
+                return value
+            return once
+        queued = []
+        with mock.patch.object(store_settings, "read", stale(store_settings.read)), \
+                mock.patch.object(store_settings, "read_only", stale(store_settings.read_only)):
+            result = library_actions.add(self.library, [self.meet],
+                                         lambda folders: queued.append(list(folders)) or Result())
+        self.assertTrue(landed[1].ok, landed[1].message())
+        self.assertFalse(result.ok, result.details)
+        self.assertIn("is on the ignored list and could not be taken off it", result.message())
+        self.assertEqual([paths.stored(self.season), paths.stored(self.other)], ignored(self.library),
+                         "the other app's Ignore was dropped")
+        self.assertEqual(([], None), (queued, result.details.get("added")), "the refused Add recorded or queued")
+
+
 class AnIndexInTheCli(unittest.TestCase):
     """The owner indexes a folder with the CLI (how long indexes are run, CLAUDE.md) and removes it in an app while the
-    run goes on. The server's queue cannot see the CLI's run, so the removal goes ahead; the folder stays gone, and the
-    run stops at its next batch, saying why in a sentence on one line, exit 1, not a traceback (NotHeld), its rows and
-    faces not made. The models are stood in for
+    run goes on. The CLI's run is a run of the job `index` in the library's job_runs (tagpup_cli._recorded_as_an_index),
+    so the removal waits for it (removal_refusal). A run whose claim was not recorded is not seen: the removal goes
+    ahead, the folder stays gone, and the run stops at its next batch, saying why in a sentence on one line, exit 1, not
+    a traceback (NotHeld), its rows and faces not made. The models are stood in for
     (test_an_index_reads_the_next_photos_ahead.StandIns)."""
 
     def setUp(self):
@@ -272,10 +394,14 @@ class AnIndexInTheCli(unittest.TestCase):
     def index(self, folder):
         return CliRunner().invoke(tagpup_cli.cli, ["--db", self.library, "index", folder])
 
-    def remove(self, folder):
+    def ask_removal(self, folder):
         reply = self.client.post("/library/api/folder/remove", json={"folder_path": folder})
-        self.assertEqual(200, reply.status_code, reply.get_json())
-        return reply.get_json()
+        return reply.status_code, reply.get_json()
+
+    def remove(self, folder):
+        status, body = self.ask_removal(folder)
+        self.assertEqual(200, status, body)
+        return body
 
     def held(self, folder):
         """(rows under `folder`, their faces)."""
@@ -288,7 +414,44 @@ class AnIndexInTheCli(unittest.TestCase):
         finally:
             conn.close()
 
-    def test_a_removal_between_two_batches_stays_removed_and_the_index_stops_saying_why(self):
+    def test_a_removal_while_another_process_indexes_the_library_waits_for_it_and_the_index_finishes(self):
+        """The CLI's index claims its run before it records its folders (#3229): a removal in an app meanwhile is refused
+        with the sentence the dialog shows, and the index goes on to its end; once it has, the folder is removed. The run
+        is made another process's here: its owner the parent process (alive), the app's own owner asked for the removal."""
+        self.photos(self.meet, 5)
+        parent = os.getppid()
+        started = processes.started(parent)
+        self.assertIsNotNone(started, "the parent process's start cannot be read")
+        another = mock.patch.object(file_journal, "owner",
+                                    return_value="%s:%d:%d" % (socket.gethostname(), parent, started))
+        read_again, answered = tagpup_cli._read_again, []
+
+        def removed_between_batches(*args):
+            if not answered:
+                another.stop()   # the app's process asks: its own owner
+                try:
+                    answered.append(self.ask_removal(self.meet))
+                finally:
+                    another.start()
+            return read_again(*args)
+        another.start()
+        try:
+            with mock.patch.object(tagpup_cli, "PHOTO_CHUNK", 2), \
+                    mock.patch.object(tagpup_cli, "_read_again", removed_between_batches):
+                result = self.index(self.meet)
+        finally:
+            another.stop()
+        status, body = answered[0]
+        self.assertEqual((409, False), (status, body["success"]), body)
+        self.assertEqual(library_actions.REMOVAL_WAITS[job_runs.INDEX], body["error"])
+        self.assertEqual(0, result.exit_code, result.output)
+        self.assertEqual(5, self.held(self.meet)[0], "the index did not finish")
+        self.assertEqual(5, self.remove(self.meet)["photos_removed"], "once the index ended it is removed")
+
+    def test_an_index_whose_run_was_not_recorded_is_removed_past_and_stops_saying_why(self):
+        """The CLI's claim was not recorded (another writer held the library longer than the claim tries: "busy"); the
+        index runs all the same, and nothing says so to the app: the removal goes ahead, and the index stops at its
+        next batch with NotHeld."""
         self.photos(self.meet, 5)
         read_again, batches = tagpup_cli._read_again, []
 
@@ -297,7 +460,8 @@ class AnIndexInTheCli(unittest.TestCase):
             if len(batches) == 2:
                 self.assertTrue(self.remove(self.meet)["success"])
             return read_again(*args)
-        with mock.patch.object(tagpup_cli, "PHOTO_CHUNK", 2), \
+        with mock.patch.object(job_runs, "claim", return_value=run_rows.Claim(why="busy")), \
+                mock.patch.object(tagpup_cli, "PHOTO_CHUNK", 2), \
                 mock.patch.object(tagpup_cli, "_read_again", removed_before_the_second_batch):
             result = self.index(self.meet)
         self.assertEqual(2, batches[1][1], "the first batch was not recorded, with its faces, before the removal")

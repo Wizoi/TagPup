@@ -68,6 +68,7 @@ from tagpup.store.taxonomy import TagTaxonomy
 from tagpup.core import gpu_turns
 from tagpup.core import paths
 from tagpup.core import read_ahead
+from tagpup.core import runs as run_tags
 from tagpup.store import db as tagpup_db
 from tagpup import config as tagpup_config
 from tagpup import runtime as runtimes
@@ -293,6 +294,34 @@ def _holds_the_roots(command):
     return run
 
 
+#: What a run of `index` typed by hand that stopped before its end says, as its row's failure (job_runs.run's `stopped`).
+INDEX_STOPPED = "the index stopped before it finished; the console said why"
+
+
+def _recorded_as_an_index(command):
+    """A run of `index` typed by hand is a run of the job `index` in the library's job_runs, as one the server's queue
+    starts is (that one claimed by the queue: its index tag in this process's environment, runs.process_tags). Claimed
+    before the command records its folders added, so a removal of a folder in an app meanwhile is refused while it runs
+    (tagpup.services.libraries.removal_refusal), and ended as the command ends; the Activity page lists it. Not
+    recorded (another writer for longer than the claim tries, a library behind), it runs all the same. A `--reset`
+    deletes the library, its runs with it: nothing is recorded."""
+    @functools.wraps(command)
+    def run(ctx, *args, **kwargs):
+        library = Library(get_db_path(ctx.obj.get("test", False), ctx.obj.get("db")))
+        if (kwargs.get("reset") or not os.path.exists(library.path)
+                or any(tag.startswith("index:") for tag in run_tags.process_tags())):
+            return command(ctx, *args, **kwargs)
+        tag = run_tags.index_tag(library.name)
+        with run_tags.running(tag), job_runs.run(library, job_runs.INDEX, library.name, stopped=INDEX_STOPPED,
+                                                 changed={"run": tag, "folders": len(kwargs.get("directories") or ())}):
+            try:
+                return command(ctx, *args, **kwargs)
+            except SystemExit as stop:
+                if stop.code:
+                    raise
+    return run
+
+
 def _needs_ffmpeg(when=lambda kwargs: True):
     """A command that indexes, or makes posters, refused before it opens anything when ffmpeg is not found or does not
     run (tagpup.config.ffmpeg_problem; owner, 2026-11-06: a prerequisite, checked early): the sentence says what to
@@ -365,6 +394,7 @@ def _folders_now(ctx, param, directories):
               help="Only the photos directly in each DIRECTORY, not in its subfolders.")
 @click.pass_context
 @_needs_ffmpeg()
+@_recorded_as_an_index
 @_holds_the_roots
 def index(ctx, directories, force_reembed: bool, reset: bool, skip_faces: bool, no_subfolders: bool = False):
     """Phase 1: Scan and index a tagged photo library: one or more DIRECTORIES, in one run

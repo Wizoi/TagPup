@@ -409,6 +409,15 @@ def _lock_refusal(missing):
     return "".join(parts)
 
 
+def _wanted(wanted, key, value):
+    """Put `value` in `wanted` as the table holds it; the validator's sentence when it refuses it."""
+    text = _as_text(value)
+    problem = validation.problem(validation.setting_kind(key), text)
+    if not problem:
+        wanted[key] = text
+    return problem
+
+
 def change(library, values, acknowledged=(), apply=True):
     """Change the settings in `values` ({key: value}) as one journaled change, so it is in
     the library's history and can be undone. Refused, with nothing written, for a key
@@ -426,6 +435,10 @@ def change(library, values, acknowledged=(), apply=True):
     details["locked"] says whether any was a locked one, after which what the models
     made is from the old values.
 
+    A value may be an edit: a callable handed the setting's text as this change reads it, which gives the new value, or
+    None for no change of it (edit_ignored). An edit is of what is written over, so a change made by another since is
+    refused with the rest, never written over: a value computed from an earlier read was (#3234).
+
     A change of the roots (library.roots) adds, in the same change, every folder under a
     new root that holds photos and no indexed photo to the ignored folders
     (excluded_under; owner, 2026-09-26): details["ignored_added"]. Without `apply`, a dry
@@ -439,17 +452,18 @@ def change(library, values, acknowledged=(), apply=True):
     if unknown is not None:
         result.refuse("There is no group of settings called %s to acknowledge." % unknown)
         return result
-    wanted = {}
+    wanted, edits_of = {}, {}
     for key, value in values.items():
         if key not in validation.SETTINGS:
             result.refuse("There is no setting called %s." % key)
             return result
-        text = _as_text(value)
-        problem = validation.problem(validation.setting_kind(key), text)
+        if callable(value):
+            edits_of[key] = value
+            continue
+        problem = _wanted(wanted, key, value)
         if problem:
             result.refuse(problem)
             return result
-        wanted[key] = text
     if apply:
         held = store_settings.read(library.path)
     else:
@@ -459,6 +473,12 @@ def change(library, values, acknowledged=(), apply=True):
     if not held:
         result.refuse("The library's settings have not been stamped yet: open it first.")
         return result
+    for key, edit in edits_of.items():
+        value = edit(held.get(key, DEFAULTS[key]))
+        problem = _wanted(wanted, key, value) if value is not None else None
+        if problem:
+            result.refuse(problem)
+            return result
     if ROOTS in wanted and wanted[ROOTS] != held.get(ROOTS):
         ignored, added = _with_excluded(library, held, wanted[ROOTS], wanted.get(IGNORED))
         result.details["ignored_added"] = added
@@ -506,15 +526,24 @@ def ignore_folder(library, folder):
     in the library's history and can be undone: Ignore, on a folder sync lists to review.
     Refused for a folder the rules do not take as one; `changed` 0 for one ignored
     already."""
-    result = Result(attempted=1)
     problem = validation.problem("folder", folder)
     if problem:
+        result = Result(attempted=1)
         result.refuse(problem)
         return result
-    ignored = of(library).ignored
-    if any(paths.same(folder, other) for other in ignored):
-        return result
-    return change(library, {IGNORED: validation.FOLDER_SEPARATOR.join(ignored + [paths.stored(folder)])})
+    return edit_ignored(library, lambda ignored: None if any(paths.same(folder, other) for other in ignored)
+                        else ignored + [paths.stored(folder)])
+
+
+def edit_ignored(library, edit):
+    """Change the library's ignored folders to `edit(the folders, in order)` -- None for no change -- as one journaled
+    change (`change`), the folders those the change itself reads: a folder another app put on or took off the list
+    since is never written over, the change refused instead. What the Ignore, the Add (tagpup.services.libraries.add)
+    and a removal of a folder (tagpup.services.faces.remove_folder) each edit the list by."""
+    def edited(text):
+        folders = edit(_folders(text))
+        return None if folders is None else validation.FOLDER_SEPARATOR.join(folders)
+    return change(library, {IGNORED: edited})
 
 
 def described(settings, app=None):
