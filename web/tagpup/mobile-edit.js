@@ -21,7 +21,7 @@
  */
 import { api } from './common/api.js';
 import { buildElement, replaceContent } from './common/dom.js';
-import { postPhotoMetadata, takeWritten } from './common/photo-write.js';
+import { inTurn, postPhotoMetadata, takeWritten } from './common/photo-write.js';
 import { baseName, pathKey } from './common/paths.js';
 import { PeopleDirectory, leafOf, photoAlreadyHas, rootOf, sortedTags } from './common/vocabulary.js';
 import { TAKEN_DIGITS } from './format.js';
@@ -41,17 +41,6 @@ function say(text) {
 /** A failure as the owner reads it: the server's sentence, or a connection that dropped. */
 function why(err) {
     return err instanceof TypeError ? 'no connection. Try again.' : (err && err.message) || 'try again.';
-}
-
-/** Run `job` after every write sent before it; resolves what it resolves, rejects with its failure. */
-function inTurn(job) {
-    const run = (state.writing || Promise.resolve()).then(job);
-    const tail = run.then(() => {}, () => {});
-    state.writing = tail;
-    tail.then(() => {
-        if (state.writing === tail) state.writing = null;
-    });
-    return run;
 }
 
 const isPerson = (tag) => Boolean(state.people && state.people.ofTag(tag));
@@ -93,7 +82,7 @@ async function writeTags(job) {
 function tagWrite(id, path, change) {
     const job = { id, path, change };
     state.queued.push(job);
-    return inTurn(() => {
+    return inTurn(state, 'writing', () => {
         state.queued = state.queued.filter((each) => each !== job);
         return writeTags(job);
     });
@@ -300,7 +289,7 @@ function save() {
     }
     edit.saving = true;
     say('Saving...');
-    inTurn(() => postPhotoMetadata(record, fields, undefined, { keepalive: true })).then((data) => {
+    inTurn(state, 'writing', () => postPhotoMetadata(record, fields, undefined, { keepalive: true })).then((data) => {
         record.title = fields.title;
         if (data.taken) record.taken = data.taken;
         const card = state.photos && state.photos.cards.get(edit.id);
