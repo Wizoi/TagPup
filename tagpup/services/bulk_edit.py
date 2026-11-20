@@ -16,8 +16,9 @@ An EDIT is what is done to every photo of a selection (at most batches.MAX_BATCH
 
 `prepare` reads and checks one up front and refuses with a sentence, before a photo is touched. `run` does it to the photos,
 synchronously: each id is resolved to its row's path NOW (a photo deleted since is skipped and counted), and the whole of it is
-read, planned and written under the one lock of changes of photo files, by the machinery a single save and Add to all selected
-use (tagging.change_tags): the held photos as ONE journaled change named for the edit ("bulk tags"), the photos of folders the
+read, planned and written under the one lock of changes of photo files, through the one entry point of a write of photo files
+(tagpup.services.photo_writes, op `tags`; the machinery a page's tag write uses, tagging.change_tags_of): the held photos as ONE
+journaled change named for the edit ("bulk tags"), the photos of folders the
 library does not hold to their files only, each file read again before its write and a file another program changed meanwhile
 reported as a conflict and never overwritten. An edit never replaces a list: it adds and removes against each file's OWN tags.
 
@@ -41,7 +42,7 @@ from dataclasses import dataclass, field
 from tagpup.core import paths, validation, vocabulary
 from tagpup.core.result import Conflict, Refused
 from tagpup.files import recycle_bin
-from tagpup.services import batches, file_changes, selection, tagging
+from tagpup.services import batches, file_changes, photo_writes, selection, tagging
 from tagpup.services import people as people_service
 from tagpup.services import photos as photo_actions
 from tagpup.store import taxonomy
@@ -219,8 +220,11 @@ def _write(library, edit, ids, exiftool_path):
     by_key = {paths.key(path): photo_id for photo_id, path in present}
     chosen = [path for _photo_id, path in present]
     # Read, planned and written by file_changes.write_fields: one change, a chunk at a time, others let in between the chunks.
-    result = tagging.change_tags(
-        library, chosen, edit.add, edit.remove, exiftool_path, operation=OPERATIONS[edit.op], stop_at_first_error=False,
+    # Named by the paths resolved just now and no id: the ids are the server's own of this request, not a page's record. No
+    # lock held here: each chunk takes it, and a save that waits is let in between them (photo_writes' docstring).
+    result = photo_writes.write(
+        library, photo_writes.TAGS, {path: (None, {"add": edit.add, "remove": edit.remove}) for path in chosen},
+        exiftool_path, None, stop_at_first_error=False, operation=OPERATIONS[edit.op],
         persons={paths.key(path): set(edit.persons) for path in chosen} if edit.persons else None)
     _count(out, result, present, by_key)
     return out

@@ -124,8 +124,9 @@ SCENARIOS = {
     "I12": ("apps", "Refresh on a folder syncs it through the library's walk, and a file it finds gone starts the whole sync once, which removes it or follows its move; pressed again while that walks, a share that does not answer, another process's run and a server with no runner each sync or start nothing more and say why in Run now's words."),
     "I13": ("apps", "In Organize somebody selects photos and clips of a folder and clicks Delete: the library view's delete, by path, asked once by the server's count; the folder is read again, the deleted leave the list and the selection and the open photo among them closes onto the next; one a share or an error left stays, a clip stopped for it plays again only if it stayed, another folder or view opened meanwhile is untouched, one delete at a time on the page, and in Just look the button is inert with its sentence."),
     "I14": ("apps", "On a phone the owner opens TagPup's phone page: an address naming no library opens the one this browser opened last while the server lists it, else the list; Back goes up a screen; another library is the phone's page on it; a server updated meanwhile says so in the banner; a list that could not be read says so with Try again; a slow first reply never draws over a newer one."),
-    "I15": ("apps", "Somebody tags photos, or saves one photo's title and tags, and the page sends it to the one entry point "
-            "of a write of photo files: one envelope whatever the op; an update stopping the batches begins nothing; two "
+    "I15": ("apps", "Somebody tags photos, saves one photo's title and tags, or shifts photos' Date Taken by some minutes, "
+            "and the page sends it to the one entry point of a write of photo files: one envelope whatever the op, a "
+            "shift journaled as a time shift; an update stopping the batches begins nothing; two "
             "writes at once both land, one after the other; a photo on a share that does not answer is its error at "
             "once and the others are written (one that stops answering part-way ends the change there, what landed listed); a stale record, or an id now naming another file, is refused 409 and nothing is written; a photo "
             "of a folder the library does not hold is named by its path alone."),

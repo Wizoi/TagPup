@@ -738,8 +738,9 @@ def shift_date_taken(library, photo_paths, minutes, exiftool_path):
     `changed` is the files written: a photo that could not be read, or holds no date to
     move, is skipped; one that could not be written, or changed outside between the plan
     and its write, is an error. details: `records`, each photo as read back afterwards;
-    `change`. Refused, and nothing written, for a shift that is not a whole number of
-    minutes (tagpup.core.validation).
+    `written`, the photos written (file_changes.write_fields'; a stopped shift's, those
+    before the stop); `change`. Refused, and nothing written, for a shift that is not a
+    whole number of minutes (tagpup.core.validation).
     """
     problem = validation.problem("time shift", minutes)
     if problem:
@@ -763,7 +764,6 @@ def shift_date_taken(library, photo_paths, minutes, exiftool_path):
         result = Result(attempted=len(photo_paths))
         result.fail("time shift", e)
         return result
-    result.details.pop("written", None)
     # Only reading, for the page: minting a DocumentID here would write the files again.
     result.details["records"] = metadata.MetadataExtractor(exiftool_path=exiftool_path
                                                            ).batch_read(photo_paths,

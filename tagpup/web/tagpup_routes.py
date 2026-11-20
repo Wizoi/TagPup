@@ -76,8 +76,9 @@ class FolderCache:
     content.
 
     A write to a photo of a folder the library does not hold is its file's only and moves no
-    counter: its records are patched (`entries_for`), which is also what the reply of a time
-    shift sends. A scan stores its whole recursive walk under the scanned folder's key, so a
+    counter: its records are patched (`entries_for`, `move`). A time shift's reply is the folder's
+    map as its write patched it (`snapshot`), held folder or not: never a scan, which a listing
+    that does not answer would empty. A scan stores its whole recursive walk under the scanned folder's key, so a
     photo in a subfolder is filed under an ancestor, not under its own directory; `entries_for`
     finds every map holding a photo, since a folder and a subfolder of it may both have been
     scanned. A map's keys change only here (`move`, `forget`) and are read as a copy (`snapshot`), all under the lock:
@@ -443,6 +444,9 @@ def folder_auto_apply():
 
 @routes.post("/api/folder/time-shift")
 def folder_time_shift():
+    """A folder's Time Shift: the Date Taken of its photos of one camera moved by `shift_minutes`. A caller of the one entry
+    point (_write, op `shift`) that chooses the photos (the camera's, never a clip) and answers as it always did, until the
+    page sends to /api/photos/write (plan one-write-path, cut 2c deletes it)."""
     library = state.require()
     body = request.get_json(silent=True) or {}
     folder = body.get("folder_path")
@@ -470,22 +474,26 @@ def folder_time_shift():
     if not targets:
         return jsonify({"success": True, "message": "No photos matched the camera model"})
     try:
-        result = photo_actions.shift_date_taken(library, targets, shift_minutes, state.exiftool(library))
+        # Named by the paths it chose, no id: the folder's records are the server's own, read in this request.
+        result, _stamps = _write(library, photo_writes.SHIFT, {path: (None, {}) for path in targets},
+                                 params={"minutes": shift_minutes})
         if result.refused:
             return responses.refused(result)
         if not result.ok:
             raise RuntimeError(result.message())
-        for meta in result.details["records"]:
-            path = paths.stored(meta["path"])
-            # Every map holding the photo: this folder's, and an ancestor's scan that
-            # walked into it.
-            record = photo_actions.page_record(path, meta, meta["mtime"], meta["size"])
-            cache.move(path, path, record)
-            photos[paths.key(path)] = record
+    except responses.ANSWERED as why:
+        # Over the cap, too many batches ahead, or cancelled before its turn (file_changes.batch_exclusively): nothing written.
+        return responses.of(why)
     except Exception as e:
         logger.error("Error applying time shift to %s: %s", folder, e)
         return responses.error(500, str(e))
-    return jsonify({"success": True, "updated_photos": _sorted(photos if (held := cache.snapshot(folder)) is None else held),
+    # The folder as the cache holds it now, each photo's record as the write read it back (_told patched every map holding
+    # it); the map read before the write, patched the same way, if the cache let the folder go meanwhile. Never a scan:
+    # the change is journaled, and a listing that does not answer would answer an empty folder (or a 500) for it.
+    held = cache.snapshot(folder)
+    if held is None:
+        held = {**photos, **{paths.key(path): record for path, record in _shifted(result)}}
+    return jsonify({"success": True, "updated_photos": _sorted(held),
                     "updated_count": result.changed, "requested_count": result.attempted,
                     **_where(result)})
 
@@ -1213,7 +1221,8 @@ def photos_bulk_tags():
 @routes.post("/api/photos/write")
 def photos_write():
     """The one entry point of a page's write of photo files (plan one-write-path; tagpup.services.photo_writes): `op`
-    (`tags` or `set`), `group`, `changes` {path: {"id": photo id or null, the op's fields}}. Answered in one envelope
+    (`tags`, `set` or `shift`), `group`, `changes` {path: {"id": photo id or null, the op's fields}}, and a shift's
+    `params` {"minutes": whole number}. Answered in one envelope
     whatever the op (_envelope): 200 when the write ran, a photo that failed among its `errors` and the others written;
     a refusal as its kind is answered (responses.refused: 409 `changed_on_disk` for a stale record or an id no longer at
     its path), the envelope beside the error."""
@@ -1222,8 +1231,13 @@ def photos_write():
     op = body.get("op")
     if op not in photo_writes.OPERATIONS:
         return responses.error(400, "op must be one of: %s." % ", ".join(photo_writes.OPERATIONS))
-    changes, why = _tag_changes(body.get("changes"), with_id=True) if op == photo_writes.TAGS \
-        else _set_change(body.get("changes"))
+    params = None
+    if op == photo_writes.TAGS:
+        changes, why = _tag_changes(body.get("changes"), with_id=True)
+    elif op == photo_writes.SHIFT:
+        changes, params, why = _shift_change(body.get("changes"), body.get("params"))
+    else:
+        changes, why = _set_change(body.get("changes"))
     if why:
         return responses.error(400, why)
     if op == photo_writes.SET:
@@ -1231,7 +1245,7 @@ def photos_write():
         if refused:
             return refused
     try:
-        result, stamps = _write(library, op, changes, group=body.get("group"))
+        result, stamps = _write(library, op, changes, group=body.get("group"), params=params)
     except responses.ANSWERED as why:
         return responses.of(why)
     reply = _envelope(op, changes, result, stamps)
@@ -1240,25 +1254,33 @@ def photos_write():
     return jsonify(reply)
 
 
-def _write(library, op, changes, group=None, stop_at_first_error=False):
+def _write(library, op, changes, group=None, stop_at_first_error=False, params=None):
     """The one write of photo files a page asks (POST /api/photos/write, and the routes that call it until the page sends
     there): the service's write (tagpup.services.photo_writes) and, once, here, what the server keeps of the photos told
     what it wrote (_told). A batch (over batches.CHUNK photos) takes its turn before the lock, and more than a write may
-    name is refused before it (file_changes.batch_exclusively); the records are told under the lock, in the order the
-    files were written. (the Result, {path: (mtime, size) or None} of each photo written). Raises responses.ANSWERED."""
+    name is refused before it (file_changes.batch_exclusively); the lock is held here, through every file (the service
+    takes none: an id is checked under this hold), and the records are told under it, in the order the files were
+    written. (the Result, {path: (mtime, size) or None} of each photo written). Raises responses.ANSWERED."""
     with file_changes.batch_exclusively(library, photo_writes.OPERATIONS[op], len(changes)):
         result = photo_writes.write(library, op, changes, state.exiftool(library),
                                     state.rename_format(library) if op == photo_writes.SET else None,
-                                    group=group, stop_at_first_error=stop_at_first_error)
+                                    group=group, stop_at_first_error=stop_at_first_error, params=params)
         return result, _told(library, op, changes, result)
 
 
 def _told(library, op, changes, result):
     """The server's records of the photos `result` wrote take what their files hold now: a tag write's (records_written,
     the photos written before a failure or a stop included), a save's followed to the name a caption gave it
-    (_followed_rename) with its title. {path as asked: its stamp after the write} of each photo written."""
+    (_followed_rename) with its title, a shift's each as read back after it (every map holding it: its folder's, an
+    ancestor's scan that walked into it). {path as asked: its stamp after the write} of each photo written (a tag
+    write's and a shift's `written`: _stamps_after)."""
     if op == photo_writes.TAGS:
         return records_written(library, result) if result.details.get("written") else {}
+    if op == photo_writes.SHIFT:
+        folders.of(library).move_all([(path, path, record) for path, record in _shifted(result)])
+        asked = {paths.key(path): path for path in changes}
+        return {asked.get(paths.key(path), path): stamp
+                for path, stamp in (_stamps_after(result) if result.details.get("written") else {}).items()}
     if not result.ok:
         return {}
     ((asked, (_id, own)),) = changes.items()
@@ -1276,18 +1298,26 @@ def _told(library, op, changes, result):
     return {asked: left}
 
 
+def _shifted(result):
+    """[(path, its page record)] of each photo a shift read back after its write (`records`, photos.shift_date_taken)."""
+    return [(path, photo_actions.page_record(path, meta, meta["mtime"], meta["size"]))
+            for meta in result.details.get("records", []) for path in (paths.stored(meta["path"]),)]
+
+
 def _envelope(op, changes, result, stamps):
     """The one reply of POST /api/photos/write, whatever its op: `success` (nothing failed or was refused), `changed`,
     `attempted`, `skipped_missing` and `skipped` [{"path", "why"}], `error_count` and `errors` [{"path", "id", "why"}],
     `stopped` ({"after", "of"} when a stop ended it part-way, else null), `change` (the journal's, null for a file-only
-    write), `file_only` and `with_rows`, `written` {path: {"tags", "mtime", "size"}, and a set's "base", "new_path",
-    "taken", "rename_failed"}, and `pictures_refused` and the faces it changed when there are any. What was written, not
+    write), `file_only` and `with_rows`, `written` {path: {"mtime", "size"}, and a tag write's and a set's "tags", a set's
+    "base", "new_path", "taken", "rename_failed"}, and `pictures_refused` and the faces it changed when there are any. What was written, not
     attempted."""
     ids = {paths.key(path): photo_id for path, (photo_id, _own) in changes.items()}
     details = result.details
     if op == photo_writes.TAGS:
         written = {path: {"tags": list(tags), **_stamp_reply(stamps.get(path))}
                    for path, (tags, _flat, _hierarchical) in details.get("written", {}).items()}
+    elif op == photo_writes.SHIFT:
+        written = {path: _stamp_reply(stamp) for path, stamp in stamps.items()}
     else:
         written = {asked: {"tags": details["tags"], "base": details["base"], "new_path": details["new_path"],
                            "taken": details["taken"], "rename_failed": details.get("rename_failed"),
@@ -1315,6 +1345,28 @@ def _photo_id(sent):
     return None, "id must be a photo id or null."
 
 
+def _entries(changes, allowed, shape):
+    """({path: (id or None, its entry)}, None) of a write's `changes`, {path: {...}}: each photo named once (under one
+    spelling of its path), its entry an object of no key but `allowed`, its "id" a photo id or null; or (None, the
+    sentence that refuses it, ending in `shape`)."""
+    if not isinstance(changes, dict):
+        return None, shape
+    if not changes:
+        return None, "The write names no photo. " + shape
+    found, named = {}, set()
+    for path, change in changes.items():
+        if not path or not isinstance(change, dict) or set(change) - set(allowed):
+            return None, shape
+        if paths.key(path) in named:
+            return None, "A photo is named once in a request: %s is named twice. " % os.path.basename(path) + shape
+        named.add(paths.key(path))
+        photo_id, why = _photo_id(change.get("id"))
+        if why:
+            return None, why + " " + shape
+        found[path] = (photo_id, change)
+    return found, None
+
+
 def _tag_changes(changes, with_id=False):
     """({path: (id or None, {"add": [tags to add], "remove": [tags to take off]})}, None) of a tag write's `changes`,
     {path: {"add": [tag], "remove": [tag]}} (a list left out is none; `with_id`, the entry may name the photo's "id"), or
@@ -1322,43 +1374,45 @@ def _tag_changes(changes, with_id=False):
     (tagpup.services.tagging.change_tags_of)."""
     shape = ('Send changes as {path: {%s"add": [tags], "remove": [tags]}}, one entry for each photo.'
              % ('"id": photo id or null, ' if with_id else ""))
-    if not isinstance(changes, dict):
-        return None, shape
-    if not changes:
-        return None, "The bulk tag write names no photo. " + shape
-    allowed = set(CHANGE_KEYS) | ({"id"} if with_id else set())
-    found = {}
-    named = set()
-    for path, change in changes.items():
-        if not path or not isinstance(change, dict) or set(change) - allowed:
-            return None, shape
-        if paths.key(path) in named:
-            return None, "A photo is named once in a request: %s is named twice. " % os.path.basename(path) + shape
-        named.add(paths.key(path))
+    found, why = _entries(changes, CHANGE_KEYS + (("id",) if with_id else ()), shape)
+    if why:
+        return None, why
+    for path, (photo_id, change) in found.items():
         lists = tuple(change.get(key, []) for key in CHANGE_KEYS)
         if not all(isinstance(tags, list) and all(isinstance(tag, str) for tag in tags) for tags in lists):
             return None, shape
-        photo_id, why = _photo_id(change.get("id"))
-        if why:
-            return None, why + " " + shape
         found[path] = (photo_id, dict(zip(CHANGE_KEYS, lists)))
     return found, None
 
 
+def _shift_change(changes, params):
+    """({path: (id or None, {})}, {"minutes": whole number}, None) of a `shift`'s `changes` and `params`: each photo named
+    by its path and its "id" (null for none); or (None, None, the sentence that refuses it). How far a shift may move a
+    date is the service's to check (tagpup.core.validation, "time shift")."""
+    shape = ('Send changes as {path: {"id": photo id or null}}, one entry for each photo, and params as '
+             '{"minutes": whole number}.')
+    if not isinstance(params, dict) or set(params) != {"minutes"} or type(params["minutes"]) is not int:
+        return None, None, shape
+    found, why = _entries(changes, ("id",), shape)
+    if why:
+        return None, None, why
+    return {path: (photo_id, {}) for path, (photo_id, _entry) in found.items()}, {"minutes": params["minutes"]}, None
+
+
 def _set_change(changes):
     """({path: (id or None, its fields: _set_fields)}, None) of a `set`'s `changes`, ONE photo's, or (None, the sentence
-    that refuses it). A set names the `base` its record read, always: save-metadata's call with neither stamp nor base
-    (no check) has no page that sends it, and is not carried here."""
+    that refuses it). Its photo read as every op's are (_entries). A set names the `base` its record read, always:
+    save-metadata's call with neither stamp nor base (no check) has no page that sends it, and is not carried here."""
     shape = ('Send changes as {path: {"id": photo id or null, "title": text, "tags": [tags], "date_taken": text, '
              '"stamp": {"mtime": number, "size": number}, "base": {"tags": [tags], "title": text}}}, one photo.')
-    if not isinstance(changes, dict) or len(changes) != 1:
+    if isinstance(changes, dict) and len(changes) > 1:
         return None, shape
-    ((path, change),) = changes.items()
-    if not path or not isinstance(change, dict) or set(change) - {"id", *SET_KEYS} or "base" not in change:
-        return None, shape
-    photo_id, why = _photo_id(change.get("id"))
+    found, why = _entries(changes, ("id", *SET_KEYS), shape)
     if why:
-        return None, why + " " + shape
+        return None, why
+    ((path, (photo_id, change)),) = found.items()
+    if "base" not in change:
+        return None, shape
     own, why = _set_fields(change)
     if why:
         return None, why

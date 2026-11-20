@@ -1,12 +1,17 @@
-"""A page's write of photo files through the one entry point, POST /api/photos/write (plan one-write-path, cut 2a; I15).
+"""A page's write of photo files through the one entry point, POST /api/photos/write (plan one-write-path, cuts 2a and 2b; I15).
 
-Somebody tags photos, or saves one photo's title and tags, and the page sends it to one route: `op` `tags` (each photo's
-own tags to add and take off) or `set` (one photo's title, tags and Date Taken from the record the page read), each photo
+Somebody tags photos, saves one photo's title and tags, or moves a folder's Date Taken by some minutes (Time Shift), and
+the page sends it to one route: `op` `tags` (each photo's own tags to add and take off), `set` (one photo's title, tags
+and Date Taken from the record the page read) or `shift` (each photo's Date Taken moved by `params.minutes`), each photo
 named by its path and by its row's id when it has one. The reply is one envelope whatever the op. What the owner lives
 through: an update stopping the server's batches while a write is asked (nothing begins, nothing is written); two writes
 at once (both land, one after the other); a share that does not answer (that photo is its error at once, the others are
-written, nothing waits on it); a page whose record is stale (its base, or its id now naming another file, is refused 409
-and nothing is written); a photo of a folder the library does not hold, which has no row and is named by its path alone.
+written, nothing waits on it), or stops answering part-way through a shift (the change ends there, `written` naming the
+photos that landed), or does not give a held folder's listing when its Time Shift answers (the folder's photos are
+answered as the write read them back, never scanned again); a page whose record is stale (its base, or its id now naming another file, is refused 409 and
+nothing is written); a photo of a folder the library does not hold, which has no row and is named by its path alone. A
+library view's bulk edit goes through the same service and still lets a waiting save in between its chunks: that one is
+tests/test_batches.py's (ASaveBetweenTwoChunks), on the fake ExifTool, as it needs three chunks of photos.
 
 Real ExifTool on JPEGs made here, rows as the indexer records them (photo_rows.add_read), the route through Flask's
 test client in a home of the test's own (tests/handler_harness.py).
@@ -21,16 +26,31 @@ from unittest import mock
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import photo_rows  # noqa: E402
 from tests.handler_harness import Library  # noqa: E402
-from tests.test_bulk_writes_start_from_the_file import EXISTING, make_photo, tags_in  # noqa: E402
+from tests.test_bulk_writes_start_from_the_file import EXIFTOOL, EXISTING, make_photo, tags_in  # noqa: E402
 from tests.test_file_changes_one_at_a_time import at_once  # noqa: E402
 from tests.test_taxonomy_lifecycle import requires_exiftool  # noqa: E402
 
 from tagpup.core import paths  # noqa: E402
-from tagpup.files import shares  # noqa: E402
-from tagpup.services import batches  # noqa: E402
+from tagpup.files import field_values, shares  # noqa: E402
+from tagpup.files.exiftool_session import ExifToolSession  # noqa: E402
+from tagpup.services import batches, file_changes, photo_writes  # noqa: E402
+from tagpup.services import photos as photo_actions  # noqa: E402
 from tagpup.store import db, journal  # noqa: E402
 
 ROUTE = "/api/photos/write"
+TAKEN = "2020:06:01 10:00:00"
+
+
+def date(photos, taken=TAKEN):
+    """Give each photo a camera's Date Taken, as a camera writes it."""
+    with ExifToolSession(executable=EXIFTOOL) as et:
+        et.set_tags(list(photos), tags={"EXIF:DateTimeOriginal": taken}, params=["-overwrite_original"])
+
+
+def taken_in(path):
+    """The photo's Date Taken as its file holds it."""
+    with ExifToolSession(executable=EXIFTOOL) as et:
+        return et.get_tags([path], tags=["EXIF:DateTimeOriginal"])[0].get("EXIF:DateTimeOriginal")
 
 
 @requires_exiftool
@@ -112,6 +132,19 @@ class AWriteThroughTheOneEntryPoint(unittest.TestCase):
         for path in self.photos:
             self.assertNotIn("Places/Quay", tags_in(path))
         self.assertEqual([], self.changes())
+
+    def test_the_hold_of_the_lock_is_the_callers_alone(self):
+        # One place decides which hold of the lock a write runs under: its caller (the route's batch_exclusively through
+        # all its files; a library view's bulk edit, none, so a save is let in between its chunks). The service takes
+        # none of its own: an id it checks is checked under the caller's hold, here a stale one refused, nothing written.
+        def no_lock():
+            raise AssertionError("photo_writes.write took the lock of changes of photo files itself")
+        with mock.patch.object(file_changes, "exclusively", no_lock):
+            result = photo_writes.write(self.lib.library, photo_writes.TAGS,
+                                        {self.photos[1]: (self.ids[0], {"add": ["Places/Quay"]})}, EXIFTOOL, None)
+        self.assertTrue(result.refused)
+        self.assertEqual(0, result.changed)
+        self.assertNotIn("Places/Quay", tags_in(self.photos[1]))
 
     def test_a_photo_with_no_row_is_named_by_its_path_and_written_to_its_file_only(self):
         loose = make_photo(os.path.join(self.lib.root, "Just Looking", "q.jpg"))
@@ -195,9 +228,84 @@ class AWriteThroughTheOneEntryPoint(unittest.TestCase):
         self.assertEqual(503, set_status, set_reply)
         self.assertNotIn("Places/Quay", tags_in(asleep))
 
+    def shift_op(self, named, minutes=30):
+        """{path: id} as the page sends a shift of them."""
+        return {"op": "shift", "params": {"minutes": minutes},
+                "changes": {path: {"id": photo_id} for path, photo_id in named.items()}}
+
+    def test_a_shift_is_journaled_as_a_time_shift_and_answered_with_each_photos_stamp(self):
+        date(self.photos)
+        status, reply = self.lib.post(ROUTE, self.shift_op(dict(zip(self.photos[:2], self.ids))))
+        self.assertEqual(200, status, reply)
+        self.assertTrue(reply["success"])
+        self.assertEqual((2, 2, 2, 0, 0), (reply["attempted"], reply["changed"], reply["with_rows"], reply["file_only"],
+                                           reply["error_count"]))
+        self.assertEqual(["time shift"], [change["operation"] for change in self.changes()])
+        self.assertEqual({path: {"mtime": os.stat(path).st_mtime, "size": int(os.stat(path).st_size)}
+                          for path in self.photos[:2]}, reply["written"])
+        self.assertEqual(["2020:06:01 10:30:00"] * 2 + [TAKEN], [taken_in(path) for path in self.photos])
+
+    def test_a_shift_with_an_id_that_names_another_file_now_is_refused_409_and_nothing_is_written(self):
+        date(self.photos)
+        status, reply = self.lib.post(ROUTE, self.shift_op({self.photos[1]: self.ids[0], self.photos[2]: self.ids[2]}))
+        self.assertEqual(409, status, reply)
+        self.assertTrue(reply["changed_on_disk"])
+        self.assertIn("p1.jpg", reply["error"])
+        self.assertEqual((0, {}), (reply["changed"], reply["written"]))
+        self.assertEqual([TAKEN] * 3, [taken_in(path) for path in self.photos])
+        self.assertEqual([], self.changes())
+
+    def test_a_share_that_stops_answering_part_way_through_a_shift_ends_it_with_what_landed(self):
+        date(self.photos)
+        shares.forget()
+        self.addCleanup(shares.forget)
+        real_read_one, real_share_of, under = field_values.read_one, shares.share_of, os.path.normcase(self.held)
+
+        def share_of(folder):
+            # Its own share, as a real one is: the test's folders are all on one local drive, taken as away by its key.
+            return "//nas/regatta" if os.path.normcase(str(folder)).startswith(under) else real_share_of(folder)
+
+        def read_one(et, path, wanted):
+            # The write's own read of each file just before it writes it: the share stops answering at the second photo.
+            if paths.key(path) == paths.key(self.photos[1]):
+                raise field_values.NotAnswered("ExifTool did not answer for it in 1 s")
+            return real_read_one(et, path, wanted)
+        with mock.patch.object(field_values, "read_one", read_one), mock.patch.object(shares, "share_of", share_of):
+            status, reply = self.lib.post(ROUTE, self.shift_op(dict(zip(self.photos, self.ids))))
+        self.assertEqual(400, status, reply)
+        self.assertIn("ExifTool stopped answering after 1 of 3 photos", reply["error"])
+        self.assertEqual((1, [self.photos[1]]), (reply["changed"], [error["path"] for error in reply["errors"]]))
+        self.assertEqual([self.photos[0]], list(reply["written"]), "what landed, not what was asked")
+        self.assertEqual(["2020:06:01 10:30:00", TAKEN, TAKEN], [taken_in(path) for path in self.photos])
+        self.assertEqual([("time shift", "applied")], [(change["operation"], change["status"]) for change in self.changes()])
+
+    def test_a_held_folders_time_shift_answers_every_photo_shifted_when_its_listing_does_not_answer(self):
+        # The owner opens a held folder and moves its Date Taken; the share is slow by the time the shift answers. The
+        # reply is the folder as the write read it back: every photo, shifted, and no scan of a listing that does not
+        # answer (which would empty the page's folder under "Time shift applied") nor a 500 for a journaled write.
+        date(self.photos)
+        status, opened = self.lib.get("/api/folder/scan", {"path": self.held})
+        self.assertEqual((200, 3), (status, len(opened)), opened)
+        with mock.patch.object(shares, "listing", return_value=shares.UNANSWERED), \
+                mock.patch.object(photo_actions, "scan_folder", wraps=photo_actions.scan_folder) as scan:
+            status, reply = self.lib.post("/api/folder/time-shift", {
+                "folder_path": self.held, "camera_model": "All Cameras", "shift_minutes": 30})
+        self.assertEqual(200, status, reply)
+        self.assertEqual((3, 3), (reply["updated_count"], reply["requested_count"]))
+        self.assertEqual(sorted(paths.key(path) for path in self.photos),
+                         sorted(paths.key(record["path"]) for record in reply["updated_photos"]))
+        self.assertEqual(["2020:06:01 10:30:00"] * 3, [taken_in(path) for path in self.photos])
+        self.assertEqual({os.stat(path).st_mtime for path in self.photos},
+                         {record["mtime"] for record in reply["updated_photos"]}, "each record as read back after the write")
+        self.assertEqual(0, scan.call_count, "a shift's answer is never a scan of the folder")
+        self.assertEqual(["time shift"], [change["operation"] for change in self.changes()])
+
     def test_a_body_that_means_nothing_is_refused_400(self):
         photo, photo_id = self.photos[0], self.ids[0]
         for body in ({"op": "shift", "changes": {photo: {"id": photo_id}}},
+                     {"op": "shift", "changes": {photo: {"id": photo_id}}, "params": {"minutes": 1.5}},
+                     {"op": "shift", "changes": {photo: {"id": photo_id, "add": []}}, "params": {"minutes": 30}},
+                     {"op": "unshift", "changes": {photo: {"id": photo_id}}, "params": {"minutes": 30}},
                      {"op": "tags", "changes": {photo: {"id": "one", "add": ["Places/Quay"]}}},
                      {"op": "tags", "changes": {photo: {"id": photo_id, "title": "x"}}},
                      {"op": "set", "changes": {photo: {"id": photo_id, "title": "", "tags": []},
@@ -207,6 +315,21 @@ class AWriteThroughTheOneEntryPoint(unittest.TestCase):
             with self.subTest(body=body):
                 status, reply = self.lib.post(ROUTE, body)
                 self.assertEqual(400, status, reply)
+        self.assertEqual([], self.changes())
+
+    def test_each_op_reads_its_photos_by_one_parser_and_refuses_them_in_one_sentence(self):
+        # A page's changes are read the same way whatever the op (_entries): a write naming no photo, or an id that is
+        # not a photo's, is refused by the same sentence, nothing written.
+        photo = self.photos[0]
+        own = {"tags": {"add": ["Places/Quay"]}, "shift": {},
+               "set": {"title": "", "tags": [], "base": {"tags": [], "title": ""}}}
+        for op in ("tags", "set", "shift"):
+            for changes, sentence in (({}, "The write names no photo."),
+                                      ({photo: {"id": "one", **own[op]}}, "id must be a photo id or null.")):
+                with self.subTest(op=op, changes=changes):
+                    status, reply = self.lib.post(ROUTE, {"op": op, "changes": changes, "params": {"minutes": 30}})
+                    self.assertEqual(400, status, reply)
+                    self.assertTrue(reply["error"].startswith(sentence), reply["error"])
         self.assertEqual([], self.changes())
 
 

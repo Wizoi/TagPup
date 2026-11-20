@@ -22,12 +22,15 @@ WRITES = {"POST", "PUT", "PATCH", "DELETE"}
 #: Routes that reach write_fields with as many photos as the person chose: a batch, claimed (one at a time, the rest queued),
 #: capped at batches.MAX_BATCH, stopped by Cancel or a hand-over at its chunk, listed on the Activity page.
 BATCHES = {
-    "/api/library/bulk-edit": "bulk_edit.run takes the claim first (a delete is a batch too, with the same chunks)",
+    "/api/library/bulk-edit": "bulk_edit.run takes the claim first (a delete is a batch too, with the same chunks); its tags "
+                              "and people are written through the entry point's service (photo_writes.write), which takes "
+                              "no lock: bulk_edit holds none, so a save waiting is let in between its chunks",
     "/api/photos/bulk-tags": "file_changes.batch_exclusively takes the claim before the lock, and refuses over the cap before it",
     "/api/photos/write": "the entry point's _write: file_changes.batch_exclusively takes the claim before the lock, and refuses "
                          "over the cap before it, as bulk-tags (which calls it)",
     "/api/folder/auto-apply": "file_changes.batch_exclusively takes the claim before the lock",
-    "/api/folder/time-shift": "write_fields takes the claim; over the cap it is refused",
+    "/api/folder/time-shift": "the entry point's _write (op shift): file_changes.batch_exclusively takes the claim before the "
+                              "lock, and refuses over the cap before it",
     "/api/folder/rename-photos": "the original names are written by write_fields under Smart Rename's lock (a batch waiting ahead "
                                  "refuses it rather than wait); Smart Rename refuses over the cap before it reads a caption",
     "/api/photo/delete": "one photo: it only settles what a dead process left half done on that photo (file_changes.settle, #3263), "
