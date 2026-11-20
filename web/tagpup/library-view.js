@@ -17,6 +17,7 @@ import { VIEW_PARAMS } from './common/library.js';
 import { baseName, samePath } from './common/paths.js';
 import { upper } from './hooks.js';
 import { state } from './state.js';
+import { rowStatesFromSpec } from './navigator-model.js';
 import {
     btnApplyRename, btnFolderAutoApply, btnLibraryRefresh, btnPhotoBack, btnRefreshList,
     btnToggleRename, btnToggleTimeshift,
@@ -175,9 +176,11 @@ export function libraryChanged() {
 /**
  * How many places back the view before a search is, for the search's own place: 1 from another view, a folder or nothing; one
  * more than the search it replaces in a new place (a sort of it); 0 when that is not known (a search opened by its address).
+ * A filter made over a search that is not a filter drops it, so it is no refinement: the view before it is that search, 1 back.
  */
-function searchBackOf(previous) {
+function searchBackOf(previous, spec) {
     if (!previous || previous.invalid || previous.kind !== 'search') return 1;
+    if (rowStatesFromSpec(spec) && !rowStatesFromSpec(previous)) return 1;
     const here = Number(window.history.state && window.history.state.searchBack);
     return here > 0 ? here + 1 : 0;
 }
@@ -262,7 +265,7 @@ function beginView(spec, history, scrollTop) {
     const previous = state.library;
     // A search pushed from a photo's place is one place further from the view before it (#862); one that replaces the photo's place is
     // not (it takes the place's index), and the place is the search's now.
-    const back = !spec.error && spec.kind === 'search' ? searchBackOf(previous) + (history === 'push' && onPhotoPlace() ? 1 : 0) : 0;
+    const back = !spec.error && spec.kind === 'search' ? searchBackOf(previous, spec) + (history === 'push' && onPhotoPlace() ? 1 : 0) : 0;
     if (history === 'replace') leavePhotoPlace(back);   // opened in the place of a photo's: the place is the view's now
     if (previous) destroyLibrary(previous);
     else quietTheFolder();

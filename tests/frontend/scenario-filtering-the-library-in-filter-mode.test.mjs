@@ -277,6 +277,17 @@ describe("leaving a filter, and a search made elsewhere", () => {
     assert.deepEqual(chipTexts(ctx), ["+ Hazel Brookmire"]);
   });
 
+  test("a filter made over a words search: Clear all goes back to the words search, as Back does", async (t) => {
+    const ctx = await page(t, { before: filterOn });
+    await searchWords(ctx, "beach");
+    click(ctx.window, ctx.rowByLabel("people", "Hazel Brookmire"));
+    await ctx.settle();
+    assert.equal(ctx.window.history.state.searchBack, 1, "one place back is the words search");
+    const history = watchHistory(ctx);
+    ctx.document.getElementById("btn-filter-bar-clear").click();
+    assert.deepEqual(history.went, [-1]);
+  });
+
   test("unsaved edits in the open photo: the click asks first, and the marks stay the open view's until it is answered", async (t) => {
     const ctx = await page(t, { before: filterOn });
     ctx.cardById(12).querySelector(".btn-thumbnail-detail").click();

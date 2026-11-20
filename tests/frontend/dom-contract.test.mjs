@@ -19,7 +19,7 @@ import path from "node:path";
 import { REPO_ROOT, PAGES, htmlOf, pageSource } from "./harness.mjs";
 
 /** Ids created by the script itself rather than declared in the markup. */
-const DYNAMIC_IDS = new Set([]);
+const DYNAMIC_IDS = new Set(["nav-filter-toggle", "nav-filter-help"]);   // navigator.js buildPanels builds them (via buildElement)
 
 /** The page's markup, and every module it loads (harness.mjs, pageModules). */
 function readApp(name) {
