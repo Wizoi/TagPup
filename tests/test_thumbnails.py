@@ -288,7 +288,7 @@ class TakingOne(Cache):
         self.serve()
         self.assertEqual(1, len(entries_of(self.library)))
         with mock.patch("tagpup.files.recycle_bin.send_to_recycle_bin", return_value=True):
-            result = photo_actions.delete(self.library, self.path)
+            result = photo_actions.delete(self.library, self.path, None)
         self.assertTrue(result.ok, result.message())
         self.assertEqual([], entries_of(self.library))
 

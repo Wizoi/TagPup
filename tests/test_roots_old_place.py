@@ -122,7 +122,7 @@ class AfterAMove(unittest.TestCase):
             return True
 
         with mock.patch("tagpup.files.recycle_bin.send_to_recycle_bin", side_effect=recycle):
-            result = photos.delete(self.library, self.held[0])
+            result = photos.delete(self.library, self.held[0], None)
         self.assertEqual(1, result.changed, result.message())
         self.assertEqual([self.moved[0]], removed)
         self.assertFalse(os.path.exists(self.moved[0]))
