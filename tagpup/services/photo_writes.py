@@ -1,45 +1,64 @@
-"""A page's write of photo files, by operation: the service of the one entry point (POST /api/photos/write; plan
-one-write-path, cut 2a). A dispatcher only: each operation is written by the service that owns it, as it always was.
+"""A write of photo files, by operation: the service of the one entry point (POST /api/photos/write; plan one-write-path,
+cuts 2a and 2b), which a library view's bulk edit of tags or people calls too (tagpup.services.bulk_edit). A dispatcher
+only: each operation is written by the service that owns it, as it always was.
 
     tags   each photo's own tags to add and take off, as ONE change of photo files (tagging.change_tags_of)
     set    ONE photo's title, tags and Date Taken from the record the page read, its stamp and base checked against the
            file under the lock (tagging.save_photo); no page sets several photos at once
+    shift  each photo's Date Taken moved by `params["minutes"]`, as ONE change of photo files (photos.shift_date_taken);
+           which photos a folder's Time Shift moves (its camera's) is its caller's to choose
 
 `changes` is {path: (id, the operation's own fields)}: a photo is named by its path, and by its row's id when it has one
 (Just look's photos have none: answer 5 of the plan). An id whose row is not at that path now -- the photo renamed,
 moved or deleted since the page read it -- refuses the whole write, as a stale record's save is refused (CHANGED_ON_DISK,
 409), nothing written: the page's record is not the file's. A photo named by its path alone is written as that path's
 file, whatever row it has.
+
+The ids are checked under the lock of changes of photo files and the write runs under the same hold, so no rename comes
+between: a write naming an id holds the lock through all its files. One naming none (a bulk edit's photos, resolved by
+the server in its own request; a folder's Time Shift) takes the lock as its service does, which lets a writer that waits
+in between its chunks (file_changes.let_others_in); from its plan on, its files are refused to another writer until
+written (file_changes.unsettled).
 """
+import contextlib
 import os
 
 from tagpup.core import paths
 from tagpup.core.result import CHANGED_ON_DISK, Result
 from tagpup.services import file_changes, selection, tagging
+from tagpup.services import photos as photo_actions
 
-TAGS, SET = "tags", "set"
+TAGS, SET, SHIFT = "tags", "set", "shift"
 #: The operations, each with the name a batch of it is listed under (Activity) while it waits for its turn.
-OPERATIONS = {TAGS: "bulk tags", SET: "save photo"}
+OPERATIONS = {TAGS: "bulk tags", SET: "save photo", SHIFT: "time shift"}
 
 #: The refusal of a photo whose id no longer names the file at the path the page sent.
 MOVED_SENTENCE = "%s is not the photo this page read (renamed, moved or deleted since): reload it first."
 
 
-def write(library, op, changes, exiftool_path, rename_format, group=None, stop_at_first_error=False):
+def write(library, op, changes, exiftool_path, rename_format, group=None, stop_at_first_error=False, params=None,
+          operation=None, persons=None):
     """Write `changes` ({path: (id or None, fields)}) by `op`, in `library`, under the lock of changes of photo files: a
     Result as the operation's service gives it. `tags`' fields are {"add": [tag], "remove": [tag]}, `group` the token
     of the page's action this is a chunk of (journal.GROUP), `stop_at_first_error` False: a photo that cannot be read or
-    written (a share that does not answer) is its own error and the others are written. `set`'s are {"title", "tags",
-    "date_taken", "stamp", "base"} of the one photo, as tagging.save_photo takes them. The ids are checked under the same
-    lock as the write, so a rename cannot come between (_moved)."""
-    with file_changes.exclusively():
+    written (a share that does not answer) is its own error and the others are written; `operation` the journal's name
+    of the change (tagging.ADD_TO_ALL when None) and `persons` {paths.key(path): the tags added that are people}
+    (tagging.change_tags_of): a bulk edit's (bulk_edit.OPERATIONS). `set`'s are {"title", "tags", "date_taken", "stamp",
+    "base"} of the one photo, as tagging.save_photo takes them. `shift`'s are none, its `params` {"minutes": whole
+    minutes}. The ids are checked under the same hold of the lock as the write, so a rename cannot come between (_moved;
+    the module's docstring)."""
+    named = any(photo_id is not None for photo_id, _own in changes.values())
+    with file_changes.exclusively() if named else contextlib.nullcontext():
         moved = _moved(library, changes)
         if moved is not None:
             return moved
         if op == TAGS:
             return tagging.change_tags_of(
                 library, {path: (own.get("add", []), own.get("remove", [])) for path, (_id, own) in changes.items()},
-                exiftool_path, stop_at_first_error=stop_at_first_error, group=group)
+                exiftool_path, operation=operation or tagging.ADD_TO_ALL, stop_at_first_error=stop_at_first_error,
+                persons=persons, group=group)
+        if op == SHIFT:
+            return photo_actions.shift_date_taken(library, list(changes), params["minutes"], exiftool_path)
         ((path, (_id, own)),) = changes.items()
         return tagging.save_photo(library, path, own["title"], own["tags"], own["date_taken"], exiftool_path,
                                   rename_format, own["stamp"], own["base"])
