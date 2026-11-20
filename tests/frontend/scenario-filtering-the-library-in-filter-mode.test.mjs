@@ -277,6 +277,16 @@ describe("leaving a filter, and a search made elsewhere", () => {
     assert.deepEqual(chipTexts(ctx), ["+ Hazel Brookmire"]);
   });
 
+  test("a marked row shows once, as a chip in the Filters section, not also in its All of / Any of / None of lists", async (t) => {
+    const ctx = await page(t, { before: filterOn });
+    click(ctx.window, ctx.rowByLabel("people", "Hazel Brookmire"));
+    await ctx.settle();
+    const section = ctx.document.getElementById("library-search-filters");
+    assert.ok(!section.classList.contains("hidden"), "the section opens with the filter");
+    assert.deepEqual(chipTexts(ctx), ["+ Hazel Brookmire"]);
+    assert.equal(section.querySelectorAll(".library-search-list .library-search-chip").length, 0);
+  });
+
   test("a filter made over a words search: Clear all goes back to the words search, as Back does", async (t) => {
     const ctx = await page(t, { before: filterOn });
     await searchWords(ctx, "beach");

@@ -24,6 +24,7 @@
 // nothing more and its answer is dropped. Everything the box holds is `state.search`.
 import { buildElement, replaceContent } from './common/dom.js';
 import { state } from './state.js';
+import { rowStatesFromSpec } from './navigator-model.js';
 import {
     btnLibrarySearch, btnLibrarySearchClear, btnLibrarySearchFilters, librarySearchFilters, librarySearchNote, librarySearchWithin,
     librarySearchWithinName, librarySearchWithinRow, librarySearchWords
@@ -202,7 +203,10 @@ export function searchFollows({ force = false } = {}) {
     const fresh = token !== s.shownToken;
     if (fresh || force) {
         if (search) {
-            s.lists = listsOf(search.value);
+            // The tree filter's rows are its chips, in this section (filter-bar.js): not also lists of All of / None of.
+            const treeFilter = state.nav.filter.on && rowStatesFromSpec(search);
+            s.lists = treeFilter ? emptyLists() : listsOf(search.value);
+            if (treeFilter) s.filtersOpen = true;
             if (fresh) {
                 librarySearchWords.value = search.value.words || '';
                 s.within = false;   // the selection is in the search now, as a chip of All of (#769: only once it has opened)
