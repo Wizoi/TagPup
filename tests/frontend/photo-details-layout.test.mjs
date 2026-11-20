@@ -81,7 +81,7 @@ test("where the photo is reads as its folder's name and its own, each whole in i
   const page = await openWith(t, { ...PHOTO, path, filename: LONG_NAME }, { before });
   const folder = page.getElementById("detail-folder"), name = page.getElementById("detail-file-name");
   assert.equal(folder.textContent, "Swim & Dive #3 + Relay at the Harbour Pool, the whole afternoon");
-  assert.equal(folder.title, `Show this folder in the library: ${LONG_FOLDER}`);
+  assert.equal(folder.title, `Back to this folder's grid: ${LONG_FOLDER}`);
   assert.equal(name.textContent, LONG_NAME);
   assert.equal(name.title, `Open in the default app: ${path}`);
   assert.ok(folder.classList.contains("one-line") && name.classList.contains("one-line"), "a long name is cut with an ellipsis");
@@ -134,6 +134,7 @@ test("the folder's name opens it in the library this page is on, and back to its
   assert.equal(params.get("kind"), "folder");
   assert.equal(params.get("folder"), folder);
   assert.equal(new URLSearchParams(ctx.window.location.search).get("value"), folder, "the address names the folder");
+  assert.equal(ctx.document.getElementById("detail-folder").title, `Show this folder in the library: ${folder}`);
   assert.ok(ctx.document.getElementById("panel-content").classList.contains("hidden"), "the folder's grid is shown");
 
   // A photo of that folder's view: its folder's name goes back to the grid it came from, asking the library nothing.
@@ -145,6 +146,24 @@ test("the folder's name opens it in the library this page is on, and back to its
   await ctx.settle(100);
   assert.ok(ctx.document.getElementById("panel-content").classList.contains("hidden"), "the grid was not shown again");
   assert.equal(ctx.server.urls().slice(before).filter((url) => url.includes("/api/library/ids")).length, 0);
+});
+
+test("a photo opened in Organize: its folder's name goes back to the Organize grid, asking the library nothing", async (t) => {
+  const srv = server([PHOTO]);
+  const { window, document } = await loadApp("tagpup", { server: srv, t });
+  await openFolder({ document, window }, "D:\\Pictures\\Run");
+  await settle(window, 60);
+  click(window, document.querySelector(".photo-item-file"));
+  await settle(window);
+  const folder = document.getElementById("detail-folder");
+  assert.equal(folder.title, "Back to this folder's grid: D:\\Pictures\\Run");
+  assert.ok(!document.getElementById("panel-content").classList.contains("hidden"), "the photo is open");
+  const asked = srv.urls().length;
+  click(window, folder);
+  await settle(window, 100);
+  assert.ok(document.getElementById("panel-content").classList.contains("hidden"), "the photo closed");
+  assert.ok(!document.getElementById("folder-view-content").classList.contains("hidden"), "the Organize grid is shown");
+  assert.equal(srv.urls().slice(asked).filter((url) => url.includes("/api/library/ids")).length, 0);
 });
 
 test("the Image Details box is as wide as the picture's box and the faces' below it", async (t) => {
