@@ -101,6 +101,10 @@ SCENARIOS = {
             "behind a Save still out; the title and Date Taken save with the stamp read, a file changed on the PC is "
             "never written over and the text typed is kept, a dropped connection says so, a title or date left by "
             "Back is put back when the sheet opens again, and Close with text typed asks."),
+    "V28": ("views", "Somebody marks rows of the navigator's tabs in Filter mode, any of, must or not: the marks are one "
+            "search the server reads as said (two people ANDed, one NOT another, a tab's any of ANDed with a year, a folder "
+            "with its subfolders, nothing found), the address read back (Back, a bookmark, one naming a tag deleted since) "
+            "gives the same marks, and a search made elsewhere (words, an Any-of list, Within's union of two tabs) marks no row."),
     "I1": ("apps", "Switching library in the middle of a folder shows no card of the first."),
     "I2": ("apps", "A write through a server update is waited out and not repeated."),
     "I3": ("apps", "An update by a launch and by an install hands one server over to the next without killing its work."),
@@ -239,6 +243,7 @@ _SCENARIO_FILES = {
     "V25": "scenario-looking-at-a-photo-on-the-phone",
     "V26": "scenario-editing-a-photo-on-the-phone",
     "V27": "scenario-moving-on-while-a-photo-saves",
+    "V28": "test_filtering_the_library_by_rows scenario-filtering-the-library-by-rows",
 }
 
 #: owner -> kind -> the unit, migration and guard files, a .mjs without its ".test.mjs".

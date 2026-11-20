@@ -1,0 +1,53 @@
+{
+  "what": "Filter mode's rows and the search they are (docs/plans/advanced-filtering.md). `rows`: [source, state] in the order they were marked, a state '+' any of, '&' must, '-' not. `value`: the search's value exactly as the page sends it (web/tagpup/navigator-model.js specFromRowStates, then library-source.js searchText; tests/frontend/scenario-filtering-the-library-by-rows.test.mjs). `photos`: what the server answers for it on the library tests/test_filtering_the_library_by_rows.py makes. {pictures} is that library's Pictures folder. Every name is fictional.",
+  "cases": [
+    {
+      "name": "Rowan AND Ada",
+      "rows": [[{"kind": "person", "value": "People/Rowan Thackeray"}, "&"], [{"kind": "person", "value": "People/Ada Lindqvist"}, "&"]],
+      "value": {"all_of": [{"kind": "person", "value": "People/Rowan Thackeray"}, {"kind": "person", "value": "People/Ada Lindqvist"}]},
+      "photos": ["Trips/together.jpg"]
+    },
+    {
+      "name": "Rowan NOT Ada",
+      "rows": [[{"kind": "person", "value": "People/Rowan Thackeray"}, "&"], [{"kind": "person", "value": "People/Ada Lindqvist"}, "-"]],
+      "value": {"all_of": [{"kind": "person", "value": "People/Rowan Thackeray"}], "none_of": [{"kind": "person", "value": "People/Ada Lindqvist"}]},
+      "photos": ["Trips/Coast/rowan.jpg"]
+    },
+    {
+      "name": "Rowan or Ada",
+      "rows": [[{"kind": "person", "value": "People/Rowan Thackeray"}, "+"], [{"kind": "person", "value": "People/Ada Lindqvist"}, "+"]],
+      "value": {"all_of": [{"kind": "any_of", "value": [{"kind": "person", "value": "People/Rowan Thackeray"}, {"kind": "person", "value": "People/Ada Lindqvist"}]}]},
+      "photos": ["Trips/together.jpg", "Trips/Coast/rowan.jpg", "Home/ada.jpg"]
+    },
+    {
+      "name": "(people any) AND a year",
+      "rows": [[{"kind": "person", "value": "People/Rowan Thackeray"}, "+"], [{"kind": "year", "value": "2020"}, "+"], [{"kind": "person", "value": "People/Mina Oyelaran"}, "+"]],
+      "value": {"all_of": [{"kind": "any_of", "value": [{"kind": "person", "value": "People/Rowan Thackeray"}, {"kind": "person", "value": "People/Mina Oyelaran"}]}, {"kind": "any_of", "value": [{"kind": "year", "value": "2020"}]}]},
+      "photos": ["Home/mina.jpg"]
+    },
+    {
+      "name": "a folder with its subfolders",
+      "rows": [[{"kind": "folder", "value": "{pictures}/Trips", "recursive": true}, "&"]],
+      "value": {"all_of": [{"kind": "folder", "value": "{pictures}/Trips", "recursive": true}]},
+      "photos": ["Trips/together.jpg", "Trips/Coast/rowan.jpg"]
+    },
+    {
+      "name": "a tag and a month of a year",
+      "rows": [[{"kind": "month", "value": "2019-08"}, "+"], [{"kind": "keyword", "value": "Places/Beach"}, "&"]],
+      "value": {"all_of": [{"kind": "keyword", "value": "Places/Beach"}, {"kind": "any_of", "value": [{"kind": "month", "value": "2019-08"}]}]},
+      "photos": ["Trips/Coast/rowan.jpg"]
+    },
+    {
+      "name": "a year, not the photos with no tag",
+      "rows": [[{"kind": "year", "value": "2020"}, "&"], [{"kind": "untagged", "value": null}, "-"]],
+      "value": {"all_of": [{"kind": "year", "value": "2020"}], "none_of": [{"kind": "untagged", "value": null}]},
+      "photos": ["Home/ada.jpg", "Home/mina.jpg"]
+    },
+    {
+      "name": "nothing matches",
+      "rows": [[{"kind": "person", "value": "People/Mina Oyelaran"}, "&"], [{"kind": "year", "value": "2019"}, "&"]],
+      "value": {"all_of": [{"kind": "person", "value": "People/Mina Oyelaran"}, {"kind": "year", "value": "2019"}]},
+      "photos": []
+    }
+  ]
+}
