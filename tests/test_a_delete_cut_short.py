@@ -8,8 +8,8 @@ Bin and the rows, or between the Bin's copy (a share with no Bin goes through th
 share stops answering part-way; or an update stops a Delete it had planned and not begun. The next settle looks at each
 file the Delete left `writing`: gone, its rows go; there, it is sent again; on a share that does not answer, it waits. A
 Delete planned and never begun is withdrawn, nothing deleted (the owner's answer 4), whoever released it: a settle stopped
-by an update releases one a dead process planned, as a clean stop would (#3256; a bulk Delete's resume after a clean stop is
-cut 1b's, by a marker of its own). A file left `writing` is sent again only while it is the file the Delete stamped:
+by an update releases one a dead process planned, as a clean stop would (#3256; a bulk Delete's resume after a clean stop,
+by a count of its own in the change: test_a_bulk_delete_stopped_part_way). A file left `writing` is sent again only while it is the file the Delete stamped:
 another put at its path meanwhile is withdrawn, its row and faces kept (#3257). A Delete the share stopped answering for
 says, in the route's reply the page shows, that it is done when the share answers (#3258). A photo of a folder the library
 does not hold (Just look) has no record.

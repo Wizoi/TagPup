@@ -339,6 +339,35 @@ describe("the other file edits", () => {
     assert.equal(ctx.posts("/api/folder/time-shift").length, 1, "the time shift was held back");
     assert.match(ctx.$("status-text").textContent, /Time shift applied to 2 photo\(s\)\. Written to the files only/);
   });
+
+  test("a time shift's question says it cannot be undone: nothing is journaled while just looking", async (t) => {
+    const ctx = await looking(t);
+    let asked = "";
+    ctx.window.confirm = (text) => { asked = text; return false; };
+    click(ctx.window, ctx.$("btn-toggle-timeshift"));
+    ctx.$("timeshift-minutes-input").value = "30";
+    const apply = ctx.$("btn-apply-timeshift");
+    apply.disabled = false;
+    click(ctx.window, apply);
+    await flush(ctx.window, 4);
+    assert.match(asked, /CANNOT be undone/);
+    assert.doesNotMatch(asked, /can be undone from History/);
+  });
+
+  test("a held folder's time shift question says it can be undone from History", async (t) => {
+    const ctx = await loadApp("tagpup", { t, url: "http://localhost:8090/kr-track/", server: server() });
+    let asked = "";
+    ctx.window.confirm = (text) => { asked = text; return false; };
+    await openFolder(ctx, HELD_FOLDER);
+    click(ctx.window, ctx.document.getElementById("btn-toggle-timeshift"));
+    ctx.document.getElementById("timeshift-minutes-input").value = "30";
+    const apply = ctx.document.getElementById("btn-apply-timeshift");
+    apply.disabled = false;
+    click(ctx.window, apply);
+    await flush(ctx.window, 4);
+    assert.match(asked, /can be undone from History/);
+    assert.doesNotMatch(asked, /CANNOT/);
+  });
 });
 
 describe("Suggest while just looking", () => {

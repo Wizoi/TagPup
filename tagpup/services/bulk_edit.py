@@ -9,10 +9,10 @@ An EDIT is what is done to every photo of a selection (at most batches.MAX_BATCH
   file already names (by the id of their node: two people called alike are two) is not added again, and no node of the tag
   tree is made;
 * `delete`: send each photo's file to the Recycle Bin and forget its row, faces and thumbnail, as the folder view's Delete
-  does it (tagpup.services.photos.delete, the one owner: each photo's Delete journaled as an INTERNAL crash record,
-  file_journal.DELETE, that a settle finishes and History never lists; a photo whose place has no Recycle Bin goes through
-  this PC's, #694), `{"token": text}` -- the token of the photos the question named (selection.where_deleted: the
-  request is refused when the selection no longer resolves to exactly them, #691).
+  does it (tagpup.services.photos.delete_in_chunks, the one owner: the whole selection's Delete journaled as ONE INTERNAL
+  crash record, file_journal.DELETE, that a settle finishes and History never lists; a photo whose place has no Recycle
+  Bin goes through this PC's, #694), `{"token": text}` -- the token of the photos the question named
+  (selection.where_deleted: the request is refused when the selection no longer resolves to exactly them, #691).
 
 `prepare` reads and checks one up front and refuses with a sentence, before a photo is touched. `run` does it to the photos,
 synchronously: each id is resolved to its row's path NOW (a photo deleted since is skipped and counted), and the whole of it is
@@ -25,7 +25,8 @@ reported as a conflict and never overwritten. An edit never replaces a list: it 
 changes nothing. The change is planned in the journal before the first file is written and each file is recorded as it is
 written, so a process that dies part-way leaves the files done and the rest planned, which the next change of photo files
 settles (file_changes.settle); History lists what was written. Nothing is resumed: an edit made again changes nothing a photo
-already holds, and a delete asks its question afresh.
+already holds, and a delete asks its question afresh -- but for a delete an update stopped, whose photos not reached are
+deleted when TagPup starts again (tagpup.services.photos.settle_delete), each photo told so.
 
 **One at a time** in this process, whichever library: a second edit waits its turn (tagpup.services.batches: at most eight wait, one
 more is a Conflict saying how many are ahead), and the lock of changes of photo files is let go between chunks. Another process's
@@ -39,7 +40,7 @@ from dataclasses import dataclass, field
 
 from tagpup.core import paths, validation, vocabulary
 from tagpup.core.result import Conflict, Refused
-from tagpup.files import images, recycle_bin
+from tagpup.files import recycle_bin
 from tagpup.services import batches, file_changes, selection, tagging
 from tagpup.services import people as people_service
 from tagpup.services import photos as photo_actions
@@ -286,43 +287,40 @@ def _delete(library, edit, present, out):
     keep the copies of the photos not confirmed for good (recycle_bin.can_copy_here: the Bin filled since the question, #703);
     if not, those photos are errors with the sentence and nothing of them is touched; the others go on. One confirmed for good
     goes through this PC while this PC's Bin keeps its copy, and for good after that (recycle_bin.recycle_through_this_pc). A clip goes as a photo does, up to recycle_bin.MOST_CLIP_BYTES;
-    a larger one is deleted for good when it was among the files confirmed (edit.for_good_ids), its size counted in no copy; a
-    clip is a chunk of its own: the lock is let go of before and after each clip, as after each chunk of photos, and a stop
-    asked is taken there."""
+    a larger one is deleted for good when it was among the files confirmed (edit.for_good_ids), its size counted in no copy.
+    The photos that go are ONE change, carried out a chunk at a time, each with the look this start took of it
+    (photos.delete_in_chunks: a stop between chunks, the rest not deleted, or, an update's, deleted at the next start)."""
     with file_changes.exclusively():
         # Where each file is, and its size, by one bounded stat of each (file_changes.file_stamps): one on a share that did
         # not answer is its error, one gone missing.
         stamps = file_changes.file_stamps([path for _id, path in present])
         states = {paths.key(path): state for path, state, _stamp in stamps}
         sizes = {paths.key(path): stamp[1] for path, _state, stamp in stamps if stamp is not None}
-        looks = {paths.key(path): stamp for path, _state, stamp in stamps if stamp is not None}   # each Delete's own look: this one
+        # Each Delete's own look: this one; a file there that could not be read has none, and is its own error (delete_planned).
+        looks = {paths.key(path): stamp for path, _state, stamp in stamps if stamp is not None}
         there = [(photo_id, path) for photo_id, path in present if states[paths.key(path)] == file_changes.PRESENT]
         out.errors.extend((photo_id, os.path.basename(path)[:MOST_TEXT], file_changes.AWAY_WHY)
                           for photo_id, path in present if states[paths.key(path)] == file_changes.AWAY)
         out.skipped_missing += sum(1 for _id, path in present if states[paths.key(path)] == file_changes.GONE)
         refused = _cannot_keep(there, sizes, edit.for_good_ids)
-        batch = batches.current()
-        for n, (photo_id, path) in enumerate(there):
-            # A chunk of photos holds the lock; a clip is a chunk of itself (its copy through this PC can take minutes).
-            turn = n and (n % batches.CHUNK == 0 or images.is_clip(there[n - 1][1]) or images.is_clip(path))
-            if turn and not file_changes.between_chunks(batch):
-                out.errors.extend((left_id, os.path.basename(left)[:MOST_TEXT], "stopped as asked: not deleted")
-                                  for left_id, left in there[n:])
-                break
-            name = os.path.basename(path)[:MOST_TEXT]
-            if photo_id in refused:
-                out.errors.append((photo_id, name, refused[photo_id][:MOST_TEXT]))
-                continue
+        out.errors.extend((photo_id, os.path.basename(path)[:MOST_TEXT], refused[photo_id][:MOST_TEXT])
+                          for photo_id, path in there if photo_id in refused)
+        going = [(photo_id, path, photo_id in edit.for_good_ids, looks.get(paths.key(path)))
+                 for photo_id, path in there if photo_id not in refused]
+        if going:
             # Deleted for good only if it was among the files confirmed: one grown past its Bin since is refused.
-            result = photo_actions.delete(library, path, photo_id in edit.for_good_ids, fresh=False,
-                                          looked=looks.get(paths.key(path)))
-            if result.ok and result.changed:
-                out.changed += 1
-                out.for_good += 1 if result.details.get("for_good") else 0
-            else:
-                why = result.refused or result.message() or "it could not be deleted"
-                out.errors.append((photo_id, name, str(why)[:MOST_TEXT]))
+            photo_actions.delete_in_chunks(library, going, lambda row, result: _deleted(out, row, result))
     return out
+
+
+def _deleted(out, row, result):
+    """Count the Delete of the photo of journal row `row` (its photo_id the selection's id), told by `result`, into `out`."""
+    if result.ok and result.changed:
+        out.changed += 1
+        out.for_good += 1 if result.details.get("for_good") else 0
+        return
+    why = result.refused or result.message() or "it could not be deleted"
+    out.errors.append((row.photo_id, os.path.basename(row.path)[:MOST_TEXT], str(why)[:MOST_TEXT]))
 
 
 def _count(out, result, present, by_key):
