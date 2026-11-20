@@ -160,10 +160,15 @@ class AWriteThroughTheOneEntryPoint(unittest.TestCase):
         self.addCleanup(woken.set)
         shares.forget()
         self.addCleanup(shares.forget)
-        real_stat = os.stat
+        real_stat, real_share_of = os.stat, shares.share_of
 
         def on_it(path):
             return os.path.normcase(str(path)).startswith(under)
+
+        def share_of(folder):
+            # The share is its own, as a real one is (\\server\share or a mapped drive): the test's folders are all
+            # on one local drive, and a share is taken as away by its key, so without this the local photo is too.
+            return "//nas/coast" if on_it(folder) else real_share_of(folder)
 
         def stat(path, *args, **kwargs):
             if on_it(path):
@@ -171,7 +176,7 @@ class AWriteThroughTheOneEntryPoint(unittest.TestCase):
                 raise FileNotFoundError(2, "not found")
             return real_stat(path, *args, **kwargs)
         with mock.patch.object(os, "stat", stat), mock.patch.object(shares, "on_a_network_drive", on_it), \
-                mock.patch.object(shares, "SHARE_WAIT", 0.05):
+                mock.patch.object(shares, "SHARE_WAIT", 0.05), mock.patch.object(shares, "share_of", share_of):
             began = time.monotonic()
             status, reply = self.lib.post(ROUTE, self.tags_op({asleep: (asleep_id, ["Places/Quay"]),
                                                                self.photos[0]: (self.ids[0], ["Places/Quay"])}))
