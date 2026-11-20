@@ -220,8 +220,8 @@ def _write(library, edit, ids, exiftool_path):
     by_key = {paths.key(path): photo_id for photo_id, path in present}
     chosen = [path for _photo_id, path in present]
     # Read, planned and written by file_changes.write_fields: one change, a chunk at a time, others let in between the chunks.
-    # Named by the paths resolved just now and no id: the ids are the server's own of this request, not a page's record, and
-    # a write naming an id holds the lock through all its files (photo_writes.write), where a save that waits is let in.
+    # Named by the paths resolved just now and no id: the ids are the server's own of this request, not a page's record. No
+    # lock held here: each chunk takes it, and a save that waits is let in between them (photo_writes' docstring).
     result = photo_writes.write(
         library, photo_writes.TAGS, {path: (None, {"add": edit.add, "remove": edit.remove}) for path in chosen},
         exiftool_path, None, stop_at_first_error=False, operation=OPERATIONS[edit.op],

@@ -1258,8 +1258,9 @@ def _write(library, op, changes, group=None, stop_at_first_error=False, params=N
     """The one write of photo files a page asks (POST /api/photos/write, and the routes that call it until the page sends
     there): the service's write (tagpup.services.photo_writes) and, once, here, what the server keeps of the photos told
     what it wrote (_told). A batch (over batches.CHUNK photos) takes its turn before the lock, and more than a write may
-    name is refused before it (file_changes.batch_exclusively); the records are told under the lock, in the order the
-    files were written. (the Result, {path: (mtime, size) or None} of each photo written). Raises responses.ANSWERED."""
+    name is refused before it (file_changes.batch_exclusively); the lock is held here, through every file (the service
+    takes none: an id is checked under this hold), and the records are told under it, in the order the files were
+    written. (the Result, {path: (mtime, size) or None} of each photo written). Raises responses.ANSWERED."""
     with file_changes.batch_exclusively(library, photo_writes.OPERATIONS[op], len(changes)):
         result = photo_writes.write(library, op, changes, state.exiftool(library),
                                     state.rename_format(library) if op == photo_writes.SET else None,

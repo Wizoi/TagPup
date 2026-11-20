@@ -23,8 +23,8 @@ WRITES = {"POST", "PUT", "PATCH", "DELETE"}
 #: capped at batches.MAX_BATCH, stopped by Cancel or a hand-over at its chunk, listed on the Activity page.
 BATCHES = {
     "/api/library/bulk-edit": "bulk_edit.run takes the claim first (a delete is a batch too, with the same chunks); its tags "
-                              "and people are written through the entry point's service (photo_writes.write), naming no id, "
-                              "so a save waiting is let in between its chunks",
+                              "and people are written through the entry point's service (photo_writes.write), which takes "
+                              "no lock: bulk_edit holds none, so a save waiting is let in between its chunks",
     "/api/photos/bulk-tags": "file_changes.batch_exclusively takes the claim before the lock, and refuses over the cap before it",
     "/api/photos/write": "the entry point's _write: file_changes.batch_exclusively takes the claim before the lock, and refuses "
                          "over the cap before it, as bulk-tags (which calls it)",

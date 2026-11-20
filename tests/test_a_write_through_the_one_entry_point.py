@@ -33,7 +33,7 @@ from tests.test_taxonomy_lifecycle import requires_exiftool  # noqa: E402
 from tagpup.core import paths  # noqa: E402
 from tagpup.files import field_values, shares  # noqa: E402
 from tagpup.files.exiftool_session import ExifToolSession  # noqa: E402
-from tagpup.services import batches  # noqa: E402
+from tagpup.services import batches, file_changes, photo_writes  # noqa: E402
 from tagpup.services import photos as photo_actions  # noqa: E402
 from tagpup.store import db, journal  # noqa: E402
 
@@ -132,6 +132,19 @@ class AWriteThroughTheOneEntryPoint(unittest.TestCase):
         for path in self.photos:
             self.assertNotIn("Places/Quay", tags_in(path))
         self.assertEqual([], self.changes())
+
+    def test_the_hold_of_the_lock_is_the_callers_alone(self):
+        # One place decides which hold of the lock a write runs under: its caller (the route's batch_exclusively through
+        # all its files; a library view's bulk edit, none, so a save is let in between its chunks). The service takes
+        # none of its own: an id it checks is checked under the caller's hold, here a stale one refused, nothing written.
+        def no_lock():
+            raise AssertionError("photo_writes.write took the lock of changes of photo files itself")
+        with mock.patch.object(file_changes, "exclusively", no_lock):
+            result = photo_writes.write(self.lib.library, photo_writes.TAGS,
+                                        {self.photos[1]: (self.ids[0], {"add": ["Places/Quay"]})}, EXIFTOOL, None)
+        self.assertTrue(result.refused)
+        self.assertEqual(0, result.changed)
+        self.assertNotIn("Places/Quay", tags_in(self.photos[1]))
 
     def test_a_photo_with_no_row_is_named_by_its_path_and_written_to_its_file_only(self):
         loose = make_photo(os.path.join(self.lib.root, "Just Looking", "q.jpg"))
