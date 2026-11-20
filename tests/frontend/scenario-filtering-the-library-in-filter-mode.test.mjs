@@ -287,6 +287,19 @@ describe("leaving a filter, and a search made elsewhere", () => {
     assert.equal(section.querySelectorAll(".library-search-list .library-search-chip").length, 0);
   });
 
+  test("words typed while a tree filter is open are searched within the filter, not instead of it", async (t) => {
+    const ctx = await page(t, { before: filterOn });
+    click(ctx.window, ctx.rowByLabel("people", "Hazel Brookmire"));
+    click(ctx.window, ctx.rowByLabel("people", "Rowan Thackeray"));   // + Hazel, + Rowan: one any of
+    await ctx.settle();
+    await searchWords(ctx, "beach");
+    const sent = idsCalls(ctx).at(-1).body.value;
+    assert.equal(sent.words, "beach");
+    assert.equal(sent.all_of.length, 1, "the filter's union is still there");
+    assert.equal(sent.all_of[0].kind, "any_of");
+    assert.equal(sent.all_of[0].value.length, 2);
+  });
+
   test("a filter made over a words search: Clear all goes back to the words search, as Back does", async (t) => {
     const ctx = await page(t, { before: filterOn });
     await searchWords(ctx, "beach");

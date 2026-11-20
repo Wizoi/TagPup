@@ -261,8 +261,15 @@ export function runSearch() {
         return;
     }
     const within = s.within ? withinSource() : null;
+    // An open tree filter is not in the lists (its rows are chips, filter-bar.js): the words and lists typed are added to it, so
+    // the search is the filter and these (it is then a search, shown in the lists, its marks gone).
+    const open = openSearch();
+    const held = open && state.nav.filter.on && rowStatesFromSpec(open) ? open.value : {};
     const value = searchValue({
-        all_of: within ? [within, ...s.lists.all_of] : s.lists.all_of, any_of: s.lists.any_of, none_of: s.lists.none_of, words,
+        all_of: [...(held.all_of || []), ...(within ? [within] : []), ...s.lists.all_of],
+        any_of: s.lists.any_of,
+        none_of: [...(held.none_of || []), ...s.lists.none_of],
+        words,
     });
     if (!searchAsksSomething(value)) {
         if (wordsNote) say(`${wordsNote} Type a word, or add a tag or a person under Filters.`, true);
