@@ -559,6 +559,23 @@ describe("a page left while a write is out", () => {
   });
 });
 
+describe("an Undo pressed in another folder", () => {
+  test("its write reaches the records kept of the photos' own folder, so a save there opened again is not refused", async (t) => {
+    const ctx = await folderOf(t, 3, { tags: ["Trips/Coast"] });
+    assert.ok(kept(ctx, FOLDER), "the folder's scan was not kept");
+    await openFolder(ctx, OTHER);
+    // As undo.js pends it: the change made in FOLDER taken back while OTHER is open (Ctrl+Z).
+    const { pendChanges } = pageExports(ctx.window, "web/tagpup/pending.js");
+    pendChanges([{ path: pathOf(1), remove: ["Trips/Coast"] }]);
+    await flush(ctx.window, 8);
+    await answer(ctx, { success: true, stamps: { [pathOf(1)]: { mtime: 1700000500, size: 4096 } }, written: { [pathOf(1)]: [] } });
+    const record = kept(ctx, FOLDER).photos[1];
+    assert.equal(record.mtime, 1700000500, "the kept record names the stamp the file had before the Undo: a save from it is refused");
+    assert.deepEqual(record.tags, [], "the kept record still holds the tag the Undo took off");
+    assert.ok(!JSON.stringify(kept(ctx, OTHER)).includes("IMG_0001"), "the folder open when Undo was pressed holds no record of the photo");
+  });
+});
+
 describe("opening another folder while changes wait", () => {
   test("asks; leaving drops the files not sent, and the write out reaches the records kept of the folder left", async (t) => {
     const ctx = await folderOf(t, 50);
