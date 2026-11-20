@@ -18,7 +18,7 @@ import {
 import {
     namesAPerson, resolveTagOrPerson
 } from './tags.js';
-import { pendTags } from './pending.js';
+import { pendTags, shownTags } from './pending.js';
 import { BULK_CONFIRM_ABOVE, isSelected, overBulkLimit, selectionCount, selectionProblem } from './selected.js';
 import { setStatus } from './status.js';
 import { addTypedToSelection } from './bulk-edit.js';
@@ -69,7 +69,8 @@ export function updateSelectedThumbnailsCount() {
     if (state.selectedThumbnails.length > 0) {
         
         // Gather statistics
-        const selectedPhotos = state.folderPhotos.filter(p => isSelected(p.path));
+        // As each photo shows its tags (pending.js shownTags): a tag taken off the selection leaves its chip at the click.
+        const selectedPhotos = state.folderPhotos.filter(p => isSelected(p.path)).map(p => ({ ...p, tags: shownTags(p) }));
         askSelectionFaces(selectedPhotos.map(p => p.path));
 
         // Calculate Date Taken Range

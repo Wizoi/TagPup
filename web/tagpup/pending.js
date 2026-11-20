@@ -13,7 +13,8 @@
 // are answered at the click, and a write of them that fails puts them back rather than waiting for Retry. Any other change
 // waiting for a photo makes its panel read-only until it is written (pendingOf; stale.js offerWrites). The record follows
 // the reply, not the map; what the page shows of a photo's tags, and decides by, is the record with the map's changes for
-// it applied (shownTags), redrawn whenever the map changes for a photo of the page (pageFollows).
+// it applied (shownTags), redrawn whenever the map changes for a photo of the page (pageFollows); a record read from the
+// library while a write is out takes the replies that came back meanwhile (readHeld).
 import { api } from './common/api.js';
 import { pathKey, samePath } from './common/paths.js';
 import { leafOf } from './common/vocabulary.js';
@@ -103,8 +104,10 @@ export function pendingOf(photo) {
 /**
  * The tags `photo` shows: its record (what its file held at the last reply) with the changes not written yet applied, the
  * chunk out's then the map's (the later op wins), compared as tags are (normalizeTag). The one answer for whatever draws a
- * photo's tags or decides by them: its pills, the list's count, the suggestions not yet on it, Ctrl+D's copy. A write
- * builds on the record, which is what the file holds.
+ * photo's tags or decides by them: its pills, the list's count, the suggestions not yet on it, Ctrl+D's copy, its face
+ * cards, a folder's selection chips. A change a failed chunk gave back is waiting like any other (its Retry writes it), and
+ * is shown: the panel is read-only saying so, and Cancel draws the record again. A write builds on the record, which is
+ * what the file holds.
  */
 export function shownTags(photo) {
     let tags = ((photo && photo.tags) || []).slice();
@@ -128,12 +131,29 @@ function heldRecords() {
 }
 
 /**
- * The page follows a change of the map for any of `keys`: the list (its counts are of the tags shown), Ctrl+D's offer,
- * and the open photo's pills, suggestions, and whether it is read-only.
+ * A record read from the library while a write may be out (photo.js: a library view's open photo, and the one before it for
+ * Ctrl+D): the one place such a read is held against the writes' replies. The server may have read the file before a write
+ * whose reply came back while the read was out, and that reply found no record of it to reach (heldRecords); so every reply
+ * taken meanwhile is applied to the record the read answers, in the order taken. `read` gives a promise of the record or null.
+ */
+export function readHeld(read) {
+    const replies = [];
+    state.pending.reads.add(replies);
+    return read().then(record => {
+        if (record) replies.filter(reply => reply.key === pathKey(record.path)).forEach(reply => reply.take(record));
+        return record;
+    }).finally(() => state.pending.reads.delete(replies));
+}
+
+/**
+ * The page follows a change of the map for any of `keys`: the list (its counts are of the tags shown), a folder's selection
+ * (a view's is counted by the server, after the file is written: takeReply), Ctrl+D's offer, and the open photo's pills,
+ * suggestions, face cards, and whether it is read-only.
  */
 function pageFollows(keys) {
     if (!heldRecords().some(p => keys.has(pathKey(p.path)))) return;
     upper.renderFileList();
+    if (!state.library && state.selectedThumbnails.length) upper.updateSelectedThumbnailsCount();
     upper.updateCarryForwardState();
     const path = state.activePhotoPath;
     if (!path || !keys.has(pathKey(path))) return;
@@ -141,6 +161,7 @@ function pageFollows(keys) {
     if (!photo) return;
     upper.renderTags();
     upper.renderSuggestionsPanel(photo.path);
+    upper.renderPhotoFacesHere(photo.path, { readStands: true });
     offerWrites(photo, pendingOf(photo));
 }
 
@@ -355,6 +376,8 @@ function takeReply(chunk, data, entry, dropped) {
         takeWritten(photo, stamps.get(key), held.get(key));
         applyOps(photo, item, held.get(key));
     };
+    // A library read out meanwhile may answer with the file as it was before this write (readHeld).
+    const forReads = (item) => state.pending.reads.forEach(replies => replies.push({ key: pathKey(item.path), take: (photo) => take(photo, item) }));
     for (const item of chunk) {
         const key = pathKey(item.path);
         if (skipped.has(key)) {
@@ -367,6 +390,7 @@ function takeReply(chunk, data, entry, dropped) {
             if (item.folder && !(state.scannedFolder && samePath(item.folder, state.scannedFolder))) {
                 left.set(item.folder, [...(left.get(item.folder) || []), item]);
             }
+            forReads(item);
             settle(item, 'written');
         } else {
             back.push(item);
@@ -390,7 +414,7 @@ function takeReply(chunk, data, entry, dropped) {
         state.pending.stopped = state.pending.stopped || kept.length > 0;   // stopped already: own removals sent meanwhile
     }
     if (written.length) {
-        upper.updateSelectedThumbnailsCount();   // the list follows in sendChunk's pageFollows
+        if (state.library) upper.updateSelectedThumbnailsCount();   // a folder's, and the list, follow in sendChunk's pageFollows
         upper.renderThumbnails();
         updateTagsDatalist();
         if (chunk.some(e => [...e.add, ...e.remove].some(t => state.pending.people.has(t)))) updatePeopleDatalist();
