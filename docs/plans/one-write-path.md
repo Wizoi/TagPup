@@ -90,13 +90,24 @@ Steady-state writer: a photo changed afterwards goes through the same entry poin
      written{path:{mtime,size,tags,base,new_path,taken,rename_failed}}, pictures_refused?, named/unnamed/renamed_faces?,
      changed_on_disk (409)`. The reshapers keep every field the pages read today (pending.js, photo.js, photo-write.js, edits.js,
      grid.js, mobile-edit.js, rename.js, bulk-run.js).
+   - **2a as left by its first worker (branch one-write-path-2a, 2026-11-20, out of budget):** built `services/photo_writes.write`
+     (the id check `_moved` under `file_changes.exclusively`, via `selection.paths_of`), the route and `_write`/`_told`/`_envelope`
+     in `tagpup_routes.py`, the two reshapers, and `tests/test_a_write_through_the_one_entry_point.py` (7 of 8 pass). Left: (1) the
+     share-asleep case: one photo away makes `write_fields` stop the whole change as a share stop (`_Stalled`, `stopped.share`), so
+     the awake photo is not written and the route answers 400; decide whether that is the contract (then fix the test) or the
+     away photo must be left out first; (2) the guards: `name_faces_routes.GUARDED`, `tests/test_batches_go_through_the_model.py`
+     BATCHES, `tests/test_every_route_answers_this_pc_or_says_why.py` (open, as bulk-tags), SPEC_TAGPUP_GUI's entry, the charter's
+     Scope (`tagpup/services/photo_writes.py`), `tests/owners.py` (a new I15 + its charter's id list) and `tests/tiers.py` (scenario);
+     `roots_ingress.KEYS` already holds `changes`; (3) `--fast`, ruff, and the existing bulk-tags/save-metadata test files.
    - **2b, Integration, ~500:** op `shift` (paths + minutes; the camera filter stays in the time-shift caller until cut 3) and
      bulk-edit's `tags`/`people` by resolved ids. **Delete stays `bulk_edit._delete` / `photos.delete`** (no field write; its own token
      contract), not a caller of the entry point.
    - **#3263 is Files', not the route's:** `file_changes._write_fields` and `rename` already settle first; Delete's path gets
      `file_changes.settle` inside its `exclusively` block in `services/photos.py` (~10 lines + one test), beside 2a.
    - **2c, after cut 3:** delete the four old routes and reshapers; spec and page fixtures follow.
-3. **Views, about 800:** `queuePhotoWrite` and `pending.js` become one client of the entry point; the page keeps its map.
+3. **Views, about 800:** `queuePhotoWrite` and `pending.js` become one client of the entry point; the page keeps its map. A 409
+   `changed_on_disk` on a chunk (an id whose row is gone or moved, refused whole) means re-read those records and send again, not one
+   photo's failure (a file gone in Explorer stays `skipped_missing`, the rest written).
    After it: re-read whether B is needed.
 
 A worker brief for each names how it fails (killed part-way, two at once, a share that does not answer, rapid clicks, switching

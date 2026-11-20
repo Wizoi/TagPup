@@ -24,14 +24,14 @@ routes = Blueprint("name_faces", __name__)
 
 
 #: The writes the job's plan must not be written over (#871): adding or indexing folders, a sync's apply, a bulk edit,
-#: a photo's keywords and the bulk tag writes, and deleting photos; and what can put faces' names, tags or the tree back or
+#: a photo's keywords, the bulk tag writes and the one entry point of a page's write of photo files, and deleting photos; and what can put faces' names, tags or the tree back or
 #: elsewhere without going through those: History's Undo, a branch's flags.
 #: Keyed as Flask names the route (`<int:change_id>` stays in it). Answered 409 while names are given (the one owner of the
 #: refusal is tuner_routes.naming_refusal, which TagTuner's own writes ask too); reads are never refused. Every other write
 #: route is guarded, or allowed with a reason, in tests/test_write_routes_are_classified.py.
 GUARDED = frozenset((
     "/api/folder/index-start", "/api/folder/add", "/api/sync/review/include", "/api/library/bulk-edit",
-    "/api/photo/save-metadata", "/api/photos/bulk-tags", "/api/folder/auto-apply",
+    "/api/photo/save-metadata", "/api/photos/bulk-tags", "/api/photos/write", "/api/folder/auto-apply",
     "/api/photo/delete", "/api/sync", "/api/history/<int:change_id>/undo", "/api/taxonomy/update",
     "/api/folder/remove"))
 
