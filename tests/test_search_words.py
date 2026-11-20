@@ -68,6 +68,16 @@ class WhatTheWordsFind(Library):
             with self.subTest(text=text):
                 self.assertEqual(expected, self.found(text))
 
+    def test_a_four_digit_term_is_also_the_year_a_photo_was_taken(self):
+        """`water` is in a folder and a file name that say no year: only its Date Taken does."""
+        self.assertEqual([self.water], self.found("2020"))
+        self.assertEqual([self.odd], self.found("2021"))
+        self.assertEqual([self.cafe], self.found("2019"), "the year, and the folder's and the file name's 2019, are one photo")
+        self.assertEqual([self.water], self.found("2020 sailing"))
+        self.assertEqual([], self.found("2020 harbour"))
+        self.assertEqual([], self.found("2018"), "no photo was taken then, and the undated one has no year")
+        self.assertEqual([], self.found("20201"), "five digits are no year")
+
     def test_every_term_must_be_found_and_each_is_a_prefix(self):
         self.assertEqual([self.cafe], self.found("harbour dusk"))
         self.assertEqual([], self.found("harbour sailing"))

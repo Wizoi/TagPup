@@ -302,11 +302,16 @@ def cameras_with(conn, term):
     return ids
 
 
+#: A term of this many digits is also the year a photo was taken (`photos.year`, derived from Date Taken, indexed).
+YEAR_DIGITS = 4
+
+
 def clause(conn, words):
     """(SQL over `photos p`, params) of the photos that hold every term of `words` (terms): for each term, its words
-    table as a prefix phrase, its names table as a substring (three characters or more), or its camera or lens as a
-    substring (cameras_with: the ids as one JSON list, read by json_each); None when no term says anything. Each term is
-    quoted, its quotes doubled: nothing typed is read as FTS5's syntax."""
+    table as a prefix phrase, its names table as a substring (three characters or more), its camera or lens as a
+    substring (cameras_with: the ids as one JSON list, read by json_each), or, for four digits, the year the photo was
+    taken (`p.year`: no index table of its own); None when no term says anything. Each term is quoted, its quotes doubled:
+    nothing typed is read as FTS5's syntax."""
     parts = []
     for term in terms(words):
         either, params = [], []
@@ -316,6 +321,9 @@ def clause(conn, words):
         if len(term) >= SUBSTRING:
             either.append("p.id IN (SELECT rowid FROM %s WHERE %s MATCH ?)" % (NAMES, NAMES))
             params.append(_phrase(term))
+        if len(term) == YEAR_DIGITS and term.isascii() and term.isdigit():
+            either.append("p.year = ?")
+            params.append(int(term))
         taken = cameras_with(conn, term)
         if taken:
             either.append("p.id IN (SELECT value FROM json_each(?))")
