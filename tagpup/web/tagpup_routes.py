@@ -1234,9 +1234,6 @@ def photos_write():
         result, stamps = _write(library, op, changes, group=body.get("group"))
     except responses.ANSWERED as why:
         return responses.of(why)
-    except Exception as e:
-        logger.error("Error in a write of photo files: %s", e, exc_info=True)
-        return responses.error(500, str(e))
     reply = _envelope(op, changes, result, stamps)
     if result.refused:
         return responses.refused(result, **reply)

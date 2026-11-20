@@ -105,7 +105,9 @@ Steady-state writer: a photo changed afterwards goes through the same entry poin
    - **#3263 is Files', not the route's:** `file_changes._write_fields` and `rename` already settle first; Delete's path gets
      `file_changes.settle` inside its `exclusively` block in `services/photos.py` (~10 lines + one test), beside 2a.
    - **2c, after cut 3:** delete the four old routes and reshapers; spec and page fixtures follow.
-3. **Views, about 800:** `queuePhotoWrite` and `pending.js` become one client of the entry point; the page keeps its map.
+3. **Views, about 800:** `queuePhotoWrite` and `pending.js` become one client of the entry point; the page keeps its map. A 409
+   `changed_on_disk` on a chunk (an id whose row is gone or moved, refused whole) means re-read those records and send again, not one
+   photo's failure (a file gone in Explorer stays `skipped_missing`, the rest written).
    After it: re-read whether B is needed.
 
 A worker brief for each names how it fails (killed part-way, two at once, a share that does not answer, rapid clicks, switching

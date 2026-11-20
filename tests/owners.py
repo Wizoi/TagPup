@@ -127,7 +127,7 @@ SCENARIOS = {
     "I15": ("apps", "Somebody tags photos, or saves one photo's title and tags, and the page sends it to the one entry point "
             "of a write of photo files: one envelope whatever the op; an update stopping the batches begins nothing; two "
             "writes at once both land, one after the other; a photo on a share that does not answer is its error at "
-            "once and the others are written; a stale record, or an id now naming another file, is refused 409 and nothing is written; a photo "
+            "once and the others are written (one that stops answering part-way ends the change there, what landed listed); a stale record, or an id now naming another file, is refused 409 and nothing is written; a photo "
             "of a folder the library does not hold is named by its path alone."),
 }
 
