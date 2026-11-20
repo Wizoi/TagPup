@@ -855,13 +855,15 @@ def plan_deletes(library, photo_paths, for_good=False):
 
 
 def delete_planned(library, rows, result, fresh=True):
-    """Carry out the Deletes `rows` (plan_deletes), one at a time: each marked `writing`, sent to the Recycle Bin
+    """Carry out the Deletes `rows` (plan_deletes), one at a time: each marked `writing` with the stamp of the file at its
+    path (shares.stamp_of; None when the look gave none, and a settle then sends nothing), sent to the Recycle Bin
     (file_only.send, `fresh` its), then forgotten (_forget), its rows removed in the transaction that marks it done. One
     the Bin step did not send is settled by what is at its path (_by_look): gone, forgotten; there, taken out of the
     change, nothing deleted; on a share that does not answer, left `writing` for a settle. `result` is told of each.
     The caller holds the lock of changes of photo files, and ends the change (end_deletes)."""
     for row in rows:
-        file_journal.writing(library.path, row.id, None)
+        stamp = shares.stamp_of(row.path)
+        file_journal.writing(library.path, row.id, stamp if isinstance(stamp, tuple) else None)
         _reached("delete writing")
         if file_only.send(row.path, row.after.get("for_good", False), result, fresh) is None:
             _by_look(library, row, result, redo=False)
@@ -883,13 +885,19 @@ def _by_look(library, row, result, redo):
     """Settle the Delete `row`, `writing`, by what is at its path now (shares.stamp_of). Gone: its rows go (_forget).
     On a share that does not answer: left `writing`, never decided on, and False. There: with `redo` (a settle: a stop
     came before the Bin step or between the Bin's copy and the original's removal) it is sent to the Bin again and
-    forgotten, else -- the Bin step failed and said why -- it is taken out of the change, nothing deleted. True when
-    the row is settled."""
+    forgotten -- only while it is the file the Delete stamped (`row.stamp`): another file put at its path meanwhile is
+    taken out of the change, nothing deleted, its row left as it is, and skipped in `result`, as _settle_files holds out
+    a file holding another's write (#1937) --, else -- the Bin step failed and said why -- it is taken out of the change,
+    nothing deleted. True when the row is settled."""
     stamp = shares.stamp_of(row.path)
     if stamp is shares.UNANSWERED:
         return False
     if stamp is None:
         _forget(library, row, result)
+        return True
+    if redo and stamp != row.stamp:
+        file_journal.withdraw(library.path, [row.id])
+        result.skip(row.path, "another file is at its path")
         return True
     if redo:
         if file_only.send(row.path, row.after.get("for_good", False), result) is not None:
@@ -916,8 +924,9 @@ def settle_delete(library, change):
     planned, as a clean stop would, so its `owner` says nothing of how it stopped --: it is taken out, nothing deleted,
     and a warning names the change and how many, no path (a bulk Delete's resume after a clean stop is cut 1b's, by a
     marker of its own in the change). Each file `writing` is settled by a look (_by_look, redo): gone, its rows go;
-    there, it is sent to the Bin again; on a share that does not answer, left for the next settle. True when the change
-    is finished."""
+    there and the file it stamped, it is sent to the Bin again; another file at its path, taken out, nothing deleted,
+    with a warning (the change, a count, no path); on a share that does not answer, left for the next settle. True
+    when the change is finished."""
     rows = file_journal.files_of(library.path, change.id)
     planned = [row.id for row in rows if row.state == "planned"]
     if planned:
@@ -929,6 +938,9 @@ def settle_delete(library, change):
         for row in rows:
             if row.state == "writing":
                 _by_look(library, row, result, redo=True)
+    if result.skipped:
+        logger.warning("%s: change %d (%s): %d photo(s) it was deleting had another file put at their path; that file "
+                       "was not deleted", library.path, change.id, change.operation, len(result.skipped))
     if not result.ok:
         logger.warning("%s: change %d (%s): %s", library.path, change.id, change.operation, result.message())
     return file_journal.finish(library.path, change.id) is not None

@@ -9,7 +9,9 @@ share stops answering part-way; or an update stops a Delete it had planned and n
 file the Delete left `writing`: gone, its rows go; there, it is sent again; on a share that does not answer, it waits. A
 Delete planned and never begun is withdrawn, nothing deleted (the owner's answer 4), whoever released it: a settle stopped
 by an update releases one a dead process planned, as a clean stop would (#3256; a bulk Delete's resume after a clean stop is
-cut 1b's, by a marker of its own). A photo of a folder the library does not hold (Just look) has no record.
+cut 1b's, by a marker of its own). A file left `writing` is sent again only while it is the file the Delete stamped:
+another put at its path meanwhile is withdrawn, its row and faces kept (#3257). A photo of a folder the library does not
+hold (Just look) has no record.
 
 Fails on the old code: tagpup.services.photos had no `_reached`, no plan and no lock -- the kill tests stop nowhere, a
 Delete beside a held lock runs at once (test_a_delete_waits_for_the_chunk_that_holds_the_lock), and a Delete whose rows
@@ -25,6 +27,7 @@ import unittest
 from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import face_rows  # noqa: E402
 import own_home  # noqa: E402
 from view_library import ViewLibrary, make_jpeg  # noqa: E402
 
@@ -58,6 +61,13 @@ class ADeleteCutShort(unittest.TestCase):
         self.share = os.path.join(self.vl.pictures, "Share")
         self.binned = []
         self.crash_in_bin = False
+        self.share_gone = False
+        stamp_of = shares.stamp_of
+        # A share that stops answering does so for every look from then on (away()).
+        patcher = mock.patch.object(shares, "stamp_of",
+                                    side_effect=lambda path: shares.UNANSWERED if self.share_gone else stamp_of(path))
+        patcher.start()
+        self.addCleanup(patcher.stop)
         for target, name, side in ((recycle_bin, "send_to_recycle_bin", self.recycle),
                                    (recycle_bin, "no_bin_reason", self.reason)):
             patcher = mock.patch.object(target, name, side_effect=side)
@@ -79,6 +89,10 @@ class ADeleteCutShort(unittest.TestCase):
         if self.crash_in_bin:
             raise Crash("the copy is in the Bin")
         return True
+
+    def away(self, path):
+        self.share_gone = True
+        raise OSError(64, "The specified network name is no longer available")
 
     def changes(self):
         return self.vl.rows("SELECT id, operation, owner FROM changes WHERE operation = ? ORDER BY id",
@@ -178,6 +192,26 @@ class ADeleteCutShort(unittest.TestCase):
         self.assertTrue(self.held(self.local_id))
         self.assertEqual(([], [], []), (self.changes(), self.files(), self.binned))
 
+    def test_killed_after_the_bin_then_another_file_put_at_its_path_is_not_deleted_and_the_row_keeps_its_faces(self):
+        face_rows.add_face(self.vl.conn, self.local)
+        self.vl.conn.commit()
+        with mock.patch.object(photo_actions, "_reached", side_effect=crash_at("delete sent")):
+            with self.assertRaises(Crash):
+                self.delete(self.local)
+        self.assertFalse(os.path.exists(self.local))
+        # While TagPup was down, another photo was saved under that name.
+        make_jpeg(self.local, shade=(200, 40, 40), size=(24, 24))
+        self.died()
+        with self.assertLogs(photo_actions.logger, "WARNING") as said:
+            self.assertEqual(1, self.settle())
+        self.assertIn("1 photo(s) it was deleting had another file put at their path", said.output[0])
+        self.assertNotIn(os.path.basename(self.local), said.output[0], "a count, no path")
+        self.assertTrue(os.path.exists(self.local), "the other photo is not sent to the Bin")
+        self.assertTrue(self.held(self.local_id))
+        self.assertEqual([(1,)], self.vl.rows("SELECT COUNT(*) FROM faces WHERE photo_id = ?", self.local_id))
+        self.assertEqual(([], []), (self.changes(), self.files()))
+        self.assertEqual([self.local], self.binned, "the first photo only")
+
     def test_a_delete_waits_for_the_chunk_that_holds_the_lock(self):
         done = []
         with file_changes.exclusively():
@@ -195,11 +229,7 @@ class ADeleteCutShort(unittest.TestCase):
         self.assertFalse(self.held(self.local_id))
 
     def test_a_share_that_stops_answering_leaves_the_delete_writing_until_it_answers(self):
-        def away(path):
-            raise OSError(64, "The specified network name is no longer available")
-
-        with mock.patch.object(recycle_bin, "send_to_recycle_bin", side_effect=away), \
-                mock.patch.object(shares, "stamp_of", return_value=shares.UNANSWERED):
+        with mock.patch.object(recycle_bin, "send_to_recycle_bin", side_effect=self.away):
             result = self.delete(self.local)
         self.assertFalse(result.ok)
         self.assertEqual(0, result.changed)
@@ -215,10 +245,10 @@ class ADeleteCutShort(unittest.TestCase):
         finally:
             conn.close()
         # Still away: the settle waits, nothing decided.
-        with mock.patch.object(shares, "stamp_of", return_value=shares.UNANSWERED):
-            self.assertEqual(0, self.settle())
+        self.assertEqual(0, self.settle())
         self.assertEqual(["writing"], [state for (state,) in self.files()])
-        # It answers: the photo is there, and is sent to the Bin.
+        # It answers: the photo is there, the file the Delete stamped, and is sent to the Bin.
+        self.share_gone = False
         self.assertEqual(1, self.settle())
         self.assertFalse(os.path.exists(self.local))
         self.assertFalse(self.held(self.local_id))
