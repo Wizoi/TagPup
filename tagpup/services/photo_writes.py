@@ -37,12 +37,12 @@ MOVED_SENTENCE = "%s is not the photo this page read (renamed, moved or deleted 
 
 
 def write(library, op, changes, exiftool_path, rename_format, group=None, stop_at_first_error=False, params=None,
-          operation=None, persons=None):
+          operation=tagging.ADD_TO_ALL, persons=None):
     """Write `changes` ({path: (id or None, fields)}) by `op`, in `library`, under the lock of changes of photo files: a
     Result as the operation's service gives it. `tags`' fields are {"add": [tag], "remove": [tag]}, `group` the token
     of the page's action this is a chunk of (journal.GROUP), `stop_at_first_error` False: a photo that cannot be read or
     written (a share that does not answer) is its own error and the others are written; `operation` the journal's name
-    of the change (tagging.ADD_TO_ALL when None) and `persons` {paths.key(path): the tags added that are people}
+    of the change (tagging.ADD_TO_ALL unless named) and `persons` {paths.key(path): the tags added that are people}
     (tagging.change_tags_of): a bulk edit's (bulk_edit.OPERATIONS). `set`'s are {"title", "tags", "date_taken", "stamp",
     "base"} of the one photo, as tagging.save_photo takes them. `shift`'s are none, its `params` {"minutes": whole
     minutes}. The ids are checked under the same hold of the lock as the write, so a rename cannot come between (_moved;
@@ -55,7 +55,7 @@ def write(library, op, changes, exiftool_path, rename_format, group=None, stop_a
         if op == TAGS:
             return tagging.change_tags_of(
                 library, {path: (own.get("add", []), own.get("remove", [])) for path, (_id, own) in changes.items()},
-                exiftool_path, operation=operation or tagging.ADD_TO_ALL, stop_at_first_error=stop_at_first_error,
+                exiftool_path, operation=operation, stop_at_first_error=stop_at_first_error,
                 persons=persons, group=group)
         if op == SHIFT:
             return photo_actions.shift_date_taken(library, list(changes), params["minutes"], exiftool_path)
