@@ -10,7 +10,10 @@
  * not off the page, and that bottom step (`first`) has no Back of its own.
  *
  * A sheet over a screen (the Photo screen's Edit) is a step of its own too, its entry the screen's with `sheet`: Back
- * closes the sheet before it leaves the screen, and Back or Forward onto that step opens it again (whenSheet).
+ * closes the sheet before it leaves the screen, and Back or Forward onto that step opens it again (whenSheet). That entry
+ * is the one record of whether the sheet is open: the sheet is drawn from it after every step (its push, Back, Forward,
+ * a reload), and a tap that must not act under an open sheet asks sheetShown(), never the sheet. A Close still on its
+ * way back, a page kept in the back-forward cache, cannot leave the two disagreeing.
  */
 import { state } from './mobile-state.js';
 
@@ -34,12 +37,19 @@ function sheetIn(entry) {
     for (const fn of onSheet) fn(Boolean(entry && entry.sheet));
 }
 
-/** A sheet opened over the screen shown, as a step: Back closes it first. */
-export function openSheetStep() {
-    window.history.pushState({ ...window.history.state, sheet: true }, '');
+/** Is a sheet open over the screen shown: does the step shown have one. */
+export function sheetShown() {
+    return Boolean(window.history.state && window.history.state.sheet);
 }
 
-/** The sheet closed by its own button: its step goes too, so the next Back leaves the screen. Every open sheet has one. */
+/** A sheet opened over the screen shown, as a step (Back closes it first), and drawn; nothing when the step has one. */
+export function openSheetStep() {
+    if (sheetShown()) return;    // open already, or its Close's Back not landed yet: no second step
+    window.history.pushState({ ...window.history.state, sheet: true }, '');
+    sheetIn(window.history.state);
+}
+
+/** The sheet closed by its own button: its step goes, the sheet with it as the Back lands, so the next Back leaves the screen. */
 export function closeSheetStep() {
     window.history.back();
 }

@@ -17,7 +17,7 @@ import { closeImageZoom, openImageZoom } from './common/image-zoom.js';
 import { enableSwipeNavigation } from './common/swipe.js';
 import { keepCards } from './library-source.js';
 import { state } from './mobile-state.js';
-import { replacePlace, samePlace } from './mobile-screens.js';
+import { replacePlace, samePlace, sheetShown } from './mobile-screens.js';
 
 const byId = (id) => document.getElementById(id);
 
@@ -157,7 +157,7 @@ export function showPhoto() {
 
 /** The next photo of the view (1) or the one before (-1); nothing at its first or last, or with no view held (a reload). */
 export function stepPhoto(delta) {
-    if (state.screen !== 'photo' || state.edit) return;    // the Edit sheet open: Close it first
+    if (state.screen !== 'photo' || sheetShown()) return;    // the Edit sheet open: Close it first
     const lib = state.photos;
     const next = landing(lib, state.place, delta);
     if (next < 0) return;
@@ -183,6 +183,7 @@ export function wirePhoto() {
             delete stage.dataset.dragged;    // that was a swipe
             return;
         }
+        if (sheetShown()) return;    // the picture above the Edit sheet: Back would shut the sheet, not the zoom
         if (state.photo && state.photo.media !== 'video') {
             openImageZoom(photoFileUrl(state.photo), { preview: picture.getAttribute('src') || '', opener: picture });
         }

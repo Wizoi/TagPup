@@ -4,7 +4,8 @@
  *
  * It edits the photo as /api/library/photo reads it when the sheet opens (the file's stamp and what it holds), not the
  * Grid's card. A chip's x waits five seconds behind an Undo before anything is sent; leaving the photo (a swipe, Back,
- * another screen) or the page puts it in its turn then: after a Save still out, never beside it (the Save would be
+ * another screen) or the page being hidden (another app, the tab going: Android may discard a hidden tab, its timers
+ * frozen) puts it in its turn then, the sheet left open: after a Save still out, never beside it (the Save would be
  * refused as changed on the PC); each write is keepalive, but a removal behind a Save still out when the page really
  * unloads is not sent (accepted, #3172). A tag is added or taken off through /api/photos/bulk-tags,
  * against what the file holds, so no stamp; the title and Date Taken through save-metadata (web/common/photo-write.js)
@@ -12,8 +13,8 @@
  * so and reads the photo again, the text typed kept. Each write of the page waits for the one before it (state.writing).
  * A title or date typed and left by Back or another screen is kept (state.drafts) and put back when the photo's sheet
  * opens again; only Close lets it go, and asks first. The page going while one is kept asks first too. The sheet is a
- * step of the history (mobile-screens.js): Back closes it, the text kept and a removal still behind its Undo, and a
- * second Back leaves the photo.
+ * step of the history (mobile-screens.js), its one record of being open: Back closes it, the text kept and a removal
+ * still behind its Undo, and a second Back leaves the photo; Close is a Back that lets the text go.
  *
  * A chip taken off and a tag change waiting are the photo's, by its id, not the record read: the sheet read again (Edit
  * opened again, a Save refused and read again) still leaves the chip off, and the write lands on the record it shows.
@@ -228,24 +229,29 @@ function readVocabulary() {
         }, () => {});
 }
 
-/** Edit tapped: the sheet, a step of the history. */
-function openEdit() {
-    if (state.edit || !showEdit()) return;
-    openSheetStep();
+/** The id of the photo the Photo screen shows, the one its sheet edits; null on another screen. */
+function photoShown() {
+    const place = state.place;
+    return state.screen === 'photo' && place && Number.isInteger(place.id) ? place.id : null;
 }
 
-/** The sheet over the photo shown, read as its file is now; false when no photo is shown. */
+/** Edit tapped: the sheet, a step of the history, drawn by it (sheetStep). */
+function openEdit() {
+    if (photoShown() !== null) openSheetStep();
+}
+
+/** The sheet over the photo shown, read as its file is now; nothing when no photo is shown. */
 function showEdit() {
-    const place = state.place;
-    if (state.screen !== 'photo' || !place || !Number.isInteger(place.id)) return false;
-    state.edit = { id: place.id, record: null, saving: false };
+    const id = photoShown();
+    if (id === null) return;
+    // `letGo`: Close tapped, its Back on the way: the sheet shuts as it lands, without keeping what was typed.
+    state.edit = { id, record: null, saving: false, letGo: false };
     byId('edit-sheet').classList.remove('hidden');
     for (const id of ['edit-people', 'edit-keywords', 'edit-matches']) replaceContent(byId(id));
     for (const id of ['edit-add', 'edit-title', 'edit-date', 'edit-time']) byId(id).value = '';
     say('Reading this photo...');
     readVocabulary();
     readRecord();
-    return true;
 }
 
 function closeEdit() {
@@ -260,18 +266,23 @@ function keepDraft() {
     else state.drafts.delete(state.edit.id);
 }
 
-/** Another photo or screen is shown, or the page goes: every removal waiting is sent in its turn, the sheet closes. */
+/** Every removal waiting behind its Undo, sent now in its turn. */
+function sendWaiting() {
+    state.removals.slice().forEach(sendRemoval);
+}
+
+/** Another photo or screen is shown: every removal waiting is sent in its turn, the sheet closes. */
 export function leaveEdit() {
     keepDraft();
-    state.removals.slice().forEach(sendRemoval);
+    sendWaiting();
     closeEdit();
 }
 
-/** Back onto the sheet's step opens it again; Back off it closes it, the text typed kept, each removal behind its Undo. */
+/** The step shown has the sheet (Edit, Back or Forward onto it) or not (Back or Close off it, the text kept unless Close let it go). */
 function sheetStep(open) {
     if (open && !state.edit) showEdit();
     else if (!open && state.edit) {
-        keepDraft();
+        if (!state.edit.letGo) keepDraft();
         closeEdit();
     }
 }
@@ -321,9 +332,11 @@ export function wireEdit() {
     byId('photo-edit').addEventListener('click', openEdit);
     byId('edit-save').addEventListener('click', save);
     byId('edit-close').addEventListener('click', () => {
+        const edit = state.edit;
+        if (!edit || edit.letGo) return;    // a second tap before the first one's Back lands
         if (editDirty() && !window.confirm('Close without saving the title and date?')) return;
-        state.drafts.delete(state.edit.id);
-        closeEdit();
+        edit.letGo = true;
+        state.drafts.delete(edit.id);
         closeSheetStep();
     });
     byId('edit-add').addEventListener('input', drawMatches);
@@ -338,7 +351,12 @@ export function wireEdit() {
         });
     }
     whenSheet(sheetStep);
-    window.addEventListener('pagehide', leaveEdit);
+    // The page hidden: Chrome on Android says so when another app is shown, and may then discard the tab with no pagehide.
+    // The sheet stays: kept in the back-forward cache, the page comes back on the sheet's step, the sheet open.
+    window.addEventListener('pagehide', sendWaiting);
+    document.addEventListener('visibilitychange', () => {
+        if (document.visibilityState === 'hidden') sendWaiting();
+    });
     // Another library or a reload with a title or date typed and not saved: the browser asks first, as Close does.
     window.addEventListener('beforeunload', (event) => {
         if (!editDirty() && !state.drafts.size) return;

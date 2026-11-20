@@ -3,11 +3,13 @@
  * photo, taps Edit, and changes its people, keywords, title and Date Taken from the sheet (web/tagpup/mobile-edit.js).
  *
  * - A tag added or taken off is one path's change through /api/photos/bulk-tags, against what the file holds: no stamp.
- * - The sheet is a step of the history: Back closes it, the text typed kept, and a second Back leaves the photo; Back
- *   to it from another screen opens it again.
+ * - The sheet is a step of the history, its one record of being open: Back closes it, the text typed kept, and a second
+ *   Back leaves the photo; Back to it from another screen opens it again; the page back from the back-forward cache, Close
+ *   then Edit tapped at once, a tap on the picture above it: the sheet is always as its step says.
  * - A chip's x waits behind its own Undo; an Undo in time sends nothing; leaving the photo (a swipe, Back, the Libraries
- *   button) or the page (pagehide, keepalive) sends what is still waiting; behind a Save still out (itself keepalive),
- *   it goes after the Save, never beside it, and names the file by the name a title gave it.
+ *   button) or the page hidden (another app, pagehide; keepalive, the sheet left open) sends what is still waiting;
+ *   behind a Save still out (itself keepalive), it goes after the Save, never beside it, and names the file by the name
+ *   a title gave it.
  * - Two chips of one leaf say their roots.
  * - Each write waits for the one before it: a tag added while the Save is out is sent after it.
  * - The title and Date Taken go through save-metadata with the stamp and base of the file as read; a title that renames
@@ -206,7 +208,7 @@ describe("editing a photo on the phone", () => {
     assert.equal(toasts(ctx).length, 0);
   });
 
-  for (const [how, leave] of [
+  for (const [how, leave, stays = false] of [
     ["a swipe to the next photo", async (ctx) => {
       click(ctx.window, el(ctx, "edit-close"));       // the sheet open, a swipe is not taken
       await settle(ctx);
@@ -224,7 +226,11 @@ describe("editing a photo on the phone", () => {
       ctx.window.history.back();
     }],
     ["the Libraries button", (ctx) => click(ctx.window, el(ctx, "bar-library"))],
-    ["the page going", (ctx) => ctx.window.dispatchEvent(new ctx.window.Event("pagehide"))],
+    ["the page going", (ctx) => ctx.window.dispatchEvent(new ctx.window.Event("pagehide")), true],
+    ["another app shown (Android may then discard the tab, its timers frozen)", (ctx) => {
+      Object.defineProperty(ctx.document, "visibilityState", { value: "hidden", configurable: true });
+      ctx.document.dispatchEvent(new ctx.window.Event("visibilitychange"));
+    }, true],
   ]) {
     test(`a removal still behind its Undo is sent on ${how}, not dropped`, async (t) => {
       const ctx = await phone(t);
@@ -234,8 +240,9 @@ describe("editing a photo on the phone", () => {
       await settle(ctx);
       assert.deepEqual(tagWrites(ctx), [{ [PATH]: { remove: [COAST] } }], "sent at once, not after the Undo's time");
       assert.ok(ctx.sent.find((s) => s.url.includes("/api/photos/bulk-tags")).keepalive, "a write that outlives the page");
-      assert.equal(sheetOpen(ctx), false);
+      assert.equal(sheetOpen(ctx), stays, stays ? "the sheet as its step left it, for the page coming back" : "the sheet shut");
       assert.equal(toasts(ctx).length, 0, "its Undo is gone with it");
+      assert.deepEqual(chips(ctx, "edit-keywords"), [], "the chip stays off");
     });
   }
 
@@ -320,6 +327,7 @@ describe("editing a photo on the phone", () => {
     await openSheet(ctx);
     click(ctx.window, chipX(ctx, COAST));
     click(ctx.window, el(ctx, "edit-close"));
+    await settle(ctx);
     click(ctx.window, el(ctx, "photo-edit"));
     await settle(ctx);
     assert.deepEqual(chips(ctx, "edit-keywords"), [], "its removal still waits: the chip is not shown back");
@@ -428,14 +436,80 @@ describe("editing a photo on the phone", () => {
     assert.ok(sheetOpen(ctx), "kept open when the owner says no");
     answer = true;
     click(ctx.window, el(ctx, "edit-close"));
+    await settle(ctx);
     assert.equal(sheetOpen(ctx), false);
 
     click(ctx.window, el(ctx, "photo-edit"));
     await settle(ctx);
     assert.equal(el(ctx, "edit-title").value, "Finish line", "a draft let go on Close is not shown again");
     click(ctx.window, el(ctx, "edit-close"));
+    await settle(ctx);
     assert.equal(asked.length, 2, "nothing typed: no question");
     assert.equal(sheetOpen(ctx), false);
+  });
+
+  test("Close tapped twice, then Close and Edit at once: one Back each, the sheet as its step says, Back from the photo the grid", async (t) => {
+    const ctx = await phone(t);
+    await openSheet(ctx);
+    click(ctx.window, el(ctx, "edit-close"));
+    click(ctx.window, el(ctx, "edit-close"));          // a second tap before the first one's Back lands
+    await settle(ctx);
+    assert.deepEqual(shown(ctx), ["photo"], "one step back: the photo, not the grid");
+    assert.equal(sheetOpen(ctx), false);
+
+    click(ctx.window, el(ctx, "photo-edit"));
+    await settle(ctx);
+    click(ctx.window, el(ctx, "edit-close"));
+    click(ctx.window, el(ctx, "photo-edit"));          // before Close's Back lands: no second sheet step
+    await settle(ctx);
+    assert.equal(sheetOpen(ctx), Boolean(ctx.window.history.state.sheet), "the sheet is as its step says");
+    if (sheetOpen(ctx)) {
+      ctx.window.history.back();
+      await settle(ctx);
+    }
+    ctx.window.history.back();
+    await settle(ctx);
+    assert.deepEqual(shown(ctx), ["grid"], "one Back from the photo leaves it: no stale sheet step under it");
+  });
+
+  test("the page back from the back-forward cache: the sheet open as its step left it; Back shuts it, the next leaves the photo", async (t) => {
+    const ctx = await phone(t);
+    await openSheet(ctx);
+    type(ctx, "edit-title", "Wren's Last Lap");
+    for (const name of ["pagehide", "pageshow"]) {    // another address opened in the tab, then the phone's Back
+      const event = new ctx.window.Event(name);
+      Object.defineProperty(event, "persisted", { value: true });
+      ctx.window.dispatchEvent(event);
+    }
+    await settle(ctx);
+    assert.ok(sheetOpen(ctx), "the sheet open, as the step shown says");
+    assert.equal(el(ctx, "edit-title").value, "Wren's Last Lap", "the text typed still there");
+    ctx.window.history.back();
+    await settle(ctx);
+    assert.equal(sheetOpen(ctx), false);
+    assert.deepEqual(shown(ctx), ["photo"], "the first Back shuts the sheet");
+    ctx.window.history.back();
+    await settle(ctx);
+    assert.deepEqual(shown(ctx), ["grid"]);
+  });
+
+  test("a tap on the picture above the open sheet opens no zoom: Back shuts the sheet, the next leaves the photo", async (t) => {
+    const ctx = await phone(t);
+    await openSheet(ctx);
+    click(ctx.window, el(ctx, "photo-picture"));
+    await settle(ctx);
+    assert.ok(el(ctx, "image-zoom").classList.contains("hidden"), "no zoom over the sheet, for Back to leave behind");
+    ctx.window.history.back();
+    await settle(ctx);
+    assert.equal(sheetOpen(ctx), false);
+    assert.deepEqual(shown(ctx), ["photo"]);
+    assert.ok(el(ctx, "image-zoom").classList.contains("hidden"));
+    click(ctx.window, el(ctx, "photo-picture"));
+    await settle(ctx);
+    assert.equal(el(ctx, "image-zoom").classList.contains("hidden"), false, "the sheet shut, a tap zooms");
+    ctx.window.history.back();
+    await settle(ctx);
+    assert.deepEqual(shown(ctx), ["grid"]);
   });
 
   test("Back with the sheet open closes the sheet, not the photo, the text typed kept; the next Back leaves the photo", async (t) => {
