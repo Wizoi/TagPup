@@ -3,8 +3,10 @@
 Status: DECIDED 2026-11-20 by the owner (answers below); the review that led here is
 [server-side-queue-review.md](server-side-queue-review.md). Option A only: the durable intent table (B, migration 40) is NOT part of
 this plan and is raised again only if cut 3 shows the page cannot be thin without it.
-Live count: to be counted read-only by the cut 1 brief before it is written (unfinished `planned` changes and Delete calls per
-library); none counted yet.
+Live count (read-only, 2026-11-20, `change_files` by state): kr-track 4,696 done, 0 planned or writing; photo_index 107,398 done,
+140 conflict, 0 planned or writing; renton_parkrun 4,319 done, 0 planned or writing. Delete leaves no `change_files` row today
+(that is the gap); the one `delete%` change per library is not a photo Delete. So no unfinished change exists to resume, and the
+140 photo_index conflicts are an existing, separate state this plan does not touch.
 Domains: Files (Delete, atomicity), Integration (the route, lifecycle), Views (the page's client); Data only if B is ever built.
 Integration reviews the seams.
 
