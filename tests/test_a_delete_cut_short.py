@@ -256,6 +256,19 @@ class ADeleteCutShort(unittest.TestCase):
         self.assertFalse(self.held(self.local_id))
         self.assertEqual(([], []), (self.changes(), self.files()))
 
+    def test_a_delete_whose_file_could_not_be_looked_at_sends_nothing_and_promises_nothing(self):
+        # No look, no stamp: a settle could not tell this file from another put at its path, so nothing is sent.
+        with mock.patch.object(shares, "stamp_of", return_value=shares.UNANSWERED), \
+                mock.patch.object(recycle_bin, "send_to_recycle_bin") as sent:
+            result = self.delete(self.local)
+        sent.assert_not_called()
+        self.assertFalse(result.ok)
+        self.assertIn("nothing was deleted", result.message())
+        self.assertNotIn("is deleted when the share answers", result.message())
+        self.assertTrue(os.path.exists(self.local))
+        self.assertTrue(self.held(self.local_id))
+        self.assertEqual(([], []), (self.changes(), self.files()), "no record is left to settle")
+
     def test_the_page_is_told_a_delete_the_share_did_not_answer_for_is_done_when_it_answers(self):
         # The route's reply is what the page's alert shows ("Error deleting photo: " + its error; web/tagpup/photo.js).
         with mock.patch.object(recycle_bin, "send_to_recycle_bin", side_effect=self.away):

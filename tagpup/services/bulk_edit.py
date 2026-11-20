@@ -295,6 +295,7 @@ def _delete(library, edit, present, out):
         stamps = file_changes.file_stamps([path for _id, path in present])
         states = {paths.key(path): state for path, state, _stamp in stamps}
         sizes = {paths.key(path): stamp[1] for path, _state, stamp in stamps if stamp is not None}
+        looks = {paths.key(path): stamp for path, _state, stamp in stamps if stamp is not None}   # each Delete's own look: this one
         there = [(photo_id, path) for photo_id, path in present if states[paths.key(path)] == file_changes.PRESENT]
         out.errors.extend((photo_id, os.path.basename(path)[:MOST_TEXT], file_changes.AWAY_WHY)
                           for photo_id, path in present if states[paths.key(path)] == file_changes.AWAY)
@@ -313,7 +314,8 @@ def _delete(library, edit, present, out):
                 out.errors.append((photo_id, name, refused[photo_id][:MOST_TEXT]))
                 continue
             # Deleted for good only if it was among the files confirmed: one grown past its Bin since is refused.
-            result = photo_actions.delete(library, path, photo_id in edit.for_good_ids, fresh=False)
+            result = photo_actions.delete(library, path, photo_id in edit.for_good_ids, fresh=False,
+                                          looked=looks.get(paths.key(path)))
             if result.ok and result.changed:
                 out.changed += 1
                 out.for_good += 1 if result.details.get("for_good") else 0

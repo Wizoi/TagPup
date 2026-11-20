@@ -771,7 +771,7 @@ def shift_date_taken(library, photo_paths, minutes, exiftool_path):
 
 
 @roots_service.canonical_args("photo_path")
-def delete(library, photo_path, for_good=False, fresh=True):
+def delete(library, photo_path, for_good=False, fresh=True, looked=None):
     """Send a photo or a clip to the Recycle Bin, and forget it: its row, faces, cached
     embedding (a clip's frames with it) and thumbnail or poster. Clicking Delete (Organize's,
     and each photo or clip of a library view's bulk Delete).
@@ -817,7 +817,7 @@ def delete(library, photo_path, for_good=False, fresh=True):
             return result
         change_id, rows = plan_deletes(library, [photo_path], for_good)
         try:
-            delete_planned(library, rows, result, fresh)
+            delete_planned(library, rows, result, fresh, looked)
         except Exception:
             end_deletes(library, change_id)
             raise
@@ -836,6 +836,9 @@ DELETE_STEPS = ("delete planned", "delete writing", "delete sent")
 #: left `writing`, and the next settle sends it once the share answers, if it is still the file the Delete stamped.
 DELETED_WHEN_THE_SHARE_ANSWERS = ("The share did not answer: the photo is deleted when the share answers, unless another "
                                   "file has taken its place.")
+
+#: What a Delete is told when the look at its file before the Bin step gave no answer (a share away, a file held open).
+NOTHING_DELETED_NO_LOOK = "The share did not answer: nothing was deleted. Try again when it does."
 
 
 def _reached(step):
@@ -859,7 +862,7 @@ def plan_deletes(library, photo_paths, for_good=False):
     return planned
 
 
-def delete_planned(library, rows, result, fresh=True):
+def delete_planned(library, rows, result, fresh=True, looked=None):
     """Carry out the Deletes `rows` (plan_deletes), one at a time: each marked `writing` with the stamp of the file at its
     path (shares.stamp_of; None when the look gave none, and a settle then sends nothing), sent to the Recycle Bin
     (file_only.send, `fresh` its), then forgotten (_forget), its rows removed in the transaction that marks it done. One
@@ -867,7 +870,12 @@ def delete_planned(library, rows, result, fresh=True):
     change, nothing deleted; on a share that does not answer, left `writing` for a settle. `result` is told of each.
     The caller holds the lock of changes of photo files, and ends the change (end_deletes)."""
     for row in rows:
-        stamp = shares.stamp_of(row.path)
+        stamp = looked if looked is not None and len(rows) == 1 else shares.stamp_of(row.path)   # `looked`: the caller's own look
+        if stamp is shares.UNANSWERED or stamp is shares.CANNOT_READ:
+            # No stamp, so a settle could not tell this file from another put at its path: nothing is sent, nothing is promised.
+            file_journal.withdraw(library.path, [row.id])
+            result.fail(row.path, NOTHING_DELETED_NO_LOOK)
+            continue
         file_journal.writing(library.path, row.id, stamp if isinstance(stamp, tuple) else None)
         _reached("delete writing")
         if file_only.send(row.path, row.after.get("for_good", False), result, fresh) is None:
