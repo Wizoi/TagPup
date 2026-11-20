@@ -9,7 +9,9 @@ internal: History never lists it), carried out a chunk of batches.CHUNK photos a
 - by an update handing over to a new version (batches.stop_all): they are left planned, the change released with how many in its
   summary, each told it is deleted when TagPup starts again; the new version's settle deletes them, once -- only while each is
   the file the Delete looked at (another put at its path is left, its row kept); a settle while this process is still handing
-  over leaves them;
+  over leaves them, and one gone by then (removed, its folder renamed, its drive not connected) or unreadable is never
+  deleted nor forgotten: it was never begun, so gone is not the Delete's doing (#3266); Cancel and an update in one chunk are
+  the owner's Cancel (#3268); a kill during that resume leaves the rest withdrawn (#3271);
 - by a kill (a process that has gone, no `finally` run): the next settle withdraws what was planned (the owner's answer 4: a
   Delete is never resumed after an unclean stop) and finishes the one it was sending; nothing more is deleted.
 
@@ -27,6 +29,7 @@ import unittest
 from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import face_rows  # noqa: E402
 from test_bulk_delete import Delete  # noqa: E402
 
 from tagpup.core import paths  # noqa: E402
@@ -116,6 +119,85 @@ class ABulkDeleteStoppedPartWay(Delete):
         self.assertEqual([self.coast[-1]], self.held(self.coast))
         self.assertTrue(os.path.exists(changed))
         self.assertNotIn(paths.key(changed), {paths.key(path) for path in self.sent})
+        self.assertEqual([], self.changes())
+
+    def test_a_photo_gone_or_moved_before_the_next_start_keeps_its_row_and_faces(self):
+        chosen = self.coast + self.lakes
+        self.stop_at(10, batches.stop_all)
+        self.start({"ids": chosen})
+        self.assertEqual(chosen[batches.CHUNK:], self.held(chosen), "the first chunk went")
+        removed, lakes = self.vl.path_of(self.coast[-1]), os.path.dirname(self.vl.path_of(self.lakes[0]))
+        for photo_id in (self.coast[-1], self.lakes[0]):
+            face_rows.add_face(self.vl.conn, self.vl.path_of(photo_id))
+        self.vl.conn.commit()
+        # While TagPup was closed: one file removed, and the folder of five renamed in Explorer (or its drive not connected).
+        os.remove(removed)
+        os.rename(lakes, lakes + " renamed")
+        batches.reopen()
+        with self.assertLogs(photo_actions.logger, "WARNING") as said:
+            self.assertEqual(1, self.settle())
+        self.assertIn("6 photo(s) it was to delete were not found or could not be read", "\n".join(said.output))
+        self.assertEqual([self.coast[-1]] + self.lakes, self.held(chosen), "never begun, so never forgotten")
+        self.assertEqual(2, len(self.vl.rows("SELECT id FROM faces")), "their faces kept")
+        self.assertEqual(len(chosen) - 6, len(self.sent), "the others deleted")
+        self.assertEqual(([], []), (self.changes(), self.planned()))
+
+    def test_a_photo_whose_share_does_not_answer_at_the_next_start_is_kept(self):
+        self.stop_at(10, batches.stop_all)
+        self.start({"ids": self.coast})
+        away, real = paths.key(self.vl.path_of(self.coast[-1])), shares.stamp_of
+        batches.reopen()
+        with mock.patch.object(shares, "stamp_of", lambda path: shares.UNANSWERED if paths.key(path) == away else real(path)), \
+                self.assertLogs(photo_actions.logger, "WARNING") as said:
+            self.assertEqual(1, self.settle())
+        self.assertIn("1 photo(s) it was to delete were on a share that did not answer", "\n".join(said.output))
+        self.assertEqual([self.coast[-1]], self.held(self.coast))
+        self.assertEqual(29, len(self.sent))
+        self.assertEqual(([], []), (self.changes(), self.planned()), "the count was taken off: not left for another start")
+
+    def test_cancel_and_an_update_in_one_chunk_is_the_owners_cancel(self):
+        self.stop_at(10, lambda: (self.cancel(), batches.stop_all()))
+        done = self.start({"ids": self.coast})
+        self.assertEqual((batches.CHUNK, 30 - batches.CHUNK), (done["changed"], done["error_count"]))
+        self.assertEqual({photo_actions.STOPPED_NOT_DELETED}, {error["why"] for error in done["errors"]})
+        self.assertEqual(([], []), (self.changes(), self.planned()), "the cancelled photos are withdrawn, not left planned")
+        batches.reopen()
+        self.assertEqual(0, self.settle())
+        self.assertEqual(self.coast[batches.CHUNK:], self.held(self.coast), "nothing more deleted at the next start")
+
+    def test_killed_during_the_resume_the_next_start_deletes_nothing_more(self):
+        self.stop_at(10, batches.stop_all)
+        self.start({"ids": self.coast})
+        batches.reopen()
+        count = []
+
+        def reached(step):
+            if step == "delete sent":
+                count.append(step)
+                if len(count) == 3:
+                    raise Crash(step)
+        with mock.patch.object(photo_actions, "_reached", side_effect=reached):
+            with self.assertRaises(Crash):
+                self.settle()
+        self.vl.conn.execute("UPDATE changes SET owner = ?", (GONE,))
+        self.vl.conn.commit()
+        sent = batches.CHUNK + 3
+        self.assertEqual(sent, len(self.sent))
+        with self.assertLogs(photo_actions.logger, "WARNING") as said:
+            self.assertEqual(1, self.settle())
+        self.assertIn("%d photo(s) were still to be deleted when TagPup stopped" % (30 - sent), "\n".join(said.output))
+        self.assertEqual(sent, len(self.sent), "nothing more deleted")
+        self.assertEqual(self.coast[sent:], self.held(self.coast), "the one it was sending is forgotten, the rest kept")
+        self.assertEqual(([], []), (self.changes(), self.planned()))
+
+    def test_a_photo_that_cannot_be_read_is_its_own_error_and_the_rest_go(self):
+        unreadable, real = paths.key(self.vl.path_of(self.coast[1])), shares.stamp_of
+        with mock.patch.object(shares, "stamp_of",
+                               lambda path: shares.CANNOT_READ if paths.key(path) == unreadable else real(path)):
+            done = self.start({"ids": self.coast[:3]})
+        self.assertEqual((2, 1), (done["changed"], done["error_count"]))
+        self.assertEqual(photo_actions.NOTHING_DELETED_NO_LOOK, done["errors"][0]["why"])
+        self.assertEqual([self.coast[1]], self.held(self.coast[:3]))
         self.assertEqual([], self.changes())
 
     def test_killed_part_way_the_next_start_deletes_nothing_more(self):

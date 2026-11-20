@@ -13,7 +13,7 @@ closed tab must not lose; the panel reads its place in line here and its end fro
   written nothing. Single saves and small writes are not batches; they wait on the lock of changes of photo files as always.
 * **Chunks.** Every CHUNK files `file_changes` lets a writer that waits in and asks the batch whether it is to stop; a batch asked to
   stop (Cancel, a hand-over to a new version) ends after its chunk with what it wrote applied and undoable. A batch asked to stop
-  while it waits never starts.
+  while it waits never starts. Which of the two asked is the batch's own (`for_an_update`), the owner's Cancel winning.
 * **Cap.** MAX_BATCH photos, in `write_fields`, for every caller but the tag tree's rewrites (rename, delete, merge, a person's
   rename): the owner chose no cap for those, and they have this progress and this Cancel.
 * **Seen.** `listing` is the batches running or waiting in a library: this process's, and a running change of another process
@@ -48,6 +48,8 @@ class Batch:
         self.ticket = next(_tickets)
         self.library, self.operation, self.photos = library, operation, photos
         self.stop = threading.Event()
+        #: Asked to stop by an update's hand-over (stop_all) and not by the owner's Cancel, whichever came first.
+        self.for_an_update = False
         self.started = None
         self.change_id = None
         #: The thread that claimed it, which carries it out: a request's, or the settle's or a conversion's (no request).
@@ -95,6 +97,7 @@ def claim(library, operation, photos, wait=True, change_id=None, on_line=None):
         if on_line is not None:
             on_line(batch)
         if _closing:
+            batch.for_an_update = True
             batch.stop.set()
         try:
             while _line[0] is not batch and not batch.stop.is_set():
@@ -116,11 +119,13 @@ def claim(library, operation, photos, wait=True, change_id=None, on_line=None):
             _turn.notify_all()
 
 
-def _stop(wanted):
+def _stop(wanted, for_an_update):
     stopped = 0
     with _turn:
         for batch in _line:
             if wanted(batch):
+                # A Cancel is the owner's, and wins over an update's stop asked before or after it in the same chunk.
+                batch.for_an_update = for_an_update and (batch.for_an_update or not batch.stop.is_set())
                 batch.stop.set()
                 stopped += 1
         _turn.notify_all()
@@ -129,7 +134,7 @@ def _stop(wanted):
 
 def cancel(library, ticket):
     """Ask this process's batch `ticket` of `library` to stop (a waiting one never starts). False when there is none."""
-    return bool(_stop(lambda batch: batch.ticket == ticket and batch.library.key == library.key))
+    return bool(_stop(lambda batch: batch.ticket == ticket and batch.library.key == library.key, False))
 
 
 def stop_all():
@@ -137,13 +142,13 @@ def stop_all():
     version."""
     global _closing
     _closing = True
-    return _stop(lambda batch: True)
+    return _stop(lambda batch: True, True)
 
 
 def closing():
-    """Is this process handing over to a new version (stop_all, until reopen)? What tells an update's stop from the
-    owner's Cancel: a write stopped by it leaves what it had planned for the next start (tagpup.services.photos'
-    Deletes)."""
+    """Is this process handing over to a new version (stop_all, until reopen)? A settle that would begin what an update's
+    stop left waits for the next start then (tagpup.services.photos.settle_delete); which stop a batch had is its own
+    (Batch.for_an_update)."""
     return _closing
 
 

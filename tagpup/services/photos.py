@@ -843,7 +843,8 @@ NOTHING_DELETED_NO_LOOK = "The share did not answer: nothing was deleted. Try ag
 #: What each photo a bulk Delete had not reached is told when the owner stopped it (Cancel): taken out, nothing deleted.
 STOPPED_NOT_DELETED = "stopped as asked: not deleted"
 
-#: What each is told when an update stopped it (batches.closing): left for the next start, which deletes it (settle_delete).
+#: What each is told when an update stopped it (Batch.for_an_update): left for the next start, which deletes it
+#: (settle_delete).
 DELETED_WHEN_TAGPUP_STARTS = "stopped for an update: it is deleted when TagPup starts again"
 
 #: The key of a Delete change's summary that says how many of its photos a bulk Delete stopped by an update left `planned`
@@ -918,7 +919,7 @@ def delete_in_chunks(library, deletes, told):
     this thread carries out). `told(row, result)` after each photo, with its Result.
 
     Asked to stop by the owner (Cancel): the photos not reached are taken out of the change, nothing deleted, each told
-    STOPPED_NOT_DELETED. By an update (batches.closing): they are left `planned`, the change released with how many in its
+    STOPPED_NOT_DELETED. By an update (Batch.for_an_update; a Cancel in the same chunk is the owner's): they are left `planned`, the change released with how many in its
     summary (LEFT_FOR_THE_NEXT_START), each told DELETED_WHEN_TAGPUP_STARTS, and the next start deletes them (settle_delete).
     The caller holds the lock."""
     change_id, rows = plan_deletes(library, deletes)
@@ -927,7 +928,7 @@ def delete_in_chunks(library, deletes, told):
         for n, row in enumerate(rows):
             turn = n and (n % batches.CHUNK == 0 or images.is_clip(rows[n - 1].path) or images.is_clip(row.path))
             if turn and not file_changes.between_chunks(batch):
-                left = len(rows) - n if batches.closing() else 0
+                left = len(rows) - n if batch.for_an_update else 0
                 for rest in rows[n:]:
                     stopped = Result(attempted=1)
                     stopped.refuse(DELETED_WHEN_TAGPUP_STARTS if left else STOPPED_NOT_DELETED)
@@ -1009,10 +1010,12 @@ def settle_delete(library, change):
     off first, so a stop that is not clean from then on leaves the rest to be withdrawn; while this process is itself
     handing over (batches.closing) the change is left as it is, and one an update stops part-way is left again with the
     rest. Else it is never begun now (the owner's answer 4): it is taken out, nothing deleted, and a warning names the
-    change and how many, no path. Each file `writing`, and each resumed, is settled by a look (_by_look, redo): gone, its
-    rows go; there and the file it stamped (a resumed one: its plan's look), it is sent to the Bin; another file at its
-    path, taken out, nothing deleted, with a warning (the change, a count, no path); on a share that does not answer, left
-    for the next settle. True when the change is finished."""
+    change and how many, no path. Each file `writing` is settled by a look (_by_look, redo): gone, its rows go; there and
+    the file it stamped, it is sent to the Bin; another file at its path, taken out, nothing deleted, with a warning (the
+    change, a count, no path); on a share that does not answer, left for the next settle. Each resumed is looked at once
+    (_resume): deleted (delete_planned) only while it is the file its plan looked at; anything else is taken out, nothing
+    deleted, its rows and faces kept -- it was never begun, so a file gone (removed, its folder renamed, its drive not
+    connected) is not the Delete's doing --, with a warning. True when the change is finished."""
     left = change.summary.get(LEFT_FOR_THE_NEXT_START, 0)
     if left and batches.closing():
         return False
@@ -1027,7 +1030,7 @@ def settle_delete(library, change):
                        "deleted", library.path, change.id, change.operation, len(planned))
         file_journal.withdraw(library.path, [row.id for row in planned])
         planned = []
-    result, finished = Result(attempted=len(rows)), True
+    result, finished, kept = Result(attempted=len(rows)), True, {NOT_FOUND: 0, NO_ANSWER: 0}
     with file_changes.exclusively():
         for row in rows:
             if row.state == "writing":
@@ -1037,15 +1040,41 @@ def settle_delete(library, change):
                 end_deletes(library, change.id, len(planned) - n)
                 finished = False
                 break
-            row.stamp = _look_of(row)
-            file_journal.writing(library.path, row.id, row.stamp)
-            _by_look(library, row, result, redo=True)
+            _resume(library, row, result, kept)
+    for why, count in kept.items():
+        if count:
+            logger.warning("%s: change %d (%s): %d photo(s) it was to delete %s; they were not deleted and keep their rows",
+                           library.path, change.id, change.operation, count, why)
     if result.skipped:
         logger.warning("%s: change %d (%s): %d photo(s) it was deleting had another file put at their path; that file "
                        "was not deleted", library.path, change.id, change.operation, len(result.skipped))
     if not result.ok:
         logger.warning("%s: change %d (%s): %s", library.path, change.id, change.operation, result.message())
     return finished and file_journal.finish(library.path, change.id) is not None
+
+
+#: Why a photo an update's stop left for this start was taken out of its Delete (settle_delete's warning).
+NOT_FOUND = "were not found or could not be read"
+NO_ANSWER = "were on a share that did not answer"
+
+
+def _resume(library, row, result, kept):
+    """Delete the photo of `row`, left `planned` by an update's stop, by one look at its file now: the file its plan looked
+    at, deleted (delete_planned, with that look); another file at its path, taken out and skipped in `result`; none there,
+    one that cannot be read, or one planned with no look, taken out and counted in kept[NOT_FOUND]; on a share that does not
+    answer, taken out too (the change no longer counts it for another start) and counted in kept[NO_ANSWER]. A row taken
+    out keeps the photo's row and faces."""
+    look, now = _look_of(row), shares.stamp_of(row.path)
+    if look is not None and now == look:
+        delete_planned(library, [row], result)
+        return
+    file_journal.withdraw(library.path, [row.id])
+    if now is shares.UNANSWERED:
+        kept[NO_ANSWER] += 1
+    elif look is None or not isinstance(now, tuple):
+        kept[NOT_FOUND] += 1
+    else:
+        result.skip(row.path, "another file is at its path")
 
 
 def rotate_plan(direction):

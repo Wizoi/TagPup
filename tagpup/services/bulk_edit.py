@@ -296,7 +296,8 @@ def _delete(library, edit, present, out):
         stamps = file_changes.file_stamps([path for _id, path in present])
         states = {paths.key(path): state for path, state, _stamp in stamps}
         sizes = {paths.key(path): stamp[1] for path, _state, stamp in stamps if stamp is not None}
-        looks = {paths.key(path): stamp for path, _state, stamp in stamps if stamp is not None}   # each Delete's own look: this one
+        # Each Delete's own look: this one; a file there that could not be read has none, and is its own error (delete_planned).
+        looks = {paths.key(path): stamp for path, _state, stamp in stamps if stamp is not None}
         there = [(photo_id, path) for photo_id, path in present if states[paths.key(path)] == file_changes.PRESENT]
         out.errors.extend((photo_id, os.path.basename(path)[:MOST_TEXT], file_changes.AWAY_WHY)
                           for photo_id, path in present if states[paths.key(path)] == file_changes.AWAY)
@@ -304,7 +305,7 @@ def _delete(library, edit, present, out):
         refused = _cannot_keep(there, sizes, edit.for_good_ids)
         out.errors.extend((photo_id, os.path.basename(path)[:MOST_TEXT], refused[photo_id][:MOST_TEXT])
                           for photo_id, path in there if photo_id in refused)
-        going = [(photo_id, path, photo_id in edit.for_good_ids, looks[paths.key(path)])
+        going = [(photo_id, path, photo_id in edit.for_good_ids, looks.get(paths.key(path)))
                  for photo_id, path in there if photo_id not in refused]
         if going:
             # Deleted for good only if it was among the files confirmed: one grown past its Bin since is refused.
