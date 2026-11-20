@@ -170,7 +170,7 @@ _SCENARIO_FILES = {
     "F7": "test_a_share_asleep test_a_share_that_drops_mid_walk test_a_share_that_wakes",
     "F8": (
         "test_bulk_delete test_delete_a_photo test_just_look_bin_and_long_names test_just_look_delete_and_rename_rules "
-        "test_just_look_edits"
+        "test_just_look_edits test_a_delete_cut_short"
     ),
     "F9": "test_roots_old_place test_roots_pinned_runs",
     "F10": "test_one_photo_whatever_its_spelling",
