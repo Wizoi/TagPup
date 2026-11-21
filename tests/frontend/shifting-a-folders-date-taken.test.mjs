@@ -88,11 +88,17 @@ test("a camera's photos are sent by path in one request, and the folder takes th
   assert.equal(ctx.shifts().length, 1);
 });
 
-test("a share that stops answering part-way: the photo that landed takes its date, and the status says how many did not", async (t) => {
+test("a share that stops answering part-way: the photo that landed takes its stamp and keeps its date, and the status says how many did not", async (t) => {
+  // The share stopped after the first photo's write landed, so the read back after the write did not reach it: the reply
+  // names its stamp and no Date Taken. It keeps the date it showed, never "Unknown" put last (#3300).
   const ctx = await opened(t, shiftedAs("stopped"), OTHER);
   await ctx.shift(CAMERA);
   assert.equal(Object.keys(ctx.shifts()[0].changes).length, 3);
-  assert.deepEqual(ctx.order(), ["IMG_1001.jpg", "IMG_1002.jpg", "IMG_1000.jpg"], "the first, written, is 30 minutes later now");
+  const { state } = pageExports(ctx.window, "web/tagpup/state.js");
+  assert.deepEqual(state.folderPhotos.map((p) => [p.filename, p.taken, p.mtime]), [
+    ["IMG_1000.jpg", "2020:06:01 10:00:00", 1], ["IMG_1001.jpg", "2020:06:01 10:00:00", HARBOUR[1].mtime],
+    ["IMG_1002.jpg", "2020:06:01 10:00:00", HARBOUR[2].mtime]], "the written one takes its stamp, and no date not read");
+  assert.deepEqual(ctx.order(), ["IMG_1000.jpg", "IMG_1001.jpg", "IMG_1002.jpg"]);
   assert.match(ctx.said(), /^Time shift applied to 1 of 3 photo\(s\); 2 could not be written: ExifTool stopped answering after 1 of 3/);
   assert.deepEqual(ctx.alerts, []);
 });

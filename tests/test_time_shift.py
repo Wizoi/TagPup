@@ -16,6 +16,7 @@ import json
 import os
 import sys
 import unittest
+from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -25,6 +26,7 @@ from test_a_photo_patched_in_place import open_elsewhere  # noqa: E402
 from test_file_journal import EXIFTOOL, SHIFTED, TAKEN, FilesCase, field_of, requires_exiftool, write_outside  # noqa: E402
 
 from tagpup.core import paths  # noqa: E402
+from tagpup.files import field_values  # noqa: E402
 from tagpup.services import photos as photo_actions  # noqa: E402
 from tagpup.store import db  # noqa: E402
 
@@ -95,6 +97,27 @@ class ShiftingACamerasClock(FilesCase):
         self.assertIn("held open by", result.message())
         self.assertEqual(TAKEN, field_of(self.b, "EXIF:DateTimeOriginal"))
         self.assertEqual(before, self.row(self.b))
+
+
+    def test_a_photo_written_whose_read_back_does_not_answer_is_told_no_new_date_and_no_record(self):
+        # The share stops answering once b's write has landed: the read back of it after the write is not answered. Its
+        # Date Taken is not known, which is not "none": the service tells none for it, and no record the folder's kept
+        # scan would take in place of the one it holds (the page showed "Unknown", #3300).
+        real_read = field_values.read
+
+        def read(et, photo_paths, wanted, *args, **kwargs):
+            found = real_read(et, photo_paths, wanted, *args, **kwargs)
+            if not wanted:   # the whole record of each, as the read back after the write asks it (MetadataExtractor)
+                found[paths.key(self.b)] = field_values.NotAnswered("ExifTool did not answer in 1 s")
+            return found
+        with mock.patch.object(field_values, "read", read):
+            result = photo_actions.shift_date_taken(self.library, [self.a, self.b], 30, EXIFTOOL)
+        self.assertEqual((2, 2, []), (result.attempted, result.changed, result.errors))
+        self.assertEqual(SHIFTED, field_of(self.b, "EXIF:DateTimeOriginal"), "its write landed")
+        taken_of = result.details[photo_actions.TAKEN_OF]
+        self.assertNotIn(paths.key(self.b), taken_of, "a date not read is not told as none")
+        self.assertIn("10:30", taken_of[paths.key(self.a)])
+        self.assertEqual([paths.key(self.a)], [paths.key(meta["path"]) for meta in result.details["records"]])
 
 
 @requires_exiftool

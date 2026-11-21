@@ -252,7 +252,8 @@ export function applyTimeShift() {
 
 /**
  * A time shift's reply (POST /api/photos/write's envelope, op `shift`) taken into the folder it was sent from: each photo
- * written takes its file's stamp and its new Date Taken as the server spells it (`written[path].taken`), and the folder is
+ * written takes its file's stamp and its new Date Taken as the server spells it (`written[path].taken`, absent for one
+ * its read back did not reach: that one keeps its date), and the folder is
  * put back in Date Taken order (inTakenOrder). A share that stopped part-way answers 400 with `written` naming only what
  * landed: those are taken all the same, and the status says how many were not. A folder left before the reply (another
  * folder, a library view) is not touched: its records are not these. A reply that is no envelope (a refusal before any
@@ -266,6 +267,9 @@ function tookShift(folder, data) {
             const w = written.get(pathKey(record.path));
             if (!w) continue;
             takeStamp(record, w);
+            // A photo whose write landed but whose read back did not answer (a share that stopped) has no `taken`: what it
+            // holds now is not known, so it keeps the date it showed rather than "Unknown" (#3300).
+            if (!('taken' in w)) continue;
             record.taken = w.taken;
             if (samePath(state.activePhotoPath, record.path)) detailDateTaken.textContent = takenSaid(w.taken);
         }

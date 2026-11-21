@@ -337,20 +337,34 @@ class AWriteThroughTheOneEntryPoint(unittest.TestCase):
     @contextlib.contextmanager
     def a_share_that_stops_answering_at(self, stop):
         """The held folder on a share of its own that stops answering at the photo `stop`: the write's own read of each
-        file just before it writes it does not answer for that one."""
+        file just before it writes it does not answer for that one, and from then on no read of a file on it answers
+        (the read back after the write included: what landed before the stop is not read again)."""
         shares.forget()
         self.addCleanup(shares.forget)
-        real_read_one, real_share_of, under = field_values.read_one, shares.share_of, os.path.normcase(self.held)
+        real_read_one, real_read, real_share_of = field_values.read_one, field_values.read, shares.share_of
+        under, stopped = os.path.normcase(self.held), []
+
+        def on_it(path):
+            return os.path.normcase(str(path)).startswith(under)
 
         def share_of(folder):
             # Its own share, as a real one is: the test's folders are all on one local drive, taken as away by its key.
-            return "//nas/regatta" if os.path.normcase(str(folder)).startswith(under) else real_share_of(folder)
+            return "//nas/regatta" if on_it(folder) else real_share_of(folder)
 
         def read_one(et, path, wanted):
-            if paths.key(path) == paths.key(stop):
+            if paths.key(path) == paths.key(stop) or (stopped and on_it(path)):
+                stopped.append(path)
                 raise field_values.NotAnswered("ExifTool did not answer for it in 1 s")
             return real_read_one(et, path, wanted)
-        with mock.patch.object(field_values, "read_one", read_one), mock.patch.object(shares, "share_of", share_of):
+
+        def read(et, photo_paths, wanted, *args, **kwargs):
+            photo_paths = list(photo_paths)
+            away = [path for path in photo_paths if stopped and on_it(path)]
+            found = real_read(et, [path for path in photo_paths if path not in away], wanted, *args, **kwargs)
+            found.update({paths.key(path): field_values.NotAnswered("ExifTool did not answer in 1 s") for path in away})
+            return found
+        with mock.patch.object(field_values, "read_one", read_one), mock.patch.object(field_values, "read", read), \
+                mock.patch.object(shares, "share_of", share_of):
             yield
 
     def test_a_share_that_stops_answering_part_way_through_a_shift_ends_it_with_what_landed(self):
@@ -361,6 +375,8 @@ class AWriteThroughTheOneEntryPoint(unittest.TestCase):
         self.assertIn("ExifTool stopped answering after 1 of 3 photos", reply["error"])
         self.assertEqual((1, [self.photos[1]]), (reply["changed"], [error["path"] for error in reply["errors"]]))
         self.assertEqual([self.photos[0]], list(reply["written"]), "what landed, not what was asked")
+        self.assertNotIn("taken", reply["written"][self.photos[0]],
+                         "its read back did not answer: its new date is not known, which is not none (#3300)")
         self.assertEqual(["2020:06:01 10:30:00", TAKEN, TAKEN], [taken_in(path) for path in self.photos])
         self.assertEqual([("time shift", "applied")], [(change["operation"], change["status"]) for change in self.changes()])
 
