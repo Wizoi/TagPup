@@ -878,11 +878,13 @@ class APageAskingOfAShareThatHangs(unittest.TestCase):
 
 
 class AFolderOnAShareThatDoesNotAnswerIsRefusedAsAway(unittest.TestCase):
-    """#2129: the owner opens, adds, Suggests in, shifts or renames in a folder on the NAS while it has stopped answering
+    """#2129: the owner opens, adds, Suggests in or renames in a folder on the NAS while it has stopped answering
     (the library's one network root; #2101, #2109), or lists it in TagTuner's folder picker: every route that refuses the
     folder says the SHARE is not answering, by its server and share and never the folder's path (which names people),
     503 (try again later), in one sentence from one place (tagpup.files.shares.folder_refusal); a folder that is really
-    not there is still 400 "not a valid directory". Break: a route refusing an away share 400 "not a valid directory",
+    not there is still 400 "not a valid directory". A Time Shift names its photos, not the folder (POST /api/photos/write
+    op shift): a photo on the share asleep is left out, saying so, and the others written
+    (tests/test_a_write_through_the_one_entry_point.py). Break: a route refusing an away share 400 "not a valid directory",
     "Invalid folder path" or "Not a folder" (as each did), or its own sentence."""
 
     SERVER = "\\\\NAS\\Pictures"
@@ -895,8 +897,6 @@ class AFolderOnAShareThatDoesNotAnswerIsRefusedAsAway(unittest.TestCase):
         ("tagpup", "post", "/api/folder/add", lambda folder: {"folder_path": folder}),
         ("tagpup", "post", "/api/folder/suggest-start", lambda folder: {"folder_path": folder}),
         ("tagpup", "post", "/api/folder/auto-apply", lambda folder: {"folder_path": folder}),
-        ("tagpup", "post", "/api/folder/time-shift",
-         lambda folder: {"folder_path": folder, "camera_model": "Canon EOS 80D", "shift_minutes": 60}),
         ("tagpup", "post", "/api/folder/rename-photos",
          lambda folder: {"folder_path": folder, "photo_paths": [folder + "\\IMG_0001.jpg"], "grouping": "Coast"}),
         # The Smart Rename of one photo, from the box beside its name.

@@ -243,6 +243,7 @@ class AWriteThroughTheOneEntryPoint(unittest.TestCase):
         self.assertEqual([], self.changes())
 
     def test_a_photo_on_a_share_that_does_not_answer_is_its_error_and_the_others_are_written_at_once(self):
+        # A tag write and a Time Shift alike: the photo asleep is answered at once, its own, the others written.
         asleep_folder = os.path.join(self.lib.photos, "Coast")
         asleep = make_photo(os.path.join(asleep_folder, "IMG_0001.jpg"))
         (asleep_id,) = self.add_rows([asleep])
@@ -265,12 +266,18 @@ class AWriteThroughTheOneEntryPoint(unittest.TestCase):
                 woken.wait(1.5)
                 raise FileNotFoundError(2, "not found")
             return real_stat(path, *args, **kwargs)
+        date([self.photos[1]])
         with mock.patch.object(os, "stat", stat), mock.patch.object(shares, "on_a_network_drive", on_it), \
                 mock.patch.object(shares, "SHARE_WAIT", 0.05), mock.patch.object(shares, "share_of", share_of):
             began = time.monotonic()
             status, reply = self.lib.post(ROUTE, self.tags_op({asleep: (asleep_id, ["Places/Quay"]),
                                                                self.photos[0]: (self.ids[0], ["Places/Quay"])}))
             took = time.monotonic() - began
+            # The folder's Time Shift as the page sends it, of the photo asleep and one beside it (#2129's sleeping
+            # share, once refused by the folder-level route as a whole).
+            shifted_at = time.monotonic()
+            shift_status, shifted = self.lib.post(ROUTE, self.shift_op({asleep: None, self.photos[1]: None}))
+            shift_took = time.monotonic() - shifted_at
             set_status, set_reply = self.lib.post(ROUTE, {"op": "set", "changes": {asleep: {
                 "id": asleep_id, "title": "", "tags": EXISTING + ["Places/Quay"],
                 "base": {"tags": EXISTING, "title": ""}}}})
@@ -284,6 +291,14 @@ class AWriteThroughTheOneEntryPoint(unittest.TestCase):
         self.assertLess(took, 60, "a share asleep is answered at once, never ExifTool's five-minute deadline")
         self.assertEqual(503, set_status, set_reply)
         self.assertNotIn("Places/Quay", tags_in(asleep))
+        # The photo asleep is left out, saying why, and the page's status says "1 of 2" with that sentence
+        # (rename.js tookShift); the other is written, at once.
+        self.assertEqual((200, 1, 2), (shift_status, shifted["changed"], shifted["attempted"]), shifted)
+        self.assertEqual([asleep], [each["path"] for each in shifted["skipped"] + shifted["errors"]])
+        self.assertIn("could not be reached", (shifted["skipped"] + shifted["errors"])[0]["why"])
+        self.assertEqual([self.photos[1]], list(shifted["written"]))
+        self.assertEqual("2020:06:01 10:30:00", taken_in(self.photos[1]))
+        self.assertLess(shift_took, 60, "a share asleep is answered at once, never ExifTool's five-minute deadline")
 
     def shift_op(self, named, minutes=30):
         """{path: id} as the page sends a shift of them."""
@@ -405,23 +420,30 @@ class AWriteThroughTheOneEntryPoint(unittest.TestCase):
 
     def test_a_held_folders_time_shift_answers_every_photo_shifted_when_its_listing_does_not_answer(self):
         # The owner opens a held folder and moves its Date Taken; the share is slow by the time the shift answers. The
-        # reply is the folder as the write read it back: every photo, shifted, and no scan of a listing that does not
-        # answer (which would empty the page's folder under "Time shift applied") nor a 500 for a journaled write.
+        # page sends the photos it opened (rename.js applyTimeShift: by path, no id) and takes each one's stamp and new
+        # date from `written` into the folder it shows (tookShift); the server's kept map of the folder is patched the
+        # same way, so the next open shows the new dates. Nothing scans the listing that does not answer (which would
+        # empty the folder under "Time shift applied"), and a journaled write is never a 500.
         date(self.photos)
         status, opened = self.lib.get("/api/folder/scan", {"path": self.held})
         self.assertEqual((200, 3), (status, len(opened)), opened)
+        shift = {"op": "shift", "params": {"minutes": 30}, "changes": {record["path"]: {"id": None} for record in opened}}
         with mock.patch.object(shares, "listing", return_value=shares.UNANSWERED), \
                 mock.patch.object(photo_actions, "scan_folder", wraps=photo_actions.scan_folder) as scan:
-            status, reply = self.lib.post("/api/folder/time-shift", {
-                "folder_path": self.held, "camera_model": "All Cameras", "shift_minutes": 30})
-        self.assertEqual(200, status, reply)
-        self.assertEqual((3, 3), (reply["updated_count"], reply["requested_count"]))
-        self.assertEqual(sorted(paths.key(path) for path in self.photos),
-                         sorted(paths.key(record["path"]) for record in reply["updated_photos"]))
+            status, reply = self.lib.post(ROUTE, shift)
+        self.assertEqual((200, True), (status, reply["success"]), reply)
+        self.assertEqual((3, 3), (reply["changed"], reply["attempted"]))
+        self.assertEqual(sorted(paths.key(path) for path in self.photos), sorted(paths.key(path) for path in reply["written"]))
         self.assertEqual(["2020:06:01 10:30:00"] * 3, [taken_in(path) for path in self.photos])
-        self.assertEqual({os.stat(path).st_mtime for path in self.photos},
-                         {record["mtime"] for record in reply["updated_photos"]}, "each record as read back after the write")
+        written = {paths.key(path): own for path, own in reply["written"].items()}
+        self.assertEqual({paths.key(path): os.stat(path).st_mtime for path in self.photos},
+                         {key: own["mtime"] for key, own in written.items()}, "each photo's stamp after the write")
+        self.assertTrue(all("10:30" in own["taken"] for own in written.values()), written)
         self.assertEqual(0, scan.call_count, "a shift's answer is never a scan of the folder")
+        kept = self.lib.folders().snapshot(self.held)
+        self.assertEqual({key: (own["mtime"], own["taken"]) for key, own in written.items()},
+                         {key: (record["mtime"], record["taken"]) for key, record in kept.items()},
+                         "the folder's kept map holds each photo as the write read it back")
         self.assertEqual(["time shift"], [change["operation"] for change in self.changes()])
 
     def test_a_body_that_means_nothing_is_refused_400(self):
