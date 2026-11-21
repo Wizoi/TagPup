@@ -13,7 +13,9 @@
  */
 import { test, describe, afterEach } from "node:test";
 import assert from "node:assert/strict";
-import { loadApp, FakeServer, photoRecord, flush, click, openFolder, closeAllApps, PEOPLE_ROUTE, SAVE, saved, saveCalls } from "./harness.mjs";
+import {
+  loadApp, FakeServer, photoRecord, flush, click, openFolder, closeAllApps, PEOPLE_ROUTE, SAVE, SHIFT, saved, saveCalls, shiftedAs,
+} from "./harness.mjs";
 
 afterEach(() => closeAllApps());
 
@@ -42,14 +44,13 @@ function server(scanned = photos) {
     .on("/api/folder/membership", (url) => (url.includes(encodeURIComponent(HELD_FOLDER)) ? HELD : NOT_HELD))
     .on("/api/photo-faces", { faces: [], total: 0, unmatched: 0 })
     .on(SAVE, saved({ new_path: A, taken: "2018:03:04 09:08:07" }, { file_only: 1, with_rows: 0 }))
+    .on(SHIFT, shiftedAs("shifted", [], { file_only: 2, with_rows: 0, change: null }))
     .on("/api/photos/write", { success: true, written: {}, file_only: 2, with_rows: 0 })
     .on("/api/photo/rotate", { success: true, mtime: 1700000000, file_only: 1, with_rows: 0 })
     .on("/api/photo/delete", { success: true, file_only: 1, with_rows: 0,
       message: "Moved to the Recycle Bin. Nothing in kr-track changed: it does not hold this folder." })
     .on("/api/folder/rename-photos", { success: true, updated_paths: {}, updated_photos: photos(),
       index_rows_moved: 0, index_skipped: [], file_only: 2, with_rows: 0 })
-    .on("/api/folder/time-shift", { success: true, updated_photos: photos(), updated_count: 2,
-      requested_count: 2, file_only: 2, with_rows: 0 })
     .on("/api/folder/scan", (url) => (url.includes(encodeURIComponent(HELD_FOLDER))
       ? [photoRecord({ filename: "held.jpg" })] : scanned()));
 }
@@ -336,7 +337,7 @@ describe("the other file edits", () => {
     apply.disabled = false;
     click(ctx.window, apply);
     await flush(ctx.window, 10);
-    assert.equal(ctx.posts("/api/folder/time-shift").length, 1, "the time shift was held back");
+    assert.equal(ctx.posts("/api/photos/write").filter((c) => c.body.op === "shift").length, 1, "the time shift was held back");
     assert.match(ctx.$("status-text").textContent, /Time shift applied to 2 photo\(s\)\. Written to the files only/);
   });
 

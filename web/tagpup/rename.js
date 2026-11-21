@@ -1,15 +1,16 @@
 // TagPup's page: Smart Rename and Shift Date Taken -- Organize's, a folder's; a library view offers neither (#669).
 import { api } from './common/api.js';
 import { ruleProblem } from './common/validate.js';
-import { samePath } from './common/paths.js';
+import { pathKey, samePath } from './common/paths.js';
+import { takeStamp } from './common/photo-write.js';
 import { state } from './state.js';
 import {
-    btnApplyRename, btnToggleRename, btnToggleTimeshift, renameGroupingInput, renamePanel,
+    btnApplyRename, btnToggleRename, btnToggleTimeshift, detailDateTaken, renameGroupingInput, renamePanel,
     statusDot, statusText, thumbnailsGrid, timeshiftCameraSelect, timeshiftMinutesInput,
     timeshiftPanel
 } from './elements.js';
 import { flagField, setStatus } from './status.js';
-import { saveToLocalStorageCache } from './cache.js';
+import { changeCachedPhotos, saveToLocalStorageCache } from './cache.js';
 import { updatePeopleDatalist, updateTagsDatalist } from './tags.js';
 import { countSaid, renderFileList } from './folder.js';
 import { renderThumbnails } from './grid.js';
@@ -19,6 +20,7 @@ import { whereWritten } from './write-queue.js';
 import { photosRenamed } from './edits.js';
 import { isVideo } from './media.js';
 import { isJustLooking } from './looking.js';
+import { takenSaid } from './format.js';
 
 /**
  * Why a Smart Rename grouping cannot be used, or null if it can: the server's rule
@@ -201,10 +203,17 @@ export function applyTimeShift() {
         return;
     }
 
-    // How many photos this is actually about. "All photos for camera X" does not
-    // say whether that is four or four hundred, and the two deserve different
-    // amounts of hesitation.
-    const affected = state.folderPhotos.filter(p => onCamera(p, cameraModel)).length;
+    // The photos this is about, chosen here (never a clip: onCamera) and sent by path, as a folder's records carry no
+    // id. How many matters too: "All photos for camera X" does not say whether that is four or four hundred, and the
+    // two deserve different amounts of hesitation.
+    const shifted = state.folderPhotos.filter(p => onCamera(p, cameraModel));
+    if (!shifted.length) {
+        // A folder of clips only (its list of cameras is of its photos: populateCameraModelsDropdown): there is nothing
+        // to send, and the server refuses a shift of no photo.
+        setStatus('error', "No photos to shift: a clip's Date Taken is not changed", { transient: false });
+        return;
+    }
+    const affected = shifted.length;
     const direction = minutes > 0 ? 'later' : 'earlier';
     const promptMsg = [
         `Shift Date Taken by ${Math.abs(minutes)} minute(s) ${direction}?`,
@@ -219,49 +228,19 @@ export function applyTimeShift() {
     if (!confirm(promptMsg)) return;
 
     setStatus('busy', `Shifting ${affected} photo(s) by ${minutes} minute(s)...`);
-    
-    api.json('/api/folder/time-shift', {
+
+    // One request, through the one entry point of photo writes (plan one-write-path): the server writes them as one
+    // change, under its own cap of a write's photos.
+    api.json('/api/photos/write', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-            folder_path: folder,
-            camera_model: cameraModel,
-            shift_minutes: minutes
+            op: 'shift',
+            params: { minutes },
+            changes: Object.fromEntries(shifted.map(p => [p.path, { id: null }])),
         })
     })
-    .then(data => {
-        if (data.success && data.updated_count === undefined) {
-            // The server found no photo of that camera: a page left open since before the cameras were named as the
-            // server names them asks for a name it no longer knows.
-            setStatus('error', 'No photos matched that camera: reload the page and try again', { transient: false });
-            return;
-        }
-        if (data.success) {
-            if (data.updated_photos) {
-                state.folderPhotos = data.updated_photos;
-            }
-            
-            // What ExifTool wrote, not what was asked: a photo it could not
-            // write keeps its old time, and saying so is the only way to know.
-            const done = data.updated_count ?? 0;
-            const asked = data.requested_count ?? affected;
-            if (done < asked) {
-                setStatus('error', `Time shift applied to ${done} of ${asked} photo(s); ${asked - done} could not be written`,
-                    { transient: false });
-            } else {
-                setStatus('ready', `Time shift applied to ${done} photo(s).${whereWritten(data)}`.replace(/\.$/, ''));
-            }
-
-            renderFileList();
-            renderThumbnails();
-            updateTagsDatalist();
-            updatePeopleDatalist();
-            populateCameraModelsDropdown();
-            saveToLocalStorageCache();
-        } else {
-            throw new Error(data.error || "Time shift failed");
-        }
-    })
+    .then(data => tookShift(folder, data))
     .catch(err => {
         console.error(err);
         setStatus('error', 'Time shift failed', { transient: false });
@@ -269,6 +248,83 @@ export function applyTimeShift() {
     });
     timeshiftMinutesInput.value = 0; // reset
     updateCameraHighlights();
+}
+
+/**
+ * A time shift's reply (POST /api/photos/write's envelope, op `shift`) taken into the folder it was sent from: each photo
+ * written takes its file's stamp and its new Date Taken as the server spells it (`written[path].taken`, absent for one
+ * its read back did not reach: that one keeps its date), and the folder is
+ * put back in Date Taken order (inTakenOrder). A share that stopped part-way answers 400 with `written` naming only what
+ * landed: those are taken all the same, and the status says how many were not. A folder left before the reply (another
+ * folder, a library view) is not touched: its records are not these; the scan this browser kept of the shifted folder takes
+ * them instead, or opened again within the half hour it showed the old dates and stamps (#3301). A reply that is no
+ * envelope (a refusal before any write: a library being renamed, over the cap, cancelled while waiting its turn), or an
+ * envelope that wrote nothing and says why (a share stopped before the first photo landed), is the failure it says (#3302).
+ */
+function tookShift(folder, data) {
+    if (!data || typeof data.attempted !== 'number') throw new Error((data && data.error) || 'Time shift failed');
+    if (data.success === false && data.error && data.changed === 0 && !Object.keys(data.written || {}).length) {
+        throw new Error(data.error);
+    }
+    const written = new Map(Object.entries(data.written || {}).map(([path, w]) => [pathKey(path), w]));
+    if (!state.library && samePath(state.scannedFolder, folder)) {
+        state.folderPhotos = shiftTaken(state.folderPhotos, written);
+        const open = state.activePhotoPath && written.get(pathKey(state.activePhotoPath));
+        if (open && 'taken' in open) detailDateTaken.textContent = takenSaid(open.taken);
+        renderFileList();
+        renderThumbnails();
+        updateTagsDatalist();
+        updatePeopleDatalist();
+        populateCameraModelsDropdown();
+        saveToLocalStorageCache();
+    } else {
+        changeCachedPhotos(folder, (kept) => shiftTaken(kept, written));
+    }
+    // What was written, not what was asked: a photo that could not be written keeps its old time, and saying so is the
+    // only way to know.
+    const changed = data.changed ?? 0;
+    const attempted = data.attempted;
+    if (changed < attempted) {
+        const why = data.error || (data.errors && data.errors[0] && data.errors[0].why)
+            || (data.skipped && data.skipped[0] && data.skipped[0].why) || '';
+        setStatus('error', `Time shift applied to ${changed} of ${attempted} photo(s); ${attempted - changed} could not be `
+            + `written${why ? `: ${why}` : ''}`, { transient: false });
+    } else {
+        setStatus('ready', `Time shift applied to ${changed} photo(s).${whereWritten(data)}`.replace(/\.$/, ''));
+    }
+}
+
+/**
+ * `records` (a folder's) with each photo in `written` (a shift reply's, by pathKey) taking its stamp and new Date Taken, in
+ * Date Taken order. A photo whose write landed but whose read back did not answer (a share that stopped) has no `taken`:
+ * what it holds now is not known, so it keeps the date it showed rather than "Unknown" (#3300).
+ */
+function shiftTaken(records, written) {
+    for (const record of records) {
+        const w = written.get(pathKey(record.path));
+        if (!w) continue;
+        takeStamp(record, w);
+        if ('taken' in w) record.taken = w.taken;
+    }
+    return inTakenOrder(records);
+}
+
+/**
+ * The folder's photos in the server's folder order (tagpup.services.photos.taken_order): by Date Taken as the library
+ * spells it, those with none after them in the order they had. Stable, so photos taken at one moment keep theirs.
+ */
+function inTakenOrder(photos) {
+    return photos
+        .map((photo, at) => ({ photo, at }))
+        .sort((a, b) => {
+            const x = a.photo.taken || null;
+            const y = b.photo.taken || null;
+            if (x && y && x !== y) return x < y ? -1 : 1;
+            if (x && !y) return -1;
+            if (!x && y) return 1;
+            return a.at - b.at;
+        })
+        .map(each => each.photo);
 }
 
 export function updateCameraHighlights() {

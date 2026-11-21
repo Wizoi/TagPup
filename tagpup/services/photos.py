@@ -19,6 +19,11 @@ logger = logging.getLogger(__name__)
 #: Photos read from disk in one ExifTool call. A folder of thousands is read in these.
 READ_BATCH = 500
 
+#: A shift's details: {paths.key(path): its Date Taken as read back after the write, as the library spells it
+#: (dates.date_taken, the page record's `taken`), None for one holding no date} of each photo it read back
+#: (shift_date_taken): the one place a shift's new Date Taken is told, which the write's reply names beside each photo.
+TAKEN_OF = "taken_of"
+
 
 # ---- A folder, as the page sees it --------------------------------------------------------
 
@@ -737,8 +742,9 @@ def shift_date_taken(library, photo_paths, minutes, exiftool_path, group=None):
 
     `changed` is the files written: a photo that could not be read, or holds no date to
     move, is skipped; one that could not be written, or changed outside between the plan
-    and its write, is an error. details: `records`, each photo as read back afterwards;
-    `written`, the photos written (file_changes.write_fields'; a stopped shift's, those
+    and its write, is an error. details: `records`, each photo as read back afterwards (one the read back could not read, `read_error`:
+    a share that stopped answering after its write landed, is left out: what it holds now is not known, which is not
+    nothing), and TAKEN_OF its Date Taken from that reading; `written`, the photos written (file_changes.write_fields'; a stopped shift's, those
     before the stop); `change`. Refused, and nothing written, for a shift that is not a
     whole number of minutes (tagpup.core.validation), or a `group` it cannot carry: the
     token of the one action of the owner's this is a chunk of, written in the change's
@@ -768,9 +774,11 @@ def shift_date_taken(library, photo_paths, minutes, exiftool_path, group=None):
         result.fail("time shift", e)
         return result
     # Only reading, for the page: minting a DocumentID here would write the files again.
-    result.details["records"] = metadata.MetadataExtractor(exiftool_path=exiftool_path
-                                                           ).batch_read(photo_paths,
-                                                                        people=taxonomy.people_vocabulary(library.path))
+    result.details["records"] = [meta for meta in metadata.MetadataExtractor(exiftool_path=exiftool_path).batch_read(
+        photo_paths, people=taxonomy.people_vocabulary(library.path)) if not meta.get("read_error")]
+    result.details[TAKEN_OF] = {
+        paths.key(meta["path"]): dates.date_taken(meta.get("raw_metadata", {}), meta["path"], images.kind_of(meta["path"]))
+        for meta in result.details["records"]}
     return result
 
 

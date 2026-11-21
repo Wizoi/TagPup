@@ -445,8 +445,9 @@ def folder_auto_apply():
 @routes.post("/api/folder/time-shift")
 def folder_time_shift():
     """A folder's Time Shift: the Date Taken of its photos of one camera moved by `shift_minutes`. A caller of the one entry
-    point (_write, op `shift`) that chooses the photos (the camera's, never a clip) and answers as it always did, until the
-    page sends to /api/photos/write (plan one-write-path, cut 2c deletes it)."""
+    point (_write, op `shift`) that chooses the photos (the camera's, never a clip) and answers as it always did. No page
+    sends to it now: the page chooses the photos and sends them to /api/photos/write (plan one-write-path, cut 2c deletes
+    it)."""
     library = state.require()
     body = request.get_json(silent=True) or {}
     folder = body.get("folder_path")
@@ -1312,7 +1313,7 @@ def _envelope(op, changes, result, stamps):
     `attempted`, `skipped_missing` and `skipped` [{"path", "why"}], `error_count` and `errors` [{"path", "id", "why"}],
     `stopped` ({"after", "of"} when a stop ended it part-way, else null), `change` (the journal's, null for a file-only
     write), `file_only` and `with_rows`, `written` {path: {"mtime", "size"}, and a tag write's and a set's "tags", a set's
-    and a shift's "taken", a set's "base", "new_path", "rename_failed"}, and `pictures_refused` and the faces it changed when there are any. What was written, not
+    and a shift's "taken" (a shift's only for a photo its read back read), a set's "base", "new_path", "rename_failed"}, and `pictures_refused` and the faces it changed when there are any. What was written, not
     attempted."""
     ids = {paths.key(path): photo_id for path, (photo_id, _own) in changes.items()}
     details = result.details
@@ -1320,8 +1321,9 @@ def _envelope(op, changes, result, stamps):
         written = {path: {"tags": list(tags), **_stamp_reply(stamps.get(path))}
                    for path, (tags, _flat, _hierarchical) in details.get("written", {}).items()}
     elif op == photo_writes.SHIFT:
-        taken = details.get(photo_writes.TAKEN_OF, {})
-        written = {path: {**_stamp_reply(stamp), "taken": taken.get(paths.key(path))} for path, stamp in stamps.items()}
+        taken = details.get(photo_actions.TAKEN_OF, {})
+        written = {path: {**_stamp_reply(stamp), **({"taken": taken[paths.key(path)]} if paths.key(path) in taken else {})}
+                   for path, stamp in stamps.items()}
     else:
         written = {asked: {"tags": details["tags"], "base": details["base"], "new_path": details["new_path"],
                            "taken": details["taken"], "rename_failed": details.get("rename_failed"),
