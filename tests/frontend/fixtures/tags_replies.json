@@ -1,4 +1,32 @@
 {
+ "not_written": {
+  "reply": {
+   "attempted": 1,
+   "change": null,
+   "changed": 0,
+   "error": "ExifTool stopped answering before anything was written; check that the share or drive is there, then run it again.",
+   "error_count": 1,
+   "errors": [
+    {
+     "id": 3,
+     "path": "PHOTO_0",
+     "why": "photo 3: ExifTool stopped answering before it was written, and nothing after it was; check that the share or drive is there"
+    }
+   ],
+   "file_only": 0,
+   "skipped": [],
+   "skipped_missing": 0,
+   "stopped": {
+    "after": 0,
+    "of": 1,
+    "share": true
+   },
+   "success": false,
+   "with_rows": 0,
+   "written": {}
+  },
+  "status": 400
+ },
  "renamed_since": {
   "reply": {
    "attempted": 2,

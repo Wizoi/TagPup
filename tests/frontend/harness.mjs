@@ -427,11 +427,20 @@ export const TAGS_REPLIES = JSON.parse(fs.readFileSync(path.join(HERE, "fixtures
  * no longer at its path, nothing written, the envelope beside the error. The reply is for the photos this request named
  * (the real one's two photos, PHOTO_0 and PHOTO_1, taken for each path of `body.changes`), the counts its own;
  * `own(path, n)` the fields over what it says of the photo at `path` (`tags`, `mtime`, `size`).
+ * `not_written`, a share that stopped answering (400): the photo failed, nothing written, the failure said in `error`
+ * (the page says that first) and in `errors`, one for each photo of `body.changes` with its id as sent; `said` is the
+ * words the test's share says in their place (the real ones name the photo by its number and the share).
  */
-export function taggedAs(name, own = () => ({})) {
+export function taggedAs(name, own = () => ({}), said = null) {
   const { status, reply } = TAGS_REPLIES[name];
   return (url, body) => {
     const sent = Object.keys(body.changes);
+    if (reply.errors && reply.errors.length) {
+      const why = (each) => said || each.why;
+      const errors = sent.map((path) => ({ ...reply.errors[0], path, id: body.changes[path].id, why: why(reply.errors[0]) }));
+      return answer(status, { ...reply, attempted: sent.length, error_count: sent.length, errors, error: said || reply.error,
+        stopped: { ...reply.stopped, of: sent.length } });
+    }
     if (!reply.written || !Object.keys(reply.written).length) {
       const said = reply.error.replace(/^.*(?= is not the photo)/, sent[0].split(/[\\/]/).pop());
       return answer(status, { ...reply, attempted: sent.length, error: said });

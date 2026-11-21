@@ -426,6 +426,13 @@ class AWriteThroughTheOneEntryPoint(unittest.TestCase):
         self.assertEqual((409, True, {}), (status, reply["changed_on_disk"], reply["written"]))
         self.assertIn("p0.jpg", reply["error"])
         found["renamed_since"] = {"status": status, "reply": self.as_the_page_test_reads(reply, sent)}
+        # `not_written`: the share stops answering at the photo, so its write fails: each photo of the request answered
+        # among `errors` with its `why`, nothing written.
+        with self.a_share_that_stops_answering_at(self.photos[2]):
+            status, reply = self.lib.post(ROUTE, self.tags_op({self.photos[2]: (self.ids[2], ["Places/Dock"])}))
+        reads = self.as_the_page_test_reads(reply, self.photos[2:])
+        self.assertEqual((400, {}, ["PHOTO_0"]), (status, reads["written"], [error["path"] for error in reads["errors"]]))
+        found["not_written"] = {"status": status, "reply": reads}
         self.assertNotIn(json.dumps(self.lib.photos)[1:-1], json.dumps(found), "a path of the test's home left in")
         text = json.dumps(found, sort_keys=True, indent=1) + "\n"
         page_fixtures.hold_to(self, TAGS_REPLIES, text, "tests.test_a_write_through_the_one_entry_point", "a tag change")

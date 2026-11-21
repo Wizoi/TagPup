@@ -81,8 +81,9 @@ async function open(t, { b = [], faces = { faces: [], total: 0, unmatched: 0 } }
   ctx.answer = async (error = null) => {
     const { kind, body, reply, resolve } = held.shift();
     if (error) {
-      // A write that failed answers each photo among its `errors`, nothing written.
-      if (kind === "bulk") resolve({ success: false, errors: Object.keys(body.changes).map((path) => ({ path, id: null, why: error })), written: {} });
+      // A write that failed (the real reply, fixtures/tags_replies.json `not_written`: a share that stopped answering,
+      // 400) answers each photo among its `errors`, nothing written; the fake's words in place of the real ones.
+      if (kind === "bulk") resolve(taggedAs("not_written", undefined, error)("", body));
       else reply(notSaved(error));
     } else if (kind === "bulk") {
       const written = {};
@@ -90,7 +91,8 @@ async function open(t, { b = [], faces = { faces: [], total: 0, unmatched: 0 } }
         files.set(path, changed(files.get(path), change));
         written[path] = { tags: files.get(path).slice() };
       }
-      resolve({ success: true, written });
+      // The real reply (`written`, 200) for each photo sent, each its tags as the file holds them now.
+      resolve(taggedAs("written", (path) => ({ tags: written[path].tags }))("", body));
     } else {
       // A save writes what it changed from the record it was made from (`base`) onto what the file holds.
       const was = body.base ? body.base.tags : files.get(body.path);
