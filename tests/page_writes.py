@@ -90,6 +90,9 @@ def shift(photos_named, minutes, group=None):
 
 
 def shift_all(library, folder, minutes, exiftool=EXIFTOOL):
-    """The body of a folder's Time Shift for every camera: each photo of its scan, never a clip (rename.js onCamera)."""
+    """The body of a folder's Time Shift for every camera: each photo of its scan, never a clip (rename.js onCamera), by
+    its path and no id, as the page sends it (a folder's records carry none). `library`, a Library or its database's
+    path."""
+    library = library if isinstance(library, Library) else Library(library)
     found = photos.scan_folder(library, folder, exiftool).values()
-    return shift({each["path"]: each.get("id") for each in found if each["media"] == "photo"}, minutes)
+    return shift([each["path"] for each in found if each["media"] == "photo"], minutes)
