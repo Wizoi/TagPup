@@ -10,7 +10,7 @@ import {
     timeshiftPanel
 } from './elements.js';
 import { flagField, setStatus } from './status.js';
-import { saveToLocalStorageCache } from './cache.js';
+import { changeCachedPhotos, saveToLocalStorageCache } from './cache.js';
 import { updatePeopleDatalist, updateTagsDatalist } from './tags.js';
 import { countSaid, renderFileList } from './folder.js';
 import { renderThumbnails } from './grid.js';
@@ -256,30 +256,25 @@ export function applyTimeShift() {
  * its read back did not reach: that one keeps its date), and the folder is
  * put back in Date Taken order (inTakenOrder). A share that stopped part-way answers 400 with `written` naming only what
  * landed: those are taken all the same, and the status says how many were not. A folder left before the reply (another
- * folder, a library view) is not touched: its records are not these. A reply that is no envelope (a refusal before any
+ * folder, a library view) is not touched: its records are not these; the scan this browser kept of the shifted folder takes
+ * them instead, or opened again within the half hour it showed the old dates and stamps (#3301). A reply that is no envelope (a refusal before any
  * write: a library being renamed, over the cap, cancelled while waiting its turn) is the failure it says.
  */
 function tookShift(folder, data) {
     if (!data || typeof data.attempted !== 'number') throw new Error((data && data.error) || 'Time shift failed');
+    const written = new Map(Object.entries(data.written || {}).map(([path, w]) => [pathKey(path), w]));
     if (!state.library && samePath(state.scannedFolder, folder)) {
-        const written = new Map(Object.entries(data.written || {}).map(([path, w]) => [pathKey(path), w]));
-        for (const record of state.folderPhotos) {
-            const w = written.get(pathKey(record.path));
-            if (!w) continue;
-            takeStamp(record, w);
-            // A photo whose write landed but whose read back did not answer (a share that stopped) has no `taken`: what it
-            // holds now is not known, so it keeps the date it showed rather than "Unknown" (#3300).
-            if (!('taken' in w)) continue;
-            record.taken = w.taken;
-            if (samePath(state.activePhotoPath, record.path)) detailDateTaken.textContent = takenSaid(w.taken);
-        }
-        state.folderPhotos = inTakenOrder(state.folderPhotos);
+        state.folderPhotos = shiftTaken(state.folderPhotos, written);
+        const open = state.activePhotoPath && written.get(pathKey(state.activePhotoPath));
+        if (open && 'taken' in open) detailDateTaken.textContent = takenSaid(open.taken);
         renderFileList();
         renderThumbnails();
         updateTagsDatalist();
         updatePeopleDatalist();
         populateCameraModelsDropdown();
         saveToLocalStorageCache();
+    } else {
+        changeCachedPhotos(folder, (kept) => shiftTaken(kept, written));
     }
     // What was written, not what was asked: a photo that could not be written keeps its old time, and saying so is the
     // only way to know.
@@ -293,6 +288,21 @@ function tookShift(folder, data) {
     } else {
         setStatus('ready', `Time shift applied to ${changed} photo(s).${whereWritten(data)}`.replace(/\.$/, ''));
     }
+}
+
+/**
+ * `records` (a folder's) with each photo in `written` (a shift reply's, by pathKey) taking its stamp and new Date Taken, in
+ * Date Taken order. A photo whose write landed but whose read back did not answer (a share that stopped) has no `taken`:
+ * what it holds now is not known, so it keeps the date it showed rather than "Unknown" (#3300).
+ */
+function shiftTaken(records, written) {
+    for (const record of records) {
+        const w = written.get(pathKey(record.path));
+        if (!w) continue;
+        takeStamp(record, w);
+        if ('taken' in w) record.taken = w.taken;
+    }
+    return inTakenOrder(records);
 }
 
 /**

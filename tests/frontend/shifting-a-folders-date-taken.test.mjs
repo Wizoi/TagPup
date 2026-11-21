@@ -44,6 +44,7 @@ function server(shift) {
 async function opened(t, shift, folder = FOLDER) {
   const fake = server(shift);
   const ctx = await loadApp("tagpup", { server: fake, t });
+  ctx.fake = fake;
   ctx.alerts = [];
   ctx.window.alert = (text) => ctx.alerts.push(text);
   ctx.window.confirm = () => true;
@@ -113,7 +114,7 @@ test("a shift refused before any write (names being given from tags) changes not
   assert.deepEqual(ctx.alerts, [`Error shifting time: ${why}`]);
 });
 
-test("a folder left before the shift's reply came is not touched by it", async (t) => {
+test("a folder left before the shift's reply came is not touched by it, and its kept scan, opened again, shows the new dates", async (t) => {
   let reply;
   const ctx = await opened(t, (url, body) => new Promise((resolve) => {
     reply = () => resolve(shiftedAs("shifted", [{ taken: "2020:06:01 11:30:00" }, { taken: "2020:06:01 09:30:00" }])(url, body));
@@ -131,4 +132,15 @@ test("a folder left before the shift's reply came is not touched by it", async (
   assert.deepEqual(state.folderPhotos.map((p) => [p.filename, p.taken, p.mtime]),
     [["IMG_0002.jpg", B.taken, B.mtime], ["IMG_0001.jpg", A.taken, A.mtime]], "neither patched nor put in another order");
   assert.match(ctx.said(), /^Time shift applied to 2 photo\(s\)$/, "what was written is still said");
+
+  // The folder opened again within the half hour is drawn from the scan this browser kept of it, not scanned: that scan
+  // took the shift's dates and stamps, and its Date Taken order (#3301).
+  state.library = null;
+  const scans = ctx.fake.calls.filter((c) => c.url.includes("/api/folder/scan")).length;
+  await openFolder(ctx, FOLDER);
+  await flush(ctx.window, 10);
+  assert.equal(ctx.fake.calls.filter((c) => c.url.includes("/api/folder/scan")).length, scans, "drawn from the kept scan");
+  assert.deepEqual([...state.folderPhotos].map((p) => [p.filename, p.taken, p.mtime]), [
+    ["MVI_0004.mp4", CLIP.taken, CLIP.mtime], ["IMG_0002.jpg", "2020:06:01 09:30:00", 1],
+    ["IMG_0003.jpg", C.taken, C.mtime], ["IMG_0001.jpg", "2020:06:01 11:30:00", 1], ["IMG_0005.jpg", undefined, UNDATED.mtime]]);
 });
