@@ -336,7 +336,7 @@ const SAVE_REPLIES = JSON.parse(fs.readFileSync(path.join(HERE, "fixtures", "sav
  * The reply of a save that wrote, as the real entry point made it (SAVE_REPLIES.no_rename), a route's function of (url,
  * body): its photo's own part (`written[path]`) says the file holds now what this save sent -- its tags and title as the
  * `base`, `new_path` its path (not renamed), a stamp after the one it sent -- `own` over it (mtime, size, base, new_path,
- * taken, rename_failed; a save that sends a Date Taken names its `taken`, as the server spells it); `top` over what it
+ * taken, rename_failed; `taken` is null unless `own` names it, as the server spells it); `top` over what it
  * says of the write (file_only, with_rows, the faces it changed, pictures_refused). A page that ignores `written` keeps
  * its own base and stamp, which a later save sends and its test reads.
  */
