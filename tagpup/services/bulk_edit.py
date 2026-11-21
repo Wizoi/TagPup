@@ -224,7 +224,7 @@ def _write(library, edit, ids, exiftool_path):
     # lock held here: each chunk takes it, and a save that waits is let in between them (photo_writes' docstring).
     result = photo_writes.write(
         library, photo_writes.TAGS, {path: (None, {"add": edit.add, "remove": edit.remove}) for path in chosen},
-        exiftool_path, None, stop_at_first_error=False, operation=OPERATIONS[edit.op],
+        exiftool_path, None, operation=OPERATIONS[edit.op],
         persons={paths.key(path): set(edit.persons) for path in chosen} if edit.persons else None)
     _count(out, result, present, by_key)
     return out

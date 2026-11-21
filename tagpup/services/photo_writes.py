@@ -38,12 +38,12 @@ OPERATIONS = {TAGS: "bulk tags", SET: "save photo", SHIFT: "time shift"}
 MOVED_SENTENCE = "%s is not the photo this page read (renamed, moved or deleted since): reload it first."
 
 
-def write(library, op, changes, exiftool_path, rename_format, group=None, stop_at_first_error=False, params=None,
-          operation=tagging.ADD_TO_ALL, persons=None):
+def write(library, op, changes, exiftool_path, rename_format, group=None, params=None, operation=tagging.ADD_TO_ALL,
+          persons=None):
     """Write `changes` ({path: (id or None, fields)}) by `op`, in `library`, under the caller's hold of the lock of
     changes of photo files when it names an id (the module's docstring): a Result as the operation's service gives it. `tags`' fields are {"add": [tag], "remove": [tag]}, `group` the token
-    of the page's action this is a chunk of (journal.GROUP), `stop_at_first_error` False: a photo that cannot be read or
-    written (a share that does not answer) is its own error and the others are written; `operation` the journal's name
+    of the page's action this is a chunk of (journal.GROUP); a photo that cannot be read or written (a share that does
+    not answer) is its own error and the others are written; `operation` the journal's name
     of the change (tagging.ADD_TO_ALL unless named) and `persons` {paths.key(path): the tags added that are people}
     (tagging.change_tags_of): a bulk edit's (bulk_edit.OPERATIONS). `set`'s are {"title", "tags", "date_taken", "stamp",
     "base"} of the one photo, as tagging.save_photo takes them. `shift`'s are none, its `params` {"minutes": whole
@@ -55,7 +55,7 @@ def write(library, op, changes, exiftool_path, rename_format, group=None, stop_a
     if op == TAGS:
         return tagging.change_tags_of(
             library, {path: (own.get("add", []), own.get("remove", [])) for path, (_id, own) in changes.items()},
-            exiftool_path, operation=operation, stop_at_first_error=stop_at_first_error,
+            exiftool_path, operation=operation, stop_at_first_error=False,
             persons=persons, group=group)
     if op == SHIFT:
         return photo_actions.shift_date_taken(library, list(changes), params["minutes"], exiftool_path, group=group)

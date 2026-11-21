@@ -57,13 +57,13 @@ describe("each shared helper is written once", () => {
 
     // A save of one photo names its stamp and base, which the server refuses a write over when the file changed: the
     // PC page's title in the grid and its Save spelled that request beside postPhotoMetadata (#3163). It is op `set` of
-    // /api/photos/write; the old route (/api/photo/save-metadata, until cut 2c of plan one-write-path) is no page's.
+    // /api/photos/write.
     test(`${app}: a photo's save (op set) is spelled only by web/common/photo-write.js`, () => {
       const offenders = [];
       for (const module of pageModules(path.join(REPO_ROOT, APPS[app].dir))) {
         if (module.file.startsWith(COMMON_DIR)) continue;
         fs.readFileSync(module.file, "utf8").split(/\r?\n/).forEach((line, i) => {
-          if (/['"`]\/api\/photo\/save-metadata|\bop:\s*['"`]set['"`]/.test(line)) offenders.push(`${path.basename(module.file)}:${i + 1}`);
+          if (/\bop:\s*['"`]set['"`]/.test(line)) offenders.push(`${path.basename(module.file)}:${i + 1}`);
         });
       }
       assert.deepEqual(offenders, [], "send it through postPhotoMetadata");

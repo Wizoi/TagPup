@@ -324,9 +324,6 @@ class TheOwnersValues(unittest.TestCase):
         self.assertEqual("Fujifilm X100V", fields.camera_of({"Model": "X100V", "EXIF:Make": "Fujifilm"}))
         self.assertEqual("Fujifilm", fields.camera_of({"EXIF:Make": "Fujifilm", "Model": ""}))
         self.assertEqual(fields.UNKNOWN_CAMERA, fields.camera_of(None))
-        self.assertTrue(fields.on_camera({}, fields.ALL_CAMERAS))
-        self.assertTrue(fields.on_camera({"EXIF:Model": "X100V"}, "X100V"))
-        self.assertFalse(fields.on_camera({"EXIF:Model": "X100V"}, "Pixel 8"))
         shapes = {
             "Google Pixel 8 Pro": {"EXIF:Make": "Google", "EXIF:Model": "Pixel 8 Pro"},
             "Canon EOS R6m2": {"EXIF:Make": "Canon", "EXIF:Model": "Canon EOS R6m2"},
@@ -341,7 +338,7 @@ class TheOwnersValues(unittest.TestCase):
                 self.assertEqual(name, fields.camera_of(raw))
                 self.assertEqual(name, page_record("D:/a.jpg", {"raw_metadata": raw})["camera"] or fields.UNKNOWN_CAMERA)
                 self.assertEqual(photo_meta.gear(raw).camera or fields.UNKNOWN_CAMERA, name)
-                self.assertEqual([name], [other for other, theirs in shapes.items() if fields.on_camera(theirs, name)])
+                self.assertEqual([name], [other for other, theirs in shapes.items() if fields.camera_of(theirs) == name])
         spelled = r"[\"'](Unknown Camera|All Cameras|EXIF:Model)[\"']"
         self.assertEqual([], [p for p in sources_matching(spelled, os.path.join("tagpup", "core", "fields.py"))
                               if re.search(r"[\"'](Unknown Camera|All Cameras)[\"']|get\([\"']EXIF:Model", read(p))])
@@ -413,7 +410,7 @@ class ThePagesKeepNoCopyOfTheirOwn(unittest.TestCase):
         self.assertNotIn("raw_metadata", page, "the page does not read the metadata to name a camera")
         self.assertIn("photo.camera", page)
         self.assertIn("const UNKNOWN_CAMERA = '%s';" % fields.UNKNOWN_CAMERA, page)
-        self.assertIn("const ALL_CAMERAS = '%s';" % fields.ALL_CAMERAS, page)
+        self.assertIn("const ALL_CAMERAS = 'All Cameras';", page)   # the page's own choice: no server reads it
         self.assertEqual([], lines_spelling(page, r"[\"'](Unknown Camera|All Cameras|EXIF:Model)[\"']",
                                             "const CAMERA_FIELDS =", "const UNKNOWN_CAMERA =", "const ALL_CAMERAS ="))
 

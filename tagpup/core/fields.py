@@ -110,20 +110,11 @@ WRITTEN_AS = {ORIENTATION: "Orientation"}
 #: The camera of a photo that names none.
 UNKNOWN_CAMERA = "Unknown Camera"
 
-#: The camera a time shift is asked for to shift every photo, whatever its camera.
-ALL_CAMERAS = "All Cameras"
-
-
 def camera_of(raw_metadata):
     """The camera a photo came from, by its metadata: its one name (tagpup.core.photo_meta.camera_name, which Image
-    Details and the search use), else UNKNOWN_CAMERA. What Shift Date Taken chooses photos by; the TagPup page gets the
-    same name in the photo's record (`camera`) and keeps no copy of the rule (docs/findings.md, #74, #1003)."""
+    Details and the search use), else UNKNOWN_CAMERA. The TagPup page gets it in the photo's record (`camera`) and
+    chooses a Shift Date Taken's photos by it, keeping no copy of the rule (docs/findings.md, #74, #1003)."""
     return photo_meta.gear(raw_metadata).camera or UNKNOWN_CAMERA
-
-
-def on_camera(raw_metadata, camera):
-    """Is a photo with this metadata one a time shift for `camera` is about?"""
-    return camera == ALL_CAMERAS or camera_of(raw_metadata) == camera
 
 
 #: The fields a photo's tags are read from: exactly what vocabulary.extract_tags reads, so tags read here are the tags a

@@ -47,9 +47,7 @@ ALLOWED = {
     "/api/settings": "the library's settings; they apply to the next index or Suggest, not to names already read",
     "/api/sync/review/ignore": "marks a folder ignored in the review list; adds no photo (include does, and is guarded)",
     "/api/taxonomy/create": "adds a node to the tree; no face, photo or existing node changes",
-    # The four the review found missing, decided from the code (the first three are not guarded; Undo and the rest now are).
-    "/api/folder/time-shift": "writes Date Taken fields and the photo row's dates, mtime and size; the plan reads tags, faces, boxes and "
-                              "vectors, no date, and the apply expects the face and photo-tags rows it read",
+    # Decided from the code: not guarded (a folder's Time Shift is op shift of /api/photos/write, guarded whole).
     "/api/folder/rename-photos": "renames files and re-points the photo row by id; faces, tags and vectors follow the photo id, "
                                  "which the plan and the apply are keyed by",
     "/api/photo/smart-rename": "one photo's Smart Rename (photos.smart_rename_one): rename-photos' renaming for a batch of one",
