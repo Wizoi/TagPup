@@ -17,7 +17,8 @@ tests/test_batches.py's (ASaveBetweenTwoChunks), on the fake ExifTool, as it nee
 
 Real ExifTool on JPEGs made here, rows as the indexer records them (photo_rows.add_read), the route through Flask's
 test client in a home of the test's own (tests/handler_harness.py). The replies of a folder's Time Shift that the page's
-tests answer from (tests/frontend/fixtures/shift_replies.json, harness.mjs shiftedAs) are written here.
+tests answer from (tests/frontend/fixtures/shift_replies.json, harness.mjs shiftedAs) and of a tag change
+(tags_replies.json, harness.mjs taggedAs) are written here.
 """
 import contextlib
 import json
@@ -39,6 +40,7 @@ from tests.test_taxonomy_lifecycle import requires_exiftool  # noqa: E402
 from tagpup.core import paths  # noqa: E402
 from tagpup.files import field_values, shares  # noqa: E402
 from tagpup.files.exiftool_session import ExifToolSession  # noqa: E402
+from tagpup.jobs import naming_faces  # noqa: E402
 from tagpup.services import batches, file_changes, photo_writes  # noqa: E402
 from tagpup.services import photos as photo_actions  # noqa: E402
 from tagpup.store import db, journal  # noqa: E402
@@ -46,6 +48,7 @@ from tagpup.store import db, journal  # noqa: E402
 ROUTE = "/api/photos/write"
 TAKEN = "2020:06:01 10:00:00"
 SHIFT_REPLIES = page_fixtures.path_of("shift_replies.json")
+TAGS_REPLIES = page_fixtures.path_of("tags_replies.json")
 
 
 def date(photos, taken=TAKEN):
@@ -395,6 +398,38 @@ class AWriteThroughTheOneEntryPoint(unittest.TestCase):
         self.assertEqual(["2020:06:01 10:30:00", TAKEN, TAKEN], [taken_in(path) for path in self.photos])
         self.assertEqual([("time shift", "applied")], [(change["operation"], change["status"]) for change in self.changes()])
 
+    def as_the_page_test_reads(self, reply, sent):
+        """`reply` as a page's test answers from it: each photo's stamp 1 and 1, each path of `sent` named PHOTO_<n> in the
+        order sent."""
+        for own in reply.get("written", {}).values():
+            own.update(mtime=1, size=1)
+        text = json.dumps(reply)
+        for n, path in enumerate(sent):
+            text = text.replace(json.dumps(path)[1:-1], "PHOTO_%d" % n)
+        return json.loads(text)
+
+    def test_the_tag_replies_the_page_reads_are_written_for_its_test(self):
+        # A page's tag change as it sends it (web/common/photo-write.js): photos by path with their id, in one request.
+        # `written`: two photos written (200); `renamed_since`: the page read photo 1 at its old name, a Smart Rename
+        # renamed it since: refused 409 `changed_on_disk` naming it, nothing written. Each photo named PHOTO_<n> in
+        # the order sent, its stamp 1 and 1.
+        found = {}
+        sent = self.photos[:2]
+        status, reply = self.lib.post(ROUTE, self.tags_op({path: (photo_id, ["Places/Quay"])
+                                                          for path, photo_id in zip(sent, self.ids)}))
+        self.assertEqual((200, ["PHOTO_0", "PHOTO_1"]), (status, sorted(self.as_the_page_test_reads(reply, sent)["written"])))
+        found["written"] = {"status": status, "reply": self.as_the_page_test_reads(reply, sent)}
+        old, new = self.photos[0], os.path.join(self.held, "p0 Quay at dusk.jpg")
+        file_changes.rename(self.lib.library, "smart rename", {old: new}, {}, EXIFTOOL)
+        status, reply = self.lib.post(ROUTE, self.tags_op({old: (self.ids[0], ["Places/Boats"]),
+                                                          self.photos[1]: (self.ids[1], ["Places/Boats"])}))
+        self.assertEqual((409, True, {}), (status, reply["changed_on_disk"], reply["written"]))
+        self.assertIn("p0.jpg", reply["error"])
+        found["renamed_since"] = {"status": status, "reply": self.as_the_page_test_reads(reply, sent)}
+        self.assertNotIn(json.dumps(self.lib.photos)[1:-1], json.dumps(found), "a path of the test's home left in")
+        text = json.dumps(found, sort_keys=True, indent=1) + "\n"
+        page_fixtures.hold_to(self, TAGS_REPLIES, text, "tests.test_a_write_through_the_one_entry_point", "a tag change")
+
     def test_the_shift_replies_the_page_reads_are_written_for_its_test(self):
         # A folder's Time Shift as the page sends it (web/tagpup/rename.js applyTimeShift): its photos by path, no id (a
         # folder's records carry none), in one request. `stopped`: the share stops answering at the second of three, the
@@ -407,16 +442,20 @@ class AWriteThroughTheOneEntryPoint(unittest.TestCase):
             body = {"op": "shift", "params": {"minutes": 30}, "changes": {path: {"id": None} for path in sent}}
             with self.a_share_that_stops_answering_at(stop) if stop else contextlib.nullcontext():
                 status, reply = self.lib.post(ROUTE, body)
-            for own in reply["written"].values():
-                own.update(mtime=1, size=1)
-            text = json.dumps(reply)
-            for n, path in enumerate(sent):
-                text = text.replace(json.dumps(path)[1:-1], "PHOTO_%d" % n)
-            found[name] = {"status": status, "reply": json.loads(text)}
+            found[name] = {"status": status, "reply": self.as_the_page_test_reads(reply, sent)}
         self.assertEqual((400, ["PHOTO_0"]), (found["stopped"]["status"], list(found["stopped"]["reply"]["written"])))
         self.assertEqual((200, ["PHOTO_0", "PHOTO_1"]), (found["shifted"]["status"],
                                                          sorted(found["shifted"]["reply"]["written"])))
         self.assertEqual((400, {}), (found["stopped_first"]["status"], found["stopped_first"]["reply"]["written"]))
+        # `refused`: a shift asked while names are being given from tags, refused 409 before any photo is read: the
+        # error alone beside `success`, no envelope.
+        before = [taken_in(path) for path in self.photos]
+        with mock.patch.object(naming_faces, "writing", return_value=True):
+            status, reply = self.lib.post(ROUTE, {"op": "shift", "params": {"minutes": 30},
+                                                  "changes": {path: {"id": None} for path in self.photos}})
+        self.assertEqual((409, False, ["error", "success"]), (status, reply["success"], sorted(reply)))
+        found["refused"] = {"status": status, "reply": self.as_the_page_test_reads(reply, self.photos)}
+        self.assertEqual(before, [taken_in(path) for path in self.photos], "a refused shift wrote nothing")
         self.assertNotIn(json.dumps(self.lib.photos)[1:-1], json.dumps(found), "a path of the test's home left in")
         text = json.dumps(found, sort_keys=True, indent=1) + "\n"
         page_fixtures.hold_to(self, SHIFT_REPLIES, text, "tests.test_a_write_through_the_one_entry_point", "the Time Shift")

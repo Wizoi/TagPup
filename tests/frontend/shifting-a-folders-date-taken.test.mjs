@@ -11,7 +11,7 @@
 import { test, afterEach } from "node:test";
 import assert from "node:assert/strict";
 import {
-  loadApp, FakeServer, closeAllApps, openFolder, click, flush, photoRecord, answer, pageExports, SHIFT, shiftedAs,
+  loadApp, FakeServer, closeAllApps, openFolder, click, flush, photoRecord, pageExports, SHIFT, shiftedAs,
   SHIFT_REPLIES,
 } from "./harness.mjs";
 
@@ -106,8 +106,8 @@ test("a share that stops answering part-way: the photo that landed takes its sta
 });
 
 test("a shift refused before any write (names being given from tags) changes nothing and says it failed", async (t) => {
-  const why = "Names are being given from tags; this waits until it finishes.";
-  const ctx = await opened(t, () => answer(409, { success: false, error: why }));
+  const why = SHIFT_REPLIES.refused.reply.error;
+  const ctx = await opened(t, shiftedAs("refused"));
   const before = ctx.order();
   await ctx.shift(CAMERA);
   assert.deepEqual(ctx.order(), before);

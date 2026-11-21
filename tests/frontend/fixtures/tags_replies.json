@@ -1,0 +1,57 @@
+{
+ "renamed_since": {
+  "reply": {
+   "attempted": 2,
+   "change": null,
+   "changed": 0,
+   "changed_on_disk": true,
+   "error": "p0.jpg is not the photo this page read (renamed, moved or deleted since): reload it first.",
+   "error_count": 0,
+   "errors": [],
+   "file_only": 0,
+   "skipped": [],
+   "skipped_missing": 0,
+   "stopped": null,
+   "success": false,
+   "with_rows": 0,
+   "written": {}
+  },
+  "status": 409
+ },
+ "written": {
+  "reply": {
+   "attempted": 2,
+   "change": 2,
+   "changed": 2,
+   "error_count": 0,
+   "errors": [],
+   "file_only": 0,
+   "skipped": [],
+   "skipped_missing": 0,
+   "stopped": null,
+   "success": true,
+   "with_rows": 2,
+   "written": {
+    "PHOTO_0": {
+     "mtime": 1,
+     "size": 1,
+     "tags": [
+      "Beach",
+      "Holiday/Summer",
+      "Places/Quay"
+     ]
+    },
+    "PHOTO_1": {
+     "mtime": 1,
+     "size": 1,
+     "tags": [
+      "Beach",
+      "Holiday/Summer",
+      "Places/Quay"
+     ]
+    }
+   }
+  },
+  "status": 200
+ }
+}

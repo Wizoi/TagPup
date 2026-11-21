@@ -395,7 +395,8 @@ export const SHIFT_REPLIES = JSON.parse(fs.readFileSync(path.join(HERE, "fixture
  * A Time Shift's reply as the real entry point made it (fixtures/shift_replies.json, written by
  * tests/test_a_write_through_the_one_entry_point.py): `shifted`, two photos written (200); `stopped`, a share that stopped
  * answering at the second of three, the first written (400); `stopped_first`, one that stopped answering at the first of
- * three, none written (400). Its photos, PHOTO_0, PHOTO_1, ..., are named again by the
+ * three, none written (400); `refused`, one asked while names are being given from tags (409, `success` and `error`
+ * alone: no envelope, so no `written` and no `errors`). Its photos, PHOTO_0, PHOTO_1, ..., are named again by the
  * paths this shift sent, in the order sent; `own[n]` over what it says of photo n (`taken`, as the server spells it),
  * `top` over what it says of the write (`file_only`, `with_rows`: a folder the library does not hold).
  */
@@ -404,9 +405,39 @@ export function shiftedAs(name, own = [], top = {}) {
   return (url, body) => {
     const sent = Object.keys(body.changes);
     const named = (key) => sent[Number(key.replace("PHOTO_", ""))] ?? key;
-    const written = Object.fromEntries(Object.entries(reply.written).map(([key, w]) =>
-      [named(key), { ...w, ...(own[Number(key.replace("PHOTO_", ""))] || {}) }]));
-    return answer(status, { ...reply, ...top, written, errors: reply.errors.map((e) => ({ ...e, path: named(e.path) })) });
+    const shown = {};
+    if (reply.written) {
+      shown.written = Object.fromEntries(Object.entries(reply.written).map(([key, w]) =>
+        [named(key), { ...w, ...(own[Number(key.replace("PHOTO_", ""))] || {}) }]));
+    }
+    if (reply.errors) shown.errors = reply.errors.map((e) => ({ ...e, path: named(e.path) }));
+    return answer(status, { ...reply, ...top, ...shown });
+  };
+}
+
+/** A route matcher of FakeServer for a page's tag change (web/common/photo-write.js): POST /api/photos/write, op `tags`. */
+export const TAGS = (url, body) => url.includes("/api/photos/write") && Boolean(body) && body.op === "tags";
+
+export const TAGS_REPLIES = JSON.parse(fs.readFileSync(path.join(HERE, "fixtures", "tags_replies.json"), "utf8"));
+
+/**
+ * A tag change's reply as the real entry point made it (fixtures/tags_replies.json, written by
+ * tests/test_a_write_through_the_one_entry_point.py): `written`, every photo it named written (200: each photo's
+ * `tags` as the file holds them, its stamp); `renamed_since`, refused 409 `changed_on_disk`, the first photo it named
+ * no longer at its path, nothing written, the envelope beside the error. The reply is for the photos this request named
+ * (the real one's two photos, PHOTO_0 and PHOTO_1, taken for each path of `body.changes`), the counts its own;
+ * `own(path, n)` the fields over what it says of the photo at `path` (`tags`, `mtime`, `size`).
+ */
+export function taggedAs(name, own = () => ({})) {
+  const { status, reply } = TAGS_REPLIES[name];
+  return (url, body) => {
+    const sent = Object.keys(body.changes);
+    if (!reply.written || !Object.keys(reply.written).length) {
+      const said = reply.error.replace(/^.*(?= is not the photo)/, sent[0].split(/[\\/]/).pop());
+      return answer(status, { ...reply, attempted: sent.length, error: said });
+    }
+    const written = Object.fromEntries(sent.map((file, n) => [file, { ...reply.written.PHOTO_0, ...own(file, n) }]));
+    return answer(status, { ...reply, attempted: sent.length, changed: sent.length, with_rows: sent.length, written });
   };
 }
 
