@@ -114,6 +114,21 @@ test("a shift refused before any write (names being given from tags) changes not
   assert.deepEqual(ctx.alerts, [`Error shifting time: ${why}`]);
 });
 
+test("an envelope that wrote nothing and says why is the failure it says, not a count of photos applied", async (t) => {
+  // The share stopped before the first photo's write: the envelope (400) names no photo written. As a refusal before any
+  // write, it is "Time shift failed" and its reason in the alert (#3302).
+  const why = "ExifTool stopped answering after 0 of 2 photos";
+  const ctx = await opened(t, (url, body) => answer(400, {
+    success: false, error: why, changed: 0, attempted: 2, skipped_missing: 0, skipped: [], error_count: 2,
+    errors: Object.keys(body.changes).map((path) => ({ path, id: null, why })), stopped: { after: 0, of: 2 }, change: null,
+    file_only: 0, with_rows: 0, written: {} }));
+  const before = ctx.order();
+  await ctx.shift(CAMERA);
+  assert.deepEqual(ctx.order(), before);
+  assert.equal(ctx.said(), "Time shift failed");
+  assert.deepEqual(ctx.alerts, [`Error shifting time: ${why}`]);
+});
+
 test("a folder left before the shift's reply came is not touched by it, and its kept scan, opened again, shows the new dates", async (t) => {
   let reply;
   const ctx = await opened(t, (url, body) => new Promise((resolve) => {

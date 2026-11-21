@@ -257,11 +257,15 @@ export function applyTimeShift() {
  * put back in Date Taken order (inTakenOrder). A share that stopped part-way answers 400 with `written` naming only what
  * landed: those are taken all the same, and the status says how many were not. A folder left before the reply (another
  * folder, a library view) is not touched: its records are not these; the scan this browser kept of the shifted folder takes
- * them instead, or opened again within the half hour it showed the old dates and stamps (#3301). A reply that is no envelope (a refusal before any
- * write: a library being renamed, over the cap, cancelled while waiting its turn) is the failure it says.
+ * them instead, or opened again within the half hour it showed the old dates and stamps (#3301). A reply that is no
+ * envelope (a refusal before any write: a library being renamed, over the cap, cancelled while waiting its turn), or an
+ * envelope that wrote nothing and says why (a share stopped before the first photo landed), is the failure it says (#3302).
  */
 function tookShift(folder, data) {
     if (!data || typeof data.attempted !== 'number') throw new Error((data && data.error) || 'Time shift failed');
+    if (data.success === false && data.error && data.changed === 0 && !Object.keys(data.written || {}).length) {
+        throw new Error(data.error);
+    }
     const written = new Map(Object.entries(data.written || {}).map(([path, w]) => [pathKey(path), w]));
     if (!state.library && samePath(state.scannedFolder, folder)) {
         state.folderPhotos = shiftTaken(state.folderPhotos, written);
