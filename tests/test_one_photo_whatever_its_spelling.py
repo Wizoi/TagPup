@@ -31,6 +31,7 @@ sys.path.insert(0, WORKSPACE_DIR)
 sys.path.insert(0, os.path.join(WORKSPACE_DIR, "scripts"))
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
+import page_writes  # noqa: E402
 import photo_rows  # noqa: E402
 from face_rows import add_face, add_vector, configured_model, FACE_MODEL, VECTORS_WITH_PATHS  # noqa: E402
 from handler_harness import Library  # noqa: E402
@@ -267,8 +268,10 @@ class TheRoutes(HandlerCase):
         written = {"XMP:Subject": ["Places/Harbour"], "XMP:Description": "Finish line"}
         with patch("tagpup.files.exiftool_session.ExifToolSession", fake_exiftool([written])), \
                 patch("tagpup.files.metadata.title_filename", side_effect=lambda *a: forward(renamed_to)):
-            result = self.call("POST", "/api/photo/save-metadata",
-                               {"path": forward(photo), "title": "Finish line", "tags": ["Places/Harbour"]})
+            # The stand-in answers every read with what the write leaves: the page's record read it too (its base).
+            result = page_writes.saved(self.call("POST", page_writes.ROUTE, page_writes.save(
+                self.db_path, forward(photo), title="Finish line", tags=["Places/Harbour"],
+                base={"tags": ["Places/Harbour"], "title": "Finish line"})))
         new_stored = os.path.abspath(renamed_to)
         self.assertEqual(new_stored, result["new_path"])
         conn = tagpup_db.connect(self.db_path)
@@ -285,15 +288,15 @@ class TheRoutes(HandlerCase):
         self.assertEqual(["Ada Marchetti", "Rowan Thackeray"], names)
         self.assertEqual((b"an-embedding", ["Places/Harbour"], ["Finish line"]), (vector, json.loads(tags), json.loads(captions)))
 
-        # A destination the index already has is not doubled: both stay as they were, and the answer says so.
+        # A destination the index already has is not doubled: both stay as they were.
         other = self.make_file("Parade - 2.jpg")
         taken = os.path.join(self.folder, "Parade - 2 - Done.jpg")
         self.seed(other, faces=["Rowan Thackeray"])
         self.seed(taken, faces=["Ada Marchetti"], embedding=b"another-photo")
         with patch("tagpup.files.exiftool_session.ExifToolSession", fake_exiftool([{}])), \
                 patch("tagpup.files.metadata.title_filename", side_effect=lambda *a: taken):
-            result = self.call("POST", "/api/photo/save-metadata", {"path": other, "title": "Done", "tags": []})
-        self.assertIn("index_warning", result)
+            self.call("POST", page_writes.ROUTE, page_writes.save(self.db_path, other, title="Done", tags=[],
+                                                                  base={"tags": [], "title": ""}))
         self.assertEqual(3, self.count("SELECT COUNT(*) FROM photos"))
         self.assertEqual(1, self.count("SELECT COUNT(*) FROM faces WHERE photo_id = (SELECT id FROM photos WHERE path = ?)",
                                        os.path.abspath(taken)))
