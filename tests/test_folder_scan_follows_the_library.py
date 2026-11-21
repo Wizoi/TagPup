@@ -137,7 +137,7 @@ class AFolderOfPhotosAndAClip(unittest.TestCase):
 
         shifted = {}
 
-        def shift(library, targets, minutes, exiftool_path):
+        def shift(library, targets, minutes, exiftool_path, group=None):
             shifted["targets"] = sorted(os.path.basename(path) for path in targets)
             raise RuntimeError("stopped here: the targets are what is asked")
         with mock.patch.object(tagpup_routes.photo_actions, "shift_date_taken", shift):
