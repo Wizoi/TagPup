@@ -14,9 +14,9 @@
  *   a title gave it.
  * - Two chips of one leaf say their roots.
  * - Each write waits for the one before it: a tag added while the Save is out is sent after it.
- * - The title and Date Taken go through save-metadata with the stamp and base of the file as read; a title that renames
- *   the file renames the card the page holds. A file changed on the PC is never written over: the sheet says so, reads
- *   it again and keeps the text typed.
+ * - The title and Date Taken go through /api/photos/write too (op `set`), with the stamp and base of the file as read; a
+ *   title that renames the file renames the card the page holds. A file changed on the PC is never written over: the
+ *   sheet says so, reads it again and keeps the text typed.
  * - A dropped connection or a server that cannot answer says a sentence, the sheet open, the text kept; a refusal while
  *   the server is updated is waited out (web/common/api.js).
  * - Close with a title or date typed asks; Back or the Libraries button keeps it, and the photo's Edit shows it again.
@@ -28,7 +28,8 @@
  */
 import { test, describe, afterEach } from "node:test";
 import assert from "node:assert/strict";
-import { loadApp, FakeServer, answer, flush, click, closeAllApps, pageExports, PEOPLE_ROUTE, PHOTO_WRITES, CLIP_WRITES, SAVE, lastSave, saveCalls } from "./harness.mjs";
+import { loadApp, FakeServer, answer, flush, click, closeAllApps, pageExports, PEOPLE_ROUTE, PHOTO_WRITES, CLIP_WRITES, SAVE, lastSave, saveCalls,
+  saved } from "./harness.mjs";
 import { PHONE_PAGE, el, shown, pageState, settle, phoneCard, phoneLayout } from "./phone-page.mjs";
 
 const KEYWORDS = { keywords: [{ tag: "Events", name: "Events", parent: null, count: 20 }], untagged: 0 };
@@ -45,7 +46,8 @@ const vocabulary = (ctx) => pageExports(ctx.window, "web/common/vocabulary.js");
 
 /**
  * The page on a library of 20 photos, the first a file `file` that the fake server writes as the real one does: a tag
- * change through photos/write, the title and date through save-metadata, each a new stamp; /api/library/photo reads it.
+ * change through photos/write (op `tags`), the title and date through it too (op `set`), each a new stamp;
+ * /api/library/photo reads it.
  * A Save naming another stamp or base than the file's is refused (409, changed_on_disk), as the server refuses it; so is
  * a tag change naming photo 1 at a path it is no longer at (photo_writes._moved), nothing written.
  */
@@ -53,7 +55,7 @@ async function phone(t, file = {}) {
   const server = new FakeServer();
   const held = Object.assign({ path: PATH, tags: [WREN, COAST], title: "Finish line", taken: "2024:06:01 10:00:00",
     mtime: 1718000000.5, size: 204800, writes: PHOTO_WRITES, media: "photo" }, file);
-  const record = () => ({ ...held, filename: held.path.split("\\").pop(), tags: held.tags.slice(), people: [], raw_metadata: {} });
+  const record = () => ({ id: 1, ...held, filename: held.path.split("\\").pop(), tags: held.tags.slice(), people: [], raw_metadata: {} });
   server
     .on("/api/databases", { databases: ["alpha", "beta"] })
     .on("/api/library/navigator?section=keywords", KEYWORDS)
@@ -73,15 +75,15 @@ async function phone(t, file = {}) {
       held.mtime += 1;
       return { success: true, written: { [path]: { tags: held.tags.slice(), mtime: held.mtime, size: held.size } } };
     })
-    .on(SAVE, () => {
+    .on(SAVE, (url, sent) => {
       const body = lastSave(server);
       if (body.stamp.mtime !== held.mtime || JSON.stringify(body.base.tags) !== JSON.stringify(held.tags)) {
-        return { success: false, changed_on_disk: true, error: "The file changed on disk." };
+        return answer(409, { success: false, changed_on_disk: true, error: "The file changed on disk.", written: {} });
       }
       held.title = body.title;
       if (body.date_taken) held.taken = body.date_taken.replace(/-/g, ":").replace("T", " ");
       held.mtime += 1;
-      return { success: true, mtime: held.mtime, size: held.size, taken: held.taken, base: { tags: held.tags.slice(), title: held.title } };
+      return saved({ mtime: held.mtime, size: held.size, taken: held.taken, base: { tags: held.tags.slice(), title: held.title } })(url, sent);
     });
   const ctx = await loadApp("phone", { t, server, url: PHONE_PAGE });
   phoneLayout(ctx);
@@ -89,7 +91,7 @@ async function phone(t, file = {}) {
   const sent = [];
   const fetch = ctx.window.fetch;
   ctx.window.fetch = (input, init) => {
-    sent.push({ url: String(input), keepalive: Boolean(init && init.keepalive) });
+    sent.push({ url: String(input), keepalive: Boolean(init && init.keepalive), body: init && init.body ? JSON.parse(init.body) : undefined });
     return fetch(input, init);
   };
   // The Undo's five seconds, shortened: every other timer as the page set it.
@@ -122,7 +124,8 @@ const toasts = (ctx) => [...el(ctx, "edit-toasts").querySelectorAll(".edit-toast
 const said = (ctx) => (el(ctx, "edit-problem").classList.contains("hidden") ? "" : el(ctx, "edit-problem").textContent);
 const sheetOpen = (ctx) => !el(ctx, "edit-sheet").classList.contains("hidden");
 const calls = (ctx, route) => ctx.server.calls.filter((c) => c.url.includes(route));
-const tagWrites = (ctx) => calls(ctx, "/api/photos/write").filter((c) => !SAVE(c.url, c.body)).map((c) => c.body.changes);
+const isTagWrite = (c) => c.url.includes("/api/photos/write") && !SAVE(c.url, c.body);
+const tagWrites = (ctx) => ctx.server.calls.filter(isTagWrite).map((c) => c.body.changes);
 
 function type(ctx, id, value) {
   el(ctx, id).value = value;
@@ -137,12 +140,12 @@ async function pick(ctx, text, tag) {
   await settle(ctx);
 }
 
-/** A route answered later: `release(body)` sends the reply. */
+/** A route answered later: `release(reply)` sends the reply, a route's function of (url, body) (saved) or its body. */
 function holdNext(ctx, route) {
   const hold = {};
-  ctx.server.first(route, () => {
+  ctx.server.first(route, (url, body) => {
     ctx.server.routes.shift();
-    return new Promise((resolve) => { hold.release = resolve; });
+    return new Promise((resolve) => { hold.release = (reply) => resolve(typeof reply === "function" ? reply(url, body) : reply); });
   });
   return hold;
 }
@@ -249,10 +252,10 @@ describe("editing a photo on the phone", () => {
     await pick(ctx, "cove", COVE);
     assert.equal(tagWrites(ctx).length, 0, "not sent while the Save is out");
 
-    save.release({ success: true, mtime: 1718000009, size: 204800, base: { tags: [WREN, COAST], title: "Wren's Last Lap" } });
+    save.release(saved({ mtime: 1718000009, size: 204800, base: { tags: [WREN, COAST], title: "Wren's Last Lap" } }));
     await settle(ctx);
     assert.deepEqual(tagWrites(ctx), [{ [PATH]: { id: 1, add: [COVE] } }]);
-    assert.ok(ctx.server.calls.findIndex((c) => c.url.includes("photos/write")) > ctx.server.calls.findIndex((c) => c.url.includes("save-metadata")));
+    assert.ok(ctx.server.calls.findIndex(isTagWrite) > ctx.server.calls.findIndex((c) => SAVE(c.url, c.body)));
     assert.deepEqual(chips(ctx, "edit-keywords"), [leaf(ctx, COAST), leaf(ctx, COVE)]);
   });
 
@@ -260,8 +263,8 @@ describe("editing a photo on the phone", () => {
     const ctx = await phone(t);
     await openSheet(ctx);
     const renamed = "D:\\Photos\\Wren's Meet\\Wren's Last Lap.jpg";
-    ctx.server.first(SAVE, { success: true, new_path: renamed, mtime: 1718000077, size: 204900,
-      taken: "2024:06:02 09:30:00", base: { tags: [WREN, COAST], title: "Wren's Last Lap" } });
+    ctx.server.first(SAVE, saved({ new_path: renamed, mtime: 1718000077, size: 204900,
+      taken: "2024:06:02 09:30:00", base: { tags: [WREN, COAST], title: "Wren's Last Lap" } }));
     assert.equal(el(ctx, "edit-title").value, "Finish line");
     assert.equal(el(ctx, "edit-date").value, "2024-06-01");
     type(ctx, "edit-title", "Wren's Last Lap");
@@ -270,7 +273,7 @@ describe("editing a photo on the phone", () => {
     click(ctx.window, el(ctx, "edit-save"));
     await settle(ctx);
 
-    assert.deepEqual(saveCalls(ctx.server).map((c) => c.body), [{ path: PATH, title: "Wren's Last Lap",
+    assert.deepEqual(saveCalls(ctx.server).map((c) => c.body), [{ path: PATH, id: 1, title: "Wren's Last Lap",
       tags: [WREN, COAST], stamp: { mtime: 1718000000.5, size: 204800 }, base: { tags: [WREN, COAST], title: "Finish line" },
       date_taken: "2024-06-02T09:30:00" }]);
     assert.equal(said(ctx), "Saved.");
@@ -288,8 +291,8 @@ describe("editing a photo on the phone", () => {
     ctx.server.first(SAVE, () => {
       ctx.server.routes.shift();
       Object.assign(ctx.held, { title: "Set on the PC", mtime: 1718000300 });
-      return { success: false, changed_on_disk: true, error: "The file changed on disk." };
-    }, { status: 409 });
+      return answer(409, { success: false, changed_on_disk: true, error: "The file changed on disk.", written: {} });
+    });
     type(ctx, "edit-title", "Wren's Last Lap");
     click(ctx.window, el(ctx, "edit-save"));
     await settle(ctx);
@@ -609,15 +612,15 @@ describe("editing a photo on the phone", () => {
       ctx.window.dispatchEvent(new ctx.window.Event("pagehide"));
       await settle(ctx);
       assert.equal(tagWrites(ctx).length, 0, "not beside the Save, which it would make look changed on the PC");
-      assert.ok(ctx.sent.find((s) => s.url.includes("/api/photo/save-metadata")).keepalive, "the Save outlives the page");
+      assert.ok(ctx.sent.find((s) => SAVE(s.url, s.body)).keepalive, "the Save outlives the page");
 
       const renamed = "D:\\Photos\\Wren's Meet\\Wren's Last Lap.jpg";
       ctx.held.path = renamed;                         // the Save's title renamed the file, as the server does
-      save.release({ success: true, new_path: renamed, mtime: 1718000009, size: 204800,
-        base: { tags: [WREN, COAST], title: "Wren's Last Lap" } });
+      save.release(saved({ new_path: renamed, mtime: 1718000009, size: 204800,
+        base: { tags: [WREN, COAST], title: "Wren's Last Lap" } }));
       await settle(ctx);
       assert.deepEqual(tagWrites(ctx), [{ [renamed]: { id: 1, remove: [COAST] } }], "after the Save, by the file's new name");
-      assert.ok(ctx.sent.find((s) => s.url.includes("/api/photos/write")).keepalive);
+      assert.ok(ctx.sent.find(isTagWrite).keepalive);
     });
   }
 
