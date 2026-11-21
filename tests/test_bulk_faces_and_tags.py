@@ -548,7 +548,7 @@ class TheKeptPool(Bulk):
         taken_off, other = self.face(second), self.face(second, box=(70, 10, 110, 60))
         self.assertEqual(200, self.tuner_post("face/match", {"face_id": taken_off, "person_name": WREN}).status_code)
         reply = self.client.post("/library/api/photos/write", json=page_writes.save(self.library, **{"path": second, "title": "", "tags": [PEOPLE + ODA]}))
-        self.assertEqual(200, reply.status_code, reply.get_json())
+        self.assertEqual((200, True), (reply.status_code, reply.get_json()["success"]), reply.get_json())
         self.assertEqual([(None, None), (None, "manual"), (None, None)], [self.row(f)[:2] for f in (alone, taken_off, other)])
         self.open_new_person(alone)
         body = self.tuner_post("faces/match-bulk", {"face_ids": [alone, taken_off], "person_name": WREN}).get_json()
@@ -600,7 +600,7 @@ class TheKeptPool(Bulk):
                 mock.patch.object(store_faces, "pooled_of", wraps=store_faces.pooled_of) as pooled:
             reply = self.client.post("/library/api/photos/write",
                                      json={"op": "tags", "changes": {photo: {"add": [PEOPLE + WREN]} for photo, _face in made}})
-        self.assertEqual(200, reply.status_code, reply.get_json())
+        self.assertEqual((200, True), (reply.status_code, reply.get_json()["success"]), reply.get_json())
         self.assertEqual(3, len(reply.get_json()["written"]), reply.get_json())
         self.assertEqual((0, 0), (fingerprint.call_count, pooled.call_count))
 

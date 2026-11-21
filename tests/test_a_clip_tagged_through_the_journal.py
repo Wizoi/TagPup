@@ -195,11 +195,11 @@ class AClipInTheLibrary(ALibraryHoldingAClip):
         clip, = self.index(self.clip_path)
         self.assertEqual([], self.tags_of(clip), "the index reads no keyword of it")
         reply = self.post("photos/write", page_writes.save(self.vl.library, **{"path": self.clip_path, "tags": ["Trips/Pier"]}))
-        self.assertEqual(200, reply.status_code, reply.get_json())
+        self.assertEqual((200, True), (reply.status_code, reply.get_json()["success"]), reply.get_json())
         self.assertEqual((["Trips/Pier"], ["Trips/Pier"]), self.read_now(self.clip_path), "its XMP holds the tag saved alone")
         self.assertEqual(["Trips/Pier"], self.tags_of(clip))
         reply = self.post("photos/write", {"op": "tags", "changes": {self.clip_path: {"remove": ["Trips/Pier"]}}})
-        self.assertEqual(200, reply.status_code, reply.get_json())
+        self.assertEqual((200, True), (reply.status_code, reply.get_json()["success"]), reply.get_json())
         self.assertEqual(([], []), self.read_now(self.clip_path), "its last tag comes off, and nothing is read back")
         self.assertEqual([], self.tags_of(clip))
         self.assertEqual(["done", "done"], self.change_states(clip))
@@ -214,7 +214,7 @@ class AClipInTheLibrary(ALibraryHoldingAClip):
             handle.write(patched.xmp_box(described))
         clip, = self.index(self.clip_path)
         reply = self.post("photos/write", page_writes.save(self.vl.library, **{"path": self.clip_path, "tags": ["Trips/Pier"], "title": "Jetty at dusk"}))
-        self.assertEqual(200, reply.status_code, reply.get_json())
+        self.assertEqual((200, True), (reply.status_code, reply.get_json()["success"]), reply.get_json())
         self.assertEqual((["Trips/Pier"], ["Trips/Pier"]), self.read_now(self.clip_path))
         record = metadata.MetadataExtractor(EXIFTOOL).batch_read([self.clip_path])[0]["raw_metadata"]
         self.assertEqual(("Jetty at dusk", "Jetty at dusk"), (record.get("XMP:Title"), record.get("XMP:Description")),
@@ -246,7 +246,7 @@ class AClipInTheLibrary(ALibraryHoldingAClip):
     def test_a_tag_save_from_the_photo_panel_writes_the_clips_xmp_and_journals_it_done(self):
         clip, = self.index(self.clip_path)
         reply = self.post("photos/write", page_writes.save(self.vl.library, **{"path": self.clip_path, "tags": ["Trips/Coast"]}))
-        self.assertEqual(200, reply.status_code, reply.get_json())
+        self.assertEqual((200, True), (reply.status_code, reply.get_json()["success"]), reply.get_json())
         self.assertEqual((["Trips/Coast"], ["Trips/Coast"]), self.read_now(self.clip_path))
         self.assertEqual(["done"], self.change_states(clip), "one journaled file, done")
         self.assertEqual(["Trips/Coast"], self.tags_of(clip))
@@ -255,7 +255,7 @@ class AClipInTheLibrary(ALibraryHoldingAClip):
         clip, = self.index(self.clip_path)
         size = os.path.getsize(self.clip_path)
         reply = self.post("photos/write", {"op": "tags", "changes": {self.clip_path: {"add": ["Trips/Coast"]}}})
-        self.assertEqual(200, reply.status_code, reply.get_json())
+        self.assertEqual((200, True), (reply.status_code, reply.get_json()["success"]), reply.get_json())
         self.assertNotEqual(size, os.path.getsize(self.clip_path), "the patch appended an XMP box")
         self.assertEqual([(os.path.getsize(self.clip_path),)], self.vl.rows("SELECT size FROM photos WHERE id = ?", clip),
                          "the row describes the file as written, so the next scan does not read it again")
@@ -264,7 +264,7 @@ class AClipInTheLibrary(ALibraryHoldingAClip):
         self.assertEqual(scanned, recorded, "and says what a scan reads of it")
         written = self.read_bytes(self.clip_path)
         reply = self.post("photos/write", page_writes.save(self.vl.library, **{"path": self.clip_path, "tags": ["Trips/Coast"]}))
-        self.assertEqual(200, reply.status_code, reply.get_json())
+        self.assertEqual((200, True), (reply.status_code, reply.get_json()["success"]), reply.get_json())
         self.assertEqual(["done"], self.change_states(clip), "the same save again journals nothing")
         self.assertEqual(written, self.read_bytes(self.clip_path), "and writes nothing")
 

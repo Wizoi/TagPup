@@ -720,7 +720,7 @@ class AFolderTheLibraryDoesNotHold(unittest.TestCase):
                             ("/photos/write", lambda: page_writes.tags({self.photo: {"add": ["Trips/Harbour"]}})),
                             ("/photo/rotate", lambda: {"path": self.photo, "direction": "left"})):
             reply = self.post(route, body())
-            self.assertEqual(200, reply.status_code, (route, reply.data))
+            self.assertEqual((200, True), (reply.status_code, reply.get_json()["success"]), (route, reply.data))
             self.assertEqual((1, 0), (reply.get_json()["file_only"], reply.get_json()["with_rows"]), route)
             self.assertNotEqual(before, stamp(self.photo), route)
             self.assertEqual([self.lighthouse], self.not_held(), "%s made a row" % route)

@@ -31,7 +31,7 @@ class AClipTagUndone(tagged.ALibraryHoldingAClip):
 
     def tagged(self, photo_id, tag):
         reply = self.post("photos/write", {"op": "tags", "changes": {self.clip_path: {"add": [tag]}}})
-        self.assertEqual(200, reply.status_code, reply.get_json())
+        self.assertEqual((200, True), (reply.status_code, reply.get_json()["success"]), reply.get_json())
         (change,), = self.vl.rows("SELECT DISTINCT change_id FROM change_files WHERE photo_id = ?", photo_id)
         return change
 

@@ -479,7 +479,7 @@ class AClipDatedThroughTheJournal(tagged.ALibraryHoldingAClip):
 
         reply = self.post("photos/write", page_writes.save(self.vl.library, **{"path": self.clip_path, "tags": [],
                                                   "date_taken": SAVED_AS_THE_PAGE_SENDS}))
-        self.assertEqual(200, reply.status_code, reply.get_json())
+        self.assertEqual((200, True), (reply.status_code, reply.get_json()["success"]), reply.get_json())
         self.assertEqual(SAVED, self.read(self.clip_path, XMP_DATES)["XMP:DateTimeOriginal"])
         self.assertEqual(SAVED, self.taken(clip))
 

@@ -237,7 +237,7 @@ class ATagAdded(Fresh):
             touches = [stack.enter_context(Touches(path)) for path in photos]
             reply = self.client.post("/library/api/photos/write", json={"op": "tags", "changes": {photo: {"add": ["Trips/Lakes"]}
                                                                                         for photo in photos}})
-        self.assertEqual(200, reply.status_code, reply.data)
+        self.assertEqual((200, True), (reply.status_code, reply.get_json()["success"]), reply.data)
         self.assertEqual([5, 5], [each.counted()["stats"] for each in touches])
         stamps = reply.get_json()["written"]
         for path in photos:

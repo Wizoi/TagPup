@@ -94,7 +94,7 @@ class AClipBesideAPhoto(unittest.TestCase):
 
     def test_a_tag_save_from_the_photo_panel_writes_the_clips_tags(self):
         reply = self.post("photos/write", page_writes.save(self.vl.library, **{"path": self.clip_path, "tags": ["Trips/Coast"]}))
-        self.assertEqual(200, reply.status_code, reply.get_json())
+        self.assertEqual((200, True), (reply.status_code, reply.get_json()["success"]), reply.get_json())
         self.assertEqual(["Trips/Coast"], self.subjects(self.clip_path))
 
     def test_a_tag_save_of_a_clip_titled_in_quicktime_alone_is_written_not_refused_as_changed_on_disk(self):
@@ -115,7 +115,7 @@ class AClipBesideAPhoto(unittest.TestCase):
             "path": record["path"], "title": record["title"], "tags": record["tags"] + ["Trips/Coast"],
             "stamp": {"mtime": record["mtime"], "size": record["size"]},
             "base": {"tags": record["tags"], "title": record["title"]}}))
-        self.assertEqual(200, saved.status_code, saved.data)
+        self.assertEqual((200, True), (saved.status_code, saved.get_json()["success"]), saved.data)
         self.assertNotEqual(before, digest(titled), "the clip's XMP is patched")
         self.assertEqual(["Trips/Coast"], self.subjects(titled))
 

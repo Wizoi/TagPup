@@ -188,7 +188,7 @@ class TwoSamsOnAPhoto(InStep):
         other Sam on it. It reads the id the journaled change recorded."""
         self.match(self.first, person_id=self.sam_t)
         reply = self.client.post("/library/api/photos/write", json=page_writes.save(self.library, **{"path": self.photo_path, "title": "", "tags": []}))
-        self.assertEqual(200, reply.status_code, reply.get_json())
+        self.assertEqual((200, True), (reply.status_code, reply.get_json()["success"]), reply.get_json())
         self.assertEqual((None, "manual"), self.row(self.first)[:2])
         conn = db.connect(db.readonly_uri(self.path), uri=True)
         try:

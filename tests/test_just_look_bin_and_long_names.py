@@ -60,7 +60,7 @@ class TheCheckIsAtParityWithTheHeldPath(jl.Base):
     def test_every_one_is_written(self):
         for name, path in self.variants().items():
             reply = self.post("/photos/write", page_writes.save(self.library, **{"path": path, "title": "x", "tags": ["A/B"]}))
-            self.assertEqual(200, reply.status_code, (name, reply.data))
+            self.assertEqual((200, True), (reply.status_code, reply.get_json()["success"]), (name, reply.data))
             self.assertEqual(["A/B"], jl.tags_in(path), name)
         self.assert_library_unchanged()
 

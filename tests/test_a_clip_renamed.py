@@ -100,7 +100,7 @@ class AClipRenamed(tagged.ALibraryHoldingAClip):
         self.assertTrue(os.path.basename(numbered).startswith("Harbour - 1"), numbered)
         self.assertEqual("jetty.mp4", self.kept_name(numbered))
         saved = self.post("photos/write", page_writes.save(self.vl.library, **{"path": numbered, "tags": [], "title": "Jetty at dusk"}))
-        self.assertEqual(200, saved.status_code, saved.get_json())
+        self.assertEqual((200, True), (saved.status_code, saved.get_json()["success"]), saved.get_json())
         titled = page_writes.saved(saved.get_json())["new_path"]
         self.assertTrue(os.path.basename(titled).startswith("Harbour - 1"), titled)
         self.assertIn("Jetty at dusk", os.path.basename(titled), "renamed after the title saved")

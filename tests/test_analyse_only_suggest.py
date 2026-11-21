@@ -278,7 +278,7 @@ class ARunInAFolderNotHeldAddsNothing(Base):
         offer = self.suggested(self.cup)["cup_01.jpg"]
         tags = [t["tag"] for t in offer["tags"]] + [p["name"] for p in offer["people"]]
         reply = self.post("/photos/write", page_writes.save(self.library, **{"path": self.loose[0], "title": "", "tags": tags}))
-        self.assertEqual(200, reply.status_code, reply.data)
+        self.assertEqual((200, True), (reply.status_code, reply.get_json()["success"]), reply.data)
         self.assertEqual(1, reply.get_json()["file_only"])
         self.assertEqual(tags, tags_in(self.loose[0]))
         self.assert_library_unchanged()
