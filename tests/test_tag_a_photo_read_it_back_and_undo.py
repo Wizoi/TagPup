@@ -44,6 +44,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import damaged_photos  # noqa: E402
 import face_rows  # noqa: E402
 import page_fixtures  # noqa: E402
+import page_writes  # noqa: E402
 import photo_rows  # noqa: E402
 import test_stale_record_precondition as S  # noqa: E402
 from test_a_file_holds_what_exiftool_kept import ReadFilesCase, flip_a_picture_byte, rewritten  # noqa: E402
@@ -417,7 +418,7 @@ class ASaveFromThePage(S.Fresh):
         refused = names.RenameFailed("The file is open in another program (held by Viewer)", [])
         with mock.patch("tagpup.files.names.rename_all", side_effect=refused):
             reply = self.save(record, title="Start line")
-        body = reply.get_json()
+        body = page_writes.saved(reply.get_json())
         self.assertEqual((200, True, path), (reply.status_code, body["success"], body["new_path"]), reply.data)
         self.assertIn("held by Viewer", body["rename_failed"])
         self.assertEqual("Start line", S.title_in(path))
@@ -426,12 +427,12 @@ class ASaveFromThePage(S.Fresh):
         path, record = self.smart_renamed()
         taken = os.path.join(self.folder, "Regatta - 1 - Start line.jpg")
         S.damaged_photos.whole_jpeg(taken, seed=77)       # the name the caption wants is taken: a free one is chosen
-        renamed = self.save(record, title="Start line").get_json()
-        self.assertNotIn("rename_failed", renamed)
+        renamed = page_writes.saved(self.save(record, title="Start line").get_json())
+        self.assertIsNone(renamed["rename_failed"])
         self.assertTrue(renamed["new_path"].endswith("Regatta - 1 - Start line_1.jpg"), renamed["new_path"])
         plain, plain_id = self.make("IMG_0002.jpg", 3, ["Trips/Coast"])
-        reply = self.save(self.record(plain_id), title="A caption").get_json()
-        self.assertNotIn("rename_failed", reply)
+        reply = page_writes.saved(self.save(self.record(plain_id), title="A caption").get_json())
+        self.assertIsNone(reply["rename_failed"])
         self.assertEqual(plain, reply["new_path"])
 
     def flipping_once(self, path):
