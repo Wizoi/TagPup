@@ -33,7 +33,7 @@ async function loadSelected(t) {
     .on("/api/folder/index-status", { status: "completed", percent: 100, message: "Ready" })
     .on("/api/folder/scan", () => PHOTOS.map((p) => ({ ...p, tags: [], people: [] })))
     .on("/api/photo-faces", { faces: [], total: 0, unmatched: 0 })
-    .on("/api/photos/bulk-tags", { success: true, written: {} })
+    .on("/api/photos/write", { success: true, written: {} })
     .on("/api/folder/suggest-status", {
       status: "completed",
       suggestions: Object.fromEntries(PHOTOS.map((p) => [p.path, {
@@ -57,7 +57,7 @@ const said = (ctx) => box(ctx).querySelector(".write-queue-status").textContent;
 const bulkWrites = (ctx) => ctx.bulkTagsCalls;
 
 /**
- * Make `bulk-tags` answer, in order: 503 while the server drains, nothing while it
+ * Make `photos/write` answer, in order: 503 while the server drains, nothing while it
  * restarts, then a real reply -- exactly what fetchThroughAnUpdate retries through
  * (server-update.test.mjs) -- while every other route still answers through the page's
  * FakeServer. `ctx.bulkTagsCalls` counts every attempt, scripted or not.
@@ -80,7 +80,7 @@ function throughAnUpdate(ctx) {
   const serverFetch = ctx.window.fetch;
   ctx.window.fetch = (input, init) => {
     const url = typeof input === "string" ? input : String(input && input.url);
-    if (url.includes("bulk-tags")) {
+    if (url.includes("photos/write")) {
       ctx.bulkTagsCalls.push(url);
       if (scripted.length) return Promise.resolve(scripted.shift()());
     }

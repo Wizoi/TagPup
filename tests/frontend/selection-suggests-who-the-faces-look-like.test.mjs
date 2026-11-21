@@ -28,7 +28,7 @@ function build(photos, faces, suggest = { status: "idle" }) {
     .on("/api/databases", { databases: ["photo_index"], selected: "photo_index" })
     .on("/api/folder/index-status", { status: "completed", percent: 100, message: "Ready" })
     .on("/api/folder/scan", () => structuredClone(photos))   // the page's records are its own: a write changes them, not these
-    .on("/api/photos/bulk-tags", { success: true })
+    .on("/api/photos/write", { success: true })
     .on("/api/folder/suggest-status", suggest);
   server.first(ROUTE, () => (typeof faces === "function" ? faces(server.lastBody(ROUTE)) : { suggestions: faces }));
   return server;
@@ -78,7 +78,7 @@ describe("a shoot just indexed: the selection offers who its faces look like", (
     click(ctx.window, [...ctx.document.querySelectorAll("#selection-suggested-people-list .suggestion-chip")]
       .find((chip) => chip.textContent.startsWith("Kira Bao")));
     await flush(ctx.window, 6);
-    const body = ctx.server.lastBody("/api/photos/bulk-tags");
+    const body = ctx.server.lastBody("/api/photos/write");
     assert.deepEqual(Object.keys(body.changes).sort(), [photos[0].path, photos[1].path].sort());
     for (const change of Object.values(body.changes)) assert.deepEqual(change, { add: ["People/Kira Bao"], remove: [] });
   });

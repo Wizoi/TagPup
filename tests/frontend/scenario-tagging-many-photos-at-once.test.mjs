@@ -15,7 +15,7 @@
  * folder was left reaches the records this browser kept of that folder, even while a view shows one of its photos, and a
  * page left with a write out forgets them; photos missing on disk are said once, when the click's change is done.
  *
- * The server's bulk-tags replies are held here until the test answers them, oldest first.
+ * The server's photos/write replies are held here until the test answers them, oldest first.
  */
 import { test, describe, afterEach } from "node:test";
 import assert from "node:assert/strict";
@@ -47,7 +47,7 @@ function heldPage(ctx, held) {
 async function viewableFolder(t, options = {}) {
   const held = [];
   const ctx = await loadViewPage(t, options);
-  ctx.server.first("/api/folder/scan", scanOf(50, [])).first("/api/photos/bulk-tags", () => new Promise((resolve) => held.push(resolve)));
+  ctx.server.first("/api/folder/scan", scanOf(50, [])).first("/api/photos/write", () => new Promise((resolve) => held.push(resolve)));
   await openFolder(ctx, FOLDER);
   await ctx.settle(60);
   ctx.document.getElementById("btn-select-all-thumbnails").click();
@@ -55,7 +55,7 @@ async function viewableFolder(t, options = {}) {
   return heldPage(ctx, held);
 }
 
-/** A folder of `n` photos holding `tags`, all selected; its bulk-tags replies wait for `answer`. */
+/** A folder of `n` photos holding `tags`, all selected; its photos/write replies wait for `answer`. */
 async function folderOf(t, n, { tags = [], bulk } = {}) {
   const held = [];
   const server = new FakeServer()
@@ -66,7 +66,7 @@ async function folderOf(t, n, { tags = [], bulk } = {}) {
     .on("/api/folder/index-status", { status: "completed", percent: 100, message: "Ready" })
     .on("/api/folder/scan", scanOf(n, tags))
     .on("/api/photo-faces", { faces: [], total: 0, unmatched: 0 })
-    .on("/api/photos/bulk-tags", bulk || (() => new Promise((resolve) => held.push(resolve))))
+    .on("/api/photos/write", bulk || (() => new Promise((resolve) => held.push(resolve))))
     .on("/api/photo/save-metadata", { success: true })
     .on("/api/taxonomy/create", { success: true })
     .on("/api/folder/suggest-status", { status: "completed", suggestions: {} });
@@ -77,7 +77,7 @@ async function folderOf(t, n, { tags = [], bulk } = {}) {
   return heldPage({ ...ctx }, held);
 }
 
-const writes = (ctx) => ctx.server.calls.filter((c) => c.url.includes("/api/photos/bulk-tags")).map((c) => c.body);
+const writes = (ctx) => ctx.server.calls.filter((c) => c.url.includes("/api/photos/write")).map((c) => c.body);
 const status = (ctx) => ctx.document.getElementById("status-text").textContent;
 const scans = (ctx, folder) => ctx.server.calls.filter((c) => c.url.includes(`/api/folder/scan?path=${encodeURIComponent(folder)}`)).length;
 const pendingOf = (ctx) => pageExports(ctx.window, "web/tagpup/state.js").state.pending;
@@ -252,8 +252,8 @@ describe("a single save clicked between two writes", () => {
     await flush(ctx.window, 8);
 
     await answer(ctx);
-    for (let i = 0; i < 20 && ctx.server.calls.filter((c) => c.url.includes("bulk-tags")).length < 3; i++) await flush(ctx.window, 2);
-    const order = ctx.server.calls.filter((c) => /bulk-tags|save-metadata/.test(c.url)).map((c) => (c.url.includes("bulk") ? "bulk" : "save"));
+    for (let i = 0; i < 20 && ctx.server.calls.filter((c) => c.url.includes("photos/write")).length < 3; i++) await flush(ctx.window, 2);
+    const order = ctx.server.calls.filter((c) => /photos\/write|save-metadata/.test(c.url)).map((c) => (c.url.includes("photos/write") ? "bulk" : "save"));
     assert.deepEqual(order, ["bulk", "bulk", "save", "bulk"]);
     const save = ctx.server.calls.find((c) => c.url.includes("save-metadata")).body;
     assert.deepEqual(save.tags, ["Trips/Coast", "Places/Beach"]);

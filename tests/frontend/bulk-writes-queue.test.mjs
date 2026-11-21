@@ -1,7 +1,7 @@
 /**
  * Bulk tag writes and Apply All wait their turn in the photo write queue.
  *
- * Three suggestion chips clicked quickly on a selection posted three bulk-tags requests
+ * Three suggestion chips clicked quickly on a selection posted three photos/write requests
  * at once. On the server they were three writes of the same files at the same time:
  * each planned from the files as they were before the others, ExifTool refused a file
  * another write had open, and one set of tags was written, one "wrote 0 file(s)", and
@@ -9,7 +9,7 @@
  * and go as one write, after any write queued before them; a failed one is reported and its
  * tags wait for Retry.
  *
- * The server's bulk-tags replies are held here until the test releases them.
+ * The server's photos/write replies are held here until the test releases them.
  */
 import { test, describe, afterEach } from "node:test";
 import assert from "node:assert/strict";
@@ -31,7 +31,7 @@ const SUGGESTIONS = {
   }])),
 };
 
-/** A server whose bulk-tags and auto-apply replies wait until released, oldest first. */
+/** A server whose photos/write and auto-apply replies wait until released, oldest first. */
 function build() {
   const held = [];
   const hold = () => new Promise((resolve) => held.push(resolve));
@@ -45,7 +45,7 @@ function build() {
     // Copies: the page adds what it wrote to the records it was given.
     .on("/api/folder/scan", () => PHOTOS.map((p) => ({ ...p, tags: [...(files[p.path] || p.tags)], people: [...p.people] })))
     .on("/api/photo-faces", { faces: [], total: 0, unmatched: 0 })
-    .on("/api/photos/bulk-tags", hold)
+    .on("/api/photos/write", hold)
     .on("/api/folder/auto-apply", hold)
     .on("/api/photo/save-metadata", { success: true })
     .on("/api/taxonomy/create", { success: true })
@@ -70,7 +70,7 @@ async function loadSelected(t, before) {
   return { ...ctx, held };
 }
 
-const writes = (ctx) => ctx.server.calls.filter((c) => /bulk-tags|auto-apply/.test(c.url));
+const writes = (ctx) => ctx.server.calls.filter((c) => /photos\/write|auto-apply/.test(c.url));
 
 const chips = (ctx) =>
   [...ctx.document.querySelectorAll("#selection-suggested-tags-list .suggestion-chip")];

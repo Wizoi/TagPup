@@ -96,7 +96,7 @@ describe("a save names what the page read, and an undo keeps the record current 
   test("carry forward, then undo, then a tag: the undo's stamp and tags are the next save's, no refusal", async (t) => {
     const server = folderServer({
       "/api/photo/save-metadata": { success: true, mtime: 1700000500.5, size: 2100, base: { tags: ["Activity/Sailing", "Trips/Coast"], title: "" } },
-      "/api/photos/bulk-tags": { success: true, written: { [`${FOLDER}\\b.jpg`]: ["Activity/Sailing"] },
+      "/api/photos/write": { success: true, written: { [`${FOLDER}\\b.jpg`]: ["Activity/Sailing"] },
         stamps: { [`${FOLDER}\\b.jpg`]: { mtime: 1700000900.5, size: 4200 } } },
     });
     const ctx = await folderPage(t, server);
@@ -196,7 +196,7 @@ describe("in a view of the library", () => {
 describe("a bulk write from a selection names itself", () => {
   async function selectionOf(t, count) {
     const records = Array.from({ length: count }, (_, i) => photoRecord({ filename: `IMG_${i}.jpg`, path: `${FOLDER}\\IMG_${i}.jpg` }));
-    const server = folderServer({ "/api/photos/bulk-tags": { success: true, written: {}, stamps: {} } });
+    const server = folderServer({ "/api/photos/write": { success: true, written: {}, stamps: {} } });
     server.scanned = records;
     const ctx = await folderPage(t, server);
     ctx.document.getElementById("btn-select-all-thumbnails").click();
@@ -204,7 +204,7 @@ describe("a bulk write from a selection names itself", () => {
     ctx.document.getElementById("bulk-add-tags-input").value = "Trips/Lighthouse";
     return ctx;
   }
-  const bulkCalls = (ctx) => ctx.server.calls.filter((c) => c.url.includes("/api/photos/bulk-tags")).length;
+  const bulkCalls = (ctx) => ctx.server.calls.filter((c) => c.url.includes("/api/photos/write")).length;
 
   test("a selection of 300 asks 'Add Trips/Lighthouse to 300 photos?' and writes only on yes", async (t) => {
     const ctx = await selectionOf(t, 300);
@@ -240,7 +240,7 @@ describe("a bulk write refused or cancelled makes no tree node (#554)", () => {
   const taxonomyWrites = (ctx) => ctx.server.calls.filter((c) => c.method === "POST" && c.url.includes("/api/taxonomy/"));
   async function many(t, count) {
     const records = Array.from({ length: count }, (_, i) => photoRecord({ filename: `IMG_${i}.jpg`, path: `${FOLDER}\\IMG_${i}.jpg` }));
-    const server = folderServer({ "/api/photos/bulk-tags": { success: true, written: {}, stamps: {} } });
+    const server = folderServer({ "/api/photos/write": { success: true, written: {}, stamps: {} } });
     server.scanned = records;
     const ctx = await folderPage(t, server);
     ctx.document.getElementById("btn-select-all-thumbnails").click();
@@ -268,7 +268,7 @@ describe("a bulk write refused or cancelled makes no tree node (#554)", () => {
     click(ctx.window, ctx.document.getElementById("btn-bulk-add-people"));
     await flush(ctx.window, 10);
     assert.deepEqual(taxonomyWrites(ctx), []);
-    assert.equal(ctx.server.calls.filter((c) => c.url.includes("bulk-tags")).length, 0);
+    assert.equal(ctx.server.calls.filter((c) => c.url.includes("photos/write")).length, 0);
   });
 });
 

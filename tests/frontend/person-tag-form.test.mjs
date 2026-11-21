@@ -161,7 +161,7 @@ describe("removing a person from a selection", () => {
       .on("/api/folder/index-status", { status: "completed", percent: 100, message: "Ready" })
       .on("/api/folder/scan", photos)
       .on("/api/photo-faces", { faces: [], total: 0, unmatched: 0 })
-      .on("/api/photos/bulk-tags", { success: true });
+      .on("/api/photos/write", { success: true });
 
     const ctx = await loadApp("tagpup", {
       t,
@@ -201,7 +201,7 @@ describe("removing a person from a selection", () => {
     click(ctx.window, chip.querySelector(".selection-summary-chip-remove"));
     await flush(ctx.window, 6);
 
-    const body = ctx.server.lastBody("/api/photos/bulk-tags");
+    const body = ctx.server.lastBody("/api/photos/write");
     assert.ok(body, "the x sent no request at all");
     for (const change of Object.values(body.changes)) {
       assert.deepEqual(change.remove, ["People/Hazel Brookmire"],
@@ -231,7 +231,7 @@ describe("removing a person from a selection", () => {
     await flush(ctx.window, 6);
 
     // Each file is sent both spellings (pending.js sends every removal; the file that lacks one ignores it).
-    const sent = Object.values(ctx.server.lastBody("/api/photos/bulk-tags").changes).map((c) => c.remove);
+    const sent = Object.values(ctx.server.lastBody("/api/photos/write").changes).map((c) => c.remove);
     assert.deepEqual(
       sent,
       [["People/Hazel Brookmire", "Hazel Brookmire"], ["People/Hazel Brookmire", "Hazel Brookmire"]],

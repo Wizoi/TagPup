@@ -8,7 +8,7 @@
  * state and a failure's reason, and a failed one can be retried. Closing the tab asks
  * while a write is waiting or under way.
  *
- * The server's bulk-tags replies are held here until the test releases them.
+ * The server's photos/write replies are held here until the test releases them.
  */
 import { test, describe, afterEach } from "node:test";
 import assert from "node:assert/strict";
@@ -33,7 +33,7 @@ async function loadSelected(t) {
     .on("/api/folder/index-status", { status: "completed", percent: 100, message: "Ready" })
     .on("/api/folder/scan", () => PHOTOS.map((p) => ({ ...p, tags: [], people: [] })))
     .on("/api/photo-faces", { faces: [], total: 0, unmatched: 0 })
-    .on("/api/photos/bulk-tags", () => new Promise((resolve) => held.push(resolve)))
+    .on("/api/photos/write", () => new Promise((resolve) => held.push(resolve)))
     .on("/api/folder/suggest-status", {
       status: "completed",
       suggestions: Object.fromEntries(PHOTOS.map((p) => [p.path, {
@@ -149,7 +149,7 @@ describe("the list", () => {
     click(ctx.window, chip(ctx, "Harbourside"));
     await flush(ctx.window, 8);
     await answer(ctx, { success: false, error: REFUSED, written: {} });
-    const sent = () => ctx.server.calls.filter((c) => c.url.includes("bulk-tags"));
+    const sent = () => ctx.server.calls.filter((c) => c.url.includes("photos/write"));
     assert.equal(sent().length, 1);
 
     click(ctx.window, rows(ctx)[0].querySelector(".write-queue-retry"));

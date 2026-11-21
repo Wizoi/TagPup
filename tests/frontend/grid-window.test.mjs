@@ -21,7 +21,7 @@ const N = 400;
 
 /** Every path the bulk writes named, once the drain has sent them all (pending.js: 25 files a write). */
 async function bulkPaths(ctx, count) {
-  const sent = () => ctx.server.calls.filter((c) => c.url.includes("/api/photos/bulk-tags"))
+  const sent = () => ctx.server.calls.filter((c) => c.url.includes("/api/photos/write"))
     .flatMap((c) => Object.keys(c.body.changes));
   for (let i = 0; i < 200 && sent().length < count; i++) await flush(ctx.window, 2);
   return sent();
@@ -48,7 +48,7 @@ async function load(t, { n = N, routes = [], onSave } = {}) {
     .on("/api/folder/suggest-status", { status: "idle" })
     .on("/api/photo-faces", { faces: [], total: 0, unmatched: 0 })
     .on("/api/photo/save-metadata", onSave || { success: true })
-    .on("/api/photos/bulk-tags", { success: true })
+    .on("/api/photos/write", { success: true })
     .on("/api/folder/scan", (url) => {
       const folder = decodeURIComponent((url.match(/path=([^&]+)/) || [])[1] || FOLDER).replace(/\//g, "\\");
       const count = server.counts && server.counts[folder] !== undefined ? server.counts[folder] : n;

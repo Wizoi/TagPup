@@ -2,7 +2,7 @@
  * V20: somebody takes tags off the open photo by its pills (owner, 2026-11-15: "when i remove, it seems to delay things until
  * that one tag is removed, can those be queued sort of how clicking on faces are queued"). The pill goes at the click, before
  * the file's write is answered (1-4 s on a share): the removal waits in the page's tag changes (web/tagpup/pending.js), first
- * in line, and is written through /api/photos/bulk-tags in its turn among the photo's other writes. Pills clicked quickly
+ * in line, and is written through /api/photos/write in its turn among the photo's other writes. Pills clicked quickly
  * are written together while a write is out, and the file ends holding none of them; a removal and a save around it neither
  * undo the other, nor does a title's save already out draw the removed pill again; a write that fails draws its own tags
  * again, says so, offers no Retry, and the next removal still goes; another photo chosen meanwhile shows only its own tags,
@@ -15,7 +15,7 @@
  * shows the tags the file holds now (pending.js readHeld).
  *
  * Every write is held until the test answers it, oldest first, as the routes answer it: the server keeps a model of each
- * file's tags, and a bulk-tags reply's `written` (a save-metadata reply's `base`) is what the file holds after it.
+ * file's tags, and a photos/write reply's `written` (a save-metadata reply's `base`) is what the file holds after it.
  */
 import { test, describe, afterEach } from "node:test";
 import assert from "node:assert/strict";
@@ -37,7 +37,7 @@ const TAGS = ["Cross Country", "Harbourside", "Kentridge"];
 const A = photoRecord({ filename: "a.jpg" });
 const B = photoRecord({ filename: "b.jpg" });
 
-/** What a write leaves in a file holding `tags`: a bulk-tags change `{add, remove}`. */
+/** What a write leaves in a file holding `tags`: a photos/write change `{add, remove}`. */
 const changed = (tags, { add = [], remove = [] }) => [...tags.filter((t) => !remove.includes(t)), ...add.filter((t) => !tags.includes(t))];
 
 async function open(t, { b = [], faces = { faces: [], total: 0, unmatched: 0 } } = {}) {
@@ -56,7 +56,7 @@ async function open(t, { b = [], faces = { faces: [], total: 0, unmatched: 0 } }
     .on("/api/folder/index-status", { status: "completed", percent: 100, message: "Ready" })
     .on("/api/folder/scan", [{ ...A, tags: TAGS.slice() }, { ...B, tags: b.slice() }])
     .on("/api/photo-faces", faces)
-    .on("/api/photos/bulk-tags", hold("bulk"))
+    .on("/api/photos/write", hold("bulk"))
     .on("/api/photo/save-metadata", hold("save"));
   const ctx = await loadApp("tagpup", { t, url: "http://localhost:8090/photo_index/", server });
   ctx.window.console.error = () => {};
@@ -66,12 +66,12 @@ async function open(t, { b = [], faces = { faces: [], total: 0, unmatched: 0 } }
   const $ = (id) => ctx.document.getElementById(id);
   ctx.$ = $;
   ctx.file = (photo) => files.get(photo.path).slice().sort();
-  ctx.bulks = () => server.calls.filter((c) => c.url.includes("bulk-tags")).map((c) => c.body);
+  ctx.bulks = () => server.calls.filter((c) => c.url.includes("photos/write")).map((c) => c.body);
   ctx.saves = () => server.calls.filter((c) => c.url.includes("save-metadata")).map((c) => c.body);
-  ctx.order = () => server.calls.filter((c) => /bulk-tags|save-metadata/.test(c.url)).map((c) => (c.url.includes("bulk") ? "bulk" : "save"));
+  ctx.order = () => server.calls.filter((c) => /photos\/write|save-metadata/.test(c.url)).map((c) => (c.url.includes("photos/write") ? "bulk" : "save"));
   // Which photos each write named, in the order sent: "bulk:a,b", "save:b".
   const named = (path) => (path === A.path ? "a" : "b");
-  ctx.writes = () => server.calls.filter((c) => /bulk-tags|save-metadata/.test(c.url))
+  ctx.writes = () => server.calls.filter((c) => /photos\/write|save-metadata/.test(c.url))
     .map((c) => (c.url.includes("bulk") ? `bulk:${Object.keys(c.body.changes).map(named).join(",")}` : `save:${named(c.body.path)}`));
   // Answer the oldest write still held: written, the file then holding what the route leaves in it; or refused with `error`.
   ctx.answer = async (error = null) => {
@@ -432,7 +432,7 @@ describe("V20: in a library view", () => {
       await ctx.settle(80);
     };
     ctx.pills = () => Array.from(ctx.document.querySelectorAll("#detail-tags .tag-pill, #detail-people .tag-pill")).map((each) => each.textContent);
-    ctx.server.first("/api/photos/bulk-tags", () => new Promise((resolve) => ctx.out.push({ body: ctx.server.calls.at(-1).body, resolve })));
+    ctx.server.first("/api/photos/write", () => new Promise((resolve) => ctx.out.push({ body: ctx.server.calls.at(-1).body, resolve })));
     ctx.answerWrite = async () => {
       const { body, resolve } = ctx.out.shift();
       const written = {};

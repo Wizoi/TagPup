@@ -8,6 +8,10 @@
 // meanwhile. A tag clicked while a 5,000-photo change drains joins the files not yet sent and rides their chunk; a file
 // already written gets it in a later chunk. A chunk that fails gives its files' ops back and stops the drain until Retry
 // or Cancel: it never loops by itself. The map is this page's memory only (closing the page loses what is not sent).
+// Each chunk goes through the one entry point of photo writes (POST /api/photos/write, op `tags`; plan one-write-path),
+// a photo named by its id when the page holds a record of it with one (a clip, a library view's open photo), else by
+// its path. A chunk refused because a photo it names by id is no longer there (409 changed_on_disk) is read again by id
+// and given back, once (readAgain).
 //
 // The open photo's own removals (its pills, a face's person: removePhotoTags) enter the map too, first in line (takeChunk), and
 // are answered at the click, and a write of them that fails puts them back rather than waiting for Retry. Any other change
@@ -22,7 +26,7 @@ import { upper } from './hooks.js';
 import { state } from './state.js';
 import { setStatus } from './status.js';
 import { changeCachedPhotos, forgetCachedFolder, saveToLocalStorageCache } from './cache.js';
-import { leavePhotoThen, queuePhotoWrite, redrawIfShowing } from './edits.js';
+import { leavePhotoThen, photoRenamed, queuePhotoWrite, redrawIfShowing } from './edits.js';
 import { takeWritten } from './common/photo-write.js';
 import { renderWriteQueue, whereWritten } from './write-queue.js';
 import { namesAPerson, normalizeTag, updatePeopleDatalist, updateTagsDatalist } from './tags.js';
@@ -59,7 +63,8 @@ export function pendChanges(list, { people = false, panel = false } = {}) {
         // A file already waiting keeps the token of the action that put it here first (the plan's cut 3 rule), and the
         // folder it was clicked in, which leaving another way does not ask about (leaveThen).
         if (!entry) {
-            entry = { path, add: new Set(), remove: new Set(), panel: new Set(), token, actions: new Set(), folder: state.scannedFolder || null };
+            entry = { path, id: idOf(path), add: new Set(), remove: new Set(), panel: new Set(), token, actions: new Set(),
+                folder: state.scannedFolder || null };
             pending.files.set(key, entry);
         }
         remove.forEach(tag => { entry.add.delete(tag); entry.remove.add(tag); });
@@ -128,6 +133,12 @@ export function shownTags(photo) {
 function heldRecords() {
     const previous = state.library && state.library.previous;
     return previous ? [...state.folderPhotos, previous.record] : state.folderPhotos;
+}
+
+/** The photo id the server names `path`'s photo by: that of a record the page holds of it (heldRecords), else null (by path). */
+function idOf(path) {
+    const record = heldRecords().find(p => Number.isInteger(p.id) && samePath(p.path, path));
+    return record ? record.id : null;
 }
 
 /**
@@ -355,23 +366,79 @@ async function sendChunk(entry) {
         entry.cancel = cancelPending;
         renderWriteQueue();
         say('busy', 'Writing tags...');
-        const changes = Object.fromEntries(chunk.map(e => [e.path, { add: [...e.add], remove: [...e.remove] }]));
+        const changes = Object.fromEntries(chunk.map(e => [e.path, { id: e.id, add: [...e.add], remove: [...e.remove] }]));
         let data;
         try {
-            data = await api.json('/api/photos/bulk-tags', {
+            data = await api.json('/api/photos/write', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ changes, group: chunk[0].token }),
+                body: JSON.stringify({ op: 'tags', group: chunk[0].token, changes }),
             });
         } catch (err) {
             data = { success: false, error: err.message };
         }
-        return takeReply(chunk, data, entry, drops !== state.pending.drops);
+        const dropped = drops !== state.pending.drops;
+        if (data.changed_on_disk && !dropped) {
+            if (!chunk.some(item => item.readAgain)) return await readAgain(chunk, data, entry, drops);
+            chunk.forEach(item => { item.readAgain = false; });   // refused again: a failure, and its Retry reads them again
+        }
+        return takeReply(chunk, data, entry, dropped);
     } finally {
         state.pending.out = null;
         drain();
         pageFollows(new Set(chunk.map(item => pathKey(item.path))));
     }
+}
+
+/** Photo `id` as the library holds it now: its record, or null when the library no longer has it (404). */
+async function readById(id) {
+    const res = await api.fetch(`/api/library/photo?id=${id}`);
+    if (res.status === 404) return null;
+    const body = await api.answered(res, 'it could not be read again');
+    return body.photo;
+}
+
+/**
+ * A chunk refused whole, nothing written, because a photo it names by id is not at the path it names (renamed or deleted
+ * since the page read it: 409 changed_on_disk). Each photo of it named by id is read again from the library: one the
+ * library no longer has is settled skipped (it is gone, as a file gone in Explorer is); one at another path is named
+ * there from now on, its entry and the page's records of it (photoRenamed). The chunk goes back to the front of the map
+ * and the drain goes on: not a failure, and once per chunk (`readAgain`; refused again, it is one, sendChunk). A read
+ * that fails is the chunk's failure, said, the drain stopped until Retry; a Cancel while they are read drops them.
+ */
+async function readAgain(chunk, data, entry, drops) {
+    let found;
+    try {
+        found = await Promise.all(chunk.map(item => (item.id === null ? undefined : readById(item.id))));
+    } catch (err) {
+        return takeReply(chunk, { success: false, error: `photos moved since they were read, and ${err.message}` }, entry,
+            drops !== state.pending.drops);
+    }
+    if (drops !== state.pending.drops) return takeReply(chunk, data, entry, true);   // cancelled while they were read
+    const again = [];
+    chunk.forEach((item, i) => {
+        const record = found[i];
+        if (record === null) {
+            settle(item, 'skipped');
+            return;
+        }
+        if (record && !samePath(record.path, item.path)) readdress(item, record.path);
+        item.readAgain = true;
+        again.push(item);
+    });
+    giveBack(again);
+    entry.label = `${entry.label}: read again, a photo had moved`;
+    return true;
+}
+
+/** `item`'s photo is at `path` now: its entry, and every record the page holds of it (by its id), name it there. */
+function readdress(item, path) {
+    heldRecords().filter(photo => photo.id === item.id).forEach(photo => {
+        const open = samePath(state.activePhotoPath, photo.path);
+        photoRenamed(photo, path);
+        if (open) state.activePhotoPath = photo.path;
+    });
+    item.path = path;
 }
 
 /**
@@ -384,8 +451,7 @@ async function sendChunk(entry) {
  */
 function takeReply(chunk, data, entry, dropped) {
     const byKey = (obj) => new Map(Object.entries(obj || {}).map(([path, v]) => [pathKey(path), v]));
-    const stamps = byKey(data.stamps);
-    const held = byKey(data.written);
+    const held = byKey(data.written);   // {path: {tags, mtime, size}} of each file written
     const skipped = new Set((data.skipped || []).map(s => pathKey(s.path)));
     const photos = new Map();   // key -> the records the page holds of it
     heldRecords().forEach(p => photos.set(pathKey(p.path), [...(photos.get(pathKey(p.path)) || []), p]));
@@ -393,9 +459,9 @@ function takeReply(chunk, data, entry, dropped) {
     const written = [];
     const left = new Map();   // a photo's folder not open -> its items written
     const take = (photo, item) => {
-        const key = pathKey(item.path);
-        takeWritten(photo, stamps.get(key), held.get(key));
-        applyOps(photo, item, held.get(key));
+        const written = held.get(pathKey(item.path));
+        takeWritten(photo, written, written && written.tags);
+        applyOps(photo, item, written && written.tags);
     };
     // A library read out meanwhile may answer with the file as it was before this write (readHeld).
     const forReads = (item) => state.pending.reads.forEach(replies => replies.push({ key: pathKey(item.path), take: (photo) => take(photo, item) }));
@@ -444,7 +510,8 @@ function takeReply(chunk, data, entry, dropped) {
         written.forEach(photo => redrawIfShowing(photo, data));
     }
     if (!data.success) {
-        entry.error = data.error || 'not written';
+        // A write that ran answers each photo that failed among its `errors` (200), one refused says why in `error`.
+        entry.error = data.error || (data.errors && data.errors.length && data.errors[0].why) || 'not written';
         if (dropped) {
             // Dropped while out: its row lost Retry and Cancel (dropPending) and stays failed until dismissed.
             say('error', `Tags not written to ${back.length.toLocaleString()} more ${back.length === 1 ? 'photo' : 'photos'}: ${entry.error}`, entry);

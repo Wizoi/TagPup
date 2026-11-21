@@ -59,7 +59,7 @@ describe("Add tag to a selection of a library view", () => {
     assert.deepEqual(body.params, { add: ["Trips/Lighthouse"], remove: [] });
     assert.deepEqual(body.selection, { source: { kind: "all", value: null, recursive: false }, excluded: [3, 5, 7] });
     assert.ok(!("ids" in body.selection) && !("paths" in body.selection), "never 5,000 ids or paths");
-    assert.ok(!ctx.server.calls.some((call) => call.url.includes("/api/photos/bulk-tags")), "not the folder's route");
+    assert.ok(!ctx.server.calls.some((call) => call.url.includes("/api/photos/write")), "not the folder's route");
     assert.equal(sentence(ctx), "Added Trips/Lighthouse to 5,000 photos; 0 errors.", "the server's count of the photos it found");
   });
 
