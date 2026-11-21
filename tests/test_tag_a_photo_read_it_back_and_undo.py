@@ -471,18 +471,30 @@ class ASaveFromThePage(S.Fresh):
         return self.post("/photos/write", {"op": "set", "changes": {record["path"]: own}})
 
     def test_the_replies_the_page_reads_are_written_for_its_test(self):
+        # Each reply as the route made it, and its status (`status`, by name): a save that wrote (`no_rename`), whose
+        # rename failed, whose picture changed and was written again; a turn; a save from a base the file no longer holds
+        # (`changed_on_disk`, refused 409); a save of a read-only file ExifTool could not write (`not_written`).
         path, record = self.smart_renamed()
         refused = names.RenameFailed("The file is open in another program (held by Viewer)", [])
-        found = {}
+        replies = {}
         with mock.patch("tagpup.files.names.rename_all", side_effect=refused):
-            found["rename_failed"] = self.sent(record, title="Start line").get_json()
+            replies["rename_failed"] = self.sent(record, title="Start line")
         plain, plain_id = self.make("IMG_0002.jpg", 3, ["Trips/Coast"])
-        found["no_rename"] = self.sent(self.record(plain_id), title="A caption").get_json()
+        replies["no_rename"] = self.sent(self.record(plain_id), title="A caption")
         again, again_id = self.make("IMG_0003.jpg", 5, ["Trips/Coast"])
         with rewritten(), self.flipping_once(again), self.assertLogs(file_changes.logger, "WARNING"):
-            found["picture_changed"] = self.sent(self.record(again_id), title="A caption").get_json()
+            replies["picture_changed"] = self.sent(self.record(again_id), title="A caption")
         with rewritten(), self.flipping_once(again), self.assertLogs(file_changes.logger, "WARNING"):
-            found["rotated_picture_changed"] = self.post("/photo/rotate", {"path": again, "direction": "left"}).get_json()
+            replies["rotated_picture_changed"] = self.post("/photo/rotate", {"path": again, "direction": "left"})
+        _stale, stale_id = self.make("IMG_0004.jpg", 7, ["Trips/Coast"])
+        replies["changed_on_disk"] = self.sent(self.record(stale_id), title="A caption",
+                                               base={"tags": ["Trips/Lakes"], "title": ""})
+        locked, locked_id = self.make("IMG_0005.jpg", 9, ["Trips/Coast"])
+        held = self.record(locked_id)
+        os.chmod(locked, stat.S_IREAD)
+        self.addCleanup(os.chmod, locked, stat.S_IREAD | stat.S_IWRITE)
+        replies["not_written"] = self.sent(held, title="A caption")
+        found = {name: reply.get_json() for name, reply in replies.items()}
         for each in found.values():
             # The photo a save wrote is named in the page's test by the path it sends (harness.mjs savedAs).
             owns = list(each["written"].values()) if "written" in each else [each]
@@ -490,9 +502,13 @@ class ASaveFromThePage(S.Fresh):
                 own.update(mtime=1, size=1)
                 if "new_path" in own:
                     own["new_path"] = os.path.basename(own["new_path"])
-            if "written" in each:
+            if each.get("written"):
                 each["written"] = {"PHOTO": owns[0]}
+            for error in each.get("errors", []):
+                error["path"] = "PHOTO"
+        found["status"] = {name: reply.status_code for name, reply in replies.items()}
         text = json.dumps(found, sort_keys=True, indent=1) + "\n"
+        self.assertNotIn(json.dumps(self.home.root)[1:-1], text, "a path of the test's home left in")
         page_fixtures.hold_to(self, SAVE_REPLIES, text, "tests.test_tag_a_photo_read_it_back_and_undo", "the photo panel's save")
 
 

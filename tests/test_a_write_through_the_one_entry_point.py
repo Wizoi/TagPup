@@ -183,8 +183,8 @@ class AWriteThroughTheOneEntryPoint(unittest.TestCase):
                 "id": named_id, "title": "Quay", "tags": EXISTING, "stamp": {"mtime": 1.0, "size": 1},
                 "base": {"tags": EXISTING, "title": ""}}}})
         status, reply = save(old, photo_id)
-        self.assertEqual(409, status, reply)
-        self.assertEqual((False, True, {}), (reply["success"], reply["changed_on_disk"], reply["written"]))
+        # The refusal the pages read (its shape: save_replies.json `changed_on_disk`, which harness.mjs changedOnDisk answers).
+        self.assertEqual((409, True), (status, reply["changed_on_disk"]), reply)
         self.assertEqual(before, len(self.changes()))
         status, reply = save(os.path.join(self.held, "gone.jpg"), None)
         self.assertEqual(400, status, reply)
