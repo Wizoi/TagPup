@@ -13,8 +13,8 @@ read the fields once more before the read back whole read them again. Counts onl
 (docs/DEVELOPMENT.md, "Performance work").
 
 The folded read is the patch's check all the same: a patch whose fields do not read back as written is put back and
-answered 500; a patch that did not land is too; and the reply, and the folder map's record, carry the file's stamp
-after the save, at its new name after a rename by its title.
+answered as the photo's error (the envelope's `errors`, `success` false); a patch that did not land is too; and the
+reply, and the folder map's record, carry the file's stamp after the save, at its new name after a rename by its title.
 
 Real ExifTool and real Pillow on photos made here; rows as the indexer makes them (tests/photo_rows.py); fictional names.
 """
@@ -29,6 +29,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import damaged_photos  # noqa: E402
+import page_writes  # noqa: E402
 import photo_rows  # noqa: E402
 from test_stale_record_precondition import Fresh, stamp_of, tags_in, write_into  # noqa: E402
 
@@ -174,7 +175,9 @@ class ATagAdded(Fresh):
 
         with mock.patch.object(field_values, "read", read):
             reply = self.save(record, tags=["Trips/Coast"])
-        self.assertEqual(500, reply.status_code, reply.data)
+        body = reply.get_json()
+        self.assertEqual((200, False), (reply.status_code, body["success"]), reply.data)
+        self.assertIn("do not read back as written", page_writes.why(body))
         self.assertEqual(original, bytes_of(path), "its bytes were put back")
         self.assertEqual(tags_before, self.row_tags(photo_id), "its row is as it was")
 
@@ -196,7 +199,9 @@ class ATagAdded(Fresh):
         original, tags_before = bytes_of(path), self.row_tags(photo_id)
         with mock.patch.object(in_place, "_write", lambda _handle, _changes: None):
             reply = self.save(record, tags=["Trips/Coast"])
-        self.assertEqual(500, reply.status_code, reply.data)
+        body = reply.get_json()
+        self.assertEqual((200, False), (reply.status_code, body["success"]), reply.data)
+        self.assertIn("did not leave the file as it wrote it", page_writes.why(body))
         self.assertEqual(original, bytes_of(path))
         self.assertEqual(tags_before, self.row_tags(photo_id))
 
@@ -204,7 +209,7 @@ class ATagAdded(Fresh):
         path, _photo_id, record = self.held("d.jpg", 54)
         reply = self.save(record, tags=["Trips/Coast"])
         self.assertEqual(200, reply.status_code, reply.data)
-        body, now = reply.get_json(), stamp_of(path)
+        body, now = page_writes.saved(reply.get_json()), stamp_of(path)
         self.assertEqual(now["size"], body["size"])
         self.assertAlmostEqual(now["mtime"], body["mtime"], places=6)
         cached = self.cached(path)
@@ -216,7 +221,7 @@ class ATagAdded(Fresh):
         path, _photo_id, record = self.held("Regatta - 1 - Start.jpg", 55, preserved="IMG_0001.jpg")
         reply = self.save(record, title="Harbour")
         self.assertEqual(200, reply.status_code, reply.data)
-        body = reply.get_json()
+        body = page_writes.saved(reply.get_json())
         new_path = body["new_path"]
         self.assertFalse(paths.same(path, new_path), "renamed after its title")
         now = stamp_of(new_path)
@@ -235,11 +240,11 @@ class ATagAdded(Fresh):
         photos = [self.held("h.jpg", 58)[0], self.held("i.jpg", 59)[0]]
         with contextlib.ExitStack() as stack:
             touches = [stack.enter_context(Touches(path)) for path in photos]
-            reply = self.client.post("/library/api/photos/bulk-tags", json={"changes": {photo: {"add": ["Trips/Lakes"]}
+            reply = self.client.post("/library/api/photos/write", json={"op": "tags", "changes": {photo: {"add": ["Trips/Lakes"]}
                                                                                         for photo in photos}})
-        self.assertEqual(200, reply.status_code, reply.data)
+        self.assertEqual((200, True), (reply.status_code, reply.get_json()["success"]), reply.data)
         self.assertEqual([5, 5], [each.counted()["stats"] for each in touches])
-        stamps = reply.get_json()["stamps"]
+        stamps = reply.get_json()["written"]
         for path in photos:
             (sent,) = [stamp for named, stamp in stamps.items() if paths.same(named, path)]
             now = stamp_of(path)

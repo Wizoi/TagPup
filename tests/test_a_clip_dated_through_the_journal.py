@@ -47,6 +47,7 @@ import test_a_clip_tagged_through_the_journal as tagged  # noqa: E402
 from test_a_clip_patch_cut_short import cut_half_way  # noqa: E402
 from test_file_journal import Crash, crash_at  # noqa: E402
 
+from tests import page_writes  # noqa: E402
 from tagpup.core import fields, processes  # noqa: E402
 from tagpup.core.result import Refused  # noqa: E402
 from tagpup.files import clip_patch, containers, field_values, images, in_place, lock_owners  # noqa: E402
@@ -177,10 +178,7 @@ class AClipDatedThroughTheJournal(tagged.ALibraryHoldingAClip):
         self.assertEqual(200, reply.status_code, reply.data)
         record = reply.get_json()["photo"]
         self.assertIn("date", record["writes"], "the panel's date control is alive for a clip")
-        return self.post("photo/save-metadata", {
-            "path": record["path"], "title": record["title"], "tags": record["tags"], "date_taken": date_taken,
-            "stamp": {"mtime": record["mtime"], "size": record["size"]},
-            "base": {"tags": record["tags"], "title": record["title"]}})
+        return self.post("photos/write", page_writes.set_from(record, date_taken=date_taken))
 
     def change_of(self, photo_id):
         (change,), = self.vl.rows("SELECT DISTINCT change_id FROM change_files WHERE photo_id = ?", photo_id)
@@ -200,7 +198,7 @@ class AClipDatedThroughTheJournal(tagged.ALibraryHoldingAClip):
 
         reply = self.save_date_from_the_panel(clip)
         self.assertEqual(200, reply.status_code, reply.get_json())
-        self.assertEqual(SAVED, reply.get_json()["taken"], "the reply spells the date saved, for the page to show")
+        self.assertEqual(SAVED, page_writes.saved(reply.get_json())["taken"], "the reply spells the date saved, for the page to show")
         self.assertEqual({"XMP:DateTimeOriginal": SAVED, "XMP:CreateDate": None}, self.read(self.clip_path, XMP_DATES),
                          "XMP:DateTimeOriginal written; no xmp:CreateDate made in a clip that held none")
         self.assertEqual({**quicktime, **{field: SAVED for field in fields.CLIP_HEADER_DATES}},
@@ -280,7 +278,7 @@ class AClipDatedThroughTheJournal(tagged.ALibraryHoldingAClip):
         self.assertEqual(1, len([one for one in held.values() if isinstance(one, dict)]), "the clip beside it is read")
         before, changes = self.read_bytes(bad), self.vl.rows("SELECT id FROM changes")
         reply = self.save_date_from_the_panel(bad_id)
-        self.assertIn("its QuickTime headers could not be read", reply.get_json()["error"], "a sentence, not a traceback")
+        self.assertIn("its QuickTime headers could not be read", page_writes.why(reply.get_json()), "a sentence, not a traceback")
         self.assertEqual(before, self.read_bytes(bad))
         self.assertEqual(changes, self.vl.rows("SELECT id FROM changes"))
 
@@ -296,8 +294,8 @@ class AClipDatedThroughTheJournal(tagged.ALibraryHoldingAClip):
         clip, = self.index(path)
         before, changes = self.read_bytes(path), self.vl.rows("SELECT id FROM changes")
         reply = self.save_date_from_the_panel(clip)
-        self.assertNotEqual(200, reply.status_code, reply.data)
-        self.assertIn(images.CLIP_NOT_PATCHED, reply.get_json()["error"])
+        self.assertFalse(reply.get_json()["success"], reply.data)
+        self.assertIn(images.CLIP_NOT_PATCHED, page_writes.why(reply.get_json()))
         self.assertEqual((before, changes), (self.read_bytes(path), self.vl.rows("SELECT id FROM changes")))
 
     def test_a_clip_whose_xmp_holds_the_date_already_has_its_zero_headers_written(self):
@@ -369,8 +367,8 @@ class AClipDatedThroughTheJournal(tagged.ALibraryHoldingAClip):
         before, changes = self.read_bytes(path), self.vl.rows("SELECT id FROM changes")
         with mock.patch.object(in_place, "headers_held", side_effect=in_place.Away("the share did not answer")) as held:
             reply = self.save_date_from_the_panel(clip)
-            self.assertNotEqual(200, reply.status_code)
-            self.assertIn("did not answer", reply.get_json()["error"])
+            self.assertFalse(reply.get_json()["success"])
+            self.assertIn("did not answer", page_writes.why(reply.get_json()))
             self.assertEqual((before, changes), (self.read_bytes(path), self.vl.rows("SELECT id FROM changes")),
                              "nothing written, nothing journaled")
             held.reset_mock()
@@ -394,8 +392,8 @@ class AClipDatedThroughTheJournal(tagged.ALibraryHoldingAClip):
         for date in ("1899-12-31T10:00:00", "2041-01-01T10:00:00"):
             with self.subTest(date):
                 reply = self.save_date_from_the_panel(clip, date)
-                self.assertNotEqual(200, reply.status_code)
-                self.assertIn("holds a date from 1904 to early 2040 only", reply.get_json()["error"])
+                self.assertFalse(reply.get_json()["success"])
+                self.assertIn("holds a date from 1904 to early 2040 only", page_writes.why(reply.get_json()))
                 self.assertEqual((before, changes), (self.read_bytes(self.clip_path),
                                                      self.vl.rows("SELECT id FROM changes")))
 
@@ -413,8 +411,8 @@ class AClipDatedThroughTheJournal(tagged.ALibraryHoldingAClip):
         clip, = self.index(self.clip_path)
         before = self.read_bytes(self.clip_path)
         reply = self.save_date_from_the_panel(clip, "2041:01:01 10:00:00+01:00")
-        self.assertNotEqual(200, reply.status_code)
-        self.assertIn("holds a date from 1904 to early 2040 only", reply.get_json()["error"])
+        self.assertFalse(reply.get_json()["success"])
+        self.assertIn("holds a date from 1904 to early 2040 only", page_writes.why(reply.get_json()))
         self.assertEqual(before, self.read_bytes(self.clip_path))
 
     def test_an_xmp_create_date_the_clip_held_is_refreshed_with_the_date_and_its_undo_gives_the_old_one_back(self):
@@ -473,15 +471,15 @@ class AClipDatedThroughTheJournal(tagged.ALibraryHoldingAClip):
         clip, = self.index(self.clip_path)
         before, changes = self.read_bytes(loose), self.vl.rows("SELECT id FROM changes")
 
-        reply = self.post("photo/save-metadata", {"path": loose, "tags": [], "date_taken": SAVED_AS_THE_PAGE_SENDS})
-        self.assertNotEqual(200, reply.status_code)
-        self.assertIn(images.CLIP_NOT_EDITED, reply.get_json()["error"])
+        reply = self.post("photos/write", page_writes.save(self.vl.library, **{"path": loose, "tags": [], "date_taken": SAVED_AS_THE_PAGE_SENDS}))
+        self.assertFalse(reply.get_json()["success"])
+        self.assertIn(images.CLIP_NOT_EDITED, page_writes.why(reply.get_json()))
         self.assertEqual(before, self.read_bytes(loose), "the Just-look clip is byte for byte as it was")
         self.assertEqual(changes, self.vl.rows("SELECT id FROM changes"), "nothing is journaled")
 
-        reply = self.post("photo/save-metadata", {"path": self.clip_path, "tags": [],
-                                                  "date_taken": SAVED_AS_THE_PAGE_SENDS})
-        self.assertEqual(200, reply.status_code, reply.get_json())
+        reply = self.post("photos/write", page_writes.save(self.vl.library, **{"path": self.clip_path, "tags": [],
+                                                  "date_taken": SAVED_AS_THE_PAGE_SENDS}))
+        self.assertEqual((200, True), (reply.status_code, reply.get_json()["success"]), reply.get_json())
         self.assertEqual(SAVED, self.read(self.clip_path, XMP_DATES)["XMP:DateTimeOriginal"])
         self.assertEqual(SAVED, self.taken(clip))
 
@@ -491,9 +489,9 @@ class AClipDatedThroughTheJournal(tagged.ALibraryHoldingAClip):
         before, changes = self.read_bytes(self.clip_path), self.vl.rows("SELECT id FROM changes")
         with open(self.clip_path, "rb"):
             reply = self.save_date_from_the_panel(clip)
-        self.assertNotEqual(200, reply.status_code)
+        self.assertFalse(reply.get_json()["success"])
         self.assertEqual(changes, self.vl.rows("SELECT id FROM changes"), "nothing is journaled")
-        error = reply.get_json()["error"]
+        error = page_writes.why(reply.get_json())
         self.assertIn(in_place.OPEN_ELSEWHERE, error)
         self.assertRegex(error, r"It is held open by python\w*\.exe \(this TagPup process, pid \d+\)\.",
                          "the refusal names the holder on this PC")
@@ -510,7 +508,7 @@ class AClipDatedThroughTheJournal(tagged.ALibraryHoldingAClip):
         with mock.patch.object(lock_owners, "_ask", side_effect=OSError("Restart Manager could not be asked")):
             with open(self.clip_path, "rb"):
                 reply = self.save_date_from_the_panel(clip)
-        error = reply.get_json()["error"]
+        error = page_writes.why(reply.get_json())
         self.assertIn(in_place.OPEN_ELSEWHERE, error, "Restart Manager failing is no holder named, never a crash")
         self.assertNotIn("held open by", error)
         self.assertEqual(before, self.read_bytes(self.clip_path))

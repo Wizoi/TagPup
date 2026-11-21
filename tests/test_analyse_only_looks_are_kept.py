@@ -20,6 +20,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import face_rows  # noqa: E402
 from face_rows import FACE_MODEL  # noqa: E402
 import library_dump  # noqa: E402
+import page_writes  # noqa: E402
 import test_analyse_only_suggest as base  # noqa: E402
 
 from tagpup.core.result import Result  # noqa: E402
@@ -231,9 +232,9 @@ class ASmartRenameRenamesWhatIsKept(Base):
                                                                   "grouping": "Lighthouse"}).status_code)
         before = self.status(self.cup)["suggestions"]
         old = next(path for path in before if os.path.basename(path) == "Lighthouse - 1.jpg")
-        reply = self.post("/photo/save-metadata", {"path": old, "title": "Dusk", "tags": []})
-        self.assertEqual(200, reply.status_code, reply.data)
-        new = reply.get_json()["new_path"]
+        reply = self.post("/photos/write", page_writes.save(self.library, old, "Dusk", []))
+        self.assertEqual((200, True), (reply.status_code, reply.get_json()["success"]), reply.data)
+        new = page_writes.saved(reply.get_json())["new_path"]
         self.assertNotEqual(old, new, "the caption renamed the file")
         found = self.status(self.cup)["suggestions"]
         self.assertIn(new, found)

@@ -480,8 +480,8 @@ MOST_FAILED = 50
 
 
 def _name_failed(result, failed):
-    """details `failed_photos` ([{"path", "why"}], the first MOST_FAILED: the page is the person's own, as the bulk-tags reply
-    that names the photos it skipped) and `failed_count`, for the photos `failed` ([(path, why)]) that could not be rewritten."""
+    """details `failed_photos` ([{"path", "why"}], the first MOST_FAILED: the page is the person's own, as the envelope of
+    POST /api/photos/write names the photos it skipped) and `failed_count`, for the photos `failed` ([(path, why)]) that could not be rewritten."""
     listed = result.details.setdefault("failed_photos", [])
     listed.extend({"path": path, "why": str(why)[:200]} for path, why in failed[:max(0, MOST_FAILED - len(listed))])
     result.details["failed_count"] = result.details.get("failed_count", 0) + len(failed)

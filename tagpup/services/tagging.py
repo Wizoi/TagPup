@@ -3,7 +3,7 @@ import logging
 import os
 
 from tagpup.core import fields, paths, suggesting, validation, vocabulary
-from tagpup.core.result import CHANGED_ON_DISK, CHANGED_ON_DISK_SENTENCE, UNREADABLE_BASE_SENTENCE, Result
+from tagpup.core.result import CHANGED_ON_DISK, CHANGED_ON_DISK_SENTENCE, Result
 # Looked up at call time, as exiftool_session.ExifToolSession, so a test standing in for
 # ExifTool there reaches this too.
 from tagpup.files import exiftool_session, field_values, images, metadata, names
@@ -242,16 +242,16 @@ def save_photo(library, photo_path, title, tags, date_taken, exiftool_path, rena
     `base`, {"tags": [...], "title": "..."}, is the tags and caption the page read of the photo: the stamp can be
     kept (a copy keeps its times; a same-length rename of a tag then the time put back), so under the same lock,
     after the read of the file's current state, the file's tags (as a set) and caption are compared with `base` and
-    any difference refuses the save the same way, writing nothing. `base` None -- a record of a photo ExifTool
-    could not read when it was opened -- is refused (UNREADABLE_BASE_SENTENCE): the whole tag list it carries is
-    not made from what the file holds. Not given at all is no check.
+    any difference refuses the save the same way, writing nothing. Not given at all is no check. A page never saves
+    from the record of a photo ExifTool could not read when it was opened: it refuses that save itself, in its own
+    words (web/common/photo-write.js UNREADABLE_SAVE), and the entry point refuses a null `base` as a shape.
 
     details: `new_path`, `renamed`, `tags` as written, `flat` and `hierarchical` as
     written, `change`, `stamp`, the file's (mtime, size) as the write recorded it, after the write, when it wrote the
     file and did not rename it (None: the caller looks), `dates`, the date fields the write set ({field: value}; a clip's XMP:CreateDate only where it
     held one, fields.held_dates), `taken`, the Date Taken saved as the library spells it (None when none was sent),
-    `base`, the tags and title the file holds after the write (the page's next `base`), and
-    `index_warning` when the renamed photo's new name already had rows; `file_only` and `with_rows`, how many files (0 or 1) were written each way; `pictures_refused` when the write
+    `base`, the tags and title the file holds after the write (the page's next `base`); `file_only` and `with_rows`,
+    how many files (0 or 1) were written each way; `pictures_refused` when the write
     changed the picture's bytes and was made again (file_changes); `named_faces` ([{"id", "name"}]) when the tags written named
     a face (the one-face rule, as the row was recorded), and what follow_people says.
     """
@@ -286,9 +286,6 @@ def save_photo(library, photo_path, title, tags, date_taken, exiftool_path, rena
     read = list(dict.fromkeys(SAVE_READ + BASE_READ + tuple(wanted) + tuple(fields.caption_fields(""))))
     with exiftool_session.ExifToolSession(executable=exiftool_path) as et:
         now = field_values.read_one(et, photo_path, read)
-        if base is None:
-            result.refuse(UNREADABLE_BASE_SENTENCE, CHANGED_ON_DISK)
-            return result
         if base is not NO_BASE and _differs_from_base(now, base):
             result.refuse(CHANGED_ON_DISK_SENTENCE, CHANGED_ON_DISK)
             return result
@@ -334,7 +331,7 @@ def save_photo(library, photo_path, title, tags, date_taken, exiftool_path, rena
         if not renamed:
             result.details["stamp"] = (written.details.get("stamps") or {}).get(paths.key(photo_path))
         result.details.update(new_path=new_path, renamed=renamed, tags=tags, flat=flat,
-                              hierarchical=hierarchical, index_warning=None, change=written.details["change"],
+                              hierarchical=hierarchical, change=written.details["change"],
                               dates=dates_written, taken=fields.date_taken_value(date_taken) if date_taken else None,
                               base={"tags": _tags_held(after), "title": _held_title({**now, **after})})
         touched = 1 if (written.changed or renamed) else 0
@@ -342,12 +339,10 @@ def save_photo(library, photo_path, title, tags, date_taken, exiftool_path, rena
                                file_only.WITH_ROWS: 0 if files_only else touched})
     if files_only:
         return result   # no row to tell: the index reads the file when the folder is added
-    if skipped:
-        result.details["index_warning"] = (
-            "Renamed, but the index already has a photo at %s; its rows were left as they were." % new_path)
-    elif written.changed:
+    if written.changed and not skipped:
         # A person really taken off the photo is off its faces, one really put back is on its face again (#908), now that
-        # the index says what the file holds (the write recorded its row, the rename moved it).
+        # the index says what the file holds (the write recorded its row, the rename moved it). A rename to a name the
+        # index already had rows at moved no row: its faces are left as they were.
         follow_people(library, result, moved={photo_path: new_path})
     return result
 
@@ -447,7 +442,7 @@ def change_tags(library, photo_paths, add, remove, exiftool_path, operation=ADD_
 def change_tags_of(library, changes, exiftool_path, operation=ADD_TO_ALL, stop_at_first_error=True, persons=None,
                    et=None, group=None):
     """Give each photo in `changes` (path -> (tags to add, tags to take off)) its own tags added and taken off, as ONE
-    change of photo files (change_each). The page's bulk tag write (POST /api/photos/bulk-tags) sends each file's own.
+    change of photo files (change_each). A page's tag write (POST /api/photos/write, op `tags`) sends each file's own.
 
     `operation` names the change in the journal. `stop_at_first_error=False` (a bulk edit's): a photo that cannot be
     read or written is an error and the others are written all the same. `persons` ({paths.key(path): the tags added

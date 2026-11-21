@@ -39,6 +39,7 @@ from test_organize_faces import WREN  # noqa: E402
 import numpy as np  # noqa: E402
 from unittest import mock  # noqa: E402
 
+from tests import page_writes  # noqa: E402
 from tagpup.core import clustering  # noqa: E402
 from tagpup.core.result import NotFound  # noqa: E402
 from tagpup.services import faces as faces_service  # noqa: E402
@@ -186,8 +187,8 @@ class TwoSamsOnAPhoto(InStep):
         """Fix round 1: the record of a removal carried the name alone, so taking the first Sam off a photo blocked guessing the
         other Sam on it. It reads the id the journaled change recorded."""
         self.match(self.first, person_id=self.sam_t)
-        reply = self.client.post("/library/api/photo/save-metadata", json={"path": self.photo_path, "title": "", "tags": []})
-        self.assertEqual(200, reply.status_code, reply.get_json())
+        reply = self.client.post("/library/api/photos/write", json=page_writes.save(self.library, **{"path": self.photo_path, "title": "", "tags": []}))
+        self.assertEqual((200, True), (reply.status_code, reply.get_json()["success"]), reply.get_json())
         self.assertEqual((None, "manual"), self.row(self.first)[:2])
         conn = db.connect(db.readonly_uri(self.path), uri=True)
         try:

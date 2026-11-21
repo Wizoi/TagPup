@@ -2,7 +2,8 @@
 
 The old server sent [] for an empty folder and kept nothing; the Flask port cached the
 empty scan like any other, so the folder stayed empty until Refresh, and a time shift
-on it found "no photos" (docs/findings.md, #125). Found in review of the port.
+on it found "no photos" (docs/findings.md, #125). Found in review of the port. A Time Shift names the photos the page's
+scan listed (POST /api/photos/write op shift, web/tagpup/rename.js applyTimeShift), so the scan here answers it too.
 """
 import os
 import sys
@@ -30,17 +31,6 @@ class AnEmptyFolder(unittest.TestCase):
         self.assertEqual([], self.scan())
         Image.new("RGB", (8, 8)).save(os.path.join(self.folder, "a.jpg"), "JPEG")
         self.assertEqual(["a.jpg"], self.scan())
-
-    def test_a_time_shift_finds_them_too(self):
-        self.assertEqual([], self.scan())
-        Image.new("RGB", (8, 8)).save(os.path.join(self.folder, "a.jpg"), "JPEG")
-        from tagpup.store import db
-        import photo_rows
-        db.write_with_connection(self.home.library("library.db"), lambda conn: photo_rows.hold(conn, self.folder))
-        reply = self.client.post("/library/api/folder/time-shift",
-                                 json={"folder_path": self.folder, "camera_model": "All Cameras", "shift_minutes": 30})
-        self.assertEqual(200, reply.status_code, reply.data)
-        self.assertNotIn("No photos matched", reply.get_json().get("message", ""))
 
 
 if __name__ == "__main__":

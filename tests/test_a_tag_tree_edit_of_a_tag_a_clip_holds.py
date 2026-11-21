@@ -28,8 +28,8 @@ class ATagTreeEditOfATagAClipHolds(tagged.ALibraryHoldingAClip):
     def tagged(self, *photo_paths, tag="Trips/Coast"):
         """Index `photo_paths` and give each the tag through the pages; their ids."""
         ids = self.index(*photo_paths)
-        reply = self.post("photos/bulk-tags", {"changes": {photo: {"add": [tag]} for photo in photo_paths}})
-        self.assertEqual(200, reply.status_code, reply.get_json())
+        reply = self.post("photos/write", {"op": "tags", "changes": {photo: {"add": [tag]} for photo in photo_paths}})
+        self.assertEqual((200, True), (reply.status_code, reply.get_json()["success"]), reply.get_json())
         return ids
 
     def node(self, tag):

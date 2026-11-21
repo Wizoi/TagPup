@@ -18,6 +18,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import damaged_photos  # noqa: E402
 import library_dump  # noqa: E402
+import page_writes  # noqa: E402
 import test_just_look_edits as jl  # noqa: E402
 
 from tagpup.core import paths  # noqa: E402
@@ -45,7 +46,7 @@ class AFolderWithRowsIsHeldWhateverIsIgnored(jl.Base):
 
     def test_save_rename_rotate_and_delete_act_as_held(self):
         photo = self.held[0]
-        body = self.post("/photo/save-metadata", {"path": photo, "title": "Start", "tags": ["A/B"]}).get_json()
+        body = self.assertWrote(self.save(photo, "Start", ["A/B"]))
         self.assertEqual((0, 1), (body["file_only"], body["with_rows"]), body)
         self.assertIn("A/B", self.rows("SELECT tags FROM photos WHERE path = ?", (photo,))[0][0])
         body = self.post("/photo/rotate", {"path": photo, "direction": "left"}).get_json()
@@ -67,15 +68,13 @@ class AFolderWithRowsIsHeldWhateverIsIgnored(jl.Base):
 
 class AFileOnlyWriteDecodesNothing(jl.Base):
     def test_a_save_a_tag_write_a_shift_a_rename_and_a_rotate_decode_nothing(self):
+        save = page_writes.save(self.library, self.loose[0], "x", ["A/B"])       # the page's record, read before
+        shift = page_writes.shift_all(self.library, self.lighthouse, 5)                 # the folder's, read before
         with mock.patch.object(images, "opened", side_effect=AssertionError("decoded in full")):
-            self.assertEqual(200, self.post("/photo/save-metadata", {"path": self.loose[0], "title": "x",
-                                                                    "tags": ["A/B"]}).status_code)
-            self.assertEqual(200, self.post("/photos/bulk-tags", {"changes": {photo: {"add": ["C/D"]}
-                                                                              for photo in self.loose}}).status_code)
+            self.assertWrote(self.post("/photos/write", save))
+            self.assertWrote(self.tag(self.loose, ["C/D"]))
             self.assertEqual(200, self.post("/photo/rotate", {"path": self.loose[1], "direction": "left"}).status_code)
-            self.assertEqual(200, self.post("/folder/time-shift", {"folder_path": self.lighthouse,
-                                                                  "camera_model": "All Cameras",
-                                                                  "shift_minutes": 5}).status_code)
+            self.assertWrote(self.post("/photos/write", shift))
             self.assertEqual(200, self.post("/folder/rename-photos", {
                 "folder_path": self.lighthouse, "grouping": "Lighthouse", "photo_paths": self.loose}).status_code)
 

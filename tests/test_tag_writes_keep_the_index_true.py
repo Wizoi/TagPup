@@ -44,6 +44,7 @@ import photo_rows  # noqa: E402
 from handler_harness import Library  # noqa: E402
 from test_file_journal import EXIFTOOL, FilesCase, field_of, keywords_of, requires_exiftool, write_outside  # noqa: E402
 from test_a_file_holds_what_exiftool_kept import rewritten  # noqa: E402
+import page_writes  # noqa: E402
 
 from tagpup.core.fields import keyword_fields  # noqa: E402
 from tagpup.core.vocabulary import extract_tags  # noqa: E402
@@ -156,10 +157,10 @@ class IndexCase(unittest.TestCase):
         self.assertAlmostEqual(row["mtime"], st.st_mtime, delta=0.05,
                                msg="the row kept the file's old mtime, so every scan re-reads it")
 
-    def call(self, path, body):
-        """Ask one route as the page would; an error reply fails the test."""
-        status, reply = self.lib.post(path, body)
-        self.assertEqual(status, 200, reply)
+    def call(self, body):
+        """Ask the one entry point as the page would; a write that did not succeed fails the test."""
+        status, reply = self.lib.post(page_writes.ROUTE, body)
+        self.assertEqual((200, True), (status, reply.get("success")), reply)
         return reply
 
 
@@ -168,8 +169,7 @@ class TestARemovedTagStaysRemoved(IndexCase):
         stored = self.photo()
         helper, _ = exiftool_that_writes()
         with patch("tagpup.files.exiftool_session.ExifToolSession", helper):
-            self.call("/api/photos/bulk-tags",
-                      {"changes": {stored: {"remove": ["Cross Country"]}}})
+            self.call(page_writes.tags({stored: {"remove": ["Cross Country"]}}))
             self.assertNotIn("Cross Country", self.row(stored)["tags"])
 
             # Renaming "Beach" re-derives this photo's tags from its raw_metadata.
@@ -193,7 +193,7 @@ class TestTheRowKeepsTheFilesNewStat(IndexCase):
         stored = self.photo()
         helper, _ = exiftool_that_writes()
         with patch("tagpup.files.exiftool_session.ExifToolSession", helper):
-            self.call("/api/photos/bulk-tags", {"changes": {stored: {"add": ["Relay"]}}})
+            self.call(page_writes.tags({stored: {"add": ["Relay"]}}))
         self.assertRowMatchesTheFile(stored)
 
     def test_renaming_a_tag(self):
@@ -211,8 +211,7 @@ class TestBulkWritersTellTheIndex(IndexCase):
         stored = self.photo()
         helper, _ = exiftool_that_writes()
         with patch("tagpup.files.exiftool_session.ExifToolSession", helper):
-            self.call("/api/photos/bulk-tags",
-                      {"changes": {stored: {"add": ["Relay"], "remove": ["Cross Country"]}}})
+            self.call(page_writes.tags({stored: {"add": ["Relay"], "remove": ["Cross Country"]}}))
 
         row = self.row(stored)
         # A cold folder cache starts from the file; it used to start from nothing and
@@ -226,7 +225,7 @@ class TestBulkWritersTellTheIndex(IndexCase):
         helper, _ = exiftool_that_writes()
         with patch("tagpup.files.exiftool_session.ExifToolSession", helper), \
                 patch("tagpup.files.metadata.title_filename", side_effect=lambda p, *rest: p):
-            self.call("/api/photo/save-metadata", {"path": stored, "title": "", "tags": ["Beach"]})
+            self.call(page_writes.save(self.library, stored, title="", tags=["Beach"]))
 
         row = self.row(stored)
         self.assertEqual(extract_tags(row["raw"]), ["Beach"])

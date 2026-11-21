@@ -25,6 +25,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from test_a_clip_tagged_through_the_journal import EXIFTOOL, TOOLS, ALibraryHoldingAClip  # noqa: E402
 
+from tests import page_writes  # noqa: E402
 from tagpup.core import processes  # noqa: E402
 from tagpup.files import containers, metadata  # noqa: E402
 from tagpup.files.exiftool_session import ExifToolSession  # noqa: E402
@@ -57,10 +58,10 @@ class AClipTitledInQuickTime(ALibraryHoldingAClip):
 
     def save(self, record, title, tags):
         """The photo panel's save of `record` as the page sends it: the stamp and the base it read."""
-        return self.post("photo/save-metadata", {
+        return self.post("photos/write", page_writes.save(self.vl.library, **{
             "path": record["path"], "title": title, "tags": tags,
             "stamp": {"mtime": record["mtime"], "size": record["size"]},
-            "base": {"tags": record["tags"], "title": record["title"]}})
+            "base": {"tags": record["tags"], "title": record["title"]}}))
 
     def assert_row_says_what_a_scan_reads(self):
         scanned = metadata.MetadataExtractor(EXIFTOOL).batch_read([self.clip_path])[0]

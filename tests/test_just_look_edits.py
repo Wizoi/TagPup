@@ -16,7 +16,8 @@ these are is the library's own answer, per photo, at the time of the write -- ne
 the page sends. In a folder the library holds part of, in one request, the held photos
 write as always and the others to their files only, and the reply says how many each.
 
-Real ExifTool and real Pillow, on photos made here; the Recycle Bin is stood in for.
+Real ExifTool and real Pillow, on photos made here; the Recycle Bin is stood in for. A save and a tag write are made as
+the page makes them, to POST /api/photos/write (tests/page_writes.py), and succeed as the page reads the envelope.
 """
 import os
 import stat
@@ -30,6 +31,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import damaged_photos  # noqa: E402
 import library_dump  # noqa: E402
 import own_home  # noqa: E402
+import page_writes  # noqa: E402
 import photo_rows  # noqa: E402
 import web_client  # noqa: E402
 from test_a_file_holds_what_exiftool_kept import flip_a_picture_byte  # noqa: E402
@@ -78,7 +80,7 @@ def stamp(path):
 
 @unittest.skipIf(EXIFTOOL is None, "ExifTool not installed")
 class Base(unittest.TestCase):
-    """harbour: Pictures/Regatta holds two photos (rows, made as the indexer makes them); its
+    """harbour: Pictures/Regatta holds two photos (rows, made as the indexer makes them of files with no tags); its
     subfolder Scans holds one the library does not hold; Share/Lighthouse, another folder,
     holds three. The library is `library`."""
 
@@ -101,7 +103,7 @@ class Base(unittest.TestCase):
         conn = db.connect(self.library.path)
         try:
             for path in self.held:
-                photo_rows.add_read(conn, path, {"XMP:Subject": ["Trips/Regatta"]})
+                photo_rows.add_read(conn, path, {})
             conn.commit()
         finally:
             conn.close()
@@ -109,6 +111,24 @@ class Base(unittest.TestCase):
 
     def post(self, route, body):
         return self.client.post("/library/api" + route, json=body)
+
+    def save(self, photo, title=None, tags=None, date_taken=None):
+        """The panel's save of `photo` from the record opening its folder gives it now (page_writes.save)."""
+        return self.post("/photos/write", page_writes.save(self.library, photo, title, tags, date_taken))
+
+    def tag(self, photo_paths, add=(), remove=()):
+        """The tag queue's chunk adding `add` to and taking `remove` off each of `photo_paths` (page_writes.tags)."""
+        return self.post("/photos/write", page_writes.tags({photo: {"add": list(add), "remove": list(remove)}
+                                                            for photo in photo_paths}))
+
+    def shift(self, folder, minutes):
+        """The folder's Time Shift for every camera, of the photos the page chooses (page_writes.shift_all)."""
+        return self.post("/photos/write", page_writes.shift_all(self.library, folder, minutes))
+
+    def assertWrote(self, reply):
+        """The write succeeded, as the page reads the envelope; the reply as the page reads it (page_writes.saved)."""
+        self.assertEqual((200, True), (reply.status_code, reply.get_json()["success"]), reply.data)
+        return page_writes.saved(reply.get_json())
 
     def assert_library_unchanged(self):
         after = library_dump.dump(self.library.path)
@@ -139,10 +159,7 @@ class TheLibraryIsDumpedWhole(Base):
 class AnEditWritesTheFileOnly(Base):
     def test_a_caption_and_tags_on_one_photo(self):
         photo = self.loose[0]
-        reply = self.post("/photo/save-metadata", {"path": photo, "title": "Lamp room",
-                                                  "tags": ["Trips/Lighthouse", "People/Rowan Thackeray"]})
-        self.assertEqual(200, reply.status_code, reply.data)
-        body = reply.get_json()
+        body = self.assertWrote(self.save(photo, "Lamp room", ["Trips/Lighthouse", "People/Rowan Thackeray"]))
         self.assertEqual((1, 0), (body["file_only"], body["with_rows"]))
         self.assertEqual(["Trips/Lighthouse", "People/Rowan Thackeray"], tags_in(photo))
         self.assertEqual("Lamp room", title_in(photo))
@@ -151,30 +168,27 @@ class AnEditWritesTheFileOnly(Base):
 
     def test_a_person_not_in_the_tree_is_written_as_given_and_the_tree_is_not_grown(self):
         photo = self.loose[0]
-        reply = self.post("/photo/save-metadata", {"path": photo, "title": "", "tags": ["People/Fictional Newcomer"]})
-        self.assertEqual(200, reply.status_code, reply.data)
+        self.assertWrote(self.save(photo, "", ["People/Fictional Newcomer"]))
         self.assertEqual(["People/Fictional Newcomer"], tags_in(photo))
         self.assert_library_unchanged()
 
-    def test_a_forged_flag_changes_nothing_either_way(self):
-        # The server decides by the library's folders: not by anything the page says.
-        reply = self.post("/photo/save-metadata", {"path": self.loose[0], "title": "x", "tags": ["A/B"],
-                                                  "just_looking": False, "file_only": False, "held": True})
-        self.assertEqual((200, 1, 0), (reply.status_code, reply.get_json()["file_only"], reply.get_json()["with_rows"]))
+    def test_a_flag_the_page_forges_inside_a_change_is_refused_and_nothing_is_written(self):
+        """The server decides file-only or held by the library's folders, and no shape of the request carries the
+        page's say (`just_looking`, `file_only`, `held`): a change entry holding one is refused 400. The old scenario,
+        a page claiming file-only for a held photo with the server still journaling it, reaches no write any more."""
+        for photo in (self.loose[0], self.held[0]):
+            for flag in ("just_looking", "file_only", "held"):
+                body = page_writes.save(self.library, photo, "x", ["A/B"])
+                ((path, change),) = body["changes"].items()
+                body["changes"] = {path: {**change, flag: True}}
+                reply = self.post("/photos/write", body)
+                self.assertEqual((400, False), (reply.status_code, reply.get_json()["success"]), (flag, reply.data))
         self.assert_library_unchanged()
-        reply = self.post("/photo/save-metadata", {"path": self.held[0], "title": "x", "tags": ["A/B"],
-                                                  "just_looking": True, "file_only": True, "held": False})
-        self.assertEqual((200, 0, 1), (reply.status_code, reply.get_json()["file_only"], reply.get_json()["with_rows"]))
-        self.assertEqual(["A/B"], __import__("json").loads(self.rows("SELECT tags FROM photos WHERE path = ?",
-                                                                    (self.held[0],))[0][0]))
 
     def test_tags_added_and_taken_off_many(self):
         write_into(self.loose[0], Subject=["Old/Tag", "Keep/Me"])
         self.before = library_dump.dump(self.library.path)
-        reply = self.post("/photos/bulk-tags", {"changes": {photo: {"add": ["Trips/Lighthouse"], "remove": ["Old/Tag"]}
-                                                            for photo in self.loose[:2]}})
-        self.assertEqual(200, reply.status_code, reply.data)
-        body = reply.get_json()
+        body = self.assertWrote(self.tag(self.loose[:2], ["Trips/Lighthouse"], ["Old/Tag"]))
         self.assertEqual((2, 0), (body["file_only"], body["with_rows"]))
         self.assertEqual(["Keep/Me", "Trips/Lighthouse"], tags_in(self.loose[0]))
         self.assertEqual(["Trips/Lighthouse"], tags_in(self.loose[1]))
@@ -183,9 +197,8 @@ class AnEditWritesTheFileOnly(Base):
 
     def test_a_tag_that_may_not_be_set_is_refused_and_nothing_is_written(self):
         before = stamp(self.loose[0])
-        reply = self.post("/photos/bulk-tags", {"changes": {photo: {"add": ["Places|Harbour"]}
-                                                            for photo in self.loose[:1]}})
-        self.assertEqual(400, reply.status_code, reply.data)
+        reply = self.tag(self.loose[:1], ["Places|Harbour"])
+        self.assertEqual((400, False), (reply.status_code, reply.get_json()["success"]), reply.data)
         self.assertEqual(before, stamp(self.loose[0]))
         self.assert_library_unchanged()
 
@@ -224,9 +237,7 @@ class AnEditWritesTheFileOnly(Base):
         self.assert_library_unchanged()
 
     def test_a_date_taken_on_one_photo(self):
-        reply = self.post("/photo/save-metadata", {"path": self.loose[0], "title": "", "tags": [],
-                                                  "date_taken": "2018-03-04T09:08:07"})
-        self.assertEqual(200, reply.status_code, reply.data)
+        self.assertWrote(self.save(self.loose[0], "", [], date_taken="2018-03-04T09:08:07"))
         self.assertEqual("2018:03:04 09:08:07", in_file(self.loose[0], "EXIF:DateTimeOriginal")["EXIF:DateTimeOriginal"])
         self.assert_library_unchanged()
 
@@ -235,12 +246,12 @@ class AnEditWritesTheFileOnly(Base):
         write_into(self.loose[1], DateTimeOriginal="2020:01:01 00:00:00")
         self.before = library_dump.dump(self.library.path)
         untouched = stamp(self.loose[2])
-        reply = self.post("/folder/time-shift", {"folder_path": self.lighthouse, "camera_model": fields.ALL_CAMERAS,
-                                                "shift_minutes": 90})
-        self.assertEqual(200, reply.status_code, reply.data)
+        reply = self.shift(self.lighthouse, 90)
+        self.assertWrote(reply)
         body = reply.get_json()
-        self.assertEqual((2, 3, 2, 0), (body["updated_count"], body["requested_count"], body["file_only"],
-                                       body["with_rows"]))
+        self.assertEqual((2, 3, 2, 0), (body["changed"], body["attempted"], body["file_only"], body["with_rows"]))
+        self.assertEqual({paths.key(path) for path in self.loose[:2]}, {paths.key(path) for path in body["written"]},
+                         "the photos written, not the one holding no date")
         self.assertEqual("2019:06:15 12:00:00", in_file(self.loose[0], "EXIF:DateTimeOriginal")["EXIF:DateTimeOriginal"])
         self.assertEqual("2020:01:01 01:30:00", in_file(self.loose[1], "EXIF:DateTimeOriginal")["EXIF:DateTimeOriginal"])
         self.assertEqual(untouched, stamp(self.loose[2]), "a photo with no date was written")
@@ -338,9 +349,7 @@ class ASmartRename(Base):
         self.assertEqual(200, self.rename(self.loose[:1]).status_code)
         renamed = [os.path.join(self.lighthouse, name) for name in self.names() if name.startswith("Lighthouse")][0]
         self.before = library_dump.dump(self.library.path)
-        reply = self.post("/photo/save-metadata", {"path": renamed, "title": "Second", "tags": []})
-        self.assertEqual(200, reply.status_code, reply.data)
-        new_path = reply.get_json()["new_path"]
+        new_path = self.assertWrote(self.save(renamed, "Second", []))["new_path"]
         self.assertNotEqual(paths.key(renamed), paths.key(new_path))
         self.assertTrue(os.path.exists(new_path))
         self.assertFalse(os.path.exists(renamed))
@@ -359,18 +368,19 @@ class AFileExifToolCannotRead(Base):
 
     def test_a_save_says_exiftool_failed_and_writes_nothing(self):
         before = stamp(self.zeros)
-        reply = self.post("/photo/save-metadata", {"path": self.zeros, "title": "x", "tags": ["A/B"]})
-        self.assertEqual(500, reply.status_code, reply.data)
-        self.assertIn("ExifTool", reply.get_json()["error"])
+        reply = self.save(self.zeros, "x", ["A/B"])
+        self.assertEqual((500, False), (reply.status_code, reply.get_json()["success"]), reply.data)
+        self.assertIn("ExifTool", page_writes.why(reply.get_json()))
         self.assertEqual(before, stamp(self.zeros))
         self.assert_library_unchanged()
 
-    def test_a_bulk_tag_write_stops_at_it_with_the_photos_before_it_written(self):
-        reply = self.post("/photos/bulk-tags", {"changes": {photo: {"add": ["Trips/Lighthouse"]}
-                                                            for photo in [self.loose[0], self.zeros, self.loose[1]]}})
-        self.assertEqual(500, reply.status_code, reply.data)
-        self.assertEqual([self.loose[0]], list(reply.get_json()["written"]))
-        self.assertEqual((["Trips/Lighthouse"], []), (tags_in(self.loose[0]), tags_in(self.loose[1])))
+    def test_a_tag_write_names_it_among_its_errors_and_writes_the_others(self):
+        reply = self.tag([self.loose[0], self.zeros, self.loose[1]], ["Trips/Lighthouse"])
+        self.assertEqual((200, False), (reply.status_code, reply.get_json()["success"]), reply.data)
+        self.assertEqual(sorted(self.loose[:2]), sorted(reply.get_json()["written"]))
+        self.assertEqual([paths.key(self.zeros)], [paths.key(each["path"]) for each in reply.get_json()["errors"]])
+        self.assertIn("ExifTool", page_writes.why(reply.get_json()))
+        self.assertEqual((["Trips/Lighthouse"], ["Trips/Lighthouse"]), (tags_in(self.loose[0]), tags_in(self.loose[1])))
         self.assertEqual(bytes(images.ZERO_TAIL + 100), open(self.zeros, "rb").read(), "the file of zeros was written into")
         self.assert_library_unchanged()
 
@@ -394,13 +404,14 @@ class AWriteThatFailsForOneFileOfMany(Base):
             return real(et, photo_path, values)
 
         with mock.patch("tagpup.files.field_values.write", second_fails):
-            reply = self.post("/photos/bulk-tags", {"changes": {photo: {"add": ["Trips/Lighthouse"]}
-                                                                for photo in self.loose}})
-        self.assertEqual(500, reply.status_code, reply.data)
+            reply = self.tag(self.loose, ["Trips/Lighthouse"])
+        self.assertEqual((200, False), (reply.status_code, reply.get_json()["success"]), reply.data)
         body = reply.get_json()
-        self.assertEqual([paths.stored(self.loose[0])], list(body["written"]), "an attempt was reported as a write")
-        self.assertEqual(["Trips/Lighthouse"], tags_in(self.loose[0]))
-        self.assertEqual([[], []], [tags_in(self.loose[1]), tags_in(self.loose[2])])
+        self.assertEqual(sorted(paths.stored(path) for path in (self.loose[0], self.loose[2])), sorted(body["written"]),
+                         "an attempt was reported as a write")
+        self.assertEqual((2, [paths.key(self.loose[1])]),
+                         (body["changed"], [paths.key(each["path"]) for each in body["errors"]]))
+        self.assertEqual([["Trips/Lighthouse"], [], ["Trips/Lighthouse"]], [tags_in(path) for path in self.loose])
         self.assert_library_unchanged()
 
     def test_an_interrupted_time_shift_reports_what_changed(self):
@@ -450,10 +461,7 @@ class AFolderTheLibraryHoldsPartOf(Base):
     """Regatta is held; its subfolder Scans is not: 'holds 2 of 3'."""
 
     def test_one_request_writes_each_photo_the_way_its_folder_asks(self):
-        reply = self.post("/photos/bulk-tags", {"changes": {photo: {"add": ["Trips/Regatta 2"]}
-                                                            for photo in [self.held[0], self.scan]}})
-        self.assertEqual(200, reply.status_code, reply.data)
-        body = reply.get_json()
+        body = self.assertWrote(self.tag([self.held[0], self.scan], ["Trips/Regatta 2"]))
         self.assertEqual((1, 1), (body["file_only"], body["with_rows"]))
         self.assertEqual(["Trips/Regatta 2"], tags_in(self.held[0]))
         self.assertEqual(["Trips/Regatta 2"], tags_in(self.scan))
@@ -467,11 +475,10 @@ class AFolderTheLibraryHoldsPartOf(Base):
         for path in self.held + [self.scan]:
             write_into(path, DateTimeOriginal=DATE)
         self.before = library_dump.dump(self.library.path)
-        reply = self.post("/folder/time-shift", {"folder_path": self.regatta, "camera_model": fields.ALL_CAMERAS,
-                                                "shift_minutes": 60})
-        self.assertEqual(200, reply.status_code, reply.data)
+        reply = self.shift(self.regatta, 60)
+        self.assertWrote(reply)
         body = reply.get_json()
-        self.assertEqual((3, 1, 2), (body["updated_count"], body["file_only"], body["with_rows"]))
+        self.assertEqual((3, 1, 2), (body["changed"], body["file_only"], body["with_rows"]))
         for path in self.held + [self.scan]:
             self.assertEqual("2019:06:15 11:30:00", in_file(path, "EXIF:DateTimeOriginal")["EXIF:DateTimeOriginal"])
         self.assertEqual(2, self.rows("SELECT COUNT(*) FROM photos")[0][0])
@@ -529,12 +536,10 @@ class TheFolderIsAddedWhileAFileOnlyWriteIsInFlight(Base):
             return real(et, photo_path, values)
 
         with mock.patch("tagpup.files.field_values.write", adds_the_folder_first):
-            reply = self.post("/photo/save-metadata", {"path": self.loose[0], "title": "Lamp room",
-                                                      "tags": ["Trips/Lighthouse"]})
-        self.assertEqual(200, reply.status_code, reply.data)
+            body = self.assertWrote(self.save(self.loose[0], "Lamp room", ["Trips/Lighthouse"]))
         self.assertEqual([1], added)
         # The write decided at its start: the file only, and no half state.
-        self.assertEqual((1, 0), (reply.get_json()["file_only"], reply.get_json()["with_rows"]))
+        self.assertEqual((1, 0), (body["file_only"], body["with_rows"]))
         self.assertEqual([], self.rows("SELECT id FROM photos WHERE path = ?", (self.loose[0],)))
         self.assertEqual(["Trips/Lighthouse"], tags_in(self.loose[0]))
         self.assertEqual([], self.not_held(self.loose[0]), "the folder was added")
@@ -550,19 +555,15 @@ class TheFolderIsAddedWhileAFileOnlyWriteIsInFlight(Base):
         self.assertIn("Trips/Lighthouse", tags)
         self.assertIn("Lamp room", captions)
         # And the next write is a held one.
-        reply = self.post("/photo/save-metadata", {"path": self.loose[0], "title": "Lamp room 2",
-                                                  "tags": ["Trips/Lighthouse"]})
-        self.assertEqual((1, 0), (reply.get_json()["with_rows"], reply.get_json()["file_only"]))
+        body = self.assertWrote(self.save(self.loose[0], "Lamp room 2", ["Trips/Lighthouse"]))
+        self.assertEqual((1, 0), (body["with_rows"], body["file_only"]))
 
 
 class AFolderEditedWhileJustLookingIsIndexedAsEdited(Base):
     def test_the_rows_hold_the_tags_captions_and_names(self):
         write_into(self.loose[0], Description="First")
-        self.assertEqual(200, self.post("/photos/bulk-tags", {"changes": {photo: {"add": ["Trips/Lighthouse"]}
-                                                                          for photo in self.loose}}).status_code)
-        self.assertEqual(200, self.post("/photo/save-metadata", {
-            "path": self.loose[1], "title": "Stairs", "tags": ["Trips/Lighthouse", "People/Rowan Thackeray"]
-        }).status_code)
+        self.assertWrote(self.tag(self.loose, ["Trips/Lighthouse"]))
+        self.assertWrote(self.save(self.loose[1], "Stairs", ["Trips/Lighthouse", "People/Rowan Thackeray"]))
         reply = self.post("/folder/rename-photos", {"folder_path": self.lighthouse, "grouping": "Lighthouse",
                                                    "photo_paths": self.loose})
         self.assertEqual(200, reply.status_code, reply.data)
@@ -607,17 +608,15 @@ class AWriteWhosePictureChanged(Base):
     def test_a_save_and_a_turn_are_made_once_more_and_say_so(self):
         photo = self.loose[0]
         with self.flipping(1):
-            saved = self.post("/photo/save-metadata", {"path": photo, "title": "Lamp room", "tags": ["Trips/Lighthouse"]})
-        self.assertEqual(200, saved.status_code, saved.data)
-        self.assertEqual((1, 1, 2), (saved.get_json().get("pictures_refused"), saved.get_json()["file_only"],
-                                     len(self.made)))
+            saved = self.assertWrote(self.save(photo, "Lamp room", ["Trips/Lighthouse"]))
+        self.assertEqual((1, 1, 2), (saved.get("pictures_refused"), saved["file_only"], len(self.made)))
         self.assertEqual(("Lamp room", ["Trips/Lighthouse"]), (title_in(photo), tags_in(photo)))
         with self.flipping(1):
             turned = self.post("/photo/rotate", {"path": photo, "direction": "left"})
         self.assertEqual((200, 1), (turned.status_code, turned.get_json().get("pictures_refused")), turned.data)
         self.assertEqual(8, int(in_file(photo, "EXIF:Orientation")["EXIF:Orientation"]))
-        quiet = self.post("/photo/save-metadata", {"path": photo, "title": "Lantern", "tags": ["Trips/Lighthouse"]})
-        self.assertNotIn("pictures_refused", quiet.get_json())
+        quiet = self.assertWrote(self.save(photo, "Lantern", ["Trips/Lighthouse"]))
+        self.assertNotIn("pictures_refused", quiet)
         self.assertFalse(os.path.exists(exiftool_session.scratch_of(photo)), "a discarded new file was left")
         self.assert_library_unchanged()
 
@@ -626,9 +625,10 @@ class AWriteWhosePictureChanged(Base):
         with open(photo, "rb") as handle:
             held = handle.read()
         with self.flipping(2):
-            saved = self.post("/photo/save-metadata", {"path": photo, "title": "Lamp room", "tags": ["Trips/Lighthouse"]})
-        self.assertEqual(500, saved.status_code, saved.data)
-        self.assertIn("picture's bytes twice", saved.get_json()["error"])
+            saved = self.save(photo, "Lamp room", ["Trips/Lighthouse"])
+        self.assertEqual((200, False), (saved.status_code, saved.get_json()["success"]), saved.data)
+        self.assertIn("picture's bytes twice", page_writes.why(saved.get_json()))
+        self.assertEqual({}, saved.get_json()["written"])
         self.assertEqual(2, len(self.made), "made more than once more")
         with open(photo, "rb") as handle:
             self.assertEqual(held, handle.read(), "the photo was written")
@@ -638,10 +638,8 @@ class AWriteWhosePictureChanged(Base):
 
 class TwoTabs(Base):
     def test_two_edits_from_two_pages_both_land(self):
-        one = self.post("/photos/bulk-tags", {"changes": {photo: {"add": ["Trips/Lighthouse"]}
-                                                          for photo in self.loose}})
-        other = self.post("/photos/bulk-tags", {"changes": {photo: {"add": ["Trips/Harbour"]} for photo in self.loose}})
-        self.assertEqual((200, 200), (one.status_code, other.status_code))
+        self.assertWrote(self.tag(self.loose, ["Trips/Lighthouse"]))
+        self.assertWrote(self.tag(self.loose, ["Trips/Harbour"]))
         self.assertEqual(["Trips/Lighthouse", "Trips/Harbour"], tags_in(self.loose[0]))
         self.assert_library_unchanged()
 
@@ -650,9 +648,10 @@ class TheLibraryCannotBeReadJustNow(Base):
     def test_the_write_fails_and_the_file_is_not_written(self):
         import sqlite3
         before = stamp(self.loose[0])
+        save = page_writes.save(self.library, self.loose[0], "x", ["A/B"])
         with mock.patch("tagpup.store.folders.holds", side_effect=sqlite3.OperationalError("database is locked")):
-            reply = self.post("/photo/save-metadata", {"path": self.loose[0], "title": "x", "tags": ["A/B"]})
-            bulk = self.post("/photos/bulk-tags", {"changes": {photo: {"add": ["A/B"]} for photo in self.loose}})
+            reply = self.post("/photos/write", save)
+            bulk = self.tag(self.loose, ["A/B"])
         # Not a 409 sending the owner to add a folder; not a write decided without the answer.
         self.assertEqual((500, 500), (reply.status_code, bulk.status_code), (reply.data, bulk.data))
         self.assertEqual(before, stamp(self.loose[0]))
@@ -677,8 +676,7 @@ class Roots(Base):
         listed = sync.review(self.library, [self.pictures])
         self.assertIn(self.new_folder, [folder["path"] for folder in listed["folders"]])
         for photo in (self.under[0], self.loose[0]):
-            reply = self.post("/photo/save-metadata", {"path": photo, "title": "x", "tags": ["Trips/Coast"]})
-            self.assertEqual((200, 1), (reply.status_code, reply.get_json()["file_only"]), reply.data)
+            self.assertEqual(1, self.assertWrote(self.save(photo, "x", ["Trips/Coast"]))["file_only"])
             self.assertEqual(["Trips/Coast"], tags_in(photo))
         self.assertEqual(listed, sync.review(self.library, [self.pictures]), "the edit changed what sync lists")
         self.assert_library_unchanged()
@@ -696,8 +694,7 @@ class AnotherLibraryHoldingTheFolder(Base):
         finally:
             conn.close()
         before = library_dump.dump(other)
-        reply = self.post("/photos/bulk-tags", {"changes": {photo: {"add": ["Trips/Harbour"]} for photo in self.loose}})
-        self.assertEqual(200, reply.status_code, reply.data)
+        self.assertWrote(self.tag(self.loose, ["Trips/Harbour"]))
         self.assertEqual(before, library_dump.dump(other))
         self.assert_library_unchanged()
 

@@ -19,6 +19,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from handler_harness import Library  # noqa: E402
 from test_taxonomy_lifecycle import EXIFTOOL, requires_exiftool  # noqa: E402
 
+import page_writes  # noqa: E402
 import photo_rows  # noqa: E402
 from face_rows import add_face  # noqa: E402
 from tagpup.files.exiftool_session import ExifToolSession  # noqa: E402
@@ -124,9 +125,10 @@ class TestFolderScan(TagPupAPITestBase):
 class TestRefusals(TagPupAPITestBase):
     def test_a_write_without_a_file_or_a_selection_is_a_400_and_a_missing_folder_or_suggestions_too(self):
         ghost = os.path.join(self.tmpdir, "ghost.jpg")
-        for route, body in (("/api/photo/save-metadata", {"title": "x", "tags": []}),
-                            ("/api/photo/save-metadata", {"path": ghost, "title": "x", "tags": []}),
-                            ("/api/photos/bulk-tags", {"changes": {}}),
+        ghost_record = {"path": ghost, "id": None, "title": "", "tags": [], "mtime": 1.0, "size": 1}
+        for route, body in ((page_writes.ROUTE, {"op": "set", "changes": {}}),
+                            (page_writes.ROUTE, page_writes.set_from(ghost_record, title="x")),
+                            (page_writes.ROUTE, page_writes.tags({})),
                             ("/api/folder/auto-apply", {"folder_path": self.tmpdir}),
                             ("/api/folder/auto-apply", {"folder_path": os.path.join(self.tmpdir, "nope")})):
             self.assertEqual(400, self.post(route, body)[0], (route, body))
@@ -296,8 +298,7 @@ class WhatAServiceRaisedIsAnsweredOneWay(TagPupAPITestBase):
 
     def test_rapid_clicks_past_the_cap_are_refused_400_with_the_sentence_and_nothing_is_claimed(self):
         too_many = ["C:/nowhere/%05d.jpg" % n for n in range(5001)]
-        status, reply = self.post("/api/photos/bulk-tags", {"changes": {photo: {"add": ["Sunset"]}
-                                                                        for photo in too_many}})
+        status, reply = self.post(page_writes.ROUTE, page_writes.tags({photo: {"add": ["Sunset"]} for photo in too_many}))
         self.assertEqual(400, status)
         self.assertEqual({"success": False, "error": "Select up to 5,000 photos at a time (5,001 were named)."}, reply)
 

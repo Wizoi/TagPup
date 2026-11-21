@@ -19,9 +19,9 @@ fails: change_tags writing the loose parts of a path (tag write), save_photo ope
 MetadataExtractor._structure dropping the bare names (the indexer's shape), file_changes._undoable skipping the
 newer-change check (undo order), save_photo's rename done outside the journal (rename after a caption).
 
-Lifted: tests/test_tagpup_server_api.py's TestSaveMetadata and TestBulkTags (what the save and bulk-tags routes left on the
+Lifted: tests/test_tagpup_server_api.py's TestSaveMetadata and TestBulkTags (what a save and a tag write left on the
 disk: a title, a tag whole and not in pieces, a deep tag, a clear, Date Taken, an add that keeps the keywords the photo
-carries, a remove) -- the routes call these services and the pages' flow against the real routes is
+carries, a remove) -- the entry point calls these services and the pages' flow against the real routes is
 test_pages_against_the_real_server's. Broken in a scratch copy and this file fails: change_tags dropping the keywords a
 photo carries before it adds (an add keeps them), save_photo writing no Date Taken (one save), a remove that takes nothing off.
 
@@ -44,6 +44,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import damaged_photos  # noqa: E402
 import face_rows  # noqa: E402
 import page_fixtures  # noqa: E402
+import page_writes  # noqa: E402
 import photo_rows  # noqa: E402
 import test_stale_record_precondition as S  # noqa: E402
 from test_a_file_holds_what_exiftool_kept import ReadFilesCase, flip_a_picture_byte, rewritten  # noqa: E402
@@ -417,7 +418,7 @@ class ASaveFromThePage(S.Fresh):
         refused = names.RenameFailed("The file is open in another program (held by Viewer)", [])
         with mock.patch("tagpup.files.names.rename_all", side_effect=refused):
             reply = self.save(record, title="Start line")
-        body = reply.get_json()
+        body = page_writes.saved(reply.get_json())
         self.assertEqual((200, True, path), (reply.status_code, body["success"], body["new_path"]), reply.data)
         self.assertIn("held by Viewer", body["rename_failed"])
         self.assertEqual("Start line", S.title_in(path))
@@ -426,12 +427,12 @@ class ASaveFromThePage(S.Fresh):
         path, record = self.smart_renamed()
         taken = os.path.join(self.folder, "Regatta - 1 - Start line.jpg")
         S.damaged_photos.whole_jpeg(taken, seed=77)       # the name the caption wants is taken: a free one is chosen
-        renamed = self.save(record, title="Start line").get_json()
-        self.assertNotIn("rename_failed", renamed)
+        renamed = page_writes.saved(self.save(record, title="Start line").get_json())
+        self.assertIsNone(renamed["rename_failed"])
         self.assertTrue(renamed["new_path"].endswith("Regatta - 1 - Start line_1.jpg"), renamed["new_path"])
         plain, plain_id = self.make("IMG_0002.jpg", 3, ["Trips/Coast"])
-        reply = self.save(self.record(plain_id), title="A caption").get_json()
-        self.assertNotIn("rename_failed", reply)
+        reply = page_writes.saved(self.save(self.record(plain_id), title="A caption").get_json())
+        self.assertIsNone(reply["rename_failed"])
         self.assertEqual(plain, reply["new_path"])
 
     def flipping_once(self, path):

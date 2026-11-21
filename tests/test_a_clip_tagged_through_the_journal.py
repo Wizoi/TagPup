@@ -30,6 +30,7 @@ import photo_rows  # noqa: E402
 import web_client  # noqa: E402
 from view_library import ViewLibrary, make_jpeg  # noqa: E402
 
+from tests import page_writes  # noqa: E402
 from tagpup.core import fields, paths, processes  # noqa: E402
 from tagpup.core.result import Refused  # noqa: E402
 from tagpup.files import containers, field_values, images, in_place, metadata, segment_edits  # noqa: E402
@@ -193,12 +194,12 @@ class AClipInTheLibrary(ALibraryHoldingAClip):
         with_a_quicktime_subject_that_is_not_text(self.clip_path)
         clip, = self.index(self.clip_path)
         self.assertEqual([], self.tags_of(clip), "the index reads no keyword of it")
-        reply = self.post("photo/save-metadata", {"path": self.clip_path, "tags": ["Trips/Pier"]})
-        self.assertEqual(200, reply.status_code, reply.get_json())
+        reply = self.post("photos/write", page_writes.save(self.vl.library, **{"path": self.clip_path, "tags": ["Trips/Pier"]}))
+        self.assertEqual((200, True), (reply.status_code, reply.get_json()["success"]), reply.get_json())
         self.assertEqual((["Trips/Pier"], ["Trips/Pier"]), self.read_now(self.clip_path), "its XMP holds the tag saved alone")
         self.assertEqual(["Trips/Pier"], self.tags_of(clip))
-        reply = self.post("photos/bulk-tags", {"changes": {self.clip_path: {"remove": ["Trips/Pier"]}}})
-        self.assertEqual(200, reply.status_code, reply.get_json())
+        reply = self.post("photos/write", {"op": "tags", "changes": {self.clip_path: {"remove": ["Trips/Pier"]}}})
+        self.assertEqual((200, True), (reply.status_code, reply.get_json()["success"]), reply.get_json())
         self.assertEqual(([], []), self.read_now(self.clip_path), "its last tag comes off, and nothing is read back")
         self.assertEqual([], self.tags_of(clip))
         self.assertEqual(["done", "done"], self.change_states(clip))
@@ -212,8 +213,8 @@ class AClipInTheLibrary(ALibraryHoldingAClip):
         with open(self.clip_path, "ab") as handle:
             handle.write(patched.xmp_box(described))
         clip, = self.index(self.clip_path)
-        reply = self.post("photo/save-metadata", {"path": self.clip_path, "tags": ["Trips/Pier"], "title": "Jetty at dusk"})
-        self.assertEqual(200, reply.status_code, reply.get_json())
+        reply = self.post("photos/write", page_writes.save(self.vl.library, **{"path": self.clip_path, "tags": ["Trips/Pier"], "title": "Jetty at dusk"}))
+        self.assertEqual((200, True), (reply.status_code, reply.get_json()["success"]), reply.get_json())
         self.assertEqual((["Trips/Pier"], ["Trips/Pier"]), self.read_now(self.clip_path))
         record = metadata.MetadataExtractor(EXIFTOOL).batch_read([self.clip_path])[0]["raw_metadata"]
         self.assertEqual(("Jetty at dusk", "Jetty at dusk"), (record.get("XMP:Title"), record.get("XMP:Description")),
@@ -244,8 +245,8 @@ class AClipInTheLibrary(ALibraryHoldingAClip):
 
     def test_a_tag_save_from_the_photo_panel_writes_the_clips_xmp_and_journals_it_done(self):
         clip, = self.index(self.clip_path)
-        reply = self.post("photo/save-metadata", {"path": self.clip_path, "tags": ["Trips/Coast"]})
-        self.assertEqual(200, reply.status_code, reply.get_json())
+        reply = self.post("photos/write", page_writes.save(self.vl.library, **{"path": self.clip_path, "tags": ["Trips/Coast"]}))
+        self.assertEqual((200, True), (reply.status_code, reply.get_json()["success"]), reply.get_json())
         self.assertEqual((["Trips/Coast"], ["Trips/Coast"]), self.read_now(self.clip_path))
         self.assertEqual(["done"], self.change_states(clip), "one journaled file, done")
         self.assertEqual(["Trips/Coast"], self.tags_of(clip))
@@ -253,8 +254,8 @@ class AClipInTheLibrary(ALibraryHoldingAClip):
     def test_a_clip_saved_is_stamped_with_its_new_size_and_the_same_save_again_writes_nothing(self):
         clip, = self.index(self.clip_path)
         size = os.path.getsize(self.clip_path)
-        reply = self.post("photos/bulk-tags", {"changes": {self.clip_path: {"add": ["Trips/Coast"]}}})
-        self.assertEqual(200, reply.status_code, reply.get_json())
+        reply = self.post("photos/write", {"op": "tags", "changes": {self.clip_path: {"add": ["Trips/Coast"]}}})
+        self.assertEqual((200, True), (reply.status_code, reply.get_json()["success"]), reply.get_json())
         self.assertNotEqual(size, os.path.getsize(self.clip_path), "the patch appended an XMP box")
         self.assertEqual([(os.path.getsize(self.clip_path),)], self.vl.rows("SELECT size FROM photos WHERE id = ?", clip),
                          "the row describes the file as written, so the next scan does not read it again")
@@ -262,8 +263,8 @@ class AClipInTheLibrary(ALibraryHoldingAClip):
         recorded = json.loads(self.vl.rows("SELECT raw_metadata FROM photos WHERE id = ?", clip)[0][0])
         self.assertEqual(scanned, recorded, "and says what a scan reads of it")
         written = self.read_bytes(self.clip_path)
-        reply = self.post("photo/save-metadata", {"path": self.clip_path, "tags": ["Trips/Coast"]})
-        self.assertEqual(200, reply.status_code, reply.get_json())
+        reply = self.post("photos/write", page_writes.save(self.vl.library, **{"path": self.clip_path, "tags": ["Trips/Coast"]}))
+        self.assertEqual((200, True), (reply.status_code, reply.get_json()["success"]), reply.get_json())
         self.assertEqual(["done"], self.change_states(clip), "the same save again journals nothing")
         self.assertEqual(written, self.read_bytes(self.clip_path), "and writes nothing")
 
@@ -281,10 +282,10 @@ class AClipInTheLibrary(ALibraryHoldingAClip):
         photo, clip = self.index(self.photo_path, self.clip_path)
         with open(self.clip_path, "rb"):
             before = self.read_bytes(self.clip_path)
-            reply = self.post("photos/bulk-tags", {"changes": {photo: {"add": ["Trips/Coast"]}
+            reply = self.post("photos/write", {"op": "tags", "changes": {photo: {"add": ["Trips/Coast"]}
                                                                for photo in [self.clip_path, self.photo_path]}})
         body = reply.get_json()
-        self.assertIn(in_place.OPEN_ELSEWHERE, body["error"])
+        self.assertIn(in_place.OPEN_ELSEWHERE, page_writes.why(body))
         self.assertEqual([paths.key(self.photo_path)], [paths.key(path) for path in body["written"]],
                          "the clip's refusal does not stop the write: the photo after it is written")
         self.assertEqual(["Trips/Coast"], self.read_now(self.photo_path)[1])

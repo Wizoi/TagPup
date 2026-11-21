@@ -28,6 +28,7 @@ from unittest import mock
 
 import flask
 
+from tests import page_writes
 from tests.handler_harness import Library
 
 from tagpup.core import paths
@@ -133,7 +134,7 @@ class ASmartRenameOfTheOpenPhoto(Follows, unittest.TestCase):
 
 
 class ASaveAfterATitle(Follows, unittest.TestCase):
-    """POST /api/photo/save-metadata: a title saved, the photo renamed after its caption."""
+    """POST /api/photos/write op `set`: a title saved, the photo renamed after its caption."""
 
     TELLS_TAGS = True
 
@@ -147,13 +148,14 @@ class ASaveAfterATitle(Follows, unittest.TestCase):
                     handle.write(b" its title written")
             result = Result(attempted=1, changed=1)
             result.details.update(new_path=new, renamed=moved, tags=list(tags), flat=list(tags), hierarchical=list(tags),
-                                  dates={}, taken=None, index_warning=None, base={"tags": list(tags), "title": title})
+                                  dates={}, taken=None, base={"tags": list(tags), "title": title})
             return result
         with mock.patch.object(tagpup_routes.tagging_actions, "save_photo", side_effect=saving):
-            status, reply = self.lib.post("/api/photo/save-metadata", {
-                "path": self.old, "title": "Harbour Day", "tags": ["Trips/Coast", "Boats"]})
+            found = self.lib.folders().peek(self.folder)[paths.key(self.old)]   # the panel's record of the photo
+            status, reply = self.lib.post(page_writes.ROUTE, page_writes.set_from(
+                found, title="Harbour Day", tags=["Trips/Coast", "Boats"]))
         self.assertEqual(200, status, reply)
-        return reply
+        return page_writes.saved(reply)
 
 
 class AClipConverted(Follows, unittest.TestCase):

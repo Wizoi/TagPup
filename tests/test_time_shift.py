@@ -10,7 +10,9 @@ stand-in raising for its path no longer reached it: the patch hands ExifTool a c
 Lifted: test_time_shift_records_every_date (#270), test_time_shift_tells_the_index and test_service_shift_date_taken (#249),
 which ran the same shift three times, once against a table standing in for ExifTool. Mutation proofs: date_shift_plan
 shifting only the first field it finds; `changed` reported as the number asked; the photos written as files only (no row,
-no journal); the route not calling shift_date_taken.
+no journal); the route not calling shift_date_taken. The page's Time Shift is sent as the page sends it, to POST
+/api/photos/write op shift (tests/page_writes.py); the order it shows the folder in is the page's own
+(tests/frontend/shifting-a-folders-date-taken.test.mjs).
 """
 import json
 import os
@@ -20,6 +22,7 @@ from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import page_writes  # noqa: E402
 import photo_rows  # noqa: E402
 from handler_harness import Library as RouteLibrary  # noqa: E402
 from test_a_photo_patched_in_place import open_elsewhere  # noqa: E402
@@ -139,38 +142,16 @@ class TheTimeShiftPage(unittest.TestCase):
             photo_rows.add_read(conn, path, {"EXIF:DateTimeOriginal": TAKEN, "EXIF:Model": "Harbour Cam"})
         conn.commit()
         conn.close()
-        status, reply = lib.post("/api/folder/time-shift", {
-            "folder_path": lib.photos.replace(os.sep, "/"), "camera_model": "All Cameras", "shift_minutes": 30})
-        self.assertEqual(200, status, reply)
-        self.assertEqual((True, 2, 3), (reply["success"], reply["updated_count"], reply["requested_count"]))
-        # The folder is typed as the browser sends it, walked cold, and its photos come back in their own case (the walk
-        # once used the lower-cased key).
-        self.assertLessEqual(set(made), {photo["path"] for photo in reply["updated_photos"]})
+        shift = page_writes.shift_all(lib.library, lib.photos, 30)
+        self.assertEqual(3, len(shift["changes"]), "the page sends the folder's photos, the one it cannot read too")
+        status, reply = lib.post(page_writes.ROUTE, shift)
+        self.assertEqual((200, True, 2, 3), (status, reply["success"], reply["changed"], reply["attempted"]), reply)
+        # The photos written come back in their own case, as the page named them.
+        self.assertEqual(set(made), set(reply["written"]))
         for path in made:
             raw, mtime, size = lib.rows("SELECT raw_metadata, mtime, size FROM photos WHERE path = ?", (path,))[0]
             self.assertEqual(SHIFTED, json.loads(raw)["EXIF:DateTimeOriginal"], path)
             self.assertEqual((os.stat(path).st_mtime, os.stat(path).st_size), (mtime, size), path)
-
-    def test_its_photos_come_back_in_the_order_the_folder_shows_them_not_the_shifted_ones_last(self):
-        from PIL import Image
-
-        lib = RouteLibrary(self)
-        taken = {"a.jpg": ("2020:05:01 10:00:00", "Harbour Cam"), "b.jpg": ("2020:05:01 10:10:00", "Other Cam"),
-                 "c.jpg": ("2020:05:01 10:20:00", "Other Cam")}
-        conn = db.connect(lib.db_path)
-        for name, (when, model) in taken.items():
-            path = os.path.join(lib.photos, name)
-            Image.new("RGB", (8, 8), (40, 60, 80)).save(path)
-            write_outside(path, {"EXIF:DateTimeOriginal": when, "EXIF:Model": model})
-            photo_rows.add_read(conn, path, {"EXIF:DateTimeOriginal": when, "EXIF:Model": model})
-        conn.commit()
-        conn.close()
-        status, reply = lib.post("/api/folder/time-shift", {
-            "folder_path": lib.photos.replace(os.sep, "/"), "camera_model": "Harbour Cam", "shift_minutes": -30})
-        self.assertEqual(200, status, reply)
-        self.assertEqual(1, reply["updated_count"])
-        self.assertEqual(["a.jpg", "b.jpg", "c.jpg"], [photo["filename"] for photo in reply["updated_photos"]],
-                         "the shifted photo is at its place in the folder, not after the ones not shifted")
 
 
 if __name__ == "__main__":

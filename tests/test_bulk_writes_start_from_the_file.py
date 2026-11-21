@@ -10,18 +10,20 @@ a scan files its whole recursive walk under the folder that was scanned. A photo
 subfolder was never found, and its record went on showing what it held before.
 
 A bulk write of a folder's photos that stops part way says which photos it wrote, so the page records them; one that
-meets a photo whose file is gone writes the rest and lists it.
+meets a photo whose file is gone, or one ExifTool refuses, writes the rest and lists it. A tag write and a save are made
+as the page makes them, to POST /api/photos/write (tests/page_writes.py).
 
 Lifted: test_a_partial_bulk_write_says_what_it_wrote, test_apply_all_stopped_half_way_says_what_it_wrote (#878) and
 test_bulk_tags_missing (#566; its stood-in ExifTool is the real one here, and its route test, which stood in the
-service, is the two tests of the route). Each was broken in a scratch copy and this file fails: bulk-tags answering a
-failure without `written`, tagpup_routes._refused_after_writing without it (#878), tagging.leave_out_missing keeping every
+service, is the two tests of the route). Each was broken in a scratch copy and this file fails: the tag write answering
+a failure without `written`, tagpup_routes._refused_after_writing without it (#878), tagging.leave_out_missing keeping every
 photo (#566), and taking a file it cannot read for a missing one.
 """
 import os
 import unittest
 from unittest import mock
 
+from tests import page_writes
 from tests.handler_harness import Library
 from tests.test_taxonomy_lifecycle import EXIFTOOL, requires_exiftool
 
@@ -60,6 +62,12 @@ def tags_in(path):
     return extract_tags({k: clean_metadata_value(v) for k, v in meta.items()})
 
 
+def tag(lib, photo_paths, add=(), remove=()):
+    """The tag queue's chunk adding `add` to and taking `remove` off each of `photo_paths` (page_writes.tags)."""
+    return lib.post(page_writes.ROUTE, page_writes.tags({photo: {"add": list(add), "remove": list(remove)}
+                                                         for photo in photo_paths}))
+
+
 @requires_exiftool
 class TestTheFileIsTheStartingPoint(unittest.TestCase):
     """No cache entry and no index row: the page after a restart, on a new photo."""
@@ -70,16 +78,16 @@ class TestTheFileIsTheStartingPoint(unittest.TestCase):
         self.photo = make_photo(os.path.join(self.lib.photos, "a.jpg"))
 
     def test_bulk_add_keeps_the_keywords_already_in_the_file(self):
-        status, reply = self.lib.post("/api/photos/bulk-tags", {"changes": {self.photo: {"add": ["Sunset"]}}})
-        self.assertEqual(status, 200, reply)
+        status, reply = tag(self.lib, [self.photo], ["Sunset"])
+        self.assertEqual((200, True), (status, reply["success"]), reply)
         self.assertEqual(sorted(tags_in(self.photo)), sorted(EXISTING + ["Sunset"]))
         self.assertEqual({paths.key(self.photo): sorted(EXISTING + ["Sunset"])},
-                         {paths.key(path): sorted(tags) for path, tags in reply["written"].items()},
+                         {paths.key(path): sorted(each["tags"]) for path, each in reply["written"].items()},
                          "a write that succeeds says what each photo holds")
 
     def test_bulk_remove_takes_away_only_that_tag(self):
-        status, reply = self.lib.post("/api/photos/bulk-tags", {"changes": {self.photo: {"remove": ["Beach"]}}})
-        self.assertEqual(status, 200, reply)
+        status, reply = tag(self.lib, [self.photo], remove=["Beach"])
+        self.assertEqual((200, True), (status, reply["success"]), reply)
         self.assertEqual(tags_in(self.photo), ["Holiday/Summer"])
 
     def test_apply_all_keeps_the_keywords_already_in_the_file(self):
@@ -93,8 +101,8 @@ class TestTheFileIsTheStartingPoint(unittest.TestCase):
         # The cache says the photo holds nothing (it was edited elsewhere since).
         self.lib.folders().put(self.lib.photos, {
             paths.key(self.photo): {"path": os.path.abspath(self.photo), "tags": [], "raw_metadata": {}}})
-        status, reply = self.lib.post("/api/photos/bulk-tags", {"changes": {self.photo: {"add": ["Sunset"]}}})
-        self.assertEqual(status, 200, reply)
+        status, reply = tag(self.lib, [self.photo], ["Sunset"])
+        self.assertEqual((200, True), (status, reply["success"]), reply)
         self.assertEqual(sorted(tags_in(self.photo)), sorted(EXISTING + ["Sunset"]))
 
 
@@ -111,19 +119,20 @@ class TestAWriteStoppedPartWay(unittest.TestCase):
     def written(self, reply):
         return [paths.key(p) for p in reply["written"]]
 
-    def test_a_file_exiftool_refuses_stops_the_run_and_the_reply_names_the_photos_before_it(self):
+    def test_a_file_exiftool_refuses_is_its_error_and_the_reply_names_the_photos_written(self):
         """ExifTool refuses the second photo for the scratch file in its way, which stays: written this moment, it may be
-        another write's under way (file_changes.removed_scratch, rule 3; DECISIONS 2026-10-29)."""
+        another write's under way (file_changes.removed_scratch, rule 3; DECISIONS 2026-10-29). The entry point writes the
+        others and names it among its errors (plan one-write-path)."""
         with open(self.second + "_exiftool_tmp", "wb") as handle:    # in the way of the second photo's write
             handle.write(b"left by another write")
-        status, reply = self.lib.post("/api/photos/bulk-tags", {"changes": {photo: {"add": ["Sunset"]}
-                                                                            for photo in [self.first, self.second, self.third]}})
-        self.assertEqual(500, status, reply)
-        self.assertFalse(reply["success"])
-        self.assertEqual([paths.key(self.first)], self.written(reply))
-        self.assertEqual(sorted(EXISTING + ["Sunset"]), sorted(list(reply["written"].values())[0]))
-        self.assertEqual(sorted(EXISTING + ["Sunset"]), sorted(tags_in(self.first)))
-        self.assertEqual(sorted(EXISTING), sorted(tags_in(self.third)), "the run stopped at the error")
+        status, reply = tag(self.lib, [self.first, self.second, self.third], ["Sunset"])
+        self.assertEqual((200, False), (status, reply["success"]), reply)
+        self.assertEqual(sorted([paths.key(self.first), paths.key(self.third)]), sorted(self.written(reply)))
+        self.assertEqual([paths.key(self.second)], [paths.key(each["path"]) for each in reply["errors"]])
+        self.assertEqual([sorted(EXISTING + ["Sunset"])] * 2, [sorted(each["tags"]) for each in reply["written"].values()])
+        self.assertEqual([sorted(EXISTING + ["Sunset"]), sorted(EXISTING), sorted(EXISTING + ["Sunset"])],
+                         [sorted(tags_in(photo)) for photo in (self.first, self.second, self.third)])
+        self.assertTrue(os.path.exists(self.second + "_exiftool_tmp"), "another write's scratch file was removed")
 
     def apply_all_stopping_at_the_second(self):
         self.lib.suggestion_runs().looks[paths.key(self.lib.photos)] = {
@@ -155,8 +164,7 @@ class TestAWriteStoppedPartWay(unittest.TestCase):
 
     def test_a_photo_whose_file_is_gone_is_listed_and_the_photos_after_it_are_written(self):
         os.remove(self.second)
-        status, reply = self.lib.post("/api/photos/bulk-tags", {"changes": {photo: {"add": ["Sunset"]}
-                                                                            for photo in [self.first, self.second, self.third]}})
+        status, reply = tag(self.lib, [self.first, self.second, self.third], ["Sunset"])
         self.assertEqual(200, status, reply)
         self.assertEqual(sorted([paths.key(self.first), paths.key(self.third)]), sorted(self.written(reply)))
         self.assertEqual(1, reply["skipped_missing"])
@@ -166,8 +174,7 @@ class TestAWriteStoppedPartWay(unittest.TestCase):
     def test_a_selection_of_only_missing_photos_writes_nothing_and_says_so(self):
         os.remove(self.first)
         os.remove(self.second)
-        status, reply = self.lib.post("/api/photos/bulk-tags", {"changes": {photo: {"add": ["Sunset"]}
-                                                                            for photo in [self.first, self.second]}})
+        status, reply = tag(self.lib, [self.first, self.second], ["Sunset"])
         self.assertEqual((200, {}, 2), (status, reply["written"], reply["skipped_missing"]), reply)
 
     def test_a_file_that_cannot_be_read_is_not_taken_for_missing(self):
@@ -192,15 +199,14 @@ class TestASubfolderPhotoIsFoundInTheCache(unittest.TestCase):
     def cached(self):
         return self.lib.folders().peek(self.lib.photos).get(paths.key(self.photo))
 
-    def test_save_metadata_updates_its_record(self):
-        status, reply = self.lib.post("/api/photo/save-metadata", {
-            "path": self.photo, "title": "", "tags": ["Beach", "Sunset"]})
-        self.assertEqual(status, 200, reply)
+    def test_a_save_updates_its_record(self):
+        status, reply = self.lib.post(page_writes.ROUTE, page_writes.save(self.lib.library, self.photo, "", ["Beach", "Sunset"]))
+        self.assertEqual((200, True), (status, reply["success"]), reply)
         self.assertEqual(sorted(self.cached()["tags"]), ["Beach", "Sunset"])
 
-    def test_bulk_tags_update_its_record(self):
-        status, reply = self.lib.post("/api/photos/bulk-tags", {"changes": {self.photo: {"add": ["Sunset"]}}})
-        self.assertEqual(status, 200, reply)
+    def test_a_tag_write_updates_its_record(self):
+        status, reply = tag(self.lib, [self.photo], ["Sunset"])
+        self.assertEqual((200, True), (status, reply["success"]), reply)
         self.assertIn("Sunset", self.cached()["tags"])
 
     def test_apply_all_updates_its_record(self):
@@ -224,10 +230,9 @@ class TestASubfolderPhotoIsFoundInTheCache(unittest.TestCase):
         with ExifToolSession(executable=EXIFTOOL) as et:
             et.set_tags([self.photo], tags={"EXIF:DateTimeOriginal": "2020:06:01 10:00:00"},
                         params=["-overwrite_original"])
-        status, reply = self.lib.post("/api/folder/time-shift", {
-            "folder_path": os.path.dirname(self.photo), "camera_model": "All Cameras",
-            "shift_minutes": 30})
-        self.assertEqual(status, 200, reply)
+        status, reply = self.lib.post(page_writes.ROUTE,
+                                      page_writes.shift_all(self.lib.library, os.path.dirname(self.photo), 30))
+        self.assertEqual((200, True, 1), (status, reply["success"], reply["changed"]), reply)
         raw = self.cached()["raw_metadata"]
         self.assertEqual(raw.get("EXIF:DateTimeOriginal"), "2020:06:01 10:30:00")
 

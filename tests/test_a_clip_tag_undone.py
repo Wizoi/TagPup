@@ -30,8 +30,8 @@ EXIFTOOL = tagged.EXIFTOOL
 class AClipTagUndone(tagged.ALibraryHoldingAClip):
 
     def tagged(self, photo_id, tag):
-        reply = self.post("photos/bulk-tags", {"changes": {self.clip_path: {"add": [tag]}}})
-        self.assertEqual(200, reply.status_code, reply.get_json())
+        reply = self.post("photos/write", {"op": "tags", "changes": {self.clip_path: {"add": [tag]}}})
+        self.assertEqual((200, True), (reply.status_code, reply.get_json()["success"]), reply.get_json())
         (change,), = self.vl.rows("SELECT DISTINCT change_id FROM change_files WHERE photo_id = ?", photo_id)
         return change
 
@@ -78,10 +78,10 @@ class AClipTagUndone(tagged.ALibraryHoldingAClip):
 
     def test_a_clip_whose_patch_is_more_than_the_journal_keeps_is_refused_and_nothing_is_written(self):
         clip, before = self.with_a_premiere_packet(1600)
-        reply = self.post("photos/bulk-tags", {"changes": {self.clip_path: {"add": ["Trips/Harbour"]}}})
-        body = reply.get_json()
-        self.assertIn(file_journal.PATCH_TOO_LARGE.split(" (")[0], body["error"])
-        self.assertIn("at most 1,024 KB is kept). Nothing was written.", body["error"])
+        reply = self.post("photos/write", {"op": "tags", "changes": {self.clip_path: {"add": ["Trips/Harbour"]}}})
+        (error,) = reply.get_json()["errors"]
+        self.assertIn(file_journal.PATCH_TOO_LARGE.split(" (")[0], error["why"])
+        self.assertIn("at most 1,024 KB is kept). Nothing was written.", error["why"])
         self.assertEqual(before, self.read_bytes(self.clip_path), "not a byte written")
         self.assertEqual(([], []), (self.tags_of(clip), self.change_states(clip)), "its row withdrawn, no tag")
 

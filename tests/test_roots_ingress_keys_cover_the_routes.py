@@ -75,7 +75,6 @@ NOT_ADDING = {
     "/api/folder/suggest-cancel": "names a run, by its folder's key",
     "/api/folder/suggest-start": "the folder the page has open, scanned first",
     "/api/folder/suggest-status": "names a run, by its folder's key",
-    "/api/folder/time-shift": "writes photos of the folder the page has open",
     "/api/library/ids": "a library view's folder source: the library's rows, not the disk",
     "/api/name-faces/scope": "counts what the library holds under the folder",
     "/api/name-faces/start": "names faces the library holds under the folder",

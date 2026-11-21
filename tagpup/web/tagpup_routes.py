@@ -22,7 +22,7 @@ from flask import Blueprint, Response, jsonify, request
 
 from tagpup import config
 from tagpup import runtime as runtimes
-from tagpup.core import fields, paths, renaming, vocabulary
+from tagpup.core import paths, renaming, vocabulary
 from tagpup.core.library import picker_name
 from tagpup.jobs import suggestions as suggestion_jobs
 from tagpup.services import bulk_edit
@@ -440,63 +440,6 @@ def folder_auto_apply():
         logger.error("Error auto-applying suggestions: %s", result.message())
         return responses.error(500, result.message(), written=_written_tags(result))
     return jsonify({"success": True, "written": _written_tags(result), **_where(result)})
-
-
-@routes.post("/api/folder/time-shift")
-def folder_time_shift():
-    """A folder's Time Shift: the Date Taken of its photos of one camera moved by `shift_minutes`. A caller of the one entry
-    point (_write, op `shift`) that chooses the photos (the camera's, never a clip) and answers as it always did. No page
-    sends to it now: the page chooses the photos and sends them to /api/photos/write (plan one-write-path, cut 2c deletes
-    it)."""
-    library = state.require()
-    body = request.get_json(silent=True) or {}
-    folder = body.get("folder_path")
-    camera_model = body.get("camera_model")
-    shift_minutes = body.get("shift_minutes", 0)
-    refused = responses.folder_refused(folder)
-    if refused:
-        return refused
-    if shift_minutes == 0:
-        return jsonify({"success": True, "message": "No shift applied (0 minutes)"})
-    # Walked and written in the stored form, looked up by the key. This used to walk the
-    # lower-cased key itself, so every path it found -- and every path it sent back to
-    # the page -- was lower case.
-    folder = paths.stored(folder)
-    cache = folders.of(library)
-    try:
-        photos = _folder_photos(library, folder)
-    except Exception as e:
-        logger.error("Error scanning folder on the fly for time shift: %s", e)
-        return responses.error(500, "Folder must be scanned first, and scan fallback failed: %s" % e)
-    # The photos of the camera asked for (tagpup.core.fields): never a clip, whose Date Taken is not changed
-    # (images.CLIP_NOT_EDITED); the page counts the same photos (rename.js onCamera).
-    targets = [paths.stored(record["path"]) for record in photos.values()
-               if record["media"] == "photo" and fields.on_camera(record.get("raw_metadata"), camera_model)]
-    if not targets:
-        return jsonify({"success": True, "message": "No photos matched the camera model"})
-    try:
-        # Named by the paths it chose, no id: the folder's records are the server's own, read in this request.
-        result, _stamps = _write(library, photo_writes.SHIFT, {path: (None, {}) for path in targets},
-                                 params={"minutes": shift_minutes})
-        if result.refused:
-            return responses.refused(result)
-        if not result.ok:
-            raise RuntimeError(result.message())
-    except responses.ANSWERED as why:
-        # Over the cap, too many batches ahead, or cancelled before its turn (file_changes.batch_exclusively): nothing written.
-        return responses.of(why)
-    except Exception as e:
-        logger.error("Error applying time shift to %s: %s", folder, e)
-        return responses.error(500, str(e))
-    # The folder as the cache holds it now, each photo's record as the write read it back (_told patched every map holding
-    # it); the map read before the write, patched the same way, if the cache let the folder go meanwhile. Never a scan:
-    # the change is journaled, and a listing that does not answer would answer an empty folder (or a 500) for it.
-    held = cache.snapshot(folder)
-    if held is None:
-        held = {**photos, **{paths.key(path): record for path, record in _shifted(result)}}
-    return jsonify({"success": True, "updated_photos": _sorted(held),
-                    "updated_count": result.changed, "requested_count": result.attempted,
-                    **_where(result)})
 
 
 @routes.post("/api/folder/rename-photos")
@@ -1041,9 +984,9 @@ def _stamp_of(sent):
 
 
 def _base_of(sent):
-    """(the `base` a write names -- {"tags": [str], "title": str}, or None for a null one --, why it cannot be read)."""
-    if sent is None:
-        return None, None
+    """(the `base` a write names, {"tags": [str], "title": str}, None) or (None, why it cannot be read). A null one is
+    refused as a shape: a page refuses a save from a photo it could not read before sending it, in its own words
+    (web/common/photo-write.js UNREADABLE_SAVE)."""
     ok = (isinstance(sent, dict) and isinstance(sent.get("tags", []), list)
           and all(isinstance(tag, str) for tag in sent.get("tags", [])) and isinstance(sent.get("title", ""), str))
     if not ok:
@@ -1133,92 +1076,6 @@ def photo_smart_rename():
                     "updated_paths": result.details["updated_paths"], **_where(result), **_stamp_reply(left)})
 
 
-def _set_fields(sent):
-    """({"title", "tags", "date_taken", "stamp", "base"} of one photo's save, as tagging.save_photo takes them, None), or
-    (None, why it cannot be read): of `save-metadata`'s body, and of a `set`'s entry. A page names what it read (`base`,
-    null for a photo it could not read); a call with neither `base` nor `stamp` is no check."""
-    stamp, why = _stamp_of(sent.get("stamp"))
-    if why:
-        return None, why
-    base = tagging_actions.NO_BASE
-    if "base" in sent or stamp is not None:
-        base, why = _base_of(sent.get("base"))
-        if why:
-            return None, why
-    return {"title": sent.get("title"), "tags": sent.get("tags", []), "date_taken": sent.get("date_taken"),
-            "stamp": stamp, "base": base}, None
-
-
-@routes.post("/api/photo/save-metadata")
-def photo_save_metadata():
-    """One photo's title, tags and Date Taken as a panel saves it: a caller of the one entry point (_write, op `set`) that
-    answers as it always did, until the pages send to /api/photos/write (plan one-write-path, cut 2c deletes it)."""
-    library = state.require()
-    body = request.get_json(silent=True) or {}
-    photo_path = body.get("path")
-    refused = responses.file_refused(photo_path)
-    if refused:
-        return refused
-    photo_path = paths.stored(photo_path)
-    own, why = _set_fields(body)
-    if why:
-        return responses.error(400, why)
-    try:
-        result, stamps = _write(library, photo_writes.SET, {photo_path: (None, own)})
-        if result.refused:
-            return responses.refused(result)
-        if not result.ok:
-            logger.error("Error saving metadata for %s: %s", photo_path, result.message())
-            return responses.error(500, result.message())
-    except Exception as e:
-        logger.error("Error saving metadata for %s: %s", photo_path, e)
-        return responses.error(500, str(e))
-    reply = {"success": True, "new_path": result.details["new_path"], **_where(result), **_stamp_reply(stamps[photo_path]),
-             "base": result.details.get("base"), **_faces_unnamed(result), **_pictures_refused(result)}
-    if result.details["taken"]:
-        reply["taken"] = result.details["taken"]   # the date as the library spells it: the page shows this, spells nothing
-    if result.details["index_warning"]:
-        reply["index_warning"] = result.details["index_warning"]
-    if result.details.get("rename_failed"):
-        reply["rename_failed"] = result.details["rename_failed"]   # the caption was saved; the photo was not renamed after it
-    return jsonify(reply)
-
-
-@routes.post("/api/photos/bulk-tags")
-def photos_bulk_tags():
-    """Each photo's own tags added and taken off, as the page's queue sends a chunk (web/tagpup/pending.js): a caller of
-    the one entry point (_write, op `tags`) that answers as it always did, stopping at the first photo it cannot write,
-    until the page sends to /api/photos/write (plan one-write-path, cut 2c deletes it)."""
-    library = state.require()
-    body = request.get_json(silent=True) or {}
-    # A body without them is refused by the shape.
-    changes, why = _tag_changes(body.get("changes"))
-    if why:
-        return responses.error(400, why)
-    try:
-        # What is added is checked, not what is removed (tagpup.services.tagging).
-        # `group`: the token of the one action of the page's this request is a chunk of (History's one line).
-        result, stamps = _write(library, photo_writes.TAGS, changes, group=body.get("group"), stop_at_first_error=True)
-        if result.refused:
-            return _refused_reply(result)
-    except responses.ANSWERED as why:
-        # Conflict: too many batches wait ahead (tagpup.services.batches); Refused: more photos than a write may name
-        # (file_changes.too_many), or cancelled before its turn. Nothing was written.
-        return responses.of(why)
-    except Exception as e:
-        logger.error("Error in bulk tags write: %s", e)
-        return responses.error(500, str(e))
-    if not result.ok:
-        # The photos before the one that failed are written: the page is told which,
-        # so that its records say what the files hold.
-        logger.error("Error in bulk tags write: %s", result.message())
-        return responses.error(500, result.message(), written=_written_tags(result))
-    return jsonify({"success": True, "written": _written_tags(result), **_skipped_photos(result),
-                    "stamps": {path: _stamp_reply(stamp) for path, stamp in stamps.items()},
-                    **_where(result),
-                    **_faces_unnamed(result)})
-
-
 @routes.post("/api/photos/write")
 def photos_write():
     """The one entry point of a page's write of photo files (plan one-write-path; tagpup.services.photo_writes): `op`
@@ -1226,7 +1083,8 @@ def photos_write():
     `params` {"minutes": whole number}. Answered in one envelope
     whatever the op (_envelope): 200 when the write ran, a photo that failed among its `errors` and the others written;
     a refusal as its kind is answered (responses.refused: 409 `changed_on_disk` for a stale record or an id no longer at
-    its path), the envelope beside the error."""
+    its path), the envelope beside the error. A write that raised (a share that stopped answering while one photo's
+    save read it) is a 500 with its sentence, as every route answers one, never a page of HTML the page cannot read."""
     library = state.require()
     body = request.get_json(silent=True) or {}
     op = body.get("op")
@@ -1234,7 +1092,7 @@ def photos_write():
         return responses.error(400, "op must be one of: %s." % ", ".join(photo_writes.OPERATIONS))
     params = None
     if op == photo_writes.TAGS:
-        changes, why = _tag_changes(body.get("changes"), with_id=True)
+        changes, why = _tag_changes(body.get("changes"))
     elif op == photo_writes.SHIFT:
         changes, params, why = _shift_change(body.get("changes"), body.get("params"))
     else:
@@ -1252,15 +1110,17 @@ def photos_write():
         result, stamps = _write(library, op, changes, group=body.get("group"), params=params)
     except responses.ANSWERED as why:
         return responses.of(why)
+    except Exception as e:
+        logger.error("Error writing photos (%s): %s", op, e)
+        return responses.error(500, str(e))
     reply = _envelope(op, changes, result, stamps)
     if result.refused:
         return responses.refused(result, **reply)
     return jsonify(reply)
 
 
-def _write(library, op, changes, group=None, stop_at_first_error=False, params=None):
-    """The one write of photo files a page asks (POST /api/photos/write, and the routes that call it until the page sends
-    there): the service's write (tagpup.services.photo_writes) and, once, here, what the server keeps of the photos told
+def _write(library, op, changes, group=None, params=None):
+    """The one write of photo files a page asks (POST /api/photos/write): the service's write (tagpup.services.photo_writes) and, once, here, what the server keeps of the photos told
     what it wrote (_told). A batch (over batches.CHUNK photos) takes its turn before the lock, and more than a write may
     name is refused before it (file_changes.batch_exclusively); the lock is held here, through every file (the service
     takes none: an id is checked under this hold), and the records are told under it, in the order the files were
@@ -1268,7 +1128,7 @@ def _write(library, op, changes, group=None, stop_at_first_error=False, params=N
     with file_changes.batch_exclusively(library, photo_writes.OPERATIONS[op], len(changes)):
         result = photo_writes.write(library, op, changes, state.exiftool(library),
                                     state.rename_format(library) if op == photo_writes.SET else None,
-                                    group=group, stop_at_first_error=stop_at_first_error, params=params)
+                                    group=group, params=params)
         return result, _told(library, op, changes, result)
 
 
@@ -1373,14 +1233,13 @@ def _entries(changes, allowed, shape):
     return found, None
 
 
-def _tag_changes(changes, with_id=False):
+def _tag_changes(changes):
     """({path: (id or None, {"add": [tags to add], "remove": [tags to take off]})}, None) of a tag write's `changes`,
-    {path: {"add": [tag], "remove": [tag]}} (a list left out is none; `with_id`, the entry may name the photo's "id"), or
-    (None, the sentence that refuses it). Nothing is checked of the tags here: what is added is the service's to check
+    {path: {"id": photo id or null, "add": [tag], "remove": [tag]}} (a list left out is none), or (None, the sentence that
+    refuses it). Nothing is checked of the tags here: what is added is the service's to check
     (tagpup.services.tagging.change_tags_of)."""
-    shape = ('Send changes as {path: {%s"add": [tags], "remove": [tags]}}, one entry for each photo.'
-             % ('"id": photo id or null, ' if with_id else ""))
-    found, why = _entries(changes, CHANGE_KEYS + (("id",) if with_id else ()), shape)
+    shape = 'Send changes as {path: {"id": photo id or null, "add": [tags], "remove": [tags]}}, one entry for each photo.'
+    found, why = _entries(changes, CHANGE_KEYS + ("id",), shape)
     if why:
         return None, why
     for path, (photo_id, change) in found.items():
@@ -1406,9 +1265,9 @@ def _shift_change(changes, params):
 
 
 def _set_change(changes):
-    """({path: (id or None, its fields: _set_fields)}, None) of a `set`'s `changes`, ONE photo's, or (None, the sentence
-    that refuses it). Its photo read as every op's are (_entries). A set names the `base` its record read, always:
-    save-metadata's call with neither stamp nor base (no check) has no page that sends it, and is not carried here."""
+    """({path: (id or None, {"title", "tags", "date_taken", "stamp", "base"} as tagging.save_photo takes them)}, None) of
+    a `set`'s `changes`, ONE photo's, or (None, the sentence that refuses it). Its photo read as every op's are (_entries).
+    A set names the `base` its record read, always."""
     shape = ('Send changes as {path: {"id": photo id or null, "title": text, "tags": [tags], "date_taken": text, '
              '"stamp": {"mtime": number, "size": number}, "base": {"tags": [tags], "title": text}}}, one photo.')
     if isinstance(changes, dict) and len(changes) > 1:
@@ -1419,10 +1278,12 @@ def _set_change(changes):
     ((path, (photo_id, change)),) = found.items()
     if "base" not in change:
         return None, shape
-    own, why = _set_fields(change)
-    if why:
-        return None, why
-    return {path: (photo_id, own)}, None
+    stamp, why = _stamp_of(change.get("stamp"))
+    base, why_base = _base_of(change["base"])
+    if why or why_base:
+        return None, why or why_base
+    return {path: (photo_id, {"title": change.get("title"), "tags": change.get("tags", []),
+                              "date_taken": change.get("date_taken"), "stamp": stamp, "base": base})}, None
 
 
 def _faces_unnamed(result):
@@ -1455,13 +1316,6 @@ def _pictures_refused(result):
     (tagpup.services.file_changes; DECISIONS 2026-11-03), else {}: the page says so in a sentence."""
     refused = result.details.get("pictures_refused")
     return {"pictures_refused": refused} if refused else {}
-
-
-def _skipped_photos(result):
-    """The photos a bulk tag write left out because their files are gone (tagpup.services.tagging.leave_out_missing):
-    {"skipped_missing": m, "skipped": [{"path", "why"}]}."""
-    return {"skipped_missing": result.details.get(tagging_actions.SKIPPED_MISSING, 0),
-            "skipped": [{"path": what, "why": why} for what, why in result.skipped if why.startswith("missing, ")]}
 
 
 def _written_tags(result):

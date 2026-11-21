@@ -29,6 +29,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import own_home  # noqa: E402
+import page_writes  # noqa: E402
 import photo_rows  # noqa: E402
 import roots_library as rl  # noqa: E402
 import web_client  # noqa: E402
@@ -714,11 +715,12 @@ class AFolderTheLibraryDoesNotHold(unittest.TestCase):
 
     def test_a_write_there_touches_the_file_and_makes_no_row(self):
         before = stamp(self.photo)
-        for route, body in (("/photo/save-metadata", {"path": self.photo, "title": "Lighthouse", "tags": ["Trips/Lighthouse"]}),
-                            ("/photos/bulk-tags", {"changes": {self.photo: {"add": ["Trips/Harbour"]}}}),
-                            ("/photo/rotate", {"path": self.photo, "direction": "left"})):
-            reply = self.post(route, body)
-            self.assertEqual(200, reply.status_code, (route, reply.data))
+        for route, body in (("/photos/write", lambda: page_writes.save(self.library, self.photo, title="Lighthouse",
+                                                                        tags=["Trips/Lighthouse"])),
+                            ("/photos/write", lambda: page_writes.tags({self.photo: {"add": ["Trips/Harbour"]}})),
+                            ("/photo/rotate", lambda: {"path": self.photo, "direction": "left"})):
+            reply = self.post(route, body())
+            self.assertEqual((200, True), (reply.status_code, reply.get_json()["success"]), (route, reply.data))
             self.assertEqual((1, 0), (reply.get_json()["file_only"], reply.get_json()["with_rows"]), route)
             self.assertNotEqual(before, stamp(self.photo), route)
             self.assertEqual([self.lighthouse], self.not_held(), "%s made a row" % route)
