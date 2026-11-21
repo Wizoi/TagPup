@@ -417,16 +417,20 @@ describe("V20: a tag taken off is gone wherever the page shows or copies the pho
 describe("V20: in a library view", () => {
   async function view(t) {
     const files = new Map([[11, ["Cross Country", "Harbourside"]], [12, []]]);
+    // A photo renamed since the view read it: the path the library holds it at now, by id (`moved`).
+    const moved = new Map();
     // A read of a photo in `held` is read now (what its file holds now) and answered when the test says (`answerReads`).
     const held = new Set();
     const reads = [];
     const onPhoto = (id) => {
-      const photo = recordOf(id, { tags: (files.get(id) || []).slice() });
+      const now = moved.has(id) ? { path: moved.get(id), filename: moved.get(id).split("\\").pop() } : {};
+      const photo = recordOf(id, { tags: (files.get(id) || []).slice(), ...now });
       return held.has(id) ? new Promise((resolve) => reads.push(() => resolve({ photo }))) : { photo };
     };
     const ctx = await loadViewPage(t, { search: "?view=all", onPhoto });
     ctx.out = [];
     ctx.files = files;
+    ctx.moved = moved;
     ctx.holdReads = (...ids) => ids.forEach((id) => held.add(id));
     ctx.answerReads = async () => {
       held.clear();
@@ -448,6 +452,17 @@ describe("V20: in a library view", () => {
       resolve({ success: true, written });
       await ctx.settle(40);
     };
+    // The oldest write out refused whole, as the server refuses a photo named by an id no longer at the path sent (409).
+    ctx.refuseWrite = async () => {
+      const { body, resolve } = ctx.out.shift();
+      const [path] = Object.keys(body.changes);
+      resolve({ success: false, changed_on_disk: true, written: {}, errors: [], skipped: [],
+        error: `${path.split("\\").pop()} is not the photo this page read (renamed, moved or deleted since): reload it first.` });
+      await ctx.settle(40);
+    };
+    ctx.sent = () => ctx.server.calls.filter((c) => c.url.includes("/api/photos/write")).map((c) => c.body);
+    ctx.reads = (id) => ctx.server.calls.filter((c) => c.url.includes(`/api/library/photo?id=${id}`)).length;
+    ctx.failedRows = () => [...pageExports(ctx.window, "web/tagpup/state.js").state.writeQueue.entries.filter((e) => e.status === "failed")];
     ctx.openPhoto = async (id) => {
       ctx.cardById(id).querySelector(".btn-thumbnail-detail").click();
       await ctx.settle(80);
@@ -513,5 +528,95 @@ describe("V20: in a library view", () => {
     assert.deepEqual(ctx.server.calls.filter((c) => c.url.includes("/selection/delete-check")), [], "the delete was asked of the server");
     await ctx.answerWrite();
     assert.deepEqual(ctx.files.get(11), ["Harbourside"]);
+  });
+
+  describe("V20: a photo renamed or deleted since the library view read it", () => {
+    const RENAMED = "D:\\Library\\2020\\Event 01\\IMG_11 Harbour run.jpg";
+    const AGAIN = "D:\\Library\\2020\\Event 01\\IMG_11 Harbour run at dusk.jpg";
+    const OLD = recordOf(11).path;
+    const outcome = (settled, ctx) => Promise.race([settled.then((counts) => ({ ...counts })), ctx.settle(200).then(() => "never settled")]);
+
+    test("a pill taken off: the write is refused, the photo read again by its id, and the change sent to its new name", async (t) => {
+      const ctx = await view(t);
+      ctx.alerts = [];
+      ctx.window.alert = (text) => ctx.alerts.push(text);
+      await ctx.openPhoto(11);
+      await ctx.takeOff("Cross Country");
+      assert.deepEqual(Object.keys(ctx.sent()[0].changes), [OLD]);
+      ctx.moved.set(11, RENAMED);   // renamed by a save in another tab
+      const reads = ctx.reads(11);
+      await ctx.refuseWrite();
+      assert.equal(ctx.reads(11), reads + 1, "the photo was not read again by its id");
+      assert.equal(ctx.out.length, 1, "the refused change was not sent again");
+      assert.deepEqual(ctx.sent()[1].changes, { [RENAMED]: { id: 11, add: [], remove: ["Cross Country"] } });
+      await ctx.answerWrite();
+      assert.deepEqual(ctx.files.get(11), ["Harbourside"]);
+      assert.deepEqual(ctx.pills(), ["Harbourside"]);
+      assert.equal(ctx.state.activePhotoPath, RENAMED, "the open photo is still named by the path it had");
+      assert.deepEqual(ctx.alerts, [], "a photo read again and written was said as a failure");
+      assert.deepEqual(ctx.failedRows(), []);
+    });
+
+    test("an Undo's change on a photo deleted since: the read answers 404, it settles skipped, and nothing is sent again", async (t) => {
+      const ctx = await view(t);
+      await ctx.openPhoto(11);
+      ctx.server.first(/\/api\/library\/photo\?id=11(?!\d)/, { error: "No such photo." }, { status: 404 });
+      // As undo.js pends a change taken back.
+      const { pendChanges } = pageExports(ctx.window, "web/tagpup/pending.js");
+      const settled = pendChanges([{ path: OLD, add: ["Places/Coast"] }]);
+      await ctx.settle(20);
+      await ctx.refuseWrite();
+      assert.deepEqual(await outcome(settled, ctx), { written: 0, failed: 0, skipped: 1 });
+      assert.equal(ctx.sent().length, 1, "a photo the library no longer has was sent again");
+      assert.equal(ctx.out.length, 0);
+      assert.deepEqual(ctx.failedRows(), [], "a photo deleted since was said as a failure");
+    });
+
+    test("refused again after the read: a failure the drain stops at; its Retry reads the photo again and writes it", async (t) => {
+      const ctx = await view(t);
+      ctx.alerts = [];
+      ctx.window.alert = (text) => ctx.alerts.push(text);
+      await ctx.openPhoto(11);
+      const { pendChanges } = pageExports(ctx.window, "web/tagpup/pending.js");
+      const settled = pendChanges([{ path: OLD, add: ["Places/Coast"] }]);
+      await ctx.settle(20);
+      ctx.moved.set(11, RENAMED);
+      await ctx.refuseWrite();
+      ctx.moved.set(11, AGAIN);   // renamed again between the read and the write
+      await ctx.refuseWrite();
+      assert.equal(ctx.out.length, 0, "a second refusal was sent again by itself");
+      const [row] = ctx.failedRows();
+      assert.ok(row && row.retry, "the second refusal is not a failure with a Retry");
+      assert.match(row.error, /is not the photo this page read/);
+      assert.equal(ctx.alerts.length, 1, "the failure was not said");
+
+      row.retry();
+      await ctx.settle(40);
+      assert.deepEqual(Object.keys(ctx.sent()[2].changes), [RENAMED], "Retry did not send the change waiting");
+      await ctx.refuseWrite();   // still not there: read again, once more
+      assert.deepEqual(Object.keys(ctx.sent()[3].changes), [AGAIN], "Retry's refusal did not read the photo again");
+      await ctx.answerWrite();
+      assert.deepEqual(ctx.files.get(11), ["Cross Country", "Harbourside", "Places/Coast"]);
+      assert.deepEqual(await outcome(settled, ctx), { written: 1, failed: 0, skipped: 0 }, "the change named at its new path never settled");
+    });
+
+    test("a Delete while the refused photo is read again waits for it, as for any change not written", async (t) => {
+      const ctx = await view(t);
+      ctx.alerts = [];
+      ctx.window.alert = (text) => ctx.alerts.push(text);
+      await ctx.openPhoto(11);
+      await ctx.takeOff("Cross Country");
+      ctx.moved.set(11, RENAMED);
+      ctx.holdReads(11);
+      await ctx.refuseWrite();
+      ctx.cardById(11).querySelector(".thumbnail-checkbox").click();
+      ctx.document.getElementById("btn-delete-selection").click();
+      await ctx.settle(40);
+      assert.deepEqual(ctx.alerts, ["Tag changes for 1 photo are not written yet: wait for them, or cancel them in the list of writes, then delete."]);
+      assert.deepEqual(ctx.server.calls.filter((c) => c.url.includes("/selection/delete-check")), [], "the delete was asked of the server");
+      await ctx.answerReads();
+      await ctx.answerWrite();
+      assert.deepEqual(ctx.files.get(11), ["Harbourside"]);
+    });
   });
 });

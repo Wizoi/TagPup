@@ -57,13 +57,14 @@ export function pendChanges(list, { people = false, panel = false } = {}) {
     // getRandomValues, not randomUUID: a page opened over plain http from another computer (`--listen lan`) is not a
     // secure context and has no randomUUID (#3097).
     const token = Array.from(crypto.getRandomValues(new Uint32Array(4)), n => n.toString(16).padStart(8, '0')).join('');
+    const ids = heldIds();
     for (const { path, add = [], remove = [] } of list) {
         const key = pathKey(path);
         let entry = pending.files.get(key);
         // A file already waiting keeps the token of the action that put it here first (the plan's cut 3 rule), and the
         // folder it was clicked in, which leaving another way does not ask about (leaveThen).
         if (!entry) {
-            entry = { path, id: idOf(path), add: new Set(), remove: new Set(), panel: new Set(), token, actions: new Set(),
+            entry = { path, id: ids.get(key) ?? null, add: new Set(), remove: new Set(), panel: new Set(), token, actions: new Set(),
                 folder: state.scannedFolder || null };
             pending.files.set(key, entry);
         }
@@ -135,10 +136,12 @@ function heldRecords() {
     return previous ? [...state.folderPhotos, previous.record] : state.folderPhotos;
 }
 
-/** The photo id the server names `path`'s photo by: that of a record the page holds of it (heldRecords), else null (by path). */
-function idOf(path) {
-    const record = heldRecords().find(p => Number.isInteger(p.id) && samePath(p.path, path));
-    return record ? record.id : null;
+/**
+ * The photo ids the server names photos by, by path key: those of the records the page holds with one (heldRecords: a
+ * library view's open photo, a clip); a photo with none (a folder's scan) is named by its path.
+ */
+function heldIds() {
+    return new Map(heldRecords().filter(p => Number.isInteger(p.id)).map(p => [pathKey(p.path), p.id]));
 }
 
 /**
@@ -378,10 +381,8 @@ async function sendChunk(entry) {
             data = { success: false, error: err.message };
         }
         const dropped = drops !== state.pending.drops;
-        if (data.changed_on_disk && !dropped) {
-            if (!chunk.some(item => item.readAgain)) return await readAgain(chunk, data, entry, drops);
-            chunk.forEach(item => { item.readAgain = false; });   // refused again: a failure, and its Retry reads them again
-        }
+        // Refused again after a read, it is a failure (takeReply), and its Retry reads them again.
+        if (data.changed_on_disk && !dropped && !chunk.some(item => item.readAgain)) return await readAgain(chunk, data, entry, drops);
         return takeReply(chunk, data, entry, dropped);
     } finally {
         state.pending.out = null;
@@ -431,13 +432,18 @@ async function readAgain(chunk, data, entry, drops) {
     return true;
 }
 
-/** `item`'s photo is at `path` now: its entry, and every record the page holds of it (by its id), name it there. */
+/**
+ * `item`'s photo is at `path` now: its entry, every record the page holds of it (by its id), and the actions waiting for
+ * it (settled by the key of the path they name) name it there.
+ */
 function readdress(item, path) {
     heldRecords().filter(photo => photo.id === item.id).forEach(photo => {
         const open = samePath(state.activePhotoPath, photo.path);
         photoRenamed(photo, path);
         if (open) state.activePhotoPath = photo.path;
     });
+    const [was, now] = [pathKey(item.path), pathKey(path)];
+    item.actions.forEach(action => { if (action.left.delete(was)) action.left.add(now); });
     item.path = path;
 }
 
@@ -497,6 +503,7 @@ function takeReply(chunk, data, entry, dropped) {
     if (!data.success && dropped) {
         back.forEach(item => settle(item, 'failed'));
     } else if (!data.success) {
+        back.forEach(item => { item.readAgain = false; });   // its Retry may read a photo moved since again (readAgain)
         ({ kept, putBack } = answerPanel(back));
         giveBack(kept);
         state.pending.stopped = state.pending.stopped || kept.length > 0;   // stopped already: own removals sent meanwhile
