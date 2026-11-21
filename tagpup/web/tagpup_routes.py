@@ -1226,7 +1226,8 @@ def photos_write():
     `params` {"minutes": whole number}. Answered in one envelope
     whatever the op (_envelope): 200 when the write ran, a photo that failed among its `errors` and the others written;
     a refusal as its kind is answered (responses.refused: 409 `changed_on_disk` for a stale record or an id no longer at
-    its path), the envelope beside the error."""
+    its path), the envelope beside the error. A write that raised (a share that stopped answering while one photo's
+    save read it) is a 500 with its sentence, as every route answers one, never a page of HTML the page cannot read."""
     library = state.require()
     body = request.get_json(silent=True) or {}
     op = body.get("op")
@@ -1252,6 +1253,9 @@ def photos_write():
         result, stamps = _write(library, op, changes, group=body.get("group"), params=params)
     except responses.ANSWERED as why:
         return responses.of(why)
+    except Exception as e:
+        logger.error("Error writing photos (%s): %s", op, e)
+        return responses.error(500, str(e))
     reply = _envelope(op, changes, result, stamps)
     if result.refused:
         return responses.refused(result, **reply)

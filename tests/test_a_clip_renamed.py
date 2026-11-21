@@ -28,6 +28,7 @@ import test_a_clip_patched_in_place as patched  # noqa: E402
 import test_a_clip_tagged_through_the_journal as tagged  # noqa: E402
 from view_library import make_jpeg  # noqa: E402
 
+from tests import page_writes  # noqa: E402
 from tagpup.core import paths, processes  # noqa: E402
 from tagpup.files import field_values, images, names  # noqa: E402
 from tagpup.files.exiftool_session import ExifToolSession  # noqa: E402
@@ -95,12 +96,12 @@ class AClipRenamed(tagged.ALibraryHoldingAClip):
         clip, = self.index(self.clip_path)
         reply = self.post("photo/smart-rename", {"path": self.clip_path, "grouping": "Harbour"})
         self.assertEqual(200, reply.status_code, reply.get_json())
-        numbered = reply.get_json()["new_path"]
+        numbered = page_writes.saved(reply.get_json())["new_path"]
         self.assertTrue(os.path.basename(numbered).startswith("Harbour - 1"), numbered)
         self.assertEqual("jetty.mp4", self.kept_name(numbered))
-        saved = self.post("photo/save-metadata", {"path": numbered, "tags": [], "title": "Jetty at dusk"})
+        saved = self.post("photos/write", page_writes.save(self.vl.library, **{"path": numbered, "tags": [], "title": "Jetty at dusk"}))
         self.assertEqual(200, saved.status_code, saved.get_json())
-        titled = saved.get_json()["new_path"]
+        titled = page_writes.saved(saved.get_json())["new_path"]
         self.assertTrue(os.path.basename(titled).startswith("Harbour - 1"), titled)
         self.assertIn("Jetty at dusk", os.path.basename(titled), "renamed after the title saved")
         self.assertEqual(sorted(["pier.jpg", os.path.basename(titled)]), self.listed())
@@ -113,8 +114,8 @@ class AClipRenamed(tagged.ALibraryHoldingAClip):
         _photo, clip = self.index(self.photo_path, self.clip_path)
         clip_bytes = self.read_bytes(self.clip_path)
         reply = self.renamed([self.photo_path, self.clip_path])
-        self.assertNotEqual(200, reply.status_code)
-        self.assertIn(images.CLIP_NOT_PATCHED, reply.get_json()["error"])
+        self.assertFalse(reply.get_json()["success"])
+        self.assertIn(images.CLIP_NOT_PATCHED, page_writes.why(reply.get_json()))
         listed = self.listed()
         self.assertIn("jetty.mp4", listed, "the clip keeps its name: renamed without its first name it is lost to it")
         self.assertNotIn("pier.jpg", listed, "the photo beside it is renamed, its number taken")
@@ -166,7 +167,7 @@ class AClipRenamed(tagged.ALibraryHoldingAClip):
         self.index(self.clip_path)
         reply = self.post("photo/smart-rename", {"path": self.clip_path, "grouping": "Harbour"})
         self.assertEqual(200, reply.status_code, reply.get_json())
-        new_path = reply.get_json()["new_path"]
+        new_path = page_writes.saved(reply.get_json())["new_path"]
         lookup, by_identity = relink_photos.claims_of([new_path], EXIFTOOL)
         pairs, unmatched = relink_photos.pair([paths.stored(self.clip_path)], lookup, by_identity, {}, set())
         self.assertEqual(([(paths.key(self.clip_path), paths.key(new_path))], []),
@@ -183,8 +184,8 @@ class AClipRenamed(tagged.ALibraryHoldingAClip):
         self.assertEqual(0, made.returncode, made.stderr)
         clip_bytes = self.read_bytes(clip_path)
         reply = self.renamed([photo_path, clip_path], folder=loose)
-        self.assertNotEqual(200, reply.status_code)
-        self.assertIn(images.CLIP_NOT_EDITED, reply.get_json()["error"])
+        self.assertFalse(reply.get_json()["success"])
+        self.assertIn(images.CLIP_NOT_EDITED, page_writes.why(reply.get_json()))
         listed = self.listed(loose)
         self.assertIn("slipway.mp4", listed, "the clip keeps its name: no journal to settle its patch")
         self.assertNotIn("slip.jpg", listed, "the photo beside it is renamed")
