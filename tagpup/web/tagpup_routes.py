@@ -1320,7 +1320,7 @@ def _envelope(op, changes, result, stamps):
         written = {path: {"tags": list(tags), **_stamp_reply(stamps.get(path))}
                    for path, (tags, _flat, _hierarchical) in details.get("written", {}).items()}
     elif op == photo_writes.SHIFT:
-        taken = details.get(photo_writes.TAKEN_OF, {})
+        taken = details.get(photo_actions.TAKEN_OF, {})
         written = {path: {**_stamp_reply(stamp), "taken": taken.get(paths.key(path))} for path, stamp in stamps.items()}
     else:
         written = {asked: {"tags": details["tags"], "base": details["base"], "new_path": details["new_path"],

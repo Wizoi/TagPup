@@ -24,6 +24,7 @@ from handler_harness import Library as RouteLibrary  # noqa: E402
 from test_a_photo_patched_in_place import open_elsewhere  # noqa: E402
 from test_file_journal import EXIFTOOL, SHIFTED, TAKEN, FilesCase, field_of, requires_exiftool, write_outside  # noqa: E402
 
+from tagpup.core import paths  # noqa: E402
 from tagpup.services import photos as photo_actions  # noqa: E402
 from tagpup.store import db  # noqa: E402
 
@@ -69,6 +70,13 @@ class ShiftingACamerasClock(FilesCase):
         self.assertIn("10:30", taken or "", "when it was taken did not follow the file")
         self.assertEqual((SHIFTED, SHIFTED), (raw.get("XMP:CreateDate"), raw.get("CreateDate")))
         self.assertEqual(stamp_before, self.row(self.undated)[1], "nothing written: its row is left as it was")
+        # Each photo's new Date Taken as the library spells it, told once by the service for the reply and the
+        # folder's records alike (#3292): the shifted date for each photo written, none for the one holding no date.
+        taken_of = result.details[photo_actions.TAKEN_OF]
+        self.assertEqual({path: self.row(path)[2] for path in (self.a, self.b, self.xmp)},
+                         {path: taken_of[paths.key(path)] for path in (self.a, self.b, self.xmp)})
+        self.assertTrue(all("10:30" in taken_of[paths.key(path)] for path in (self.a, self.b, self.xmp)), taken_of)
+        self.assertIsNone(taken_of[paths.key(self.undated)])
 
         self.assertEqual(3, self.undo(result.details["change"]).changed)
         self.assertEqual(TAKEN, field_of(self.xmp, "XMP:CreateDate"))
