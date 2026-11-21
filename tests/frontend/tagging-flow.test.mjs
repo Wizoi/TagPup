@@ -224,8 +224,10 @@ describe("carrying tags forward against the server", { skip: !REAL }, () => {
     document.getElementById("btn-carry-forward").click();
     await until(ctx, () => !undo.disabled, "the write to be undoable");
     assert.deepEqual((await ctx.tagsOnServer())["b.jpg"], ["Beach", "Portrait"], "it adds to the photo's own tags");
+    const writes = () => ctx.server.replied.filter((url) => url.includes("photos/write")).length;
+    const carried = writes();                      // the carry's own save went there too (op set)
     undo.click();
-    await until(ctx, () => ctx.server.replied.some((url) => url.includes("photos/write")), "the server to take the tags off");
+    await until(ctx, () => writes() > carried, "the server to take the tags off");
     assert.equal(undo.disabled, true, "Undo empties itself: it cannot be applied twice");
     assert.deepEqual(await ctx.tagsOnServer(), { "a.jpg": ["Beach"], "b.jpg": ["Portrait"], "c.jpg": [] }, "only what the write added was taken off");
   });

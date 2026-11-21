@@ -587,8 +587,9 @@ describe("naming a face against the server", { skip: !REAL }, () => {
     await until(ctx, () => ctx.replies("/api/face/match") === 1 && !ctx.panel(), "the face to be named");
     click(ctx.window, ctx.box(1));
     await until(ctx, () => ctx.panel(), "the named face's panel");
+    const named = ctx.replies("photos/write");     // the naming's save went there too (op set)
     click(ctx.window, [...ctx.panel().querySelectorAll("button")].find((b) => b.textContent === "Not this person"));
-    await until(ctx, () => ctx.replies("/api/face/unmatch") === 1 && ctx.replies("photos/write") === 1, "the name to be taken off");
+    await until(ctx, () => ctx.replies("/api/face/unmatch") === 1 && ctx.replies("photos/write") === named + 1, "the name to be taken off");
     assert.deepEqual(await ctx.faceNames(), [null, null, null]);
     assert.deepEqual(await ctx.tagsOfPhoto(), ["Trips"]);
     assert.match(ctx.box(1).getAttribute("aria-label"), /not named/);
