@@ -17,6 +17,7 @@ from test_faces_and_tags_in_step import PEOPLE, InStep  # noqa: E402
 from test_file_journal import Crash, crash_at  # noqa: E402
 from test_organize_faces import ODA, WREN  # noqa: E402
 
+from tests import page_writes  # noqa: E402
 from tagpup.core import paths  # noqa: E402
 from tagpup.core.result import Conflict, Refused  # noqa: E402
 from tagpup.services import activity, batches, face_assignment, face_people, file_changes, identify, job_runs  # noqa: E402
@@ -546,7 +547,7 @@ class TheKeptPool(Bulk):
         second = self.held("pool_02.jpg", [PEOPLE + ODA])
         taken_off, other = self.face(second), self.face(second, box=(70, 10, 110, 60))
         self.assertEqual(200, self.tuner_post("face/match", {"face_id": taken_off, "person_name": WREN}).status_code)
-        reply = self.client.post("/library/api/photo/save-metadata", json={"path": second, "title": "", "tags": [PEOPLE + ODA]})
+        reply = self.client.post("/library/api/photos/write", json=page_writes.save(self.library, **{"path": second, "title": "", "tags": [PEOPLE + ODA]}))
         self.assertEqual(200, reply.status_code, reply.get_json())
         self.assertEqual([(None, None), (None, "manual"), (None, None)], [self.row(f)[:2] for f in (alone, taken_off, other)])
         self.open_new_person(alone)
@@ -597,8 +598,8 @@ class TheKeptPool(Bulk):
         made = self.many(3)
         with mock.patch.object(store_faces, "fingerprint", wraps=store_faces.fingerprint) as fingerprint, \
                 mock.patch.object(store_faces, "pooled_of", wraps=store_faces.pooled_of) as pooled:
-            reply = self.client.post("/library/api/photos/bulk-tags",
-                                     json={"changes": {photo: {"add": [PEOPLE + WREN]} for photo, _face in made}})
+            reply = self.client.post("/library/api/photos/write",
+                                     json={"op": "tags", "changes": {photo: {"add": [PEOPLE + WREN]} for photo, _face in made}})
         self.assertEqual(200, reply.status_code, reply.get_json())
         self.assertEqual(3, len(reply.get_json()["written"]), reply.get_json())
         self.assertEqual((0, 0), (fingerprint.call_count, pooled.call_count))

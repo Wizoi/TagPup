@@ -17,6 +17,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import damaged_photos  # noqa: E402
 import test_just_look_edits as jl  # noqa: E402
 
+from tests import page_writes  # noqa: E402
 from tagpup.services import file_only  # noqa: E402
 from tagpup.web import tagpup_routes  # noqa: E402
 
@@ -58,7 +59,7 @@ class TheCheckIsAtParityWithTheHeldPath(jl.Base):
 
     def test_every_one_is_written(self):
         for name, path in self.variants().items():
-            reply = self.post("/photo/save-metadata", {"path": path, "title": "x", "tags": ["A/B"]})
+            reply = self.post("/photos/write", page_writes.save(self.library, **{"path": path, "title": "x", "tags": ["A/B"]}))
             self.assertEqual(200, reply.status_code, (name, reply.data))
             self.assertEqual(["A/B"], jl.tags_in(path), name)
         self.assert_library_unchanged()
@@ -72,7 +73,7 @@ class TheCheckIsAtParityWithTheHeldPath(jl.Base):
             et.execute("-ThumbnailImage<=" + thumb, "-overwrite_original", photo)
             held = et.get_tags([photo], tags=["ThumbnailImage"])[0]
         self.assertIn("ThumbnailImage", " ".join(held), "the fixture holds no thumbnail")
-        self.assertEqual(200, self.post("/photo/save-metadata", {"path": photo, "title": "x", "tags": []}).status_code)
+        self.assertEqual(200, self.post("/photos/write", page_writes.save(self.library, **{"path": photo, "title": "x", "tags": []})).status_code)
 
 
 class AnyFailureAfterTheHeldPartAnswersWhatChanged(jl.Base):

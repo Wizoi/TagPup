@@ -27,6 +27,7 @@ import own_home  # noqa: E402
 import web_client  # noqa: E402
 from view_library import ViewLibrary, make_jpeg  # noqa: E402
 
+from tests import page_writes  # noqa: E402
 from tagpup import config  # noqa: E402
 from tagpup.core import paths, processes  # noqa: E402
 from tagpup.files import images  # noqa: E402
@@ -92,7 +93,7 @@ class AClipBesideAPhoto(unittest.TestCase):
         self.assert_clip_untouched()
 
     def test_a_tag_save_from_the_photo_panel_writes_the_clips_tags(self):
-        reply = self.post("photo/save-metadata", {"path": self.clip_path, "tags": ["Trips/Coast"]})
+        reply = self.post("photos/write", page_writes.save(self.vl.library, **{"path": self.clip_path, "tags": ["Trips/Coast"]}))
         self.assertEqual(200, reply.status_code, reply.get_json())
         self.assertEqual(["Trips/Coast"], self.subjects(self.clip_path))
 
@@ -110,10 +111,10 @@ class AClipBesideAPhoto(unittest.TestCase):
         record = reply.get_json()["photo"]
         self.assertEqual("Slipway at dusk", record["title"])
         before = digest(titled)
-        saved = self.post("photo/save-metadata", {
+        saved = self.post("photos/write", page_writes.save(self.vl.library, **{
             "path": record["path"], "title": record["title"], "tags": record["tags"] + ["Trips/Coast"],
             "stamp": {"mtime": record["mtime"], "size": record["size"]},
-            "base": {"tags": record["tags"], "title": record["title"]}})
+            "base": {"tags": record["tags"], "title": record["title"]}}))
         self.assertEqual(200, saved.status_code, saved.data)
         self.assertNotEqual(before, digest(titled), "the clip's XMP is patched")
         self.assertEqual(["Trips/Coast"], self.subjects(titled))

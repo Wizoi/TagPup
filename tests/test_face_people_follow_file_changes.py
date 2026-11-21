@@ -11,6 +11,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from test_faces_and_tags_in_step import PEOPLE, InStep  # noqa: E402
 from test_organize_faces import ODA, WREN  # noqa: E402
 
+from tests import page_writes  # noqa: E402
 from tagpup.core import paths  # noqa: E402
 from tagpup.services import bulk_edit, face_people, tags_from_faces  # noqa: E402
 from tagpup.services import faces as faces_service  # noqa: E402
@@ -23,13 +24,13 @@ RENAMED = "face named again for a person put back on the photo"
 
 class Case(InStep):
     def save(self, photo, tags):
-        reply = self.client.post("/library/api/photo/save-metadata", json={"path": photo, "title": "", "tags": list(tags)})
+        reply = self.client.post("/library/api/photos/write", json=page_writes.save(self.library, **{"path": photo, "title": "", "tags": list(tags)}))
         self.assertEqual(200, reply.status_code, reply.get_json())
         return reply.get_json()
 
     def bulk_tags(self, paths_, add=(), remove=()):
-        reply = self.client.post("/library/api/photos/bulk-tags",
-                                 json={"changes": {photo: {"add": add, "remove": remove} for photo in paths_}})
+        reply = self.client.post("/library/api/photos/write",
+                                 json={"op": "tags", "changes": {photo: {"add": add, "remove": remove} for photo in paths_}})
         self.assertEqual(200, reply.status_code, reply.get_json())
         return reply.get_json()
 
@@ -92,8 +93,8 @@ class ATakenOffPersonIsNobodyOnTheirFace(Case):
         kept = self.face(failing, name=WREN, name_source="manual")
         self.files.fails.add(paths.key(failing))
         with mock.patch("tagpup.services.tagging.logger"):
-            self.client.post("/library/api/photos/bulk-tags",
-                             json={"changes": {photo: {"remove": [PEOPLE + WREN]}
+            self.client.post("/library/api/photos/write",
+                             json={"op": "tags", "changes": {photo: {"remove": [PEOPLE + WREN]}
                                                for photo in [written, also, failing]}})
         self.assertEqual([(None, "manual"), (None, "manual"), (WREN, "manual")], [self.row(f)[:2] for f in (gone, guessed, kept)],
                          "the person is on the photo whose file was not written still")
