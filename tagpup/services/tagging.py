@@ -250,8 +250,8 @@ def save_photo(library, photo_path, title, tags, date_taken, exiftool_path, rena
     written, `change`, `stamp`, the file's (mtime, size) as the write recorded it, after the write, when it wrote the
     file and did not rename it (None: the caller looks), `dates`, the date fields the write set ({field: value}; a clip's XMP:CreateDate only where it
     held one, fields.held_dates), `taken`, the Date Taken saved as the library spells it (None when none was sent),
-    `base`, the tags and title the file holds after the write (the page's next `base`), and
-    `index_warning` when the renamed photo's new name already had rows; `file_only` and `with_rows`, how many files (0 or 1) were written each way; `pictures_refused` when the write
+    `base`, the tags and title the file holds after the write (the page's next `base`); `file_only` and `with_rows`,
+    how many files (0 or 1) were written each way; `pictures_refused` when the write
     changed the picture's bytes and was made again (file_changes); `named_faces` ([{"id", "name"}]) when the tags written named
     a face (the one-face rule, as the row was recorded), and what follow_people says.
     """
@@ -334,7 +334,7 @@ def save_photo(library, photo_path, title, tags, date_taken, exiftool_path, rena
         if not renamed:
             result.details["stamp"] = (written.details.get("stamps") or {}).get(paths.key(photo_path))
         result.details.update(new_path=new_path, renamed=renamed, tags=tags, flat=flat,
-                              hierarchical=hierarchical, index_warning=None, change=written.details["change"],
+                              hierarchical=hierarchical, change=written.details["change"],
                               dates=dates_written, taken=fields.date_taken_value(date_taken) if date_taken else None,
                               base={"tags": _tags_held(after), "title": _held_title({**now, **after})})
         touched = 1 if (written.changed or renamed) else 0
@@ -342,12 +342,10 @@ def save_photo(library, photo_path, title, tags, date_taken, exiftool_path, rena
                                file_only.WITH_ROWS: 0 if files_only else touched})
     if files_only:
         return result   # no row to tell: the index reads the file when the folder is added
-    if skipped:
-        result.details["index_warning"] = (
-            "Renamed, but the index already has a photo at %s; its rows were left as they were." % new_path)
-    elif written.changed:
+    if written.changed and not skipped:
         # A person really taken off the photo is off its faces, one really put back is on its face again (#908), now that
-        # the index says what the file holds (the write recorded its row, the rename moved it).
+        # the index says what the file holds (the write recorded its row, the rename moved it). A rename to a name the
+        # index already had rows at moved no row: its faces are left as they were.
         follow_people(library, result, moved={photo_path: new_path})
     return result
 
