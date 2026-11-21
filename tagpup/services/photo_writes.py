@@ -5,8 +5,9 @@ only: each operation is written by the service that owns it, as it always was.
     tags   each photo's own tags to add and take off, as ONE change of photo files (tagging.change_tags_of)
     set    ONE photo's title, tags and Date Taken from the record the page read, its stamp and base checked against the
            file under the lock (tagging.save_photo); no page sets several photos at once
-    shift  each photo's Date Taken moved by `params["minutes"]`, as ONE change of photo files (photos.shift_date_taken);
-           which photos a folder's Time Shift moves (its camera's) is its caller's to choose
+    shift  each photo's Date Taken moved by `params["minutes"]`, as ONE change of photo files (photos.shift_date_taken)
+           carrying `group` as a tag write does, each photo's new Date Taken told (TAKEN_OF); which photos a folder's
+           Time Shift moves (its camera's) is its caller's to choose
 
 `changes` is {path: (id, the operation's own fields)}: a photo is named by its path, and by its row's id when it has one
 (Just look's photos have none: answer 5 of the plan). An id whose row is not at that path now -- the photo renamed,
@@ -33,6 +34,10 @@ TAGS, SET, SHIFT = "tags", "set", "shift"
 #: The operations, each with the name a batch of it is listed under (Activity) while it waits for its turn.
 OPERATIONS = {TAGS: "bulk tags", SET: "save photo", SHIFT: "time shift"}
 
+#: A shift's details: {paths.key(path): its Date Taken as read back after the write, as the library spells it} of each
+#: photo it read back, which the reply names beside each photo written, as a set's `taken` (the page shows it, spells nothing).
+TAKEN_OF = "taken_of"
+
 #: The refusal of a photo whose id no longer names the file at the path the page sent.
 MOVED_SENTENCE = "%s is not the photo this page read (renamed, moved or deleted since): reload it first."
 
@@ -46,7 +51,7 @@ def write(library, op, changes, exiftool_path, rename_format, group=None, stop_a
     of the change (tagging.ADD_TO_ALL unless named) and `persons` {paths.key(path): the tags added that are people}
     (tagging.change_tags_of): a bulk edit's (bulk_edit.OPERATIONS). `set`'s are {"title", "tags", "date_taken", "stamp",
     "base"} of the one photo, as tagging.save_photo takes them. `shift`'s are none, its `params` {"minutes": whole
-    minutes}. The ids are checked under the caller's hold of the lock, the write's own, so a rename cannot come between
+    minutes}, `group` as a tag write's. The ids are checked under the caller's hold of the lock, the write's own, so a rename cannot come between
     (_moved)."""
     moved = _moved(library, changes)
     if moved is not None:
@@ -57,7 +62,11 @@ def write(library, op, changes, exiftool_path, rename_format, group=None, stop_a
             exiftool_path, operation=operation, stop_at_first_error=stop_at_first_error,
             persons=persons, group=group)
     if op == SHIFT:
-        return photo_actions.shift_date_taken(library, list(changes), params["minutes"], exiftool_path)
+        result = photo_actions.shift_date_taken(library, list(changes), params["minutes"], exiftool_path, group=group)
+        # shift_date_taken reads every photo back for the page (`records`): its Date Taken by the page record's one rule.
+        result.details[TAKEN_OF] = {paths.key(meta["path"]): photo_actions.page_record(meta["path"], meta)["taken"]
+                                    for meta in result.details.get("records", [])}
+        return result
     ((path, (_id, own)),) = changes.items()
     return tagging.save_photo(library, path, own["title"], own["tags"], own["date_taken"], exiftool_path,
                               rename_format, own["stamp"], own["base"])
