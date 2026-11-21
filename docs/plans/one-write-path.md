@@ -112,3 +112,15 @@ Steady-state writer: a photo changed afterwards goes through the same entry poin
 
 A worker brief for each names how it fails (killed part-way, two at once, a share that does not answer, rapid clicks, switching
 library mid-folder, an update while working) and cites `Plan: docs/plans/one-write-path.md`.
+
+## Revision 2026-11-21 (main session, after cut 3b-3 was found to conflict with the trunk's design)
+
+**`/api/library/bulk-edit` stays** as the library view's caller for tags, people and Delete; cut 3b-3 has nothing left to move and
+is closed without a merge. Since 2b `bulk_edit._write` already writes through `services/photo_writes.write`, so the one write path
+holds at the service. Why the page cannot move to `/api/photos/write` op `tags`: the page holds the selection as ids or as a source
+minus excluded ids (up to 60,270 photos), resolved on the server at write time (the "N more came into this view" sentence); people
+are resolved on the server (`bulk_edit._people`); the library view's edit lets a waiting save in between its chunks by design (#3057,
+`tests/test_batches.py` `ASaveBetweenTwoChunks`), which the entry point's whole-edit lock would not; and Delete shares the route.
+Rejected: a selection form on the entry point (a new meaning for row 79, the bulk edit's body in two routes), and fetching paths first.
+**Cut 2c is therefore three routes:** `bulk-tags`, `save-metadata`, `time-shift` (and their reshapers, `index_warning`, and the guard
+lines in `name_faces_routes.GUARDED`, `test_batches_go_through_the_model.py`, `test_every_route_answers_this_pc_or_says_why.py`).
