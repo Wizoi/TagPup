@@ -33,6 +33,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(
 import baked_files  # noqa: E402
 import doctor  # noqa: E402
 import own_home  # noqa: E402
+import page_writes  # noqa: E402
 import photo_rows  # noqa: E402
 import share_waits  # noqa: E402
 import web_client  # noqa: E402
@@ -45,7 +46,7 @@ from tagpup import runtime as runtimes  # noqa: E402
 
 from tagpup.core import paths  # noqa: E402
 from tagpup.core.library import Library  # noqa: E402
-from tagpup.core.result import SHARE_AWAY, Result  # noqa: E402
+from tagpup.core.result import CHANGED_ON_DISK_SENTENCE, SHARE_AWAY, Result  # noqa: E402
 from tagpup.files import recycle_bin, shares  # noqa: E402
 from tagpup.ml import clip  # noqa: E402
 from tagpup.runtime import Runtime  # noqa: E402
@@ -1012,16 +1013,22 @@ class APhotoOnAShareThatDoesNotAnswerIsRefusedAsAway(unittest.TestCase):
     """#3068: the owner adds a tag to a photo, turns it, deletes it or shows it in Explorer while its share sleeps: every
     route that acts on one photo says the SHARE is not answering, 503, in the sentence a folder on it is refused with
     (shares.SHARE_AWAY_SENTENCE), and writes nothing: the file, its row and the journal are as they were. A photo whose
-    file is really gone is still 400 "Invalid file path". Break: the routes' one check reading shares.known_stamp's None
+    file is really gone is still 400 "Invalid file path"; a save, which names the photo's row, is told its photo changed
+    on disk since it was opened (409, as one renamed since). Break: the routes' one check reading shares.known_stamp's None
     for a share that did not answer as no file (as _a_file did): the share asleep is 400 "Invalid file path"."""
 
-    #: (route, the request's body for `path`): every route that acts on one photo (responses.file_refused).
+    #: (route, the request's body for `path` and its row's id): every route that acts on one photo
+    #: (responses.file_refused); a save as the panel makes it from the record the folder gave before the share slept.
+    #: The answer to a photo whose file is gone, by route, when it is not 400 "Invalid file path".
+    GONE = {"/api/photos/write": (409, CHANGED_ON_DISK_SENTENCE)}
     SITES = (
-        ("/api/photo/save-metadata", lambda path: {"path": path, "title": "", "tags": ["Trips/Coast"]}),
-        ("/api/photo/rotate", lambda path: {"path": path, "direction": "right"}),
-        ("/api/photo/delete", lambda path: {"path": path}),
-        ("/api/photo/open-explorer", lambda path: {"path": path}),
-        ("/api/photo/open", lambda path: {"path": path}),
+        ("/api/photos/write", lambda path, photo_id: page_writes.set_from(
+            {"path": path, "id": photo_id, "title": "", "tags": ["Trips/Lakes"], "mtime": 1.0, "size": 1},
+            tags=["Trips/Lakes", "Trips/Coast"])),
+        ("/api/photo/rotate", lambda path, photo_id: {"path": path, "direction": "right"}),
+        ("/api/photo/delete", lambda path, photo_id: {"path": path}),
+        ("/api/photo/open-explorer", lambda path, photo_id: {"path": path}),
+        ("/api/photo/open", lambda path, photo_id: {"path": path}),
     )
 
     def setUp(self):
@@ -1038,6 +1045,7 @@ class APhotoOnAShareThatDoesNotAnswerIsRefusedAsAway(unittest.TestCase):
             for path in (self.photo, self.gone):
                 photo_rows.add_read(conn, path, {"XMP:Subject": ["Trips/Lakes"]})
             conn.commit()
+            self.ids = [row[0] for row in conn.execute("SELECT id FROM photos ORDER BY id")]   # the photo's, the gone one's
         finally:
             conn.close()
         asleep, under = threading.Event(), os.path.normcase(self.asleep_folder)
@@ -1076,11 +1084,12 @@ class APhotoOnAShareThatDoesNotAnswerIsRefusedAsAway(unittest.TestCase):
         away = shares.SHARE_AWAY_SENTENCE % os.path.splitdrive(self.photo)[0]
         for route, made in self.SITES:
             with self.subTest(route=route):
-                reply = self.client.post("/library" + route, json=made(self.photo))
+                reply = self.client.post("/library" + route, json=made(self.photo, self.ids[0]))
                 self.assertEqual((503, away), (reply.status_code, reply.get_json()["error"]), route)
                 self.assertNotIn("IMG_0001", reply.get_json()["error"], "the photo's path is named")
-                reply = self.client.post("/library" + route, json=made(self.gone))
-                self.assertEqual((400, "Invalid file path"), (reply.status_code, reply.get_json()["error"]), route)
+                reply = self.client.post("/library" + route, json=made(self.gone, self.ids[1]))
+                self.assertEqual(self.GONE.get(route, (400, "Invalid file path")),
+                                 (reply.status_code, reply.get_json()["error"]), route)
         with open(self.photo, "rb") as handle:
             self.assertEqual(before, handle.read(), "the photo was written")
         self.assertEqual(held, self.held(), "a row or the journal changed")
