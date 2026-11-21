@@ -1,4 +1,20 @@
 {
+ "changed_on_disk": {
+  "attempted": 1,
+  "change": null,
+  "changed": 0,
+  "changed_on_disk": true,
+  "error": "This photo changed on disk since you opened it: reload it first.",
+  "error_count": 0,
+  "errors": [],
+  "file_only": 0,
+  "skipped": [],
+  "skipped_missing": 0,
+  "stopped": null,
+  "success": false,
+  "with_rows": 0,
+  "written": {}
+ },
  "no_rename": {
   "attempted": 1,
   "change": 4,
@@ -29,6 +45,26 @@
     "taken": null
    }
   }
+ },
+ "not_written": {
+  "attempted": 1,
+  "change": null,
+  "changed": 0,
+  "error_count": 1,
+  "errors": [
+   {
+    "id": 5,
+    "path": "PHOTO",
+    "why": "[WinError 5] its new file could not be put in place of it (Access is denied): the photo may be marked read-only or open in another program; the new file was removed and the photo is as it was"
+   }
+  ],
+  "file_only": 0,
+  "skipped": [],
+  "skipped_missing": 0,
+  "stopped": null,
+  "success": false,
+  "with_rows": 0,
+  "written": {}
  },
  "picture_changed": {
   "attempted": 1,
@@ -100,5 +136,13 @@
   "size": 1,
   "success": true,
   "with_rows": 1
+ },
+ "status": {
+  "changed_on_disk": 409,
+  "no_rename": 200,
+  "not_written": 200,
+  "picture_changed": 200,
+  "rename_failed": 200,
+  "rotated_picture_changed": 200
  }
 }

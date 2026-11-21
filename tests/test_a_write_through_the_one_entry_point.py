@@ -183,8 +183,8 @@ class AWriteThroughTheOneEntryPoint(unittest.TestCase):
                 "id": named_id, "title": "Quay", "tags": EXISTING, "stamp": {"mtime": 1.0, "size": 1},
                 "base": {"tags": EXISTING, "title": ""}}}})
         status, reply = save(old, photo_id)
-        self.assertEqual(409, status, reply)
-        self.assertEqual((False, True, {}), (reply["success"], reply["changed_on_disk"], reply["written"]))
+        # The refusal the pages read (its shape: save_replies.json `changed_on_disk`, which harness.mjs changedOnDisk answers).
+        self.assertEqual((409, True), (status, reply["changed_on_disk"]), reply)
         self.assertEqual(before, len(self.changes()))
         status, reply = save(os.path.join(self.held, "gone.jpg"), None)
         self.assertEqual(400, status, reply)
@@ -398,10 +398,12 @@ class AWriteThroughTheOneEntryPoint(unittest.TestCase):
     def test_the_shift_replies_the_page_reads_are_written_for_its_test(self):
         # A folder's Time Shift as the page sends it (web/tagpup/rename.js applyTimeShift): its photos by path, no id (a
         # folder's records carry none), in one request. `stopped`: the share stops answering at the second of three, the
-        # first written; `shifted`: two photos written. Each photo named PHOTO_<n> in the order sent, its stamp 1 and 1.
+        # first written; `shifted`: two photos written; `stopped_first`: the share stops answering at the first of three,
+        # none written. Each photo named PHOTO_<n> in the order sent, its stamp 1 and 1.
         date(self.photos)
         found = {}
-        for name, sent, stop in (("stopped", self.photos, self.photos[1]), ("shifted", self.photos[1:], None)):
+        for name, sent, stop in (("stopped", self.photos, self.photos[1]), ("shifted", self.photos[1:], None),
+                                 ("stopped_first", self.photos, self.photos[0])):
             body = {"op": "shift", "params": {"minutes": 30}, "changes": {path: {"id": None} for path in sent}}
             with self.a_share_that_stops_answering_at(stop) if stop else contextlib.nullcontext():
                 status, reply = self.lib.post(ROUTE, body)
@@ -414,6 +416,7 @@ class AWriteThroughTheOneEntryPoint(unittest.TestCase):
         self.assertEqual((400, ["PHOTO_0"]), (found["stopped"]["status"], list(found["stopped"]["reply"]["written"])))
         self.assertEqual((200, ["PHOTO_0", "PHOTO_1"]), (found["shifted"]["status"],
                                                          sorted(found["shifted"]["reply"]["written"])))
+        self.assertEqual((400, {}), (found["stopped_first"]["status"], found["stopped_first"]["reply"]["written"]))
         self.assertNotIn(json.dumps(self.lib.photos)[1:-1], json.dumps(found), "a path of the test's home left in")
         text = json.dumps(found, sort_keys=True, indent=1) + "\n"
         page_fixtures.hold_to(self, SHIFT_REPLIES, text, "tests.test_a_write_through_the_one_entry_point", "the Time Shift")

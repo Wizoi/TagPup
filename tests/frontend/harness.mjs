@@ -324,50 +324,63 @@ export function lastSave(server) {
 }
 
 /**
- * The reply of a save that wrote, as tagpup_routes._envelope makes it, a route's function of (url, body): `own`, what
- * it says of the photo (`written[path]`: mtime, size, base, new_path, taken, rename_failed), `top`, what it says of the
- * write (file_only, with_rows, the faces it changed, pictures_refused).
+ * A save's replies as the real entry point made them (fixtures/save_replies.json, written by
+ * tests/test_tag_a_photo_read_it_back_and_undo.py ASaveFromThePage), each by name, its status in `status`, its one photo
+ * named "PHOTO": `no_rename` (a save that wrote), `rename_failed`, `picture_changed`, `changed_on_disk` (refused 409: the
+ * file is no longer what the page read), `not_written` (a file ExifTool could not write: a 200 with the photo among its
+ * `errors`). Every fake reply of a save below is one of them, so that its fields are the server's, not a list kept here.
+ */
+const SAVE_REPLIES = JSON.parse(fs.readFileSync(path.join(HERE, "fixtures", "save_replies.json"), "utf8"));
+
+/**
+ * The reply of a save that wrote, as the real entry point made it (SAVE_REPLIES.no_rename), a route's function of (url,
+ * body): its photo's own part (`written[path]`) says the file holds now what this save sent -- its tags and title as the
+ * `base`, `new_path` its path (not renamed), a stamp after the one it sent -- `own` over it (mtime, size, base, new_path,
+ * taken, rename_failed; a save that sends a Date Taken names its `taken`, as the server spells it); `top` over what it
+ * says of the write (file_only, with_rows, the faces it changed, pictures_refused). A page that ignores `written` keeps
+ * its own base and stamp, which a later save sends and its test reads.
  */
 export function saved(own = {}, top = {}) {
-  return (url, body) => ({ ...envelope(1), ...top, written: { [savedPhoto(body).path]: own } });
+  const real = SAVE_REPLIES.no_rename;
+  return (url, body) => {
+    const sent = savedPhoto(body);
+    const tags = (sent.tags || []).slice();
+    const stamp = sent.stamp ? { mtime: sent.stamp.mtime + 1, size: sent.stamp.size } : {};
+    const wrote = { ...real.written.PHOTO, new_path: sent.path, tags, base: { tags: tags.slice(), title: sent.title || "" },
+      ...stamp, ...own };
+    return { ...real, ...top, written: { [sent.path]: wrote } };
+  };
 }
 
 /**
- * A save's reply as the server made it (`reply`, a fixture written by a Python test, its one photo named "PHOTO"), for
+ * A save's reply as the server made it (`reply`, an entry of save_replies.json, its one photo named "PHOTO"), for
  * the photo this save names, `own` over what the server said of it.
  */
 export function savedAs(reply, own = {}) {
   return (url, body) => ({ ...reply, written: { [savedPhoto(body).path]: { ...reply.written.PHOTO, ...own } } });
 }
 
-/** The reply of a save the server could not write, `why` its sentence: a 200 with the photo among its `errors`. */
+/**
+ * The reply of a save the server could not write (SAVE_REPLIES.not_written: a 200, nothing written, the photo among its
+ * `errors`), named by the path and id this save sent, `why` its sentence.
+ */
 export function notSaved(why) {
+  const real = SAVE_REPLIES.not_written;
   return (url, body) => {
     const { path, id } = savedPhoto(body);
-    return { ...envelope(0), success: false, error_count: 1, errors: [{ path, id, why }], written: {} };
+    return answer(SAVE_REPLIES.status.not_written,
+      { ...real, errors: real.errors.map((e) => ({ ...e, path, id, why: why ?? e.why })) });
   };
 }
 
 /**
  * The reply of a save refused because the file is no longer the one the page read, or the id's photo no longer at its
- * path (responses.refused: 409, `changed_on_disk`, the envelope beside the error), `why` its sentence. Nothing written.
+ * path (SAVE_REPLIES.changed_on_disk: 409, `changed_on_disk`, the envelope beside the error), `why` its sentence when
+ * a test names one. Nothing written.
  */
-export function changedOnDisk(why = "This photo changed on disk since you opened it: reload it first.") {
-  return () => answer(409, { ...envelope(0), success: false, error: why, changed_on_disk: true, written: {} });
-}
-
-/**
- * What a save's reply says of the write beside its photo's own part (`written`): the envelope the real entry point made
- * of a save (fixtures/save_replies.json, tests/test_tag_a_photo_read_it_back_and_undo.py writes it), so that its fields
- * are the server's and not a list kept here. `changed` of the one photo: 1 written, 0 not (no journal change then).
- */
-const SAVE_ENVELOPE = (() => {
-  const { written, ...rest } = JSON.parse(fs.readFileSync(path.join(HERE, "fixtures", "save_replies.json"), "utf8")).no_rename;
-  return rest;
-})();
-
-function envelope(changed) {
-  return { ...SAVE_ENVELOPE, changed, with_rows: changed, change: changed ? SAVE_ENVELOPE.change : null };
+export function changedOnDisk(why) {
+  const real = SAVE_REPLIES.changed_on_disk;
+  return () => answer(SAVE_REPLIES.status.changed_on_disk, { ...real, ...(why === undefined ? {} : { error: why }) });
 }
 
 /**
@@ -376,12 +389,13 @@ function envelope(changed) {
  */
 export const SHIFT = (url, body) => url.includes("/api/photos/write") && Boolean(body) && body.op === "shift";
 
-const SHIFT_REPLIES = JSON.parse(fs.readFileSync(path.join(HERE, "fixtures", "shift_replies.json"), "utf8"));
+export const SHIFT_REPLIES = JSON.parse(fs.readFileSync(path.join(HERE, "fixtures", "shift_replies.json"), "utf8"));
 
 /**
  * A Time Shift's reply as the real entry point made it (fixtures/shift_replies.json, written by
  * tests/test_a_write_through_the_one_entry_point.py): `shifted`, two photos written (200); `stopped`, a share that stopped
- * answering at the second of three, the first written (400). Its photos, PHOTO_0, PHOTO_1, ..., are named again by the
+ * answering at the second of three, the first written (400); `stopped_first`, one that stopped answering at the first of
+ * three, none written (400). Its photos, PHOTO_0, PHOTO_1, ..., are named again by the
  * paths this shift sent, in the order sent; `own[n]` over what it says of photo n (`taken`, as the server spells it),
  * `top` over what it says of the write (`file_only`, `with_rows`: a folder the library does not hold).
  */

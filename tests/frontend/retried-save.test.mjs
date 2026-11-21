@@ -4,6 +4,9 @@
  * Retry queued the save again through queuePhotoWrite, not queueWriteOf: the retried
  * save was not the write leaving the photo waits for, and a retry whose photo had been
  * left found the fields no longer its own, wrote nothing and was marked done.
+ *
+ * The saves' replies are the real entry point's (harness.mjs saved, notSaved: fixtures/save_replies.json), so a save
+ * after the retried one names what that one wrote as its base, read from the reply's `written` (#3297).
  */
 import { test, describe, afterEach } from "node:test";
 import assert from "node:assert/strict";
@@ -137,6 +140,24 @@ describe("Retry of a failed save", () => {
     const rows = entries(document);
     assert.ok(rows.every((r) => !r.startsWith("done")), `marked done: ${rows}`);
     assert.ok(rows.some((r) => r.startsWith("failed")), `no failed entry: ${rows}`);
+  });
+
+  test("a save after the retried one names what that one wrote as its base, as the file holds it now", async (t) => {
+    const { window, document, server, held, input } = await failedSaveOnA(t);
+    click(window, document.querySelector(".write-queue-retry"));
+    await settle(window, 60);
+    held.shift()();
+    await settle(window, 60);
+    assert.ok(entries(document).some((r) => r.startsWith("done")), `the retry not done: ${entries(document)}`);
+    input.value = "Sports day, the relay";
+    input.dispatchEvent(new window.Event("input", { bubbles: true }));
+    document.getElementById("btn-save-details").click();
+    await settle(window, 60);
+    assert.equal(saves(server).at(-1).body.title, "Sports day, the relay");
+    assert.deepEqual(saves(server).at(-1).body.base, { tags: [], title: "Sports day" },
+      "the next save named the base read before the retried save wrote, not the one its reply gave");
+    held.shift()();
+    await settle(window, 40);
   });
 
   test("a later save that worked settles the failed one, which stops offering Retry (#881)", async (t) => {
