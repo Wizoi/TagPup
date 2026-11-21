@@ -31,7 +31,7 @@ class Case(InStep):
     def bulk_tags(self, paths_, add=(), remove=()):
         reply = self.client.post("/library/api/photos/write",
                                  json={"op": "tags", "changes": {photo: {"add": add, "remove": remove} for photo in paths_}})
-        self.assertEqual(200, reply.status_code, reply.get_json())
+        self.assertEqual((200, True), (reply.status_code, reply.get_json()["success"]), reply.get_json())
         return reply.get_json()
 
     def change_ids(self, operation):
