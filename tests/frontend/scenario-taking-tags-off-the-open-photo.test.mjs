@@ -22,7 +22,7 @@ import assert from "node:assert/strict";
 import {
   loadApp, FakeServer, answer, photoRecord, flush, openFolder, closeAllApps, pageExports, PEOPLE_ROUTE, peopleRecordsOf,
   SAVE, saveCalls,
-  saved, notSaved, savedPhoto,
+  saved, notSaved, savedPhoto, taggedAs,
 } from "./harness.mjs";
 import { loadViewPage, recordOf } from "./view-page.mjs";
 
@@ -445,23 +445,19 @@ describe("V20: in a library view", () => {
     ctx.server.first("/api/photos/write", () => new Promise((resolve) => ctx.out.push({ body: ctx.server.calls.at(-1).body, resolve })));
     ctx.answerWrite = async () => {
       const { body, resolve } = ctx.out.shift();
-      const written = {};
       for (const [path, change] of Object.entries(body.changes)) {
         // A library view's photo is named by the id of the record the page holds of it.
         const id = change.id;
         assert.equal(id, Number(path.match(/IMG_(\d+)/)[1]), "a view's photo was not named by its id");
         files.set(id, changed(files.get(id), change));
-        written[path] = { tags: files.get(id).slice() };
       }
-      resolve({ success: true, written });
+      resolve(taggedAs("written", (path, n) => ({ tags: files.get(Object.values(body.changes)[n].id).slice() }))("", body));
       await ctx.settle(40);
     };
     // The oldest write out refused whole, as the server refuses a photo named by an id no longer at the path sent (409).
     ctx.refuseWrite = async () => {
       const { body, resolve } = ctx.out.shift();
-      const [path] = Object.keys(body.changes);
-      resolve(answer(409, { success: false, changed_on_disk: true, written: {}, errors: [], skipped: [],
-        error: `${path.split("\\").pop()} is not the photo this page read (renamed, moved or deleted since): reload it first.` }));
+      resolve(taggedAs("renamed_since")("", body));
       await ctx.settle(40);
     };
     ctx.sent = () => ctx.server.calls.filter((c) => c.url.includes("/api/photos/write")).map((c) => c.body);

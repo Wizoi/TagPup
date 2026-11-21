@@ -28,8 +28,8 @@
  */
 import { test, describe, afterEach } from "node:test";
 import assert from "node:assert/strict";
-import { loadApp, FakeServer, answer, flush, click, closeAllApps, pageExports, PEOPLE_ROUTE, PHOTO_WRITES, CLIP_WRITES, SAVE, lastSave, saveCalls,
-  saved, changedOnDisk } from "./harness.mjs";
+import { loadApp, FakeServer, flush, click, closeAllApps, pageExports, PEOPLE_ROUTE, PHOTO_WRITES, CLIP_WRITES, SAVE, lastSave, saveCalls,
+  saved, changedOnDisk, taggedAs } from "./harness.mjs";
 import { PHONE_PAGE, el, shown, pageState, settle, phoneCard, phoneLayout } from "./phone-page.mjs";
 
 const KEYWORDS = { keywords: [{ tag: "Events", name: "Events", parent: null, count: 20 }], untagged: 0 };
@@ -65,15 +65,13 @@ async function phone(t, file = {}) {
     .on("/api/library/photo", () => ({ photo: record() }))
     .on("/api/tags", TAGS)
     .on(PEOPLE_ROUTE, PEOPLE)
-    .on("/api/photos/write", () => {
-      const [[path, change]] = Object.entries(server.lastBody("/api/photos/write").changes);
-      if (change.id === 1 && path !== held.path) {
-        return answer(409, { success: false, changed_on_disk: true, error: "A photo is not where the page last saw it.", written: {} });
-      }
+    .on("/api/photos/write", (url, sent) => {
+      const [[path, change]] = Object.entries(sent.changes);
+      if (change.id === 1 && path !== held.path) return taggedAs("renamed_since")(url, sent);
       held.tags = held.tags.filter((tag) => !(change.remove || []).includes(tag))
         .concat((change.add || []).filter((tag) => !held.tags.includes(tag)));
       held.mtime += 1;
-      return { success: true, written: { [path]: { tags: held.tags.slice(), mtime: held.mtime, size: held.size } } };
+      return taggedAs("written", () => ({ tags: held.tags.slice(), mtime: held.mtime, size: held.size }))(url, sent);
     })
     .on(SAVE, (url, sent) => {
       const body = lastSave(server);

@@ -1,4 +1,11 @@
 {
+ "refused": {
+  "reply": {
+   "error": "Names are being given from tags; this waits until it finishes.",
+   "success": false
+  },
+  "status": 409
+ },
  "shifted": {
   "reply": {
    "attempted": 2,
