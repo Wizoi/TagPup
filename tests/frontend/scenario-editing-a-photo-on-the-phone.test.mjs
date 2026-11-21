@@ -122,7 +122,7 @@ const toasts = (ctx) => [...el(ctx, "edit-toasts").querySelectorAll(".edit-toast
 const said = (ctx) => (el(ctx, "edit-problem").classList.contains("hidden") ? "" : el(ctx, "edit-problem").textContent);
 const sheetOpen = (ctx) => !el(ctx, "edit-sheet").classList.contains("hidden");
 const calls = (ctx, route) => ctx.server.calls.filter((c) => c.url.includes(route));
-const tagWrites = (ctx) => calls(ctx, "/api/photos/write").map((c) => c.body.changes);
+const tagWrites = (ctx) => calls(ctx, "/api/photos/write").filter((c) => !SAVE(c.url, c.body)).map((c) => c.body.changes);
 
 function type(ctx, id, value) {
   el(ctx, id).value = value;

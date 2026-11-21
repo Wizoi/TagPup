@@ -265,7 +265,7 @@ describe("acting on a face", () => {
     assert.equal(label(ctx), "Jane Doe?");
     let release;
     const gate = new Promise((resolve) => { release = resolve; });
-    ctx.server.first(SAVE, () => gate.then(() => ({ success: true })));
+    ctx.server.first(SAVE, (url, body) => gate.then(() => saved()(url, body)));
     const asked = photoFacesAsked(ctx);
     click(ctx.window, ctx.document.querySelector(".face-card"));
     await flush(ctx.window, 6);

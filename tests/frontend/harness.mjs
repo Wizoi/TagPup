@@ -307,7 +307,7 @@ export function answer(status, body) {
 export const SAVE = (url, body) => url.includes("/api/photos/write") && Boolean(body) && body.op === "set";
 
 /** A save's body as the page named its one photo in it: {path, id, title, tags, stamp, base, ...the rest it sent}. */
-function savedPhoto(body) {
+export function savedPhoto(body) {
   const [[path, own]] = Object.entries(body.changes);
   return { path, ...own };
 }

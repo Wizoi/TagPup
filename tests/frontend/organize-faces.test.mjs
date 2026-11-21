@@ -10,7 +10,7 @@
  */
 import { test, describe, afterEach } from "node:test";
 import assert from "node:assert/strict";
-import { loadApp, FakeServer, photoRecord, flush, click, openFolder, closeAllApps, REAL, realLibrary, until, peopleRecordsOf, PEOPLE_ROUTE, SAVE, notSaved, saveCalls } from "./harness.mjs";
+import { loadApp, FakeServer, photoRecord, flush, click, openFolder, closeAllApps, REAL, realLibrary, until, peopleRecordsOf, PEOPLE_ROUTE, SAVE, notSaved, saveCalls, saved, savedPhoto } from "./harness.mjs";
 import { boxInContainedImage } from "../../web/common/image-zoom.js";
 import { leafOf } from "../../web/common/vocabulary.js";
 
@@ -72,9 +72,9 @@ function serverFor({ photoFaces = THREE, tree = TAXONOMY, matches = MATCHES, pho
     .on("/api/photo-faces", () => ({    // a fresh answer each time
       ...structuredClone(held), unmatched: held.faces.filter((f) => !f.name && !f.excluded).length,
     }))
-    .on(SAVE, () => {
-      keywords = [...written(server).tags];
-      return { success: true };
+    .on(SAVE, (url, body) => {
+      keywords = [...savedPhoto(body).tags];
+      return saved()(url, body);
     })
     // A person taken off the photo goes as its pills' removals do (pending.js), a change of the tags it names.
     .on("/api/photos/write", () => {
@@ -142,8 +142,9 @@ async function openPhoto(t, options = {}) {
   ctx.icon = () => ctx.layer().querySelector(".face-boxes-toggle");
   ctx.boxes = () => [...ctx.layer().querySelectorAll(".face-box")];
   ctx.panel = () => ctx.layer().querySelector(".face-panel");
-  ctx.posts = (route) => server.calls.filter((c) => c.method === "POST" && c.url.includes(route));
-  ctx.order = () => server.calls.filter((c) => /save-metadata|photos\/write/.test(c.url)).map((c) => (c.url.includes("photos/write") ? "bulk" : "save"));
+  // A save goes to /api/photos/write as well: saveCalls tells it, and the posts of a route are the others.
+  ctx.posts = (route) => server.calls.filter((c) => c.method === "POST" && c.url.includes(route) && !SAVE(c.url, c.body));
+  ctx.order = () => server.calls.filter((c) => c.url.includes("photos/write")).map((c) => (SAVE(c.url, c.body) ? "save" : "bulk"));
   ctx.wait = (ms) => new Promise((resolve) => ctx.window.setTimeout(resolve, ms));
   ctx.key = (target, key, extra = {}) => {
     const event = new ctx.window.KeyboardEvent("keydown", { key, bubbles: true, cancelable: true, ...extra });
@@ -468,7 +469,7 @@ describe("naming a face names the person on the photo too", () => {
     const tree = [...TAXONOMY, { id: 23, tag: "People/Cleo Marsh", name: "Cleo Marsh", parent_id: 1, has_face: 1 }];
     const matches = [...MATCHES, { name: "Cleo Marsh", person: CLEO, similarity: 0.6, band: "possible" }];
     const ctx = await openPhoto(t, {
-      tree, matches, extra: (server) => server.first(SAVE, () => slow.then(() => ({ success: true }))),
+      tree, matches, extra: (server) => server.first(SAVE, (url, body) => slow.then(() => saved()(url, body))),
     });
     ctx.show();
     for (const [index, who] of [[0, "Hazel"], [1, "Anh"], [2, "Cleo"]]) {
@@ -550,9 +551,9 @@ describe("naming a face against the server", { skip: !REAL }, () => {
     click(ctx.window, button);
     click(ctx.window, button);
     await until(ctx, () => ctx.replies("/api/face/match") === 1, "the face to be named");
-    const posts = ctx.server.calls.slice(sent).filter((c) => c.method === "POST").map((c) => c.url.replace(/^.*\/api\//, ""));
+    const posts = ctx.server.calls.slice(sent).filter((c) => c.method === "POST").map((c) => (SAVE(c.url, c.body) ? "save" : c.url.replace(/^.*\/api\//, "")));
     // A person the tree holds is not created again (taxonomy/create was a no-op for a node it has, and the tree was read after it).
-    assert.deepEqual(posts, ["photo/save-metadata", "face/match"], "two rapid clicks name once, the tag first");
+    assert.deepEqual(posts, ["save", "face/match"], "two rapid clicks name once, the tag first");
     assert.deepEqual(await ctx.faceNames(), [null, WREN, null]);
     assert.deepEqual(await ctx.tagsOfPhoto(), ["People/" + WREN, "Trips"]);
     assert.match(ctx.box(1).getAttribute("aria-label"), new RegExp(`Face [0-9] of 3: ${WREN}`));
@@ -602,7 +603,7 @@ describe("naming a face against the server", { skip: !REAL }, () => {
     click(ctx.window, card);
     click(ctx.window, card);
     await until(ctx, () => ctx.replies("/api/face/match") === 1, "the face to be named");
-    assert.equal(ctx.replies("save-metadata"), 1);
+    assert.equal(saveCalls(ctx.server).length, 1);
     assert.deepEqual(await ctx.faceNames(), [null, WREN, null]);
     assert.deepEqual(await ctx.tagsOfPhoto(), ["People/" + WREN, "Trips"]);
     // The summary is drawn from the faces read again after the match: waited for, not raced (it failed under load).
@@ -629,7 +630,7 @@ describe("naming a face against the server", { skip: !REAL }, () => {
     click(ctx.window, [...ctx.panel().querySelectorAll("button")].find((b) => b.textContent === "Not important"));
     await until(ctx, () => ctx.replies("/api/faces/exclude") === 1 && !ctx.panel(), "the face to be ruled out");
     assert.deepEqual(ctx.boxes().map((b) => b.dataset.faceId).sort(), ctx.real.faces.slice(0, 2).map(String).sort());
-    assert.equal(ctx.replies("save-metadata"), 0, "an unnamed face had no person to take off");
+    assert.equal(saveCalls(ctx.server).length, 0, "an unnamed face had no person to take off");
     assert.deepEqual(await ctx.tagsOfPhoto(), ["Trips"]);
   });
 });

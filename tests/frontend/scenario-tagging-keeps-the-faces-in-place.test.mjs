@@ -15,6 +15,7 @@ import assert from "node:assert/strict";
 import {
   loadApp, FakeServer, photoRecord, flush, openFolder, closeAllApps, PEOPLE_ROUTE, peopleRecordsOf,
   SAVE, lastSave,
+  saved,
 } from "./harness.mjs";
 
 const A = photoRecord({ filename: "a.jpg" });
@@ -72,7 +73,7 @@ async function open(t, { faces = THREE, tags = [], status = 200 } = {}) {
     .on("/api/folder/suggest-status", { status: "idle" })
     .on("/api/folder/index-status", { status: "completed", percent: 100, message: "Ready" })
     .on("/api/folder/scan", [{ ...A, tags: tags.slice() }, { ...B, tags: [] }])
-    .on(SAVE, () => (saves.length ? saves.shift() : { success: true }))
+    .on(SAVE, (url, body) => saved({}, saves.length ? saves.shift() : {})(url, body))
     .on("/api/photos/write", () => (bulks.length ? bulks.shift() : { success: true }))
     .on("/api/face/match", { success: true })
     .on("/api/photo-faces", (url) => (queued.length ? queued.shift()(url) : faces(url)), { status });

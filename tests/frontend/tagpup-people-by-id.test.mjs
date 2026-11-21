@@ -10,7 +10,7 @@
  */
 import { test, describe, afterEach } from "node:test";
 import assert from "node:assert/strict";
-import { loadApp, FakeServer, photoRecord, flush, click, openFolder, closeAllApps, peopleRecordsOf, PEOPLE_ROUTE, SAVE, saveCalls } from "./harness.mjs";
+import { loadApp, FakeServer, photoRecord, flush, click, openFolder, closeAllApps, peopleRecordsOf, PEOPLE_ROUTE, SAVE, saveCalls, saved, savedPhoto } from "./harness.mjs";
 
 afterEach(() => closeAllApps());
 
@@ -59,9 +59,9 @@ function serverFor({ photo = null, faces = FACES, matches = MATCHES, extra = nul
     .on("/api/folder/suggest-status", { status: "idle" })
     .on("/api/folder/scan", [shown])
     .on("/api/photo-faces", () => ({ ...structuredClone(held), unmatched: held.faces.filter((each) => !each.name && !each.excluded).length }))
-    .on(SAVE, () => {
-      keywords = [...server.calls[server.calls.length - 1].body.tags];
-      return { success: true };
+    .on(SAVE, (url, body) => {
+      keywords = [...savedPhoto(body).tags];
+      return saved()(url, body);
     })
     .on("/api/face/match", () => ({ success: true, changed: 1, untag: {} }))
     .first("/api/face-matches", () => structuredClone(matches))

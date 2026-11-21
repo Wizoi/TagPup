@@ -22,6 +22,7 @@ import assert from "node:assert/strict";
 import {
   loadApp, FakeServer, answer, photoRecord, flush, openFolder, closeAllApps, pageExports, PEOPLE_ROUTE, peopleRecordsOf,
   SAVE, saveCalls,
+  saved, notSaved, savedPhoto,
 } from "./harness.mjs";
 import { loadViewPage, recordOf } from "./view-page.mjs";
 
@@ -46,7 +47,9 @@ async function open(t, { b = [], faces = { faces: [], total: 0, unmatched: 0 } }
   // The files as the server would hold them; a write changes its file when it is answered, in the order it was sent.
   const files = new Map([[A.path, TAGS.slice()], [B.path, b.slice()]]);
   // The request just made is the last call the server saw (FakeServer hands a route only its url).
-  const hold = (kind) => () => new Promise((resolve) => held.push({ kind, body: server.calls.at(-1).body, resolve }));
+  // A save's body is held as the photo it names (savedPhoto), the request as it was sent (`sent`).
+  const hold = (kind) => (url, sent) => new Promise((resolve) => held.push({
+    kind, body: kind === "save" ? savedPhoto(sent) : sent, reply: (made) => resolve(made(url, sent)), resolve }));
   const server = new FakeServer()
     .on("/api/tags", TAGS)
     .first(PEOPLE_ROUTE, peopleRecordsOf(TAXONOMY))
@@ -67,20 +70,20 @@ async function open(t, { b = [], faces = { faces: [], total: 0, unmatched: 0 } }
   const $ = (id) => ctx.document.getElementById(id);
   ctx.$ = $;
   ctx.file = (photo) => files.get(photo.path).slice().sort();
-  ctx.bulks = () => server.calls.filter((c) => c.url.includes("photos/write")).map((c) => c.body);
+  ctx.bulks = () => server.calls.filter((c) => c.url.includes("photos/write") && !SAVE(c.url, c.body)).map((c) => c.body);
   ctx.saves = () => saveCalls(server).map((c) => c.body);
-  ctx.order = () => server.calls.filter((c) => /photos\/write|save-metadata/.test(c.url)).map((c) => (c.url.includes("photos/write") ? "bulk" : "save"));
+  ctx.order = () => server.calls.filter((c) => c.url.includes("photos/write")).map((c) => (SAVE(c.url, c.body) ? "save" : "bulk"));
   // Which photos each write named, in the order sent: "bulk:a,b", "save:b".
   const named = (path) => (path === A.path ? "a" : "b");
-  ctx.writes = () => server.calls.filter((c) => /photos\/write|save-metadata/.test(c.url))
-    .map((c) => (c.url.includes("photos/write") ? `bulk:${Object.keys(c.body.changes).map(named).join(",")}` : `save:${named(c.body.path)}`));
+  ctx.writes = () => server.calls.filter((c) => c.url.includes("photos/write"))
+    .map((c) => (SAVE(c.url, c.body) ? `save:${named(savedPhoto(c.body).path)}` : `bulk:${Object.keys(c.body.changes).map(named).join(",")}`));
   // Answer the oldest write still held: written, the file then holding what the route leaves in it; or refused with `error`.
   ctx.answer = async (error = null) => {
-    const { kind, body, resolve } = held.shift();
+    const { kind, body, reply, resolve } = held.shift();
     if (error) {
-      // A tag write that failed answers each photo among its `errors`, nothing written; a save says why in `error`.
-      resolve(kind === "bulk" ? { success: false, errors: Object.keys(body.changes).map((path) => ({ path, id: null, why: error })), written: {} }
-        : { success: false, error });
+      // A write that failed answers each photo among its `errors`, nothing written.
+      if (kind === "bulk") resolve({ success: false, errors: Object.keys(body.changes).map((path) => ({ path, id: null, why: error })), written: {} });
+      else reply(notSaved(error));
     } else if (kind === "bulk") {
       const written = {};
       for (const [path, change] of Object.entries(body.changes)) {
@@ -95,7 +98,7 @@ async function open(t, { b = [], faces = { faces: [], total: 0, unmatched: 0 } }
         add: body.tags.filter((t) => !was.includes(t)),
         remove: was.filter((t) => !body.tags.includes(t)),
       }));
-      resolve({ success: true, base: { tags: files.get(body.path).slice(), title: body.title || "" } });
+      reply(saved({ base: { tags: files.get(body.path).slice(), title: body.title || "" } }));
     }
     await flush(ctx.window, 12);
   };
