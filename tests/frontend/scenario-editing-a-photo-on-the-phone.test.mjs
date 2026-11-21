@@ -2,7 +2,9 @@
  * Owner scenario: on the phone page (web/tagpup/mobile.html, docs/plans/phone-viewer.md, Screens 5) the owner opens a
  * photo, taps Edit, and changes its people, keywords, title and Date Taken from the sheet (web/tagpup/mobile-edit.js).
  *
- * - A tag added or taken off is one path's change through /api/photos/bulk-tags, against what the file holds: no stamp.
+ * - A tag added or taken off is one path's change through /api/photos/write (op `tags`), the photo named by its id,
+ *   against what the file holds: no stamp. Renamed on the PC since it was read, the write is refused (changed_on_disk);
+ *   the sheet reads the photo again by its id and sends it once more, by the name the file has now.
  * - The sheet is a step of the history, its one record of being open: Back closes it, the text typed kept, and a second
  *   Back leaves the photo; Back to it from another screen opens it again; the page back from the back-forward cache, Close
  *   then Edit tapped at once, a tap on the picture above it: the sheet is always as its step says.
@@ -43,8 +45,9 @@ const vocabulary = (ctx) => pageExports(ctx.window, "web/common/vocabulary.js");
 
 /**
  * The page on a library of 20 photos, the first a file `file` that the fake server writes as the real one does: a tag
- * change through bulk-tags, the title and date through save-metadata, each a new stamp; /api/library/photo reads it.
- * A Save naming another stamp or base than the file's is refused (409, changed_on_disk), as the server refuses it.
+ * change through photos/write, the title and date through save-metadata, each a new stamp; /api/library/photo reads it.
+ * A Save naming another stamp or base than the file's is refused (409, changed_on_disk), as the server refuses it; so is
+ * a tag change naming photo 1 at a path it is no longer at (photo_writes._moved), nothing written.
  */
 async function phone(t, file = {}) {
   const server = new FakeServer();
@@ -60,12 +63,15 @@ async function phone(t, file = {}) {
     .on("/api/library/photo", () => ({ photo: record() }))
     .on("/api/tags", TAGS)
     .on(PEOPLE_ROUTE, PEOPLE)
-    .on("/api/photos/bulk-tags", () => {
-      const [[path, change]] = Object.entries(server.lastBody("/api/photos/bulk-tags").changes);
+    .on("/api/photos/write", () => {
+      const [[path, change]] = Object.entries(server.lastBody("/api/photos/write").changes);
+      if (change.id === 1 && path !== held.path) {
+        return { success: false, changed_on_disk: true, error: "A photo is not where the page last saw it.", written: {} };
+      }
       held.tags = held.tags.filter((tag) => !(change.remove || []).includes(tag))
         .concat((change.add || []).filter((tag) => !held.tags.includes(tag)));
       held.mtime += 1;
-      return { written: { [path]: held.tags.slice() }, stamps: { [path]: { mtime: held.mtime, size: held.size } } };
+      return { success: true, written: { [path]: { tags: held.tags.slice(), mtime: held.mtime, size: held.size } } };
     })
     .on("/api/photo/save-metadata", () => {
       const body = server.lastBody("/api/photo/save-metadata");
@@ -116,7 +122,7 @@ const toasts = (ctx) => [...el(ctx, "edit-toasts").querySelectorAll(".edit-toast
 const said = (ctx) => (el(ctx, "edit-problem").classList.contains("hidden") ? "" : el(ctx, "edit-problem").textContent);
 const sheetOpen = (ctx) => !el(ctx, "edit-sheet").classList.contains("hidden");
 const calls = (ctx, route) => ctx.server.calls.filter((c) => c.url.includes(route));
-const tagWrites = (ctx) => calls(ctx, "/api/photos/bulk-tags").map((c) => c.body.changes);
+const tagWrites = (ctx) => calls(ctx, "/api/photos/write").map((c) => c.body.changes);
 
 function type(ctx, id, value) {
   el(ctx, id).value = value;
@@ -144,7 +150,7 @@ function holdNext(ctx, route) {
 afterEach(() => closeAllApps());
 
 describe("editing a photo on the phone", () => {
-  test("a person and a keyword added and taken off: one path each through bulk-tags, no stamp", async (t) => {
+  test("a person and a keyword added and taken off: one path each through photos/write, no stamp", async (t) => {
     const ctx = await phone(t);
     await openSheet(ctx);
     const { leafOf } = vocabulary(ctx);
@@ -160,8 +166,8 @@ describe("editing a photo on the phone", () => {
     click(ctx.window, chipX(ctx, WREN));
     await settle(ctx, UNDO + 80);
 
-    assert.deepEqual(tagWrites(ctx), [{ [PATH]: { add: [JUNIPER] } }, { [PATH]: { add: [COVE] } },
-      { [PATH]: { remove: [COAST] } }, { [PATH]: { remove: [WREN] } }], "one path's change each, nothing of a stamp or base");
+    assert.deepEqual(tagWrites(ctx), [{ [PATH]: { id: 1, add: [JUNIPER] } }, { [PATH]: { id: 1, add: [COVE] } },
+      { [PATH]: { id: 1, remove: [COAST] } }, { [PATH]: { id: 1, remove: [WREN] } }], "one path's change each, nothing of a stamp or base");
     assert.deepEqual(ctx.held.tags, [JUNIPER, COVE]);
     assert.deepEqual(chips(ctx, "edit-people"), [leafOf(JUNIPER)]);
     assert.deepEqual(chips(ctx, "edit-keywords"), [leafOf(COVE)]);
@@ -183,7 +189,7 @@ describe("editing a photo on the phone", () => {
     assert.equal(tagWrites(ctx).length, 0, "nothing is sent while the Undo can still be tapped");
 
     await settle(ctx, UNDO + 80);
-    assert.deepEqual(tagWrites(ctx), [{ [PATH]: { remove: [COAST] } }, { [PATH]: { remove: [COVE] } }]);
+    assert.deepEqual(tagWrites(ctx), [{ [PATH]: { id: 1, remove: [COAST] } }, { [PATH]: { id: 1, remove: [COVE] } }]);
     assert.deepEqual(ctx.held.tags, [WREN, "Events/Relay"], "the tag undone was never taken off");
     assert.equal(toasts(ctx).length, 0);
   });
@@ -218,8 +224,8 @@ describe("editing a photo on the phone", () => {
       click(ctx.window, chipX(ctx, COAST));
       await leave(ctx);
       await settle(ctx);
-      assert.deepEqual(tagWrites(ctx), [{ [PATH]: { remove: [COAST] } }], "sent at once, not after the Undo's time");
-      assert.ok(ctx.sent.find((s) => s.url.includes("/api/photos/bulk-tags")).keepalive, "a write that outlives the page");
+      assert.deepEqual(tagWrites(ctx), [{ [PATH]: { id: 1, remove: [COAST] } }], "sent at once, not after the Undo's time");
+      assert.ok(ctx.sent.find((s) => s.url.includes("/api/photos/write")).keepalive, "a write that outlives the page");
       assert.equal(sheetOpen(ctx), stays, stays ? "the sheet as its step left it, for the page coming back" : "the sheet shut");
       assert.equal(toasts(ctx).length, 0, "its Undo is gone with it");
       assert.deepEqual(chips(ctx, "edit-keywords"), [], "the chip stays off");
@@ -245,8 +251,8 @@ describe("editing a photo on the phone", () => {
 
     save.release({ success: true, mtime: 1718000009, size: 204800, base: { tags: [WREN, COAST], title: "Wren's Last Lap" } });
     await settle(ctx);
-    assert.deepEqual(tagWrites(ctx), [{ [PATH]: { add: [COVE] } }]);
-    assert.ok(ctx.server.calls.findIndex((c) => c.url.includes("bulk-tags")) > ctx.server.calls.findIndex((c) => c.url.includes("save-metadata")));
+    assert.deepEqual(tagWrites(ctx), [{ [PATH]: { id: 1, add: [COVE] } }]);
+    assert.ok(ctx.server.calls.findIndex((c) => c.url.includes("photos/write")) > ctx.server.calls.findIndex((c) => c.url.includes("save-metadata")));
     assert.deepEqual(chips(ctx, "edit-keywords"), [leaf(ctx, COAST), leaf(ctx, COVE)]);
   });
 
@@ -397,7 +403,7 @@ describe("editing a photo on the phone", () => {
   test("an add that fails says why and puts the text typed back", async (t) => {
     const ctx = await phone(t);
     await openSheet(ctx);
-    ctx.server.first("/api/photos/bulk-tags", { error: "The library is busy: try again." }, { status: 500 });
+    ctx.server.first("/api/photos/write", { error: "The library is busy: try again." }, { status: 500 });
     await pick(ctx, "cove", COVE);
     assert.equal(said(ctx), "Not added: The library is busy: try again.");
     assert.equal(el(ctx, "edit-add").value, "cove");
@@ -606,13 +612,48 @@ describe("editing a photo on the phone", () => {
       assert.ok(ctx.sent.find((s) => s.url.includes("/api/photo/save-metadata")).keepalive, "the Save outlives the page");
 
       const renamed = "D:\\Photos\\Wren's Meet\\Wren's Last Lap.jpg";
+      ctx.held.path = renamed;                         // the Save's title renamed the file, as the server does
       save.release({ success: true, new_path: renamed, mtime: 1718000009, size: 204800,
         base: { tags: [WREN, COAST], title: "Wren's Last Lap" } });
       await settle(ctx);
-      assert.deepEqual(tagWrites(ctx), [{ [renamed]: { remove: [COAST] } }], "after the Save, by the file's new name");
-      assert.ok(ctx.sent.find((s) => s.url.includes("/api/photos/bulk-tags")).keepalive);
+      assert.deepEqual(tagWrites(ctx), [{ [renamed]: { id: 1, remove: [COAST] } }], "after the Save, by the file's new name");
+      assert.ok(ctx.sent.find((s) => s.url.includes("/api/photos/write")).keepalive);
     });
   }
+
+  test("a chip taken off a photo renamed on the PC since it was read: refused, read again by its id, sent once more by its new name", async (t) => {
+    const ctx = await phone(t);
+    await openSheet(ctx);
+    const renamed = "D:\\Photos\\Wren's Meet\\Wren at the Finish.jpg";
+    ctx.held.path = renamed;                           // renamed on the PC: the sheet's record still names the old file
+    const reads = calls(ctx, "/api/library/photo?id=1").length;
+    click(ctx.window, chipX(ctx, COAST));
+    await settle(ctx, UNDO + 80);
+    assert.deepEqual(tagWrites(ctx), [{ [PATH]: { id: 1, remove: [COAST] } }, { [renamed]: { id: 1, remove: [COAST] } }],
+      "refused by the old name, sent once more by the new");
+    assert.equal(calls(ctx, "/api/library/photo?id=1").length, reads + 1, "read again by its id, once");
+    assert.deepEqual(ctx.held.tags, [WREN]);
+    assert.deepEqual(chips(ctx, "edit-keywords"), [], "the chip stays off");
+    assert.equal(toasts(ctx).length, 0, "nothing failed");
+
+    type(ctx, "edit-title", "Wren at the Finish");
+    click(ctx.window, el(ctx, "edit-save"));
+    await settle(ctx);
+    assert.equal(ctx.server.lastBody("/api/photo/save-metadata").path, renamed, "the next Save names the file where it is");
+    assert.equal(ctx.held.title, "Wren at the Finish");
+  });
+
+  test("a chip taken off a photo since deleted from the library: refused, read again, and said; the chip comes back", async (t) => {
+    const ctx = await phone(t);
+    await openSheet(ctx);
+    ctx.held.path = "D:\\Photos\\Wren's Meet\\gone.jpg";
+    ctx.server.first("/api/library/photo?id=1", { success: false, error: "No photo 1 in this library." }, { status: 404 });
+    click(ctx.window, chipX(ctx, COAST));
+    await settle(ctx, UNDO + 80);
+    assert.equal(tagWrites(ctx).length, 1, "not sent again");
+    assert.deepEqual(chips(ctx, "edit-keywords"), [leaf(ctx, COAST)], "the chip is back");
+    assert.match(toasts(ctx).map((line) => line.textContent).join(" "), /Not taken off Coast: this photo is no longer in the library/);
+  });
 });
 
 function leaf(ctx, tag) {
