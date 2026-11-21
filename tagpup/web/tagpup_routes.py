@@ -1111,7 +1111,7 @@ def photos_write():
     except responses.ANSWERED as why:
         return responses.of(why)
     except Exception as e:
-        logger.error("Error writing photos (%s): %s", op, e)
+        logger.error("Error writing photos (%s): %s", op, e, exc_info=True)
         return responses.error(500, str(e))
     reply = _envelope(op, changes, result, stamps)
     if result.refused:
