@@ -172,17 +172,18 @@ class AnEditWritesTheFileOnly(Base):
         self.assertEqual(["People/Fictional Newcomer"], tags_in(photo))
         self.assert_library_unchanged()
 
-    def test_a_forged_flag_changes_nothing_either_way(self):
-        # The server decides by the library's folders: not by anything the page says beside its save.
-        def forged(photo, **flags):
-            return self.post("/photos/write", {**page_writes.save(self.library, photo, "x", ["A/B"]), **flags})
-        body = self.assertWrote(forged(self.loose[0], just_looking=False, file_only=False, held=True))
-        self.assertEqual((1, 0), (body["file_only"], body["with_rows"]))
+    def test_a_flag_the_page_forges_inside_a_change_is_refused_and_nothing_is_written(self):
+        """The server decides file-only or held by the library's folders, and no shape of the request carries the
+        page's say (`just_looking`, `file_only`, `held`): a change entry holding one is refused 400. The old scenario,
+        a page claiming file-only for a held photo with the server still journaling it, reaches no write any more."""
+        for photo in (self.loose[0], self.held[0]):
+            for flag in ("just_looking", "file_only", "held"):
+                body = page_writes.save(self.library, photo, "x", ["A/B"])
+                ((path, change),) = body["changes"].items()
+                body["changes"] = {path: {**change, flag: True}}
+                reply = self.post("/photos/write", body)
+                self.assertEqual((400, False), (reply.status_code, reply.get_json()["success"]), (flag, reply.data))
         self.assert_library_unchanged()
-        body = self.assertWrote(forged(self.held[0], just_looking=True, file_only=True, held=False))
-        self.assertEqual((0, 1), (body["file_only"], body["with_rows"]))
-        self.assertEqual(["A/B"], __import__("json").loads(self.rows("SELECT tags FROM photos WHERE path = ?",
-                                                                    (self.held[0],))[0][0]))
 
     def test_tags_added_and_taken_off_many(self):
         write_into(self.loose[0], Subject=["Old/Tag", "Keep/Me"])
