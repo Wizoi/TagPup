@@ -3,7 +3,7 @@ import logging
 import os
 
 from tagpup.core import fields, paths, suggesting, validation, vocabulary
-from tagpup.core.result import CHANGED_ON_DISK, CHANGED_ON_DISK_SENTENCE, UNREADABLE_BASE_SENTENCE, Result
+from tagpup.core.result import CHANGED_ON_DISK, CHANGED_ON_DISK_SENTENCE, Result
 # Looked up at call time, as exiftool_session.ExifToolSession, so a test standing in for
 # ExifTool there reaches this too.
 from tagpup.files import exiftool_session, field_values, images, metadata, names
@@ -242,9 +242,9 @@ def save_photo(library, photo_path, title, tags, date_taken, exiftool_path, rena
     `base`, {"tags": [...], "title": "..."}, is the tags and caption the page read of the photo: the stamp can be
     kept (a copy keeps its times; a same-length rename of a tag then the time put back), so under the same lock,
     after the read of the file's current state, the file's tags (as a set) and caption are compared with `base` and
-    any difference refuses the save the same way, writing nothing. `base` None -- a record of a photo ExifTool
-    could not read when it was opened -- is refused (UNREADABLE_BASE_SENTENCE): the whole tag list it carries is
-    not made from what the file holds. Not given at all is no check.
+    any difference refuses the save the same way, writing nothing. Not given at all is no check. A page never saves
+    from the record of a photo ExifTool could not read when it was opened: it refuses that save itself, in its own
+    words (web/common/photo-write.js UNREADABLE_SAVE), and the entry point refuses a null `base` as a shape.
 
     details: `new_path`, `renamed`, `tags` as written, `flat` and `hierarchical` as
     written, `change`, `stamp`, the file's (mtime, size) as the write recorded it, after the write, when it wrote the
@@ -286,9 +286,6 @@ def save_photo(library, photo_path, title, tags, date_taken, exiftool_path, rena
     read = list(dict.fromkeys(SAVE_READ + BASE_READ + tuple(wanted) + tuple(fields.caption_fields(""))))
     with exiftool_session.ExifToolSession(executable=exiftool_path) as et:
         now = field_values.read_one(et, photo_path, read)
-        if base is None:
-            result.refuse(UNREADABLE_BASE_SENTENCE, CHANGED_ON_DISK)
-            return result
         if base is not NO_BASE and _differs_from_base(now, base):
             result.refuse(CHANGED_ON_DISK_SENTENCE, CHANGED_ON_DISK)
             return result

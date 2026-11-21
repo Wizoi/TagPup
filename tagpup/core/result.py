@@ -66,9 +66,6 @@ class Result:
 
 #: What a Result refused as CHANGED_ON_DISK says.
 CHANGED_ON_DISK_SENTENCE = "This photo changed on disk since you opened it: reload it first."
-#: Refused because the page's record was of a photo ExifTool could not read when it was opened: what the file holds is
-#: not known, so a save that carries the whole tag list is not made from it.
-UNREADABLE_BASE_SENTENCE = "This photo could not be read just now: reopen it."
 
 
 class NotFound(Exception):

@@ -17,15 +17,17 @@ export function stampOf(photo) {
  * save sends it, and the server compares it with the file under its lock and refuses on any difference -- a stamp
  * can be kept by a copy, or by a rename of a tag to one of the same length with the time put back (findings #551,
  * #552). Taken from the record the first time it is needed, and from the server's reply after each write. A photo
- * ExifTool could not read when it was opened has none: null, which the server refuses a save from.
+ * ExifTool could not read when it was opened is never saved (postPhotoMetadata refuses it, UNREADABLE_SAVE), so it is
+ * never asked for one.
  */
 export function baseOf(photo) {
     if (!photo) return undefined;
-    if (photo.unreadable) return null;
     if (!photo.base) photo.base = { tags: (photo.tags || []).slice(), title: photo.title || '' };
     return photo.base;
 }
 
+// The one sentence of a save refused because the photo could not be read when it was opened: the page's own, said before
+// anything is sent (#3298).
 export const UNREADABLE_SAVE = 'This photo could not be read just now: reopen it.';
 
 /**

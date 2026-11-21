@@ -984,9 +984,9 @@ def _stamp_of(sent):
 
 
 def _base_of(sent):
-    """(the `base` a write names -- {"tags": [str], "title": str}, or None for a null one --, why it cannot be read)."""
-    if sent is None:
-        return None, None
+    """(the `base` a write names, {"tags": [str], "title": str}, None) or (None, why it cannot be read). A null one is
+    refused as a shape: a page refuses a save from a photo it could not read before sending it, in its own words
+    (web/common/photo-write.js UNREADABLE_SAVE)."""
     ok = (isinstance(sent, dict) and isinstance(sent.get("tags", []), list)
           and all(isinstance(tag, str) for tag in sent.get("tags", [])) and isinstance(sent.get("title", ""), str))
     if not ok:

@@ -308,13 +308,14 @@ class TheFileIsComparedWithWhatThePageRead(Fresh):
         damaged_photos.whole_jpeg(good, seed=22)
         write_into(good, Subject=["Trips/Coast", "Trips/Lakes"])
         os.replace(good, path)                                          # replaced by a good file between open and save
-        reply = self.save(record, title="", tags=["Activity/Sailing"], base=None)     # the page's base of it: none
-        self.assertEqual((409, False), (reply.status_code, reply.get_json()["success"]), reply.data)
-        self.assertRegex(page_writes.why(reply.get_json()), "changed on disk|could not be read just now")
+        # The page refuses the save itself, in its own words (web/common/photo-write.js UNREADABLE_SAVE,
+        # tests/frontend/stale-record.test.mjs); a request naming no base read is a shape the server does not take (#3298).
+        reply = self.save(record, title="", tags=["Activity/Sailing"], base=None)
+        self.assertEqual((400, False), (reply.status_code, reply.get_json()["success"]), reply.data)
+        self.assertIn("base must be", page_writes.why(reply.get_json()))
         # the same save with the stamp of the good file still cannot be made from a base that was not read
         again = self.save(record, title="", tags=["Activity/Sailing"], stamp=stamp_of(path), base=None)
-        self.assertEqual((409, False), (again.status_code, again.get_json()["success"]), again.data)
-        self.assertIn("could not be read just now", page_writes.why(again.get_json()))
+        self.assertEqual((400, False), (again.status_code, again.get_json()["success"]), again.data)
         self.assertEqual(["Trips/Coast", "Trips/Lakes"], sorted(tags_in(path)), "the keywords are kept")
 
     def test_a_foreign_change_to_a_field_the_save_does_not_touch_is_not_refused(self):
