@@ -22,6 +22,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import own_home  # noqa: E402
+import page_writes  # noqa: E402
 import photo_rows  # noqa: E402
 import roots_library as rl  # noqa: E402
 from click.testing import CliRunner  # noqa: E402
@@ -85,6 +86,10 @@ class AfterAMove(unittest.TestCase):
     def move(self):
         config.set_location("pictures", self.first)
 
+    def wrote(self, reply):
+        """The write's reply said it succeeded, as the page reads the envelope."""
+        self.assertEqual((200, True), (reply.status_code, reply.get_json()["success"]), reply.get_data(as_text=True))
+
     def scan(self, folder, force=False):
         reply = self.get("/api/folder/scan", query_string={"path": folder, "force": "true" if force else "false"})
         self.assertEqual(200, reply.status_code, reply.get_data(as_text=True))
@@ -106,17 +111,16 @@ class TheFolderCache(AfterAMove):
         before = self.scan(self.folder_old)                    # cached, spelled by the place before the move
         self.assertTrue(before)
         self.move()                                            # done in the other process: nothing here knows
-        reply = self.post("/api/photos/bulk-tags", {"changes": {photo: {"add": ["Harbour"]} for photo in self.held}})
-        self.assertEqual(200, reply.status_code, reply.get_data(as_text=True))
+        reply = self.post(page_writes.ROUTE, page_writes.tags({photo: {"add": ["Harbour"]} for photo in self.held}))
+        self.wrote(reply)
         for moved in self.moved:
             self.assertIn("Harbour", keywords(moved))
         again = self.scan(self.folder_old)                     # without force
         self.assertTrue(all(record["path"].lower().startswith(self.first.lower()) for record in again), again[0]["path"])
         self.assertTrue(all("Harbour" in record["tags"] for record in again), "the cache still held the old tags")
         record = [r for r in again if r["path"].lower() == self.moved[0].lower()][0]
-        saved = self.post("/api/photo/save-metadata", {"path": self.held[0], "title": "A title",
-                                                       "tags": record["tags"], "date_taken": None})
-        self.assertEqual(200, saved.status_code, saved.get_data(as_text=True))
+        saved = self.post(page_writes.ROUTE, page_writes.set_from(record, title="A title", path=self.held[0]))
+        self.wrote(saved)
         self.assertIn("Harbour", keywords(self.moved[0]), "a panel save removed the bulk-added tag")
         self.assertNotIn("Harbour", keywords(self.held[0]), "the old copy was written")
 
@@ -204,9 +208,9 @@ class TheFolderRoutesNameTheTwoPlaces(AfterAMove):
 class ThePageIsToldItsPathsAreOld(AfterAMove):
     def test_a_response_to_old_paths_carries_the_roots_name(self):                           # #492
         self.move()
-        old = self.post("/api/photos/bulk-tags", {"changes": {self.held[0]: {"add": ["Harbour"]}}})
+        old = self.post(page_writes.ROUTE, page_writes.tags({self.held[0]: {"add": ["Harbour"]}}))
         self.assertEqual("pictures", old.headers.get("X-TagPup-Roots-Moved"))
-        new = self.post("/api/photos/bulk-tags", {"changes": {self.moved[0]: {"add": ["Quay"]}}})
+        new = self.post(page_writes.ROUTE, page_writes.tags({self.moved[0]: {"add": ["Quay"]}}))
         self.assertIsNone(new.headers.get("X-TagPup-Roots-Moved"))
         self.assertIsNone(self.get("/api/server").headers.get("X-TagPup-Roots-Moved"))
         self.assertEqual("pictures", self.get("/api/photo-file", query_string={"path": self.held[1]}).headers.get(
@@ -224,9 +228,9 @@ class EachPhotosOwnChanges(AfterAMove):
     def test_old_paths_as_the_keys_of_changes_write_the_first_places_files_and_the_reply_names_them(self):
         # The page's queue of tag changes is keyed by the paths it holds; after a move they are the old place's.
         self.move()
-        reply = self.post("/api/photos/bulk-tags", {"changes": {self.held[0]: {"add": ["Harbour"]},
-                                                                self.held[1]: {"add": ["Quay"], "remove": []}}})
-        self.assertEqual(200, reply.status_code, reply.get_data(as_text=True))
+        reply = self.post(page_writes.ROUTE, page_writes.tags({self.held[0]: {"add": ["Harbour"]},
+                                                               self.held[1]: {"add": ["Quay"], "remove": []}}))
+        self.wrote(reply)
         self.assertEqual("pictures", reply.headers.get("X-TagPup-Roots-Moved"), "the page is not told its paths are old")
         self.assertIn("Harbour", keywords(self.moved[0]))
         self.assertIn("Quay", keywords(self.moved[1]))
@@ -234,8 +238,8 @@ class EachPhotosOwnChanges(AfterAMove):
         self.assertNotIn("Quay", keywords(self.held[1]), "the old copy was written")
         body = reply.get_json()
         first = sorted(paths.key(moved) for moved in self.moved[:2])
-        self.assertEqual((first, first), (sorted(paths.key(each) for each in body["written"]),
-                                          sorted(paths.key(each) for each in body["stamps"])))
+        self.assertEqual(first, sorted(paths.key(each) for each in body["written"]))
+        self.assertTrue(all("mtime" in each for each in body["written"].values()), "a photo written without its stamp")
 
 
 class ThePhotoServedAndOpened(AfterAMove):
@@ -264,13 +268,17 @@ class ThePhotoServedAndOpened(AfterAMove):
 class WhenThePreviousPlaceIsGone(AfterAMove):
     def test_a_request_holding_old_paths_still_works(self):                                # #482
         self.move()
+        (record,) = [r for r in self.scan(self.folder_old) if paths.key(r["path"]) == paths.key(self.moved[0])]
+        # The side's rows say what an indexer read (roots_library.READ); its files hold none of it: the base the save
+        # names is what the file holds, as a page that read the file has it.
+        base = {"tags": keywords(self.moved[0]), "title": ""}
         shutil.rmtree(self.old)
-        saved = self.post("/api/photo/save-metadata", {"path": self.held[0], "title": "", "tags": ["Harbour"],
-                                                       "date_taken": None})
-        self.assertEqual(200, saved.status_code, saved.get_data(as_text=True))
+        saved = self.post(page_writes.ROUTE, page_writes.set_from(record, title="", tags=["Harbour"], path=self.held[0],
+                                                                  base=base))
+        self.wrote(saved)
         self.assertIn("Harbour", keywords(self.moved[0]))
         self.assertEqual(200, self.post("/api/photo/rotate", {"path": self.held[0], "direction": "left"}).status_code)
-        self.assertEqual(200, self.post("/api/photos/bulk-tags", {"changes": {self.held[1]: {"add": ["Quay"]}}}).status_code)
+        self.wrote(self.post(page_writes.ROUTE, page_writes.tags({self.held[1]: {"add": ["Quay"]}})))
         self.assertEqual(200, self.get("/api/photo-file", query_string={"path": self.held[0]}).status_code)
         with mock.patch("tagpup.files.recycle_bin.send_to_recycle_bin", side_effect=lambda p: os.remove(p) or True):
             deleted = self.post("/api/photo/delete", {"path": self.held[0]})
@@ -455,8 +463,8 @@ class AWriteStoppedByARootChange(unittest.TestCase):
         app = web.create_app("tagpup", startup=self.library, runtime=Runtime())
         app.testing = True
         reply = self.stopped(lambda: app.test_client().post(
-            "/photo_index/api/photos/bulk-tags",
-            data=json.dumps({"changes": {photo: {"add": ["Harbour"]} for photo in self.side.real[:3]}}),
+            "/photo_index" + page_writes.ROUTE,
+            data=json.dumps(page_writes.tags({photo: {"add": ["Harbour"]} for photo in self.side.real[:3]})),
             content_type="application/json"))
         body = reply.get_json()
         self.assertEqual(400, reply.status_code)

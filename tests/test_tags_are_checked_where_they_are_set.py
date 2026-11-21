@@ -21,6 +21,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from face_rows import add_face  # noqa: E402
 from handler_harness import Library  # noqa: E402
+import page_writes  # noqa: E402
 import tuner_client  # noqa: E402
 
 from tagpup.store import db as tagpup_db  # noqa: E402
@@ -66,10 +67,24 @@ class TagPupCase(unittest.TestCase):
             f.write(b"not really a jpeg")
 
     def call(self, path, body):
-        """Ask one route as the page would; return (status, what it sent: the JSON, or
-        an error's message)."""
+        """Ask one route as the page would; return (status, what it sent: the JSON of a request that succeeded, or the
+        sentence the page shows of one that did not: page_writes.why)."""
         status, reply = self.lib.post(path, body)
-        return status, reply if status == 200 else reply["error"]
+        return status, reply if reply.get("success") else page_writes.why(reply)
+
+    def save(self, holds, title, tags):
+        """The photo's save as its panel makes it (page_writes.save), and the answer (call). The photo is a stand-in
+        whose tags only the stand-in ExifTool knows (fake_exiftool): the panel's record read `holds` and no title."""
+        return self.call(page_writes.ROUTE, page_writes.save(self.lib.db_path, self.photo, title=title, tags=tags,
+                                                             base={"tags": holds, "title": ""}))
+
+    def tag(self, change):
+        """The tag queue's chunk of the photo's `change` ({"add": [...], "remove": [...]}), and the answer (call)."""
+        return self.call(page_writes.ROUTE, page_writes.tags({self.photo: change}))
+
+    def assertWrote(self, status, reply):
+        self.assertEqual(200, status, reply)
+        self.assertIsInstance(reply, dict, "the write did not succeed: %s" % reply)
 
     def rows(self, sql, *params):
         return self.lib.rows(sql, params)
@@ -79,9 +94,7 @@ class TagPupRefuses(TagPupCase):
     def test_saving_a_photo_with_a_new_bad_tag_writes_nothing(self):
         session, et = fake_exiftool(["Places/Harbour"])
         with patch("tagpup.files.exiftool_session.ExifToolSession", session):
-            status, reply = self.call("/api/photo/save-metadata",
-                                      {"path": self.photo, "title": "Harbour at dusk",
-                                       "tags": ["Places/Harbour", "People|Rowan Thackeray"]})
+            status, reply = self.save(["Places/Harbour"], "Harbour at dusk", ["Places/Harbour", "People|Rowan Thackeray"])
         self.assertEqual((status, reply), (400, PIPE))
         et.set_tags.assert_not_called()
         et.execute.assert_not_called()
@@ -91,17 +104,14 @@ class TagPupRefuses(TagPupCase):
         session, et = fake_exiftool(["Legacy|Keyword"])
         with patch("tagpup.files.exiftool_session.ExifToolSession", session), \
                 patch("tagpup.files.metadata.title_filename", side_effect=lambda p, *rest: p):
-            status, reply = self.call("/api/photo/save-metadata",
-                                      {"path": self.photo, "title": "Harbour at dusk",
-                                       "tags": ["Legacy|Keyword", "Places/Harbour"]})
-        self.assertEqual(status, 200, reply)
+            status, reply = self.save(["Legacy|Keyword"], "Harbour at dusk", ["Legacy|Keyword", "Places/Harbour"])
+        self.assertWrote(status, reply)
         et.set_tags.assert_called()
 
     def test_adding_a_bad_tag_to_many_photos_writes_nothing(self):
         session, et = fake_exiftool([])
         with patch("tagpup.files.exiftool_session.ExifToolSession", session):
-            status, reply = self.call("/api/photos/bulk-tags",
-                                      {"changes": {self.photo: {"add": ["Places//Harbour"]}}})
+            status, reply = self.tag({"add": ["Places//Harbour"]})
         self.assertEqual(status, 400)
         self.assertIn("empty level", reply)
         session.assert_not_called()
@@ -109,9 +119,8 @@ class TagPupRefuses(TagPupCase):
     def test_removing_a_bad_tag_is_still_allowed(self):
         session, et = fake_exiftool(["Legacy|Keyword"])
         with patch("tagpup.files.exiftool_session.ExifToolSession", session):
-            status, reply = self.call("/api/photos/bulk-tags",
-                                      {"changes": {self.photo: {"remove": ["Legacy|Keyword"]}}})
-        self.assertEqual(status, 200, reply)
+            status, reply = self.tag({"remove": ["Legacy|Keyword"]})
+        self.assertWrote(status, reply)
 
     def test_creating_a_bad_tag_creates_nothing(self):
         status, reply = self.call("/api/taxonomy/create", {"name": "People/Rowan\tThackeray"})
@@ -148,10 +157,8 @@ class ANewTagIsWrittenInItsOneSpelling(TagPupCase):
         session, et = fake_exiftool(["Places/Harbour"])
         with patch("tagpup.files.exiftool_session.ExifToolSession", session), \
                 patch("tagpup.files.metadata.title_filename", side_effect=lambda p, *rest: p):
-            status, reply = self.call("/api/photo/save-metadata",
-                                      {"path": self.photo, "title": "",
-                                       "tags": ["Places/Harbour", "People / Rowan Thackeray"]})
-        self.assertEqual(status, 200, reply)
+            status, reply = self.save(["Places/Harbour"], "", ["Places/Harbour", "People / Rowan Thackeray"])
+        self.assertWrote(status, reply)
         self.assertEqual(subjects_written(et), ["Places/Harbour", "People/Rowan Thackeray"])
 
     def test_a_tag_the_photo_already_holds_is_left_as_it_is(self):
@@ -159,18 +166,15 @@ class ANewTagIsWrittenInItsOneSpelling(TagPupCase):
         session, et = fake_exiftool(["Legacy / Keyword"])
         with patch("tagpup.files.exiftool_session.ExifToolSession", session), \
                 patch("tagpup.files.metadata.title_filename", side_effect=lambda p, *rest: p):
-            status, reply = self.call("/api/photo/save-metadata",
-                                      {"path": self.photo, "title": "",
-                                       "tags": ["Legacy / Keyword"]})
-        self.assertEqual(status, 200, reply)
+            status, reply = self.save(["Legacy / Keyword"], "", ["Legacy / Keyword"])
+        self.assertWrote(status, reply)
         self.assertEqual(subjects_written(et), ["Legacy / Keyword"])
 
     def test_adding_to_many_photos(self):
         session, et = fake_exiftool([])
         with patch("tagpup.files.exiftool_session.ExifToolSession", session):
-            status, reply = self.call("/api/photos/bulk-tags",
-                                      {"changes": {self.photo: {"add": [" Places / Harbour "]}}})
-        self.assertEqual(status, 200, reply)
+            status, reply = self.tag({"add": [" Places / Harbour "]})
+        self.assertWrote(status, reply)
         self.assertEqual(subjects_written(et), ["Places/Harbour"])
 
 
