@@ -570,6 +570,29 @@ describe("V20: in a library view", () => {
       assert.equal(ctx.sent().length, 1, "a photo the library no longer has was sent again");
       assert.equal(ctx.out.length, 0);
       assert.deepEqual(ctx.failedRows(), [], "a photo deleted since was said as a failure");
+      // #3289: said, as the phone says it, and the row does not read as done.
+      assert.match(ctx.document.getElementById("status-text").textContent, /^1 photo is missing on disk and was left out\./);
+      const labels = pageExports(ctx.window, "web/tagpup/state.js").state.writeQueue.entries.map((e) => e.label);
+      assert.ok(labels.some((l) => /1 photo no longer in the library/.test(l)), `the row did not say the photo is gone: ${labels}`);
+    });
+
+    test("two pills taken off while the refused photo is read again: one write to its new name, no failure (#3290)", async (t) => {
+      const ctx = await view(t);
+      ctx.alerts = [];
+      ctx.window.alert = (text) => ctx.alerts.push(text);
+      await ctx.openPhoto(11);
+      await ctx.takeOff("Cross Country");
+      ctx.moved.set(11, RENAMED);
+      ctx.holdReads(11);
+      await ctx.refuseWrite();
+      await ctx.takeOff("Harbourside");   // clicked within the re-read: keyed at the old path
+      await ctx.answerReads();
+      assert.equal(ctx.out.length, 1, "the re-read change was not sent");
+      assert.deepEqual(ctx.sent()[1].changes, { [RENAMED]: { id: 11, add: [], remove: ["Cross Country", "Harbourside"] } });
+      await ctx.answerWrite();
+      assert.deepEqual(ctx.files.get(11), []);
+      assert.deepEqual(ctx.alerts, [], "a photo read again was said as a failure");
+      assert.deepEqual(ctx.failedRows(), []);
     });
 
     test("refused again after the read: a failure the drain stops at; its Retry reads the photo again and writes it", async (t) => {
