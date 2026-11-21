@@ -52,7 +52,7 @@ class TwoBulkWritesAtOnce(unittest.TestCase):
         client = self.lib.app.test_client()
 
         def call():
-            reply = client.post("/api/photos/bulk-tags", json=body)
+            reply = client.post("/api/photos/write", json={"op": "tags", **body})
             return reply.status_code, reply.get_json()
         return call
 

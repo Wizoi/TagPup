@@ -59,8 +59,8 @@ class AChunkedTagWrite(unittest.TestCase):
     def chunk(self, paths, tag, group, status=200):
         """A chunk as the page posts it; the id of the change it made (None when it was refused)."""
         before = self.newest()
-        reply = self.client.post("/library/api/photos/bulk-tags",
-                                 json={"changes": {photo: {"add": [tag]} for photo in paths}, "group": group})
+        reply = self.client.post("/library/api/photos/write",
+                                 json={"op": "tags", "changes": {photo: {"add": [tag]} for photo in paths}, "group": group})
         self.assertEqual(status, reply.status_code, reply.data)
         made = self.newest()
         return None if made == before else made
@@ -69,7 +69,7 @@ class AChunkedTagWrite(unittest.TestCase):
         """A chunk of each photo's own changes, as the page's queue posts it: (the id of the change it made, or None when
         nothing was made; the reply)."""
         before = self.newest()
-        reply = self.client.post("/library/api/photos/bulk-tags", json={"changes": changes, "group": group, **more})
+        reply = self.client.post("/library/api/photos/write", json={"op": "tags", "changes": changes, "group": group, **more})
         self.assertEqual(status, reply.status_code, reply.data)
         made = self.newest()
         return (None if made == before else made), reply.get_json()
@@ -175,8 +175,8 @@ class AChunkedTagWrite(unittest.TestCase):
         self.assertEqual([["Beach", "Harbour"], [], ["Quay"], ["Beach"], ["Beach"]], self.held())
         self.assertEqual({paths.key(self.photos[0]): ["Beach", "Harbour"], paths.key(self.photos[1]): [],
                           paths.key(self.photos[2]): ["Quay"]},
-                         {paths.key(path): sorted(tags) for path, tags in reply["written"].items()})
-        self.assertEqual(sorted(reply["written"]), sorted(reply["stamps"]), "a stamp for each photo written")
+                         {paths.key(path): sorted(written["tags"]) for path, written in reply["written"].items()})
+        self.assertTrue(all(written["size"] for written in reply["written"].values()), "a stamp for each photo written")
         # One change, each photo in it once; the photo with nothing to change is not planned.
         planned = [paths.key(row.path) for row in file_journal.files_of(self.library.path, first)]
         self.assertEqual(sorted(paths.key(photo) for photo in self.photos[0:3]), sorted(planned))
@@ -189,7 +189,7 @@ class AChunkedTagWrite(unittest.TestCase):
             self.assertEqual(200, undone.status_code, undone.data)
         self.assertEqual([["Beach"]] * 5, self.held())
 
-    def test_changes_of_another_shape_or_the_old_body_are_refused_and_nothing_written(self):
+    def test_changes_of_another_shape_are_refused_and_nothing_written(self):
         before = self.newest()
         one = self.photos[0]
         for changes in ([one], {}, {one: ["Harbour"]}, {one: {"add": "Harbour"}}, {one: {"tags": ["Harbour"]}},
@@ -197,11 +197,6 @@ class AChunkedTagWrite(unittest.TestCase):
             made, reply = self.chunk_of(changes, "drain-5", status=400)
             self.assertIsNone(made, changes)
             self.assertIn("changes", reply["error"], changes)
-        # The old body, one list of tags for every photo: a page from before the queue (an install while it was open).
-        reply = self.client.post("/library/api/photos/bulk-tags",
-                                 json={"paths": [one], "add_tags": ["Harbour"], "remove_tags": [], "group": "drain-5"})
-        self.assertEqual(400, reply.status_code, reply.data)
-        self.assertIn("Send changes as", reply.get_json()["error"])
         # A tag that may not be set, on one photo of the chunk, refuses the whole chunk.
         made, _reply = self.chunk_of({one: {"add": ["Harbour"]}, self.photos[1]: {"add": ["Places|Harbour"]}},
                                      "drain-5", status=400)

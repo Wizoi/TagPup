@@ -235,11 +235,11 @@ class ATagAdded(Fresh):
         photos = [self.held("h.jpg", 58)[0], self.held("i.jpg", 59)[0]]
         with contextlib.ExitStack() as stack:
             touches = [stack.enter_context(Touches(path)) for path in photos]
-            reply = self.client.post("/library/api/photos/bulk-tags", json={"changes": {photo: {"add": ["Trips/Lakes"]}
+            reply = self.client.post("/library/api/photos/write", json={"op": "tags", "changes": {photo: {"add": ["Trips/Lakes"]}
                                                                                         for photo in photos}})
         self.assertEqual(200, reply.status_code, reply.data)
         self.assertEqual([5, 5], [each.counted()["stats"] for each in touches])
-        stamps = reply.get_json()["stamps"]
+        stamps = reply.get_json()["written"]
         for path in photos:
             (sent,) = [stamp for named, stamp in stamps.items() if paths.same(named, path)]
             now = stamp_of(path)
