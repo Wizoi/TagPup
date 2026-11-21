@@ -29,7 +29,7 @@
 import { test, describe, afterEach } from "node:test";
 import assert from "node:assert/strict";
 import { loadApp, FakeServer, answer, flush, click, closeAllApps, pageExports, PEOPLE_ROUTE, PHOTO_WRITES, CLIP_WRITES, SAVE, lastSave, saveCalls,
-  saved } from "./harness.mjs";
+  saved, changedOnDisk } from "./harness.mjs";
 import { PHONE_PAGE, el, shown, pageState, settle, phoneCard, phoneLayout } from "./phone-page.mjs";
 
 const KEYWORDS = { keywords: [{ tag: "Events", name: "Events", parent: null, count: 20 }], untagged: 0 };
@@ -78,7 +78,7 @@ async function phone(t, file = {}) {
     .on(SAVE, (url, sent) => {
       const body = lastSave(server);
       if (body.stamp.mtime !== held.mtime || JSON.stringify(body.base.tags) !== JSON.stringify(held.tags)) {
-        return answer(409, { success: false, changed_on_disk: true, error: "The file changed on disk.", written: {} });
+        return changedOnDisk("The file changed on disk.")();
       }
       held.title = body.title;
       if (body.date_taken) held.taken = body.date_taken.replace(/-/g, ":").replace("T", " ");
@@ -291,7 +291,7 @@ describe("editing a photo on the phone", () => {
     ctx.server.first(SAVE, () => {
       ctx.server.routes.shift();
       Object.assign(ctx.held, { title: "Set on the PC", mtime: 1718000300 });
-      return answer(409, { success: false, changed_on_disk: true, error: "The file changed on disk.", written: {} });
+      return changedOnDisk("The file changed on disk.")();
     });
     type(ctx, "edit-title", "Wren's Last Lap");
     click(ctx.window, el(ctx, "edit-save"));

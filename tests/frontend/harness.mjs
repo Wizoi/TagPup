@@ -329,7 +329,7 @@ export function lastSave(server) {
  * write (file_only, with_rows, the faces it changed, pictures_refused).
  */
 export function saved(own = {}, top = {}) {
-  return (url, body) => ({ ...envelope(body, 1), ...top, written: { [savedPhoto(body).path]: own } });
+  return (url, body) => ({ ...envelope(1), ...top, written: { [savedPhoto(body).path]: own } });
 }
 
 /**
@@ -344,13 +344,30 @@ export function savedAs(reply, own = {}) {
 export function notSaved(why) {
   return (url, body) => {
     const { path, id } = savedPhoto(body);
-    return { ...envelope(body, 0), success: false, error_count: 1, errors: [{ path, id, why }], written: {} };
+    return { ...envelope(0), success: false, error_count: 1, errors: [{ path, id, why }], written: {} };
   };
 }
 
-function envelope(body, changed) {
-  return { success: true, changed, attempted: 1, skipped_missing: 0, skipped: [], error_count: 0, errors: [],
-           stopped: null, change: null, file_only: 0, with_rows: changed };
+/**
+ * The reply of a save refused because the file is no longer the one the page read, or the id's photo no longer at its
+ * path (responses.refused: 409, `changed_on_disk`, the envelope beside the error), `why` its sentence. Nothing written.
+ */
+export function changedOnDisk(why = "This photo changed on disk since you opened it: reload it first.") {
+  return () => answer(409, { ...envelope(0), success: false, error: why, changed_on_disk: true, written: {} });
+}
+
+/**
+ * What a save's reply says of the write beside its photo's own part (`written`): the envelope the real entry point made
+ * of a save (fixtures/save_replies.json, tests/test_tag_a_photo_read_it_back_and_undo.py writes it), so that its fields
+ * are the server's and not a list kept here. `changed` of the one photo: 1 written, 0 not (no journal change then).
+ */
+const SAVE_ENVELOPE = (() => {
+  const { written, ...rest } = JSON.parse(fs.readFileSync(path.join(HERE, "fixtures", "save_replies.json"), "utf8")).no_rename;
+  return rest;
+})();
+
+function envelope(changed) {
+  return { ...SAVE_ENVELOPE, changed, with_rows: changed, change: changed ? SAVE_ENVELOPE.change : null };
 }
 
 /** A fetch stub that routes by URL substring and records every call. */
