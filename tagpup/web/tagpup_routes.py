@@ -1241,8 +1241,11 @@ def photos_write():
     if why:
         return responses.error(400, why)
     if op == photo_writes.SET:
-        refused = responses.file_refused(next(iter(changes)))
-        if refused:
+        ((path, (photo_id, _own)),) = changes.items()
+        refused = responses.file_refused(path)
+        # A path with no file: 400 for a photo named by its path alone; one named by its id is answered under the lock
+        # (_moved: 409 when it was renamed since the page read it). A share that did not answer (503) refuses either.
+        if refused and (photo_id is None or refused[1] != 400):
             return refused
     try:
         result, stamps = _write(library, op, changes, group=body.get("group"), params=params)
