@@ -445,8 +445,9 @@ def folder_auto_apply():
 @routes.post("/api/folder/time-shift")
 def folder_time_shift():
     """A folder's Time Shift: the Date Taken of its photos of one camera moved by `shift_minutes`. A caller of the one entry
-    point (_write, op `shift`) that chooses the photos (the camera's, never a clip) and answers as it always did, until the
-    page sends to /api/photos/write (plan one-write-path, cut 2c deletes it)."""
+    point (_write, op `shift`) that chooses the photos (the camera's, never a clip) and answers as it always did. No page
+    sends to it now: the page chooses the photos and sends them to /api/photos/write (plan one-write-path, cut 2c deletes
+    it)."""
     library = state.require()
     body = request.get_json(silent=True) or {}
     folder = body.get("folder_path")
