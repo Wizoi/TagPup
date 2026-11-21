@@ -389,12 +389,13 @@ export function changedOnDisk(why) {
  */
 export const SHIFT = (url, body) => url.includes("/api/photos/write") && Boolean(body) && body.op === "shift";
 
-const SHIFT_REPLIES = JSON.parse(fs.readFileSync(path.join(HERE, "fixtures", "shift_replies.json"), "utf8"));
+export const SHIFT_REPLIES = JSON.parse(fs.readFileSync(path.join(HERE, "fixtures", "shift_replies.json"), "utf8"));
 
 /**
  * A Time Shift's reply as the real entry point made it (fixtures/shift_replies.json, written by
  * tests/test_a_write_through_the_one_entry_point.py): `shifted`, two photos written (200); `stopped`, a share that stopped
- * answering at the second of three, the first written (400). Its photos, PHOTO_0, PHOTO_1, ..., are named again by the
+ * answering at the second of three, the first written (400); `stopped_first`, one that stopped answering at the first of
+ * three, none written (400). Its photos, PHOTO_0, PHOTO_1, ..., are named again by the
  * paths this shift sent, in the order sent; `own[n]` over what it says of photo n (`taken`, as the server spells it),
  * `top` over what it says of the write (`file_only`, `with_rows`: a folder the library does not hold).
  */
