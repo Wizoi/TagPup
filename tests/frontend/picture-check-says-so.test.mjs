@@ -6,7 +6,7 @@
 import fs from "node:fs";
 import { test, describe, afterEach } from "node:test";
 import assert from "node:assert/strict";
-import { loadApp, FakeServer, closeAllApps, openFolder, click, PHOTO_WRITES } from "./harness.mjs";
+import { loadApp, FakeServer, closeAllApps, openFolder, click, PHOTO_WRITES, SAVE, savedAs } from "./harness.mjs";
 
 const served = JSON.parse(fs.readFileSync(new URL("./fixtures/save_replies.json", import.meta.url), "utf8"));
 const A = "D:\\p\\a.jpg";
@@ -22,7 +22,7 @@ async function openA(t, replies) {
     .on("/api/databases", { databases: ["photo_index"], selected: "photo_index" })
     .on("/api/photo-faces", { faces: [], total: 0, unmatched: 0 })
     .on("/api/folder/suggest-status", { status: "idle" })
-    .on("/api/photo/save-metadata", () => ({ ...replies.save, new_path: A }))
+    .on(SAVE, savedAs(replies.save, { new_path: A }))
     .on("/api/photo/rotate", () => replies.rotate);
   const { window, document } = await loadApp("tagpup", { server, t });
   window.alert = () => {};

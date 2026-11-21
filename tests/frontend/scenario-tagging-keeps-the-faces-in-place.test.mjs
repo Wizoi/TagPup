@@ -14,6 +14,7 @@ import { test, describe, afterEach } from "node:test";
 import assert from "node:assert/strict";
 import {
   loadApp, FakeServer, photoRecord, flush, openFolder, closeAllApps, PEOPLE_ROUTE, peopleRecordsOf,
+  SAVE, lastSave,
 } from "./harness.mjs";
 
 const A = photoRecord({ filename: "a.jpg" });
@@ -71,7 +72,7 @@ async function open(t, { faces = THREE, tags = [], status = 200 } = {}) {
     .on("/api/folder/suggest-status", { status: "idle" })
     .on("/api/folder/index-status", { status: "completed", percent: 100, message: "Ready" })
     .on("/api/folder/scan", [{ ...A, tags: tags.slice() }, { ...B, tags: [] }])
-    .on("/api/photo/save-metadata", () => (saves.length ? saves.shift() : { success: true }))
+    .on(SAVE, () => (saves.length ? saves.shift() : { success: true }))
     .on("/api/photos/write", () => (bulks.length ? bulks.shift() : { success: true }))
     .on("/api/face/match", { success: true })
     .on("/api/photo-faces", (url) => (queued.length ? queued.shift()(url) : faces(url)), { status });
@@ -153,7 +154,7 @@ describe("V19: tagging the open photo keeps its faces in place", () => {
     await ctx.addTag("Events/Birthday");
     assert.equal(ctx.reads(), before, "a keyword read the faces again");
     await ctx.addPerson("Sam Gray");
-    assert.deepEqual(ctx.server.lastBody("/api/photo/save-metadata").tags, ["Events/Birthday", "People/Sam Gray"]);
+    assert.deepEqual(lastSave(ctx.server).tags, ["Events/Birthday", "People/Sam Gray"]);
     assert.equal(ctx.reads(), before, "a person the server named no face after read the faces again");
     assert.equal(ctx.ids(), "1,2");
   });
@@ -248,7 +249,7 @@ describe("V19: tagging the open photo keeps its faces in place", () => {
     const ctx = await open(t, { faces: (url) => (url.includes("b.jpg") ? reply([named(9)]) : THREE()), tags: ["Events/Birthday"] });
     await ctx.select(B);
     await ctx.click("btn-carry-forward");
-    assert.deepEqual(ctx.server.lastBody("/api/photo/save-metadata").tags, ["Events/Birthday"]);
+    assert.deepEqual(lastSave(ctx.server).tags, ["Events/Birthday"]);
     await ctx.select(A);
     const before = ctx.reads();
     ctx.nextBulk({ success: true, unnamed_faces: [{ id: 9, name: JANE.name }] });

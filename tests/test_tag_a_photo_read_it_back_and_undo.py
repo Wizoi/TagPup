@@ -461,23 +461,36 @@ class ASaveFromThePage(S.Fresh):
         quiet = self.save(self.record(photo_id), title="Another caption").get_json()
         self.assertNotIn("pictures_refused", quiet)
 
+    def sent(self, record, **changes):
+        """The reply of the page's save of `record` as the page sends it (web/common/photo-write.js postPhotoMetadata):
+        op `set` on the one entry point, the photo named by its path and id."""
+        own = {"id": record["id"], "title": record.get("title", ""), "tags": record["tags"],
+               "stamp": {"mtime": record["mtime"], "size": record["size"]},
+               "base": {"tags": record["tags"], "title": record.get("title", "")}, **changes}
+        return self.post("/photos/write", {"op": "set", "changes": {record["path"]: own}})
+
     def test_the_replies_the_page_reads_are_written_for_its_test(self):
         path, record = self.smart_renamed()
         refused = names.RenameFailed("The file is open in another program (held by Viewer)", [])
         found = {}
         with mock.patch("tagpup.files.names.rename_all", side_effect=refused):
-            found["rename_failed"] = self.save(record, title="Start line").get_json()
+            found["rename_failed"] = self.sent(record, title="Start line").get_json()
         plain, plain_id = self.make("IMG_0002.jpg", 3, ["Trips/Coast"])
-        found["no_rename"] = self.save(self.record(plain_id), title="A caption").get_json()
+        found["no_rename"] = self.sent(self.record(plain_id), title="A caption").get_json()
         again, again_id = self.make("IMG_0003.jpg", 5, ["Trips/Coast"])
         with rewritten(), self.flipping_once(again), self.assertLogs(file_changes.logger, "WARNING"):
-            found["picture_changed"] = self.save(self.record(again_id), title="A caption").get_json()
+            found["picture_changed"] = self.sent(self.record(again_id), title="A caption").get_json()
         with rewritten(), self.flipping_once(again), self.assertLogs(file_changes.logger, "WARNING"):
             found["rotated_picture_changed"] = self.post("/photo/rotate", {"path": again, "direction": "left"}).get_json()
         for each in found.values():
-            each.update(mtime=1, size=1)
-            if "new_path" in each:
-                each["new_path"] = os.path.basename(each["new_path"])
+            # The photo a save wrote is named in the page's test by the path it sends (harness.mjs savedAs).
+            owns = list(each["written"].values()) if "written" in each else [each]
+            for own in owns:
+                own.update(mtime=1, size=1)
+                if "new_path" in own:
+                    own["new_path"] = os.path.basename(own["new_path"])
+            if "written" in each:
+                each["written"] = {"PHOTO": owns[0]}
         text = json.dumps(found, sort_keys=True, indent=1) + "\n"
         page_fixtures.hold_to(self, SAVE_REPLIES, text, "tests.test_tag_a_photo_read_it_back_and_undo", "the photo panel's save")
 

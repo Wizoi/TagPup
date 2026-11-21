@@ -9,7 +9,7 @@
  */
 import { test, describe, afterEach } from "node:test";
 import assert from "node:assert/strict";
-import { loadApp, FakeServer, photoRecord, flush, click, openFolder, closeAllApps, pageExports } from "./harness.mjs";
+import { loadApp, FakeServer, photoRecord, flush, click, openFolder, closeAllApps, pageExports, SAVE, saveCalls, lastSave } from "./harness.mjs";
 
 afterEach(() => closeAllApps());
 
@@ -59,7 +59,7 @@ describe("a save names the stamp of the record it was built from", () => {
     ctx.document.getElementById("input-add-tag").value = "Trips/Lakes";
     click(ctx.window, ctx.document.getElementById("btn-add-tag"));
     await flush(ctx.window, 8);
-    assert.deepEqual(server.lastBody("/api/photo/save-metadata").stamp, { mtime: 1700000500.5 - 500, size: 2048 });
+    assert.deepEqual(lastSave(server).stamp, { mtime: 1700000500.5 - 500, size: 2048 });
   });
 
   test("after a save the record has the file's new stamp, and the next save names that", async (t) => {
@@ -72,7 +72,7 @@ describe("a save names the stamp of the record it was built from", () => {
     ctx.document.getElementById("input-add-tag").value = "Trips/Harbour";
     click(ctx.window, ctx.document.getElementById("btn-add-tag"));
     await flush(ctx.window, 8);
-    assert.deepEqual(server.lastBody("/api/photo/save-metadata").stamp, { mtime: 1700000500.5, size: 2100 });
+    assert.deepEqual(lastSave(server).stamp, { mtime: 1700000500.5, size: 2100 });
   });
 });
 
@@ -85,11 +85,11 @@ describe("a save names what the page read, and an undo keeps the record current 
     ctx.document.getElementById("input-add-tag").value = "Trips/Lakes";
     click(ctx.window, ctx.document.getElementById("btn-add-tag"));
     await flush(ctx.window, 8);
-    assert.deepEqual(server.lastBody("/api/photo/save-metadata").base, { tags: ["Trips/Coast"], title: "" });
+    assert.deepEqual(lastSave(server).base, { tags: ["Trips/Coast"], title: "" });
     ctx.document.getElementById("input-add-tag").value = "Trips/Harbour";
     click(ctx.window, ctx.document.getElementById("btn-add-tag"));
     await flush(ctx.window, 8);
-    assert.deepEqual(server.lastBody("/api/photo/save-metadata").base, { tags: ["Trips/Coast", "Trips/Lakes"], title: "" },
+    assert.deepEqual(lastSave(server).base, { tags: ["Trips/Coast", "Trips/Lakes"], title: "" },
       "the next save names the file as the last reply said it was left");
   });
 
@@ -103,13 +103,13 @@ describe("a save names what the page read, and an undo keeps the record current 
     await openPhoto(ctx, "b.jpg");
     click(ctx.window, ctx.document.getElementById("btn-carry-forward"));
     await flush(ctx.window, 10);
-    assert.ok(server.lastBody("/api/photo/save-metadata"), "carried");
+    assert.ok(lastSave(server), "carried");
     click(ctx.window, ctx.document.getElementById("btn-undo"));
     await flush(ctx.window, 10);
     ctx.document.getElementById("input-add-tag").value = "Trips/Lakes";
     click(ctx.window, ctx.document.getElementById("btn-add-tag"));
     await flush(ctx.window, 10);
-    const sent = server.lastBody("/api/photo/save-metadata");
+    const sent = lastSave(server);
     assert.deepEqual(sent.stamp, { mtime: 1700000900.5, size: 4200 });
     assert.deepEqual(sent.base.tags, ["Activity/Sailing"]);
   });
@@ -122,7 +122,7 @@ describe("a save names what the page read, and an undo keeps the record current 
     ctx.document.getElementById("input-add-tag").value = "Trips/Lakes";
     click(ctx.window, ctx.document.getElementById("btn-add-tag"));
     await flush(ctx.window, 8);
-    assert.equal(server.calls.filter((c) => c.url.includes("save-metadata")).length, 0);
+    assert.equal(saveCalls(server).length, 0);
     assert.match(ctx.document.getElementById("status-text").textContent, /could not be read just now: reopen it/);
   });
 });
@@ -165,7 +165,7 @@ describe("in a view of the library", () => {
       .on("/api/library/cards", { cards: [{ id: ID, name: "v.jpg", path: state.photo.path, taken: "2020:01:01 10:00:00",
         thumb: `/api/photo-thumb?id=${ID}&v=1700000000.5` }] })
       .on("/api/library/photo", () => ({ photo: state.photo }))
-      .on("/api/photo/save-metadata", saved || { success: true, mtime: 1700000600.5, size: 2200 });
+      .on(SAVE, saved || { success: true, mtime: 1700000600.5, size: 2200 });
     const ctx = await loadApp("tagpup", { t, url: "http://localhost:8090/photo_index/?view=all", server });
     ctx.window.alert = (message) => { ctx.alerts.push(message); };
     ctx.alerts = [];
@@ -188,7 +188,7 @@ describe("in a view of the library", () => {
     assert.equal(ctx.server.urls().filter((u) => u.includes("/api/library/photo")).length, 2, "read again");
     assert.match(ctx.document.getElementById("status-text").textContent, /changed on disk/);
     assert.match(ctx.document.getElementById("detail-tags").textContent, /Trips\/Lakes/, "the panel shows the file's tags now");
-    assert.equal(ctx.server.lastBody("/api/photo/save-metadata").stamp.size, 2048, "the refused save named the stamp it was built from");
+    assert.equal(lastSave(ctx.server).stamp.size, 2048, "the refused save named the stamp it was built from");
   });
 
 });

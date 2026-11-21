@@ -18,7 +18,7 @@
  */
 import { test, describe, afterEach } from "node:test";
 import assert from "node:assert/strict";
-import { loadApp, FakeServer, closeAllApps, openFolder, click, peopleRecordsOf, PEOPLE_ROUTE, PHOTO_WRITES } from "./harness.mjs";
+import { loadApp, FakeServer, closeAllApps, openFolder, click, peopleRecordsOf, PEOPLE_ROUTE, PHOTO_WRITES, SAVE, saved, saveCalls } from "./harness.mjs";
 
 const TAXONOMY = [
   { id: 1, tag: "People", name: "People", parent_id: null, has_face: 1 },
@@ -52,7 +52,7 @@ function server(aTags) {
     .on("/api/tags", ["Cross Country", "Harbourside", "Kentridge"])
     .on("/api/databases", { databases: ["photo_index"], selected: "photo_index" })
     .on("/api/photo-faces", { faces: [], total: 0, unmatched: 0 })
-    .on("/api/photo/save-metadata", { success: true })
+    .on(SAVE, saved())
     .on("/api/folder/suggest-status", { status: "completed", suggestions: SUGGESTIONS });
 }
 
@@ -129,7 +129,7 @@ function type(window, input, text) {
   input.dispatchEvent(new window.Event("input", { bubbles: true }));
 }
 
-const saves = (s) => s.calls.filter((c) => c.url.includes("save-metadata"));
+const saves = (s) => saveCalls(s);
 const pills = (document) =>
   [...document.querySelectorAll("#detail-tags .tag-pill, #detail-people .tag-pill")].map((p) => p.textContent);
 const chipEls = (document) => [...document.querySelectorAll("#suggestions-section .suggestion-chip")];

@@ -8,7 +8,7 @@
 import { test, afterEach } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { loadApp, FakeServer, photoRecord, flush, click, openFolder, closeAllApps, peopleRecordsOf, PEOPLE_ROUTE } from "./harness.mjs";
+import { loadApp, FakeServer, photoRecord, flush, click, openFolder, closeAllApps, peopleRecordsOf, PEOPLE_ROUTE, SAVE, saved, saveCalls } from "./harness.mjs";
 
 afterEach(() => closeAllApps());
 
@@ -49,7 +49,7 @@ for (const found of TABLE.cases) {
       .on("/api/folder/membership", { library: "photo_index", folder: "D:/Library/2020", photos: 1, photos_held: 1,
         photos_not_held: 0, folders_not_held: 0, first_not_held: null, has_roots: true, under_roots: true, ignored: false })
       .on("/api/photo-faces", { faces: [], total: 0, unmatched: 0 })
-      .on("/api/photo/save-metadata", { success: true })
+      .on(SAVE, saved())
       .on("/api/folder/suggest-status", {
         status: "completed", suggestions: { [photo.path]: { tags: [], people: [{ name: TABLE.name, score: 0.9 }], title: null } },
       });
@@ -59,7 +59,7 @@ for (const found of TABLE.cases) {
     if (row) row.click();
     await flush(ctx.window, 8);
     const chip = ctx.document.querySelector("#suggested-people-container .suggestion-chip");
-    const saves = () => server.calls.filter((c) => c.method === "POST" && c.url.includes("/api/photo/save-metadata"));
+    const saves = () => saveCalls(server);
     if (found.expect === "already") {
       assert.equal(chip, null, "the person is offered though the file names them");
       return;

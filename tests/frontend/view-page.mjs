@@ -7,7 +7,7 @@
  * The library is invented: 2,746 folders, 895 keyword nodes, 413 people and 61 years, the sizes photo_index has. Every
  * name is fictional; the real library is photographs of real people, many of them minors.
  */
-import { FakeServer, loadApp, flush, pageExports, photoRecord } from "./harness.mjs";
+import { FakeServer, loadApp, flush, pageExports, photoRecord, SAVE, saved } from "./harness.mjs";
 
 /** Every page loaded by this file's tests: afterwards each is checked for an error the page itself raised. */
 export const opened = [];
@@ -177,7 +177,7 @@ export async function loadViewPage(t, {
     .on("/api/folder/index-status", { status: "completed", percent: 100, message: "Ready" })
     .on("/api/folder/suggest-status", { status: "idle" })
     .on("/api/photo-faces", { faces: [], total: 0, unmatched: 0 })
-    .on("/api/photo/save-metadata", { success: true })
+    .on(SAVE, saved())
     .on("/api/photo/delete", { success: true })
     .on("/api/photos/write", { success: true })
     .on("/api/library/bulk-edit", answer("bulkEdit", () => editReply(ctx.bulk.edit)))

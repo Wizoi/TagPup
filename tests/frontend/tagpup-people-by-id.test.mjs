@@ -10,7 +10,7 @@
  */
 import { test, describe, afterEach } from "node:test";
 import assert from "node:assert/strict";
-import { loadApp, FakeServer, photoRecord, flush, click, openFolder, closeAllApps, peopleRecordsOf, PEOPLE_ROUTE } from "./harness.mjs";
+import { loadApp, FakeServer, photoRecord, flush, click, openFolder, closeAllApps, peopleRecordsOf, PEOPLE_ROUTE, SAVE, saveCalls } from "./harness.mjs";
 
 afterEach(() => closeAllApps());
 
@@ -59,7 +59,7 @@ function serverFor({ photo = null, faces = FACES, matches = MATCHES, extra = nul
     .on("/api/folder/suggest-status", { status: "idle" })
     .on("/api/folder/scan", [shown])
     .on("/api/photo-faces", () => ({ ...structuredClone(held), unmatched: held.faces.filter((each) => !each.name && !each.excluded).length }))
-    .on("/api/photo/save-metadata", () => {
+    .on(SAVE, () => {
       keywords = [...server.calls[server.calls.length - 1].body.tags];
       return { success: true };
     })
@@ -133,7 +133,7 @@ describe("the panel of the second face", () => {
     await ctx.openFace(1);
     click(ctx.window, ctx.panel().querySelector(".face-panel-suggestion"));
     await ctx.wait(80);
-    const saved = ctx.posts("/api/photo/save-metadata");
+    const saved = saveCalls(ctx.server);
     assert.equal(saved.length, 1, "the keyword is written first");
     assert.deepEqual(saved[0].body.tags.slice().sort(), ["Friends/Sam", "Pets/Sam", "Trips"]);
     const named = ctx.posts("/api/face/match");
@@ -170,7 +170,7 @@ describe("the panel of the second face", () => {
     click(ctx.window, question.querySelector(".btn-confirm"));
     await ctx.wait(80);
     assert.equal(ctx.posts("/api/face/match")[0].body.person_id, 41);
-    assert.ok(ctx.posts("/api/photo/save-metadata")[0].body.tags.includes("Pets/Sam"));
+    assert.ok(saveCalls(ctx.server)[0].body.tags.includes("Pets/Sam"));
   });
 
   test("typing a tag path from the list names exactly that person", async (t) => {
@@ -208,7 +208,7 @@ describe("the panel of the second face", () => {
     click(ctx.window, ctx.document.querySelector(".person-choice .btn-cancel"));
     await ctx.wait();
     assert.equal(ctx.posts("/api/face/match").length, 0);
-    assert.equal(ctx.posts("/api/photo/save-metadata").length, 0);
+    assert.equal(saveCalls(ctx.server).length, 0);
   });
 });
 

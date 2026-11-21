@@ -299,6 +299,60 @@ export function answer(status, body) {
   return { [ANSWER]: { status, body } };
 }
 
+/**
+ * A page's save of one photo's title, tags and Date Taken (web/common/photo-write.js postPhotoMetadata): POST
+ * /api/photos/write, op `set`. A route matcher of FakeServer (tried before every URL route, so a test's route of the tag
+ * writes to /api/photos/write does not answer a save), and of the calls (saveCalls).
+ */
+export const SAVE = (url, body) => url.includes("/api/photos/write") && Boolean(body) && body.op === "set";
+
+/** A save's body as the page named its one photo in it: {path, id, title, tags, stamp, base, ...the rest it sent}. */
+function savedPhoto(body) {
+  const [[path, own]] = Object.entries(body.changes);
+  return { path, ...own };
+}
+
+/** The saves the page sent, in order, each {url, method, body: savedPhoto}. */
+export function saveCalls(server) {
+  return server.calls.filter((c) => SAVE(c.url, c.body)).map((c) => ({ ...c, body: savedPhoto(c.body) }));
+}
+
+/** The last save's body (savedPhoto), or undefined when the page sent none. */
+export function lastSave(server) {
+  const sent = saveCalls(server);
+  return sent.length ? sent.at(-1).body : undefined;
+}
+
+/**
+ * The reply of a save that wrote, as tagpup_routes._envelope makes it, a route's function of (url, body): `own`, what
+ * it says of the photo (`written[path]`: mtime, size, base, new_path, taken, rename_failed), `top`, what it says of the
+ * write (file_only, with_rows, the faces it changed, pictures_refused).
+ */
+export function saved(own = {}, top = {}) {
+  return (url, body) => ({ ...envelope(body, 1), ...top, written: { [savedPhoto(body).path]: own } });
+}
+
+/**
+ * A save's reply as the server made it (`reply`, a fixture written by a Python test, its one photo named "PHOTO"), for
+ * the photo this save names, `own` over what the server said of it.
+ */
+export function savedAs(reply, own = {}) {
+  return (url, body) => ({ ...reply, written: { [savedPhoto(body).path]: { ...reply.written.PHOTO, ...own } } });
+}
+
+/** The reply of a save the server could not write, `why` its sentence: a 200 with the photo among its `errors`. */
+export function notSaved(why) {
+  return (url, body) => {
+    const { path, id } = savedPhoto(body);
+    return { ...envelope(body, 0), success: false, error_count: 1, errors: [{ path, id, why }], written: {} };
+  };
+}
+
+function envelope(body, changed) {
+  return { success: true, changed, attempted: 1, skipped_missing: 0, skipped: [], error_count: 0, errors: [],
+           stopped: null, change: null, file_only: 0, with_rows: changed };
+}
+
 /** A fetch stub that routes by URL substring and records every call. */
 export class FakeServer {
   constructor() {
@@ -308,7 +362,8 @@ export class FakeServer {
   }
 
   /**
-   * Reply with `body` (JSON-encoded) for any URL containing `match` (a string), or that `match` (a RegExp) matches.
+   * Reply with `body` (JSON-encoded) for any URL containing `match` (a string), or that `match` (a RegExp) matches, or
+   * for which `match` (a function of the URL and the request's body, parsed: SAVE) is true.
    *
    * `body` may be a function of the URL (and the request's body, parsed) returning the body or a promise of it, for a
    * reply that has to arrive later -- a scan still running while someone types -- or one with a status of its own
@@ -358,10 +413,12 @@ export class FakeServer {
       // Match on the path regardless of a leading slash: the apps issue both
       // absolute ("/api/x") and relative ("api/x") URLs, and a relative one would
       // otherwise fall through to the default empty reply.
-      const route = self.routes.find((r) => (typeof r.match === "string"
-        ? url.includes(r.match) || url.includes(r.match.replace(/^\//, ""))
-        : r.match.test(url))
-      ) || (url.includes("api/rules") ? { body: PUBLISHED_RULES, status: 200 } : undefined);
+      // A function route (SAVE) is of the request's body too, and is tried first.
+      const route = self.routes.find((r) => typeof r.match === "function" && r.match(url, body))
+        || self.routes.find((r) => (typeof r.match === "string"
+          ? url.includes(r.match) || url.includes(r.match.replace(/^\//, ""))
+          : r.match instanceof RegExp && r.match.test(url)))
+        || (url.includes("api/rules") ? { body: PUBLISHED_RULES, status: 200 } : undefined);
       const headers = (route && route.headers) || {};
       const reply = (sent) => {
         const { status, body: payload } = sent && sent[ANSWER] ? sent[ANSWER] : { status: route ? route.status : 200, body: sent };

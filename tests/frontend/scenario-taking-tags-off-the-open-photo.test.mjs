@@ -21,6 +21,7 @@ import { test, describe, afterEach } from "node:test";
 import assert from "node:assert/strict";
 import {
   loadApp, FakeServer, answer, photoRecord, flush, openFolder, closeAllApps, pageExports, PEOPLE_ROUTE, peopleRecordsOf,
+  SAVE, saveCalls,
 } from "./harness.mjs";
 import { loadViewPage, recordOf } from "./view-page.mjs";
 
@@ -57,7 +58,7 @@ async function open(t, { b = [], faces = { faces: [], total: 0, unmatched: 0 } }
     .on("/api/folder/scan", [{ ...A, tags: TAGS.slice() }, { ...B, tags: b.slice() }])
     .on("/api/photo-faces", faces)
     .on("/api/photos/write", hold("bulk"))
-    .on("/api/photo/save-metadata", hold("save"));
+    .on(SAVE, hold("save"));
   const ctx = await loadApp("tagpup", { t, url: "http://localhost:8090/photo_index/", server });
   ctx.window.console.error = () => {};
   ctx.alerts = [];
@@ -67,7 +68,7 @@ async function open(t, { b = [], faces = { faces: [], total: 0, unmatched: 0 } }
   ctx.$ = $;
   ctx.file = (photo) => files.get(photo.path).slice().sort();
   ctx.bulks = () => server.calls.filter((c) => c.url.includes("photos/write")).map((c) => c.body);
-  ctx.saves = () => server.calls.filter((c) => c.url.includes("save-metadata")).map((c) => c.body);
+  ctx.saves = () => saveCalls(server).map((c) => c.body);
   ctx.order = () => server.calls.filter((c) => /photos\/write|save-metadata/.test(c.url)).map((c) => (c.url.includes("photos/write") ? "bulk" : "save"));
   // Which photos each write named, in the order sent: "bulk:a,b", "save:b".
   const named = (path) => (path === A.path ? "a" : "b");
@@ -471,7 +472,7 @@ describe("V20: in a library view", () => {
       Array.from(ctx.document.querySelectorAll(".tag-pill")).find((each) => each.textContent === text).click();
       await ctx.settle(20);
     };
-    ctx.saves = () => ctx.server.calls.filter((c) => c.url.includes("save-metadata")).map((c) => c.body);
+    ctx.saves = () => saveCalls(ctx.server).map((c) => c.body);
     return ctx;
   }
 

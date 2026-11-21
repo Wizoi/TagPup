@@ -19,7 +19,7 @@
  */
 import { test, describe, afterEach } from "node:test";
 import assert from "node:assert/strict";
-import { loadApp, FakeServer, photoRecord, flush, click, openFolder, closeAllApps, pageExports } from "./harness.mjs";
+import { loadApp, FakeServer, photoRecord, flush, click, openFolder, closeAllApps, pageExports, SAVE, saved, saveCalls } from "./harness.mjs";
 import { loadViewPage, recordOf } from "./view-page.mjs";
 
 const FOLDER = "D:\\Library\\2020";
@@ -67,7 +67,7 @@ async function folderOf(t, n, { tags = [], bulk } = {}) {
     .on("/api/folder/scan", scanOf(n, tags))
     .on("/api/photo-faces", { faces: [], total: 0, unmatched: 0 })
     .on("/api/photos/write", bulk || (() => new Promise((resolve) => held.push(resolve))))
-    .on("/api/photo/save-metadata", { success: true })
+    .on(SAVE, saved())
     .on("/api/taxonomy/create", { success: true })
     .on("/api/folder/suggest-status", { status: "completed", suggestions: {} });
   const ctx = await loadApp("tagpup", { t, url: "http://localhost:8090/alpha/", server });
@@ -255,7 +255,7 @@ describe("a single save clicked between two writes", () => {
     for (let i = 0; i < 20 && ctx.server.calls.filter((c) => c.url.includes("photos/write")).length < 3; i++) await flush(ctx.window, 2);
     const order = ctx.server.calls.filter((c) => /photos\/write|save-metadata/.test(c.url)).map((c) => (c.url.includes("photos/write") ? "bulk" : "save"));
     assert.deepEqual(order, ["bulk", "bulk", "save", "bulk"]);
-    const save = ctx.server.calls.find((c) => c.url.includes("save-metadata")).body;
+    const save = saveCalls(ctx.server)[0].body;
     assert.deepEqual(save.tags, ["Trips/Coast", "Places/Beach"]);
     await answer(ctx);
   });

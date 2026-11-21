@@ -28,7 +28,7 @@
  */
 import { test, describe, afterEach } from "node:test";
 import assert from "node:assert/strict";
-import { loadApp, FakeServer, answer, flush, click, closeAllApps, pageExports, PEOPLE_ROUTE, PHOTO_WRITES, CLIP_WRITES } from "./harness.mjs";
+import { loadApp, FakeServer, answer, flush, click, closeAllApps, pageExports, PEOPLE_ROUTE, PHOTO_WRITES, CLIP_WRITES, SAVE, lastSave, saveCalls } from "./harness.mjs";
 import { PHONE_PAGE, el, shown, pageState, settle, phoneCard, phoneLayout } from "./phone-page.mjs";
 
 const KEYWORDS = { keywords: [{ tag: "Events", name: "Events", parent: null, count: 20 }], untagged: 0 };
@@ -73,8 +73,8 @@ async function phone(t, file = {}) {
       held.mtime += 1;
       return { success: true, written: { [path]: { tags: held.tags.slice(), mtime: held.mtime, size: held.size } } };
     })
-    .on("/api/photo/save-metadata", () => {
-      const body = server.lastBody("/api/photo/save-metadata");
+    .on(SAVE, () => {
+      const body = lastSave(server);
       if (body.stamp.mtime !== held.mtime || JSON.stringify(body.base.tags) !== JSON.stringify(held.tags)) {
         return { success: false, changed_on_disk: true, error: "The file changed on disk." };
       }
@@ -243,7 +243,7 @@ describe("editing a photo on the phone", () => {
   test("a tag added while the Save is out waits for it", async (t) => {
     const ctx = await phone(t);
     await openSheet(ctx);
-    const save = holdNext(ctx, "/api/photo/save-metadata");
+    const save = holdNext(ctx, SAVE);
     type(ctx, "edit-title", "Wren's Last Lap");
     click(ctx.window, el(ctx, "edit-save"));
     await pick(ctx, "cove", COVE);
@@ -260,7 +260,7 @@ describe("editing a photo on the phone", () => {
     const ctx = await phone(t);
     await openSheet(ctx);
     const renamed = "D:\\Photos\\Wren's Meet\\Wren's Last Lap.jpg";
-    ctx.server.first("/api/photo/save-metadata", { success: true, new_path: renamed, mtime: 1718000077, size: 204900,
+    ctx.server.first(SAVE, { success: true, new_path: renamed, mtime: 1718000077, size: 204900,
       taken: "2024:06:02 09:30:00", base: { tags: [WREN, COAST], title: "Wren's Last Lap" } });
     assert.equal(el(ctx, "edit-title").value, "Finish line");
     assert.equal(el(ctx, "edit-date").value, "2024-06-01");
@@ -270,7 +270,7 @@ describe("editing a photo on the phone", () => {
     click(ctx.window, el(ctx, "edit-save"));
     await settle(ctx);
 
-    assert.deepEqual(calls(ctx, "/api/photo/save-metadata").map((c) => c.body), [{ path: PATH, title: "Wren's Last Lap",
+    assert.deepEqual(saveCalls(ctx.server).map((c) => c.body), [{ path: PATH, title: "Wren's Last Lap",
       tags: [WREN, COAST], stamp: { mtime: 1718000000.5, size: 204800 }, base: { tags: [WREN, COAST], title: "Finish line" },
       date_taken: "2024-06-02T09:30:00" }]);
     assert.equal(said(ctx), "Saved.");
@@ -285,7 +285,7 @@ describe("editing a photo on the phone", () => {
   test("a file changed on the PC since it was read is not written over: the sheet says so, reads it again, keeps the text", async (t) => {
     const ctx = await phone(t);
     await openSheet(ctx);
-    ctx.server.first("/api/photo/save-metadata", () => {
+    ctx.server.first(SAVE, () => {
       ctx.server.routes.shift();
       Object.assign(ctx.held, { title: "Set on the PC", mtime: 1718000300 });
       return { success: false, changed_on_disk: true, error: "The file changed on disk." };
@@ -295,14 +295,14 @@ describe("editing a photo on the phone", () => {
     await settle(ctx);
 
     assert.match(said(ctx), /changed on the PC since it was read/);
-    assert.equal(calls(ctx, "/api/photo/save-metadata").length, 1, "nothing sent again by itself");
+    assert.equal(saveCalls(ctx.server).length, 1, "nothing sent again by itself");
     assert.equal(calls(ctx, "/api/library/photo").length, 2, "the photo read again");
     assert.equal(el(ctx, "edit-title").value, "Wren's Last Lap", "the text typed kept");
     assert.ok(sheetOpen(ctx));
 
     click(ctx.window, el(ctx, "edit-save"));
     await settle(ctx);
-    const again = calls(ctx, "/api/photo/save-metadata")[1].body;
+    const again = saveCalls(ctx.server)[1].body;
     assert.deepEqual([again.stamp, again.base.title], [{ mtime: 1718000300, size: 204800 }, "Set on the PC"],
       "the Save the owner sends again names the file as read again");
     assert.equal(ctx.held.title, "Wren's Last Lap");
@@ -352,16 +352,16 @@ describe("editing a photo on the phone", () => {
     const ctx = await phone(t);
     await openSheet(ctx);
     type(ctx, "edit-title", "Wren's Last Lap");
-    ctx.server.first("/api/photo/save-metadata", () => {
+    ctx.server.first(SAVE, () => {
       ctx.server.routes.shift();
       return Promise.reject(new ctx.window.TypeError("Failed to fetch"));
     });
     click(ctx.window, el(ctx, "edit-save"));
     await settle(ctx);
     assert.equal(said(ctx), "Not saved: no connection. Try again.");
-    assert.equal(calls(ctx, "/api/photo/save-metadata").length, 1, "a write is not sent again by itself");
+    assert.equal(saveCalls(ctx.server).length, 1, "a write is not sent again by itself");
 
-    ctx.server.first("/api/photo/save-metadata", () => {
+    ctx.server.first(SAVE, () => {
       ctx.server.routes.shift();
       return { success: false, error: "Could not reach the library's folder just now. Try again." };
     }, { status: 503 });
@@ -376,7 +376,7 @@ describe("editing a photo on the phone", () => {
   test("a Save turned away while the server is updated is waited out and lands once", async (t) => {
     const ctx = await phone(t);
     await openSheet(ctx);
-    ctx.server.first("/api/photo/save-metadata", () => {
+    ctx.server.first(SAVE, () => {
       ctx.server.routes.shift();
       return { success: false, error: "Updating" };
     }, { status: 503, headers: { "X-TagPup-Updating": "1", "Retry-After": "0" } });
@@ -384,7 +384,7 @@ describe("editing a photo on the phone", () => {
     click(ctx.window, el(ctx, "edit-save"));
     await settle(ctx, 60);
     assert.equal(said(ctx), "Saved.");
-    assert.equal(calls(ctx, "/api/photo/save-metadata").length, 2, "sent again once the update was through");
+    assert.equal(saveCalls(ctx.server).length, 2, "sent again once the update was through");
     assert.equal(ctx.held.title, "Wren's Last Lap");
   });
 
@@ -396,8 +396,8 @@ describe("editing a photo on the phone", () => {
     type(ctx, "edit-date", "2024-06-03");
     click(ctx.window, el(ctx, "edit-save"));
     await settle(ctx);
-    assert.equal(calls(ctx, "/api/photo/save-metadata")[0].body.date_taken, "2024-06-03T10:00:00");
-    assert.equal(calls(ctx, "/api/photo/save-metadata")[0].body.path, clip);
+    assert.equal(saveCalls(ctx.server)[0].body.date_taken, "2024-06-03T10:00:00");
+    assert.equal(saveCalls(ctx.server)[0].body.path, clip);
   });
 
   test("an add that fails says why and puts the text typed back", async (t) => {
@@ -525,7 +525,7 @@ describe("editing a photo on the phone", () => {
     ctx.window.history.back();
     await settle(ctx);
     assert.deepEqual(shown(ctx), ["grid"]);
-    assert.equal(calls(ctx, "/api/photo/save-metadata").length, 0);
+    assert.equal(saveCalls(ctx.server).length, 0);
   });
 
   test("a draft kept survives the sheet opened and shut again while the photo is still being read (#3168)", async (t) => {
@@ -585,7 +585,7 @@ describe("editing a photo on the phone", () => {
       assert.equal(el(ctx, "edit-title").value, "Wren's Last Lap");
       assert.equal(el(ctx, "edit-date").value, "2024-06-02");
       assert.match(said(ctx), /not saved yet/i);
-      assert.equal(calls(ctx, "/api/photo/save-metadata").length, 0, "nothing was saved for the owner");
+      assert.equal(saveCalls(ctx.server).length, 0, "nothing was saved for the owner");
       click(ctx.window, el(ctx, "edit-save"));
       await settle(ctx);
       assert.equal(ctx.held.title, "Wren's Last Lap");
@@ -601,7 +601,7 @@ describe("editing a photo on the phone", () => {
     test(`the page going with a removal ${how} and a Save still out: the Save goes first, the removal after it`, async (t) => {
       const ctx = await phone(t);
       await openSheet(ctx);
-      const save = holdNext(ctx, "/api/photo/save-metadata");
+      const save = holdNext(ctx, SAVE);
       type(ctx, "edit-title", "Wren's Last Lap");
       click(ctx.window, el(ctx, "edit-save"));
       click(ctx.window, chipX(ctx, COAST));
@@ -639,7 +639,7 @@ describe("editing a photo on the phone", () => {
     type(ctx, "edit-title", "Wren at the Finish");
     click(ctx.window, el(ctx, "edit-save"));
     await settle(ctx);
-    assert.equal(ctx.server.lastBody("/api/photo/save-metadata").path, renamed, "the next Save names the file where it is");
+    assert.equal(lastSave(ctx.server).path, renamed, "the next Save names the file where it is");
     assert.equal(ctx.held.title, "Wren at the Finish");
   });
 

@@ -7,7 +7,7 @@
  */
 import { test, describe, afterEach } from "node:test";
 import assert from "node:assert/strict";
-import { loadApp, FakeServer, photoRecord, flush, click, openFolder, closeAllApps, peopleRecordsOf, PEOPLE_ROUTE } from "./harness.mjs";
+import { loadApp, FakeServer, photoRecord, flush, click, openFolder, closeAllApps, peopleRecordsOf, PEOPLE_ROUTE, SAVE, saved, saveCalls } from "./harness.mjs";
 
 afterEach(() => closeAllApps());
 
@@ -36,7 +36,7 @@ async function open(t, { photos, suggestions = {}, tags = [] } = {}) {
     .on("/api/folder/index-status", { status: "completed", percent: 100 })
     .on("/api/folder/scan", list)
     .on("/api/photo-faces", { faces: [], total: 0, unmatched: 0 })
-    .on("/api/photo/save-metadata", { success: true })
+    .on(SAVE, saved())
     .on("/api/photos/write", { success: true })
     .on("/api/folder/suggest-status", { status: "completed", suggestions });
   const ctx = await loadApp("tagpup", { t, url: "http://localhost:8090/photo_index/", server });
@@ -51,7 +51,7 @@ async function openPhoto(ctx) {
 }
 
 const texts = (ctx, selector) => [...ctx.document.querySelectorAll(selector)].map((el) => el.textContent);
-const saves = (ctx) => ctx.server.calls.filter((c) => c.url.includes("save-metadata"));
+const saves = (ctx) => saveCalls(ctx.server);
 
 describe("a photo's pills", () => {
   test("tags and people are each alphabetical", async (t) => {

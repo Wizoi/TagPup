@@ -12,6 +12,8 @@ import { test, describe, afterEach } from "node:test";
 import assert from "node:assert/strict";
 import {
   loadApp, FakeServer, photoRecord, flush, openFolder, closeAllApps, PEOPLE_ROUTE, peopleRecordsOf,
+  SAVE, saved, saveCalls,
+  notSaved,
 } from "./harness.mjs";
 
 const TAXONOMY = [
@@ -36,7 +38,7 @@ async function open(t) {
     .on("/api/folder/index-status", { status: "completed", percent: 100, message: "Ready" })
     .on("/api/folder/scan", PHOTOS.map((p) => ({ ...p, tags: TAGS.slice() })))
     .on("/api/photo-faces", { faces: [], total: 0, unmatched: 0 })
-    .on("/api/photo/save-metadata", () => new Promise((resolve) => held.push(resolve)));
+    .on(SAVE, (url, body) => new Promise((resolve) => held.push((reply) => resolve(reply(url, body)))));
   const ctx = await loadApp("tagpup", { t, url: "http://localhost:8090/photo_index/", server });
   ctx.window.console.error = () => {};
   ctx.window.alert = () => {};
@@ -66,10 +68,9 @@ async function open(t) {
   };
   let answered = 0;
   ctx.answer = async (error = null) => {
-    const body = server.calls.filter((c) => c.url.includes("save-metadata"))[answered].body;
+    const body = saveCalls(server)[answered].body;
     answered += 1;
-    held.shift()(error ? { success: false, error }
-      : { success: true, base: { tags: (body.tags || []).slice(), title: body.title || "" } });
+    held.shift()(error ? notSaved(error) : saved({ base: { tags: (body.tags || []).slice(), title: body.title || "" } }));
     await flush(window, 12);
   };
   ctx.note = () => document.querySelector(".move-waiting");

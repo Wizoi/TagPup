@@ -17,7 +17,7 @@
 import { test, describe, afterEach } from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
-import { closeAllApps, click, openFolder, photoRecord } from "./harness.mjs";
+import { closeAllApps, click, openFolder, photoRecord, SAVE, saveCalls } from "./harness.mjs";
 import { loadViewPage, pageErrors, speedUp } from "./view-page.mjs";
 
 afterEach(() => {
@@ -137,13 +137,13 @@ describe("I13: deleting the selected photos of a folder", () => {
   test("a card's title saved and not written yet: the Delete of its photo is refused naming the save, nothing sent; written, it goes", async (t) => {
     const ctx = await organize(t);
     let answer;
-    ctx.server.first("/api/photo/save-metadata", () => new Promise((resolve) => { answer = resolve; }));
+    ctx.server.first(SAVE, () => new Promise((resolve) => { answer = resolve; }));
     const card = [...ctx.document.querySelectorAll("#thumbnails-grid [data-path]")].find((each) => each.getAttribute("data-path") === at("IMG_0003.jpg"));
     click(ctx.window, card.querySelector(".thumbnail-filename"));
     const input = card.querySelector(".thumbnail-filename-input");
     input.value = "Harbour lights";
     input.dispatchEvent(new ctx.window.KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
-    await ctx.until(() => calls(ctx, "/api/photo/save-metadata").length === 1);
+    await ctx.until(() => saveCalls(ctx.server).length === 1);
     assert.notEqual(ctx.state.activePhotoPath, at("IMG_0003.jpg"), "the photo saved is not the open one");
     pick(ctx, "IMG_0003.jpg", "IMG_0004.jpg");
     click(ctx.window, button(ctx));

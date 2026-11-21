@@ -13,6 +13,7 @@ import { test, describe, afterEach, mock } from "node:test";
 import assert from "node:assert/strict";
 import {
   loadApp, FakeServer, photoRecord, flush, click, openFolder, closeAllApps, pageExports,
+  SAVE, saved, lastSave,
 } from "./harness.mjs";
 
 afterEach(() => closeAllApps());
@@ -54,7 +55,7 @@ async function load(t, { search = "?view=all", ids = IDS, total, onIds, onCards,
     .on("/api/folder/suggest-status", { status: "idle" })
     .on("/api/folder/membership", { photos_not_held: 0 })
     .on("/api/photo-faces", { faces: [], total: 0, unmatched: 0 })
-    .on("/api/photo/save-metadata", { success: true })
+    .on(SAVE, saved())
     .on("/api/photo/delete", { success: true })
     .on("/api/photos/write", { success: true })
     .on("/api/folder/scan", () => (scan ? scan() : [photoRecord({ filename: "a.jpg" }), photoRecord({ filename: "b.jpg" })]));
@@ -475,7 +476,7 @@ describe("the details panel on a library photo", () => {
     ctx.document.getElementById("input-photo-title").value = "Harbour";
     click(ctx.window, ctx.document.getElementById("btn-save-title"));
     await ctx.settle(60);
-    const sent = ctx.server.lastBody("/api/photo/save-metadata");
+    const sent = lastSave(ctx.server);
     assert.equal(sent.path, cardOf(IDS[2]).path);
     assert.equal(sent.title, "Harbour");
     assert.deepEqual(sent.tags, ["Trips/Coast"], "the tags it holds, not a card's nothing");

@@ -1,4 +1,4 @@
-// Both pages' write of one photo's title, tags and Date Taken (POST /api/photo/save-metadata), and the stamp and base it
+// Both pages' write of one photo's title, tags and Date Taken (POST /api/photos/write, op `set`), and the stamp and base it
 // names: the file as the page read it, which the server compares under its lock and refuses a write over when it
 // changed (docs/plans/phone-viewer.md, moved from web/tagpup/edits.js). What a page shows of a refusal is its own.
 import { api } from './api.js';
@@ -93,27 +93,34 @@ export async function readMoved(reply, items) {
 }
 
 /**
- * POST a photo's title and tags -- as they are now, unless given -- and check the reply. A refusal rejects with the
- * server's sentence; one because the file changed since it was read (409) is marked `changedOnDisk` and handed to
- * `changed(photo)` first, the page's own way of reading it again. Nothing is retried or merged. `request` is of the
- * request, never its body: the phone's Save goes with keepalive, so the page going does not cancel it.
+ * POST a photo's title and tags -- as they are now, unless given -- to the one entry point (op `set`, the photo named by
+ * its path and, when the library holds it, its id) and check the reply. A refusal rejects with the server's sentence; one
+ * because the file changed since it was read, or the id's photo is no longer at this path (409), is marked
+ * `changedOnDisk` and handed to `changed(photo)` first, the page's own way of reading it again. Nothing is retried or
+ * merged. Resolves the reply with the photo's own part of it (`written`, its stamp, base, `new_path`, `taken`,
+ * `rename_failed`) at the top, beside what the reply says of the whole write (`file_only`, `with_rows`, the faces it
+ * changed, `pictures_refused`). `request` is of the request, never its body: the phone's Save goes with keepalive, so
+ * the page going does not cancel it.
  */
 export async function postPhotoMetadata(photo, { title = photo.title, tags = photo.tags || [], ...extra } = {}, changed = () => {},
     request = {}) {
     if (photo.unreadable) throw new Error(UNREADABLE_SAVE);
-    const res = await api.fetch('/api/photo/save-metadata', {
+    const path = photo.path;
+    const own = { id: Number.isInteger(photo.id) ? photo.id : null, title, tags, stamp: stampOf(photo), base: baseOf(photo), ...extra };
+    const res = await api.fetch('/api/photos/write', {
         ...request,
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ path: photo.path, title, tags, stamp: stampOf(photo), base: baseOf(photo), ...extra })
+        body: JSON.stringify({ op: 'set', changes: { [path]: own } })
     });
     const data = await res.json();
     if (!data.success) {
         if (data.changed_on_disk) changed(photo);
-        const failure = new Error(data.error || 'Failed to save');
+        const failure = new Error(data.error || (data.errors && data.errors[0] && data.errors[0].why) || 'Failed to save');
         failure.changedOnDisk = Boolean(data.changed_on_disk);
         throw failure;
     }
-    takeStamp(photo, data);
-    return data;
+    const saved = { ...data, ...data.written[path] };
+    takeStamp(photo, saved);
+    return saved;
 }

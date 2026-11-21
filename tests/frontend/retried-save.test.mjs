@@ -7,7 +7,7 @@
  */
 import { test, describe, afterEach } from "node:test";
 import assert from "node:assert/strict";
-import { loadApp, FakeServer, closeAllApps, openFolder, click, pageExports, PHOTO_WRITES } from "./harness.mjs";
+import { loadApp, FakeServer, closeAllApps, openFolder, click, pageExports, PHOTO_WRITES, SAVE, saveCalls, saved, notSaved } from "./harness.mjs";
 
 const A = "D:\\p\\a.jpg";
 const B = "D:\\p\\b.jpg";
@@ -30,10 +30,10 @@ function failingOnce() {
     .on("/api/tags", [])
     .on("/api/databases", { databases: ["photo_index"], selected: "photo_index" })
     .on("/api/photo-faces", { faces: [], total: 0, unmatched: 0 })
-    .on("/api/photo/save-metadata", () => {
+    .on(SAVE, (url, body) => {
       calls += 1;
-      if (calls === 1) return { success: false, error: "The file is locked." };
-      return new Promise((resolve) => held.push(() => resolve({ success: true })));
+      if (calls === 1) return notSaved("The file is locked.")(url, body);
+      return new Promise((resolve) => held.push(() => resolve(saved()(url, body))));
     });
   return { server, held };
 }
@@ -57,7 +57,7 @@ async function failedSaveOnA(t) {
   return { window, document, server, held, input };
 }
 
-const saves = (s) => s.calls.filter((c) => c.url.includes("save-metadata"));
+const saves = (s) => saveCalls(s);
 const entries = (document) => [...document.querySelectorAll(".write-queue-entry")]
   .map((e) => `${e.dataset.status}: ${e.textContent}`);
 const activePath = (document) => {

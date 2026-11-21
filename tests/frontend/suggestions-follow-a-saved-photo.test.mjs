@@ -6,7 +6,7 @@
  */
 import { test, describe, afterEach } from "node:test";
 import assert from "node:assert/strict";
-import { loadApp, FakeServer, flush, click, openFolder, closeAllApps, PHOTO_WRITES } from "./harness.mjs";
+import { loadApp, FakeServer, flush, click, openFolder, closeAllApps, PHOTO_WRITES, SAVE, saved, notSaved } from "./harness.mjs";
 
 afterEach(() => closeAllApps());
 
@@ -26,7 +26,7 @@ async function load(t, save) {
     .on("/api/folder/index-status", { status: "completed", percent: 100, message: "Ready" })
     .on("/api/folder/suggest-status", { status: "completed", suggestions: { [A]: OFFER, [B]: OFFER } })
     .on("/api/photo-faces", { faces: [], total: 0, unmatched: 0 })
-    .on("/api/photo/save-metadata", save)
+    .on(SAVE, save)
     .on("/api/folder/scan", () => [record(A), record(B)]);
   const ctx = await loadApp("tagpup", { t, url: "http://localhost:8090/photo_index/", server });
   ctx.window.alert = () => {};
@@ -51,7 +51,7 @@ async function saveCaption(ctx, text) {
 
 describe("a saved photo keeps its suggestions", () => {
   test("a save that renames the open photo keeps its box, and the other photo's badge", async (t) => {
-    const ctx = await load(t, { success: true, new_path: RENAMED });
+    const ctx = await load(t, saved({ new_path: RENAMED }));
     click(ctx.window, ctx.document.querySelector(`li[data-path="${A.replace(/\\/g, "\\\\")}"]`));
     await flush(ctx.window, 10);
     assert.ok(shown(ctx), "the box is shown before the save");
@@ -64,7 +64,7 @@ describe("a saved photo keeps its suggestions", () => {
   });
 
   test("a rename from the card's own title keeps the badge", async (t) => {
-    const ctx = await load(t, { success: true, new_path: RENAMED });
+    const ctx = await load(t, saved({ new_path: RENAMED }));
     ctx.card("a.jpg").querySelector(".thumbnail-filename").dispatchEvent(new ctx.window.MouseEvent("click", { bubbles: true }));
     const input = ctx.card("a.jpg").querySelector(".thumbnail-filename-input");
     input.value = "Harbour";
@@ -75,7 +75,7 @@ describe("a saved photo keeps its suggestions", () => {
 
   test("Smart Rename keeps the renamed photo's suggestions, whole or stopped part-way", async (t) => {
     for (const stopped of [false, true]) {
-      const ctx = await load(t, { success: true });
+      const ctx = await load(t, saved());
       const updated = [{ ...record(RENAMED) }, record(B)];
       // The server spells the old path as it likes: matched by key, not by exact text.
       const updated_paths = { [A.toLowerCase()]: RENAMED, [B]: B };
@@ -96,7 +96,7 @@ describe("a saved photo keeps its suggestions", () => {
   });
 
   test("a save that fails changes no suggestion", async (t) => {
-    const ctx = await load(t, { success: false, error: "disk full" });
+    const ctx = await load(t, notSaved("disk full"));
     click(ctx.window, ctx.document.querySelector(`li[data-path="${A.replace(/\\/g, "\\\\")}"]`));
     await flush(ctx.window, 10);
     await saveCaption(ctx, "Harbour");

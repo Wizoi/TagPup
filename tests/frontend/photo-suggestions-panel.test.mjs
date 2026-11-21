@@ -21,6 +21,7 @@ import fs from "node:fs";
 import path from "node:path";
 import {
   loadApp, FakeServer, photoRecord, flush, click, openFolder, pageExports, peopleRecordsOf, PEOPLE_ROUTE, REPO_ROOT,
+  SAVE, saved,
 } from "./harness.mjs";
 
 const TAXONOMY = [
@@ -44,7 +45,7 @@ async function openPhoto(t, { tags = [], people = [], suggestions = {}, faces } 
     .on("/api/folder/index-status", { status: "completed", percent: 100 })
     .on("/api/folder/scan", [photo])
     .on("/api/photo-faces", faces || { faces: [], total: 0, unmatched: 0 })
-    .on("/api/photo/save-metadata", { success: true })
+    .on(SAVE, saved())
     .on("/api/folder/suggest-status", {
       status: "completed",
       suggestions: { [photo.path]: suggestions },
