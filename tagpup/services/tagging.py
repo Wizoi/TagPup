@@ -390,6 +390,9 @@ def _rename_after_caption(library, photo_path, wanted, files_only):
     except Exception as e:
         logger.warning("Could not rename %s after its caption: %s", photo_path, e)
         return photo_path, [], e.message() if isinstance(e, names.RenameFailed) else str(e)
+    if done.skipped:
+        logger.warning("Renamed %s after its caption, but the index already had rows at the new name: %s",
+                       photo_path, done.skipped)
     return paths.stored(done.done.get(photo_path, wanted)), done.skipped or [], None
 
 

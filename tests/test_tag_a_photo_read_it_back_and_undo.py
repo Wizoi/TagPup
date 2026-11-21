@@ -435,6 +435,16 @@ class ASaveFromThePage(S.Fresh):
         self.assertIsNone(reply["rename_failed"])
         self.assertEqual(plain, reply["new_path"])
 
+    def test_a_rename_onto_a_name_the_index_already_holds_is_said_in_the_log(self):
+        # #3310: the file is renamed, but the index already had rows at that name (its file gone), so no row moves; nothing said so.
+        path, record = self.smart_renamed()
+        other, _other_id = self.make("Regatta - 1 - Start line.jpg", 5, ["Trips/Coast"])
+        os.remove(other)
+        with self.assertLogs("tagpup.services.tagging", "WARNING") as logged:
+            body = page_writes.saved(self.save(record, title="Start line").get_json())
+        self.assertTrue(body["success"], body)
+        self.assertIn("already had rows at the new name", "\n".join(logged.output))
+
     def flipping_once(self, path):
         """A stand-in for file_changes._reached that changes a picture byte of the photo's new file the first time it is
         written (what the owner's PC did, #2377): the write is discarded and made again. The new file is ExifTool's
