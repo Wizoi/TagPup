@@ -3,7 +3,7 @@ one-queue-for-tag-changes, cut 2; tagpup.services.journal.lines, tagpup.store.jo
 
 A page's bulk tag write will be sent in chunks of 25 photos, each chunk its own journaled change (cut 3): History must not
 list a 5,000-photo action as 200 lines, nor make the owner undo it 200 times. Each chunk carries the action's token in its
-change's summary (POST /api/photos/bulk-tags `group`); History lists the changes of one token as one line, and the
+change's summary (POST /api/photos/write `group`); History lists the changes of one token as one line, and the
 dialog's Undo posts them newest first through the one per-change undo route, as this test does. The changes are made
 through the route the page posts to, on JPEGs made here whose rows are as the indexer makes them, with the real ExifTool.
 

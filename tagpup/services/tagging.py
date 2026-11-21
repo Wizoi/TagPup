@@ -442,7 +442,7 @@ def change_tags(library, photo_paths, add, remove, exiftool_path, operation=ADD_
 def change_tags_of(library, changes, exiftool_path, operation=ADD_TO_ALL, stop_at_first_error=True, persons=None,
                    et=None, group=None):
     """Give each photo in `changes` (path -> (tags to add, tags to take off)) its own tags added and taken off, as ONE
-    change of photo files (change_each). The page's bulk tag write (POST /api/photos/bulk-tags) sends each file's own.
+    change of photo files (change_each). A page's tag write (POST /api/photos/write, op `tags`) sends each file's own.
 
     `operation` names the change in the journal. `stop_at_first_error=False` (a bulk edit's): a photo that cannot be
     read or written is an error and the others are written all the same. `persons` ({paths.key(path): the tags added

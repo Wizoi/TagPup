@@ -19,9 +19,9 @@ fails: change_tags writing the loose parts of a path (tag write), save_photo ope
 MetadataExtractor._structure dropping the bare names (the indexer's shape), file_changes._undoable skipping the
 newer-change check (undo order), save_photo's rename done outside the journal (rename after a caption).
 
-Lifted: tests/test_tagpup_server_api.py's TestSaveMetadata and TestBulkTags (what the save and bulk-tags routes left on the
+Lifted: tests/test_tagpup_server_api.py's TestSaveMetadata and TestBulkTags (what a save and a tag write left on the
 disk: a title, a tag whole and not in pieces, a deep tag, a clear, Date Taken, an add that keeps the keywords the photo
-carries, a remove) -- the routes call these services and the pages' flow against the real routes is
+carries, a remove) -- the entry point calls these services and the pages' flow against the real routes is
 test_pages_against_the_real_server's. Broken in a scratch copy and this file fails: change_tags dropping the keywords a
 photo carries before it adds (an add keeps them), save_photo writing no Date Taken (one save), a remove that takes nothing off.
 

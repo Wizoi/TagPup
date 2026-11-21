@@ -145,7 +145,7 @@ class APersonPutBackNamesNoFaceByItself(Case):
     def test_control_z_in_tagpup_names_no_face_either(self):
         photo, wren, other = self.two_faces()
         self.bulk_tags([photo], remove=[PEOPLE + WREN])
-        self.bulk_tags([photo], add=[PEOPLE + WREN])          # web/tagpup/undo.js: the undo re-adds through bulk-tags
+        self.bulk_tags([photo], add=[PEOPLE + WREN])          # web/tagpup/undo.js: the undo re-adds through op tags
         self.assertEqual([(None, "manual"), (None, None)], [self.row(wren)[:2], self.row(other)[:2]])
 
     def test_tagpups_order_save_then_match_ends_with_the_other_face_the_person(self):
