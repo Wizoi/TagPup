@@ -15,7 +15,7 @@
  * shows the tags the file holds now (pending.js readHeld).
  *
  * Every write is held until the test answers it, oldest first, as the routes answer it: the server keeps a model of each
- * file's tags, and a photos/write reply's `written` (a save-metadata reply's `base`) is what the file holds after it.
+ * file's tags, and a photos/write reply's `written` (a save's, op `set`: its `base`) is what the file holds after it.
  */
 import { test, describe, afterEach } from "node:test";
 import assert from "node:assert/strict";

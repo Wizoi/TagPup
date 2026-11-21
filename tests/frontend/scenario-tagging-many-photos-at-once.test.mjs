@@ -15,7 +15,8 @@
  * folder was left reaches the records this browser kept of that folder, even while a view shows one of its photos, and a
  * page left with a write out forgets them; photos missing on disk are said once, when the click's change is done.
  *
- * The server's photos/write replies are held here until the test answers them, oldest first.
+ * The server's photos/write replies to a tag write (op `tags`) are held here until the test answers them, oldest first;
+ * a save of one photo (op `set`) is answered at once.
  */
 import { test, describe, afterEach } from "node:test";
 import assert from "node:assert/strict";
@@ -77,7 +78,8 @@ async function folderOf(t, n, { tags = [], bulk } = {}) {
   return heldPage({ ...ctx }, held);
 }
 
-const writes = (ctx) => ctx.server.calls.filter((c) => c.url.includes("/api/photos/write")).map((c) => c.body);
+const isTagWrite = (c) => c.url.includes("/api/photos/write") && !SAVE(c.url, c.body);
+const writes = (ctx) => ctx.server.calls.filter(isTagWrite).map((c) => c.body);
 const status = (ctx) => ctx.document.getElementById("status-text").textContent;
 const scans = (ctx, folder) => ctx.server.calls.filter((c) => c.url.includes(`/api/folder/scan?path=${encodeURIComponent(folder)}`)).length;
 const pendingOf = (ctx) => pageExports(ctx.window, "web/tagpup/state.js").state.pending;
@@ -252,8 +254,8 @@ describe("a single save clicked between two writes", () => {
     await flush(ctx.window, 8);
 
     await answer(ctx);
-    for (let i = 0; i < 20 && ctx.server.calls.filter((c) => c.url.includes("photos/write")).length < 3; i++) await flush(ctx.window, 2);
-    const order = ctx.server.calls.filter((c) => /photos\/write|save-metadata/.test(c.url)).map((c) => (c.url.includes("photos/write") ? "bulk" : "save"));
+    for (let i = 0; i < 20 && ctx.server.calls.filter(isTagWrite).length < 3; i++) await flush(ctx.window, 2);
+    const order = ctx.server.calls.filter((c) => c.url.includes("/api/photos/write")).map((c) => (SAVE(c.url, c.body) ? "save" : "bulk"));
     assert.deepEqual(order, ["bulk", "bulk", "save", "bulk"]);
     const save = saveCalls(ctx.server)[0].body;
     assert.deepEqual(save.tags, ["Trips/Coast", "Places/Beach"]);

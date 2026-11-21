@@ -83,7 +83,7 @@ function typeAndEnter(ctx, id, text) {
 }
 
 const writes = (ctx) =>
-  ctx.server.calls.filter((c) => /taxonomy\/create|save-metadata|photos\/write/.test(c.url));
+  ctx.server.calls.filter((c) => /taxonomy\/create|photos\/write/.test(c.url));
 
 describe("TagPup: a tag that cannot be set", () => {
   test("typed on a photo, sends nothing, says why, and stays in the box", async (t) => {

@@ -13,7 +13,7 @@
  *   - a second Save chained behind the first was not waited for, so the "Save
  *     changes?" question could offer Discard for text that was then written anyway.
  *
- * The server's save-metadata replies are held back here until the test releases
+ * The server's replies to a save (op `set` of /api/photos/write) are held back here until the test releases
  * them, which is what makes "a reply that lands after the arrow key" reproducible.
  */
 import { test, describe, afterEach } from "node:test";
@@ -59,7 +59,7 @@ function server(aTags) {
 const settle = (window, ms = 40) => new Promise((r) => window.setTimeout(r, ms));
 
 /**
- * Hold every save-metadata reply until released. The request is still recorded
+ * Hold every save's reply (SAVE) until released. The request is still recorded
  * the moment it is sent; only the answer waits.
  */
 function holdSaves(window) {
@@ -68,7 +68,7 @@ function holdSaves(window) {
   window.fetch = function (input, init) {
     const url = typeof input === "string" ? input : String(input && input.url);
     const reply = inner.call(this, input, init);
-    if (!url.includes("save-metadata")) return reply;
+    if (!SAVE(url, init && typeof init.body === "string" ? JSON.parse(init.body) : undefined)) return reply;
     return new Promise((resolve) => held.push(() => resolve(reply)));
   };
   return {

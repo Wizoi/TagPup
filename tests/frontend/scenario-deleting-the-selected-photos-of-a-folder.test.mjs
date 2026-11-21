@@ -17,7 +17,7 @@
 import { test, describe, afterEach } from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
-import { closeAllApps, click, openFolder, photoRecord, SAVE, saveCalls } from "./harness.mjs";
+import { closeAllApps, click, openFolder, photoRecord, SAVE, saved, saveCalls } from "./harness.mjs";
 import { loadViewPage, pageErrors, speedUp } from "./view-page.mjs";
 
 afterEach(() => {
@@ -137,7 +137,7 @@ describe("I13: deleting the selected photos of a folder", () => {
   test("a card's title saved and not written yet: the Delete of its photo is refused naming the save, nothing sent; written, it goes", async (t) => {
     const ctx = await organize(t);
     let answer;
-    ctx.server.first(SAVE, () => new Promise((resolve) => { answer = resolve; }));
+    ctx.server.first(SAVE, (url, body) => new Promise((resolve) => { answer = (own) => resolve(saved(own)(url, body)); }));
     const card = [...ctx.document.querySelectorAll("#thumbnails-grid [data-path]")].find((each) => each.getAttribute("data-path") === at("IMG_0003.jpg"));
     click(ctx.window, card.querySelector(".thumbnail-filename"));
     const input = card.querySelector(".thumbnail-filename-input");
@@ -151,7 +151,7 @@ describe("I13: deleting the selected photos of a folder", () => {
     assert.deepEqual(ctx.alerts, ["A save of 1 of these photos is not written yet: wait for it (the list of writes, bottom right), then delete."]);
     assert.equal(calls(ctx, "/selection/delete-check").length, 0, "nothing asked of the server");
     assert.equal(ctx.questions.length, 0);
-    answer({ success: true, mtime: 1700000000, size: 2048 });
+    answer({ mtime: 1700000000, size: 2048 });
     await ctx.until(() => !Object.keys(ctx.state.photoWrites).length);
     serverDeletes(ctx, ["IMG_0003.jpg", "IMG_0004.jpg"], served.deleted);
     click(ctx.window, button(ctx));

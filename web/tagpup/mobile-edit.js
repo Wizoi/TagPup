@@ -10,8 +10,8 @@
  * unloads is not sent (accepted, #3172). A tag is added or taken off through the one entry point of photo writes
  * (POST /api/photos/write, op `tags`), the photo named by its id, against what the file holds, so no stamp; refused because
  * the photo is no longer at the path named (renamed on the PC: 409), it is read again by its id and sent once more, named
- * where it is now (photo-write.js readMoved, the PC's rule too). The title and Date Taken through save-metadata (web/common/photo-write.js)
- * with the stamp, which the server refuses when the file changed since it was read: nothing is written, the sheet says
+ * where it is now (photo-write.js readMoved, the PC's rule too). The title and Date Taken through the same entry point, op
+ * `set` (web/common/photo-write.js postPhotoMetadata), with the stamp, which the server refuses when the file changed since it was read: nothing is written, the sheet says
  * so and reads the photo again, the text typed kept. Each write of the page waits for the one before it (state.writing).
  * A title or date typed and left by Back or another screen is kept (state.drafts) and put back when the photo's sheet
  * opens again; only Close lets it go, and asks first. The page going while one is kept asks first too. The sheet is a

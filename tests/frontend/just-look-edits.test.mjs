@@ -13,7 +13,7 @@
  */
 import { test, describe, afterEach } from "node:test";
 import assert from "node:assert/strict";
-import { loadApp, FakeServer, photoRecord, flush, click, openFolder, closeAllApps, PEOPLE_ROUTE, SAVE, saveCalls } from "./harness.mjs";
+import { loadApp, FakeServer, photoRecord, flush, click, openFolder, closeAllApps, PEOPLE_ROUTE, SAVE, saved, saveCalls } from "./harness.mjs";
 
 afterEach(() => closeAllApps());
 
@@ -41,7 +41,7 @@ function server(scanned = photos) {
     .on("/api/folder/index-status", { status: "completed", percent: 100, message: "Ready" })
     .on("/api/folder/membership", (url) => (url.includes(encodeURIComponent(HELD_FOLDER)) ? HELD : NOT_HELD))
     .on("/api/photo-faces", { faces: [], total: 0, unmatched: 0 })
-    .on(SAVE, (url) => ({ success: true, new_path: A, taken: "2018:03:04 09:08:07", file_only: 1, with_rows: 0 }))
+    .on(SAVE, saved({ new_path: A, taken: "2018:03:04 09:08:07" }, { file_only: 1, with_rows: 0 }))
     .on("/api/photos/write", { success: true, written: {}, file_only: 2, with_rows: 0 })
     .on("/api/photo/rotate", { success: true, mtime: 1700000000, file_only: 1, with_rows: 0 })
     .on("/api/photo/delete", { success: true, file_only: 1, with_rows: 0,
@@ -305,7 +305,7 @@ describe("the other file edits", () => {
   });
 
   test("the date taken saved is shown as the server's reply spells it, the page spelling none", async (t) => {
-    const ctx = await looking(t, server().first(SAVE, { success: true, new_path: A, taken: "2001:02:03 04:05:06" }));
+    const ctx = await looking(t, server().first(SAVE, saved({ new_path: A, taken: "2001:02:03 04:05:06" })));
     await ctx.open();
     click(ctx.window, ctx.$("btn-edit-date-taken"));
     ctx.$("input-date-taken").value = "2018-03-04T09:08:07";
@@ -437,7 +437,7 @@ describe("what stays off", () => {
       && !item.hasAttribute("data-requires-selection")), "an entry was dimmed by just looking");
     click(ctx.window, menu.querySelector('[data-action="select-all"]'));
     await flush(ctx.window, 4);
-    assert.ok(ctx.server.calls.every((c) => c.method !== "POST" || !/save-metadata|photos\/write|rotate|delete/.test(c.url)));
+    assert.ok(ctx.server.calls.every((c) => c.method !== "POST" || !/photos\/write|rotate|delete/.test(c.url)));
   });
 
   test("a library that holds the folder is written with its rows, with no note", async (t) => {

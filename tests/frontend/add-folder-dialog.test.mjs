@@ -166,8 +166,7 @@ describe("the write queue while just looking", () => {
     press("ArrowDown");
     click(ctx.window, $("btn-carry-forward"));
     await flush(ctx.window, 8);
-    const writes = () => s.calls.filter((c) => c.method === "POST"
-      && (c.url.includes("/api/photos/write") || c.url.includes("/api/photo/save-metadata"))).length;
+    const writes = () => s.calls.filter((c) => c.method === "POST" && c.url.includes("/api/photos/write")).length;
     const before = writes();
     assert.equal(before, 1, "the carried tags were not written");
     assert.ok(!$("btn-undo").disabled);
