@@ -261,7 +261,7 @@ describe("a suggestion says how sure it is, and lands where it was asked for", (
       Object.keys(body.changes), [twoPhotos[0].path],
       `applied to photos that never suggested it: ${JSON.stringify(Object.keys(body.changes))}`
     );
-    assert.deepEqual(body.changes[twoPhotos[0].path], { add: ["Anh Tran"], remove: [] });
+    assert.deepEqual(body.changes[twoPhotos[0].path], { id: null, add: ["Anh Tran"], remove: [] });
   });
 });
 

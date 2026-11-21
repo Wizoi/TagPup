@@ -69,7 +69,7 @@ describe("a photo's pills", () => {
     await flush(ctx.window, 8);
     // The pill's removal is a change of the one tag (pending.js); the title's save after it sends the photo's tags.
     const removal = ctx.server.calls.find((c) => c.url.includes("photos/write"));
-    assert.deepEqual(Object.values(removal.body.changes), [{ add: [], remove: ["Banana"] }]);
+    assert.deepEqual(Object.values(removal.body.changes), [{ id: null, add: [], remove: ["Banana"] }]);
     ctx.document.getElementById("input-photo-title").value = "Fruit stall";
     ctx.document.getElementById("btn-save-title").click();
     await flush(ctx.window, 8);

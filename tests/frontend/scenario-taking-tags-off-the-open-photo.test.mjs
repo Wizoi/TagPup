@@ -72,17 +72,19 @@ async function open(t, { b = [], faces = { faces: [], total: 0, unmatched: 0 } }
   // Which photos each write named, in the order sent: "bulk:a,b", "save:b".
   const named = (path) => (path === A.path ? "a" : "b");
   ctx.writes = () => server.calls.filter((c) => /photos\/write|save-metadata/.test(c.url))
-    .map((c) => (c.url.includes("bulk") ? `bulk:${Object.keys(c.body.changes).map(named).join(",")}` : `save:${named(c.body.path)}`));
+    .map((c) => (c.url.includes("photos/write") ? `bulk:${Object.keys(c.body.changes).map(named).join(",")}` : `save:${named(c.body.path)}`));
   // Answer the oldest write still held: written, the file then holding what the route leaves in it; or refused with `error`.
   ctx.answer = async (error = null) => {
     const { kind, body, resolve } = held.shift();
     if (error) {
-      resolve({ success: false, error });
+      // A tag write that failed answers each photo among its `errors`, nothing written; a save says why in `error`.
+      resolve(kind === "bulk" ? { success: false, errors: Object.keys(body.changes).map((path) => ({ path, id: null, why: error })), written: {} }
+        : { success: false, error });
     } else if (kind === "bulk") {
       const written = {};
       for (const [path, change] of Object.entries(body.changes)) {
         files.set(path, changed(files.get(path), change));
-        written[path] = files.get(path).slice();
+        written[path] = { tags: files.get(path).slice() };
       }
       resolve({ success: true, written });
     } else {
@@ -204,7 +206,7 @@ describe("V20: taking tags off the open photo is answered at the click, the writ
     assert.equal(ctx.retries(), 0, "the failed removal offers a Retry or a Cancel");
     assert.equal(ctx.unanswered(), 1, "the removal clicked behind the failed one did not go");
     while (ctx.unanswered()) await ctx.answer();
-    assert.deepEqual(ctx.bulks()[1].changes[A.path], { add: [], remove: ["Harbourside"] }, "the failed tag was sent again");
+    assert.deepEqual(ctx.bulks()[1].changes[A.path], { id: null, add: [], remove: ["Harbourside"] }, "the failed tag was sent again");
     // The failure stays on the status line until its row is dismissed: the next write's "Writing tags..." and "Ready" do not
     // say over it (#3221).
     assert.equal(ctx.status(), "Not taken off Cross Country: The share did not answer", "the next write said over the failure");
@@ -437,9 +439,11 @@ describe("V20: in a library view", () => {
       const { body, resolve } = ctx.out.shift();
       const written = {};
       for (const [path, change] of Object.entries(body.changes)) {
-        const id = Number(path.match(/IMG_(\d+)/)[1]);
+        // A library view's photo is named by the id of the record the page holds of it.
+        const id = change.id;
+        assert.equal(id, Number(path.match(/IMG_(\d+)/)[1]), "a view's photo was not named by its id");
         files.set(id, changed(files.get(id), change));
-        written[path] = files.get(id).slice();
+        written[path] = { tags: files.get(id).slice() };
       }
       resolve({ success: true, written });
       await ctx.settle(40);

@@ -80,7 +80,7 @@ function serverFor({ photoFaces = THREE, tree = TAXONOMY, matches = MATCHES, pho
     .on("/api/photos/write", () => {
       const [[path, { add, remove }]] = Object.entries(written(server).changes);
       keywords = [...keywords.filter((tag) => !remove.includes(tag)), ...add.filter((tag) => !keywords.includes(tag))];
-      return { success: true, written: { [path]: [...keywords] } };
+      return { success: true, written: { [path]: { tags: [...keywords] } } };
     })
     .on("/api/face/match", () => {
       if (busy.on) return Promise.reject(new Error("the library is busy"));
@@ -681,7 +681,7 @@ describe("taking a name off, and ruling a face out", () => {
     const saves = ctx.posts("/api/photo/save-metadata").map((c) => c.body.tags);
     assert.deepEqual(saves, [["Trips", "People/Hazel Brookmire", "People/Anh Tran"]], "the new person first");
     const removals = ctx.posts("/api/photos/write").map((c) => Object.values(c.body.changes));
-    assert.deepEqual(removals, [[{ add: [], remove: ["People/Hazel Brookmire"] }]], "then the old person off");
+    assert.deepEqual(removals, [[{ id: null, add: [], remove: ["People/Hazel Brookmire"] }]], "then the old person off");
     assert.deepEqual(ctx.order(), ["save", "bulk"], "the old person went off before the new one was put on");
     assert.match(ctx.boxes()[0].getAttribute("aria-label"), /Anh Tran/);
   });
@@ -934,7 +934,7 @@ describe("in the full-window zoom (#859)", () => {
     click(ctx.window, [...ctx.zoomPanel().querySelectorAll("button")].find((b) => b.textContent === "Not this person"));
     await flush(ctx.window, 12);
     const removals = ctx.posts("/api/photos/write").map((c) => Object.values(c.body.changes));
-    assert.deepEqual(removals, [[{ add: [], remove: ["People/Anh Tran"] }]]);
+    assert.deepEqual(removals, [[{ id: null, add: [], remove: ["People/Anh Tran"] }]]);
     assert.match(ctx.zoomBoxes()[0].getAttribute("aria-label"), /not named/);
   });
 

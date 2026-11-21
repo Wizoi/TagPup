@@ -164,7 +164,7 @@ describe("V19: tagging the open photo keeps its faces in place", () => {
     // A pill's removal is written as the page's tag changes are (pending.js), and its reply says the faces it unnamed.
     ctx.nextBulk(unnamed(1, JANE));
     await ctx.pill("Jane Doe");
-    assert.deepEqual(Object.values(ctx.server.lastBody("/api/photos/write").changes), [{ add: [], remove: ["People/Jane Doe"] }],
+    assert.deepEqual(Object.values(ctx.server.lastBody("/api/photos/write").changes), [{ id: null, add: [], remove: ["People/Jane Doe"] }],
       "the person was not taken off");
     assert.equal(ctx.reads(), before + 1, "the faces were not read again after their person went");
   });
@@ -180,7 +180,7 @@ describe("V19: tagging the open photo keeps its faces in place", () => {
     const before = ctx.reads();
     ctx.nextBulk(unnamed(2, ALEX));
     await ctx.pill("Alex Roe");
-    assert.deepEqual(Object.values(ctx.server.lastBody("/api/photos/write").changes), [{ add: [], remove: [ALEX.tag] }],
+    assert.deepEqual(Object.values(ctx.server.lastBody("/api/photos/write").changes), [{ id: null, add: [], remove: [ALEX.tag] }],
       "the person was not taken off");
     assert.equal(ctx.reads(), before + 1, "the faces were not read again after their person went");
     assert.doesNotMatch(ctx.summary(), /all identified/, "the strip still said the unnamed face was named");

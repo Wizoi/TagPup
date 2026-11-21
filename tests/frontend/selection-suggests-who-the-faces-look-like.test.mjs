@@ -80,7 +80,7 @@ describe("a shoot just indexed: the selection offers who its faces look like", (
     await flush(ctx.window, 6);
     const body = ctx.server.lastBody("/api/photos/write");
     assert.deepEqual(Object.keys(body.changes).sort(), [photos[0].path, photos[1].path].sort());
-    for (const change of Object.values(body.changes)) assert.deepEqual(change, { add: ["People/Kira Bao"], remove: [] });
+    for (const change of Object.values(body.changes)) assert.deepEqual(change, { id: null, add: ["People/Kira Bao"], remove: [] });
   });
 
   test("a photo a Suggest run and its faces both offer someone counts once", async (t) => {

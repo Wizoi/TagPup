@@ -143,7 +143,7 @@ describe("a caption and tags on one photo", () => {
 describe("tags on many photos", () => {
   test("added with the bulk field, and the answer says where", async (t) => {
     const s = server().first("/api/photos/write", { success: true, file_only: 2, with_rows: 0,
-      written: { [A]: ["Beach", "Trips/Lighthouse"], [B]: ["Trips/Lighthouse"] } });
+      written: { [A]: { tags: ["Beach", "Trips/Lighthouse"] }, [B]: { tags: ["Trips/Lighthouse"] } } });
     const ctx = await looking(t, s);
     ctx.select(0, 1);
     ctx.$("bulk-add-tags-input").value = "Trips/Lighthouse";
@@ -152,7 +152,7 @@ describe("tags on many photos", () => {
     const sent = ctx.posts("/api/photos/write");
     assert.equal(sent.length, 1, "nothing was sent");
     assert.deepEqual(Object.keys(sent[0].body.changes).sort(), [A, B]);
-    for (const change of Object.values(sent[0].body.changes)) assert.deepEqual(change, { add: ["Trips/Lighthouse"], remove: [] });
+    for (const change of Object.values(sent[0].body.changes)) assert.deepEqual(change, { id: null, add: ["Trips/Lighthouse"], remove: [] });
     assert.match(ctx.$("status-text").textContent, /Written to the files only: kr-track does not hold this folder/);
     assert.equal(ctx.posts("/api/taxonomy/create").length, 0);
     assert.equal(ctx.document.querySelectorAll(".photo-item-file").length, 2, "a photo left the list");
@@ -160,7 +160,7 @@ describe("tags on many photos", () => {
 
   test("a partly held folder says how many went where", async (t) => {
     const s = server().first("/api/photos/write", { success: true, file_only: 1, with_rows: 1,
-      written: { [A]: ["Beach", "Trips/Lighthouse"], [B]: ["Trips/Lighthouse"] } });
+      written: { [A]: { tags: ["Beach", "Trips/Lighthouse"] }, [B]: { tags: ["Trips/Lighthouse"] } } });
     const ctx = await looking(t, s);
     ctx.select(0, 1);
     ctx.$("bulk-add-tags-input").value = "Trips/Lighthouse";
@@ -181,8 +181,8 @@ describe("tags on many photos", () => {
     await flush(ctx.window, 4);
     await openFolder(ctx, HELD_FOLDER);
     assert.ok(!ctx.document.body.classList.contains("just-looking"), "the new folder is held");
-    release({ success: true, file_only: 2, with_rows: 0, written: { [A]: ["Beach", "Trips/Lighthouse"],
-      [B]: ["Trips/Lighthouse"] } });
+    release({ success: true, file_only: 2, with_rows: 0, written: { [A]: { tags: ["Beach", "Trips/Lighthouse"] },
+      [B]: { tags: ["Trips/Lighthouse"] } } });
     await flush(ctx.window, 10);
     const names = [...ctx.document.querySelectorAll(".photo-item-file")].map((e) => e.getAttribute("data-path"));
     assert.deepEqual(names, ["D:\\Library\\2020\\held.jpg"], "the list is not the new folder's");

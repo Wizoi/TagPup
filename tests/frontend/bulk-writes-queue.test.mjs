@@ -80,7 +80,8 @@ const chip = (ctx, name) => chips(ctx).find((c) => c.textContent.includes(name))
 /** Answer the oldest request waiting, with `reply`. */
 async function answer(ctx, reply) {
   assert.ok(ctx.held.length, "no request was waiting for an answer");
-  Object.assign(ctx.server.files, reply.written || {});
+  // A photos/write reply names what each file holds ({tags, mtime, size}); an Apply All's, the list of its tags.
+  for (const [path, held] of Object.entries(reply.written || {})) ctx.server.files[path] = Array.isArray(held) ? held : held.tags;
   ctx.held.shift()(reply);
   await flush(ctx.window, 8);
 }
@@ -100,7 +101,7 @@ describe("tags clicked quickly on a selection", () => {
     assert.equal(writes(ctx).length, 1);
     const { changes } = writes(ctx)[0].body;
     assert.deepEqual(Object.keys(changes), PHOTOS.map((p) => p.path));
-    for (const change of Object.values(changes)) assert.deepEqual(change, { add: OFFERED, remove: [] });
+    for (const change of Object.values(changes)) assert.deepEqual(change, { id: null, add: OFFERED, remove: [] });
     await answer(ctx, { success: true });
     assert.equal(writes(ctx).length, 1, "the three were written twice");
 
@@ -161,8 +162,8 @@ describe("a bulk write that stops part-way", () => {
     await flush(ctx.window, 8);
     await answer(ctx, {
       success: false,
-      error: "ExifTool: Error: Temporary file already exists: <file>_exiftool_tmp (exit status 1)",
-      written: { [PHOTOS[0].path]: ["Cross Country"] },
+      errors: [{ path: PHOTOS[1].path, id: null, why: "ExifTool: Error: Temporary file already exists: <file>_exiftool_tmp (exit status 1)" }],
+      written: { [PHOTOS[0].path]: { tags: ["Cross Country"] } },
     });
     assert.equal(ctx.alerts.length, 1, "the failure was not reported");
     const held = () => [...ctx.document.querySelectorAll("#selection-tags-list .selection-summary-chip")]
@@ -203,7 +204,7 @@ describe("Ctrl+Z while a later write is out", () => {
     assert.equal(writes(ctx).length, 4);
     const undo = writes(ctx).at(-1).body;
     for (const change of Object.values(undo.changes)) {
-      assert.deepEqual(change, { add: [], remove: ["Harbourside"] }, "undo took off more than Apply All added");
+      assert.deepEqual(change, { id: null, add: [], remove: ["Harbourside"] }, "undo took off more than Apply All added");
     }
     await answer(ctx, { success: true, written: {} });
   });
