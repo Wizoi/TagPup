@@ -125,15 +125,26 @@ class AClipBesideAPhoto(unittest.TestCase):
                 self.assert_refused("photo/rotate", {"path": self.clip_path, "direction": direction})
 
     def test_a_time_shift_over_a_folder_moves_the_photos_date_and_leaves_the_clip_byte_for_byte(self):
-        reply = self.post("folder/time-shift", {"folder_path": self.folder, "camera_model": "All Cameras",
-                                                "shift_minutes": 30})
-        self.assertEqual(200, reply.status_code, reply.get_json())
+        # The page shifts the folder's photos for every camera, never a clip (rename.js onCamera).
+        shift = page_writes.shift_all(self.vl.library, self.folder, 30)
+        self.assertEqual([paths.key(self.photo_path)], [paths.key(path) for path in shift["changes"]])
+        reply = self.post("photos/write", shift)
         body = reply.get_json()
-        self.assertEqual((True, 1, 1), (body["success"], body["updated_count"], body["requested_count"]),
+        self.assertEqual((200, True, 1, 1), (reply.status_code, body["success"], body["changed"], body["attempted"]),
                          "the photo alone is shifted, and counted")
         with ExifToolSession(executable=EXIFTOOL) as et:
             moved = et.get_tags([self.photo_path], tags=["EXIF:DateTimeOriginal"])[0]["EXIF:DateTimeOriginal"]
         self.assertEqual("2024:07:04 10:30:00", moved, "the photo's date moved")
+        self.assert_clip_untouched()
+
+    def test_a_time_shift_that_names_the_clip_too_leaves_it_byte_for_byte_and_says_why(self):
+        # A shift naming the clip beside the photo (a page that did not leave it out): the clip is not written, and the
+        # reply says so in the sentence; the photo is.
+        reply = self.post("photos/write", page_writes.shift([self.photo_path, self.clip_path], 30))
+        body = reply.get_json()
+        self.assertEqual((200, 1, 2), (reply.status_code, body["changed"], body["attempted"]), body)
+        said = [each["why"] for each in body["skipped"] + body["errors"] if paths.same(each["path"], self.clip_path)]
+        self.assertEqual([images.CLIP_NOT_EDITED], said, body)
         self.assert_clip_untouched()
 
 if __name__ == "__main__":

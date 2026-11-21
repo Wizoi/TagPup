@@ -230,10 +230,9 @@ class TestASubfolderPhotoIsFoundInTheCache(unittest.TestCase):
         with ExifToolSession(executable=EXIFTOOL) as et:
             et.set_tags([self.photo], tags={"EXIF:DateTimeOriginal": "2020:06:01 10:00:00"},
                         params=["-overwrite_original"])
-        status, reply = self.lib.post("/api/folder/time-shift", {
-            "folder_path": os.path.dirname(self.photo), "camera_model": "All Cameras",
-            "shift_minutes": 30})
-        self.assertEqual(status, 200, reply)
+        status, reply = self.lib.post(page_writes.ROUTE,
+                                      page_writes.shift_all(self.lib.library, os.path.dirname(self.photo), 30))
+        self.assertEqual((200, True, 1), (status, reply["success"], reply["changed"]), reply)
         raw = self.cached()["raw_metadata"]
         self.assertEqual(raw.get("EXIF:DateTimeOriginal"), "2020:06:01 10:30:00")
 

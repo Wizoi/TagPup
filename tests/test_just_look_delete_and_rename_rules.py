@@ -69,13 +69,12 @@ class AFolderWithRowsIsHeldWhateverIsIgnored(jl.Base):
 class AFileOnlyWriteDecodesNothing(jl.Base):
     def test_a_save_a_tag_write_a_shift_a_rename_and_a_rotate_decode_nothing(self):
         save = page_writes.save(self.library, self.loose[0], "x", ["A/B"])       # the page's record, read before
+        shift = page_writes.shift_all(self.library, self.lighthouse, 5)                 # the folder's, read before
         with mock.patch.object(images, "opened", side_effect=AssertionError("decoded in full")):
             self.assertWrote(self.post("/photos/write", save))
             self.assertWrote(self.tag(self.loose, ["C/D"]))
             self.assertEqual(200, self.post("/photo/rotate", {"path": self.loose[1], "direction": "left"}).status_code)
-            self.assertEqual(200, self.post("/folder/time-shift", {"folder_path": self.lighthouse,
-                                                                  "camera_model": "All Cameras",
-                                                                  "shift_minutes": 5}).status_code)
+            self.assertWrote(self.post("/photos/write", shift))
             self.assertEqual(200, self.post("/folder/rename-photos", {
                 "folder_path": self.lighthouse, "grouping": "Lighthouse", "photo_paths": self.loose}).status_code)
 

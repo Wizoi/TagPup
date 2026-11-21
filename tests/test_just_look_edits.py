@@ -121,6 +121,10 @@ class Base(unittest.TestCase):
         return self.post("/photos/write", page_writes.tags({photo: {"add": list(add), "remove": list(remove)}
                                                             for photo in photo_paths}))
 
+    def shift(self, folder, minutes):
+        """The folder's Time Shift for every camera, of the photos the page chooses (page_writes.shift_all)."""
+        return self.post("/photos/write", page_writes.shift_all(self.library, folder, minutes))
+
     def assertWrote(self, reply):
         """The write succeeded, as the page reads the envelope; the reply as the page reads it (page_writes.saved)."""
         self.assertEqual((200, True), (reply.status_code, reply.get_json()["success"]), reply.data)
@@ -241,12 +245,12 @@ class AnEditWritesTheFileOnly(Base):
         write_into(self.loose[1], DateTimeOriginal="2020:01:01 00:00:00")
         self.before = library_dump.dump(self.library.path)
         untouched = stamp(self.loose[2])
-        reply = self.post("/folder/time-shift", {"folder_path": self.lighthouse, "camera_model": fields.ALL_CAMERAS,
-                                                "shift_minutes": 90})
-        self.assertEqual(200, reply.status_code, reply.data)
+        reply = self.shift(self.lighthouse, 90)
+        self.assertWrote(reply)
         body = reply.get_json()
-        self.assertEqual((2, 3, 2, 0), (body["updated_count"], body["requested_count"], body["file_only"],
-                                       body["with_rows"]))
+        self.assertEqual((2, 3, 2, 0), (body["changed"], body["attempted"], body["file_only"], body["with_rows"]))
+        self.assertEqual({paths.key(path) for path in self.loose[:2]}, {paths.key(path) for path in body["written"]},
+                         "the photos written, not the one holding no date")
         self.assertEqual("2019:06:15 12:00:00", in_file(self.loose[0], "EXIF:DateTimeOriginal")["EXIF:DateTimeOriginal"])
         self.assertEqual("2020:01:01 01:30:00", in_file(self.loose[1], "EXIF:DateTimeOriginal")["EXIF:DateTimeOriginal"])
         self.assertEqual(untouched, stamp(self.loose[2]), "a photo with no date was written")
@@ -470,11 +474,10 @@ class AFolderTheLibraryHoldsPartOf(Base):
         for path in self.held + [self.scan]:
             write_into(path, DateTimeOriginal=DATE)
         self.before = library_dump.dump(self.library.path)
-        reply = self.post("/folder/time-shift", {"folder_path": self.regatta, "camera_model": fields.ALL_CAMERAS,
-                                                "shift_minutes": 60})
-        self.assertEqual(200, reply.status_code, reply.data)
+        reply = self.shift(self.regatta, 60)
+        self.assertWrote(reply)
         body = reply.get_json()
-        self.assertEqual((3, 1, 2), (body["updated_count"], body["file_only"], body["with_rows"]))
+        self.assertEqual((3, 1, 2), (body["changed"], body["file_only"], body["with_rows"]))
         for path in self.held + [self.scan]:
             self.assertEqual("2019:06:15 11:30:00", in_file(path, "EXIF:DateTimeOriginal")["EXIF:DateTimeOriginal"])
         self.assertEqual(2, self.rows("SELECT COUNT(*) FROM photos")[0][0])
