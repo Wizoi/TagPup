@@ -308,15 +308,13 @@ class TheFileIsComparedWithWhatThePageRead(Fresh):
         damaged_photos.whole_jpeg(good, seed=22)
         write_into(good, Subject=["Trips/Coast", "Trips/Lakes"])
         os.replace(good, path)                                          # replaced by a good file between open and save
-        reply = self.post("/photo/save-metadata", {"path": path, "title": "", "tags": ["Activity/Sailing"],
-                                                  "stamp": {"mtime": record["mtime"], "size": record["size"]}, "base": None})
-        self.assertEqual(409, reply.status_code, reply.data)
-        self.assertRegex(reply.get_json()["error"], "changed on disk|could not be read just now")
+        reply = self.save(record, title="", tags=["Activity/Sailing"], base=None)     # the page's base of it: none
+        self.assertEqual((409, False), (reply.status_code, reply.get_json()["success"]), reply.data)
+        self.assertRegex(page_writes.why(reply.get_json()), "changed on disk|could not be read just now")
         # the same save with the stamp of the good file still cannot be made from a base that was not read
-        again = self.post("/photo/save-metadata", {"path": path, "title": "", "tags": ["Activity/Sailing"],
-                                                   "stamp": stamp_of(path), "base": None})
-        self.assertEqual(409, again.status_code)
-        self.assertIn("could not be read just now", again.get_json()["error"])
+        again = self.save(record, title="", tags=["Activity/Sailing"], stamp=stamp_of(path), base=None)
+        self.assertEqual((409, False), (again.status_code, again.get_json()["success"]), again.data)
+        self.assertIn("could not be read just now", page_writes.why(again.get_json()))
         self.assertEqual(["Trips/Coast", "Trips/Lakes"], sorted(tags_in(path)), "the keywords are kept")
 
     def test_a_foreign_change_to_a_field_the_save_does_not_touch_is_not_refused(self):
