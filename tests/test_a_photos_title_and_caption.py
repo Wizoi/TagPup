@@ -65,9 +65,9 @@ class ATitleAndACaption(S.Fresh):
         return (json.loads(captions or "[]") or [""])[0]
 
     def saved(self, reply):
-        """The record the page goes on with after a save's reply (edits.takeStamp)."""
-        self.assertEqual(200, reply.status_code, reply.data)
-        body = reply.get_json()
+        """The save succeeded, and the record the page goes on with after its reply (edits.takeStamp): the reply as the
+        page reads it (page_writes.saved), and its photo's stamp and base."""
+        body = self.assertSaved(reply)
         return body, {"stamp": {"mtime": body["mtime"], "size": body["size"]}, "base": body["base"]}
 
     def test_a_title_is_saved_to_the_title_fields_and_a_caption_that_differs_is_never_written(self):
@@ -79,9 +79,8 @@ class ATitleAndACaption(S.Fresh):
         self.assertEqual({**title_held("Pier at dusk", iptc="Pier at noon"), **caption}, self.held(path))
         self.assertEqual("Pier at dusk", body["base"]["title"])
         # Two saves in a row: the second goes from the first's reply, and is accepted.
-        self.saved(self.post("/photo/save-metadata", {"path": body["new_path"], "title": "Pier at dusk",
-                                                      "tags": record["tags"] + ["Trips/Lakes", "Activity/Rowing"],
-                                                      **after}))
+        self.saved(self.save(record, path=body["new_path"], title="Pier at dusk",
+                             tags=record["tags"] + ["Trips/Lakes", "Activity/Rowing"], **after))
         self.assertEqual({**title_held("Pier at dusk", iptc="Pier at noon"), **caption}, self.held(path))
         again = self.record(photo_id)
         self.assertEqual(("Pier at dusk", "Pier at dusk"), (again["title"], self.shown_by_the_index(photo_id)),
@@ -94,10 +93,11 @@ class ATitleAndACaption(S.Fresh):
         caption = {field: "Pier at noon" for field in CAPTION_FIELDS}
         titled = {"XMP:Title": "Pier at noon", "IPTC:ObjectName": "Pier at noon"}
         path, photo_id = self.made("a.jpg", 69, {**titled, **caption})
-        body, after = self.saved(self.save(self.record(photo_id), tags=["Trips/Coast", "Trips/Lakes"]))
+        record = self.record(photo_id)
+        body, after = self.saved(self.save(record, tags=["Trips/Coast", "Trips/Lakes"]))
         self.assertEqual({**titled, **caption}, self.held(path), "the same title saved with a tag")
-        self.saved(self.post("/photo/save-metadata", {"path": body["new_path"], "title": "Pier at dusk",
-                                                      "tags": ["Trips/Coast", "Trips/Lakes"], **after}))
+        self.saved(self.save(record, path=body["new_path"], title="Pier at dusk", tags=["Trips/Coast", "Trips/Lakes"],
+                             **after))
         self.assertEqual({**title_held("Pier at dusk", iptc="Pier at noon"), **caption}, self.held(path),
                          "a changed title")
 
@@ -112,8 +112,7 @@ class ATitleAndACaption(S.Fresh):
                           "EXIF:XPComment": "Taken from the end of the pier"}, self.held(path),
                          "moved into the title, no copy left in the caption; a caption that differs is kept")
         self.assertEqual(("Harbour at dawn", "Harbour at dawn"), (self.record(photo_id)["title"], body["base"]["title"]))
-        self.saved(self.post("/photo/save-metadata", {"path": body["new_path"], "title": "Harbour at dawn",
-                                                      "tags": record["tags"], **after}))
+        self.saved(self.save(record, path=body["new_path"], title="Harbour at dawn", tags=record["tags"], **after))
 
     def test_a_title_changed_or_cleared_over_a_description_shown_as_the_title_moves_it_out_too(self):
         """#2583: one rule whatever title is saved: the Description shown as the title leaves every caption field
@@ -127,11 +126,11 @@ class ATitleAndACaption(S.Fresh):
         self.assertEqual("Harbour at noon", self.record(changed_id)["title"])
         cleared, cleared_id = self.made("c.jpg", 68, {**moved, **kept})
         earlier = self.last_change()
-        body, after = self.saved(self.save(self.record(cleared_id), title=""))
+        record = self.record(cleared_id)
+        body, after = self.saved(self.save(record, title=""))
         self.assertEqual(kept, {field: text for field, text in self.held(cleared).items() if text})
         self.assertEqual(("", ""), (body["base"]["title"], self.record(cleared_id)["title"]), "it stays cleared")
-        self.saved(self.post("/photo/save-metadata", {"path": body["new_path"], "title": "",
-                                                      "tags": ["Trips/Coast", "Trips/Lakes"], **after}))
+        self.saved(self.save(record, path=body["new_path"], title="", tags=["Trips/Coast", "Trips/Lakes"], **after))
         # Undo of both saves, the latest first, puts the Description back: the page shows it as the title again. The
         # undo writes the caption's XMP copy alone, IPTC's left as the save cleared it (fields.XMP_ONLY).
         for change in range(self.last_change(), earlier, -1):
@@ -156,8 +155,7 @@ class ATitleAndACaption(S.Fresh):
         body, after = self.saved(self.save(record, title=""))
         self.assertEqual({field: "" for field in TITLE_FIELDS + CAPTION_FIELDS}, self.held(path))
         self.assertEqual(("", ""), (body["base"]["title"], self.record(photo_id)["title"]), "a reload shows no title")
-        self.saved(self.post("/photo/save-metadata", {"path": body["new_path"], "title": "",
-                                                      "tags": record["tags"] + ["Trips/Lakes"], **after}))
+        self.saved(self.save(record, path=body["new_path"], title="", tags=record["tags"] + ["Trips/Lakes"], **after))
         self.assertEqual(["Trips/Coast", "Trips/Lakes"], sorted(S.tags_in(path)))
 
     def test_undo_of_a_title_save_puts_the_old_title_back_and_writes_no_caption(self):
