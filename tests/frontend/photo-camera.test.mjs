@@ -80,11 +80,18 @@ test("Shift Date Taken's list of cameras is by the record's camera, the name Ima
   ], "a make-less model and the same model with its make are two cameras, as the server's shift takes them");
 });
 
-test("a time shift for a camera the server found no photo of says so, and does not say photos could not be written", async (t) => {
-  const fake = server()
-    .on("/api/folder/time-shift", { success: true, message: "No photos matched the camera model" });
+test("a time shift of a folder of clips only says so and sends nothing: a clip's Date Taken is not changed", async (t) => {
+  const clip = { ...BASE, path: "D:\\Pictures\\Run\\f.mp4", filename: "f.mp4", media: "video", camera: "Harbourline Action 4" };
+  const fake = new FakeServer()
+    .on("/api/folder/scan", [clip])
+    .on("/api/taxonomy/tree", [])
+    .on("/api/people", [])
+    .on("/api/tags", [])
+    .on("/api/photo-faces", { faces: [], total: 0, unmatched: 0 })
+    .on("/api/folder/suggest-status", { status: "idle" });
   const { window, document } = await loadApp("tagpup", { server: fake, t });
-  window.confirm = () => true;
+  let asked = false;
+  window.confirm = () => { asked = true; return true; };
   await openFolder({ document, window }, "D:\\Pictures\\Run");
   await settle(window, 60);
   click(window, document.getElementById("btn-toggle-timeshift"));
@@ -92,8 +99,10 @@ test("a time shift for a camera the server found no photo of says so, and does n
   click(window, document.getElementById("btn-apply-timeshift"));
   await settle(window, 80);
   const said = document.getElementById("status-text").textContent;
-  assert.match(said, /No photos matched that camera: reload the page and try again/);
-  assert.doesNotMatch(said, /could not be written/);
+  assert.equal(document.getElementById("timeshift-camera-select").value, "All Cameras");
+  assert.equal(said, "No photos to shift: a clip's Date Taken is not changed");
+  assert.equal(asked, false, "nothing to confirm");
+  assert.deepEqual(fake.calls.filter((c) => c.method === "POST").map((c) => c.url), []);
 });
 
 // jsdom does not lay a page out, so what keeps the camera line from widening the details grid (a grid item is as wide as its

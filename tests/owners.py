@@ -157,7 +157,7 @@ _SCENARIO_FILES = {
         "test_a_file_holds_what_exiftool_kept test_a_photo_patched_in_place "
         "test_a_rename_stopped_part_way test_smart_rename_one_photo smart-rename-one-photo "
         "test_file_changes_one_at_a_time test_file_journal test_rotate_crash_settles_with_the_boxes test_rotate_is_journaled test_rotate_keeps_the_photo "
-        "test_tag_a_photo_read_it_back_and_undo test_time_shift test_xmp_packet_edits_what_it_owns "
+        "test_tag_a_photo_read_it_back_and_undo test_time_shift shifting-a-folders-date-taken test_xmp_packet_edits_what_it_owns "
         "test_iptc_block_edits_what_it_owns test_exif_block_edits_what_it_owns test_segment_edits_choose_what_to_write "
         "test_a_photo_written_by_its_own_editors test_the_two_writers_compared_on_copies "
         "test_a_photos_title_and_caption test_tag_writes_keep_the_index_true test_a_tag_added_touches_its_file_no_more_than_it_must"

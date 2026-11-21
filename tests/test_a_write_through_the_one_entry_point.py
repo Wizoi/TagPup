@@ -16,8 +16,11 @@ library view's bulk edit goes through the same service and still lets a waiting 
 tests/test_batches.py's (ASaveBetweenTwoChunks), on the fake ExifTool, as it needs three chunks of photos.
 
 Real ExifTool on JPEGs made here, rows as the indexer records them (photo_rows.add_read), the route through Flask's
-test client in a home of the test's own (tests/handler_harness.py).
+test client in a home of the test's own (tests/handler_harness.py). The replies of a folder's Time Shift that the page's
+tests answer from (tests/frontend/fixtures/shift_replies.json, harness.mjs shiftedAs) are written here.
 """
+import contextlib
+import json
 import os
 import sys
 import threading
@@ -26,6 +29,7 @@ import unittest
 from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import page_fixtures  # noqa: E402
 import photo_rows  # noqa: E402
 from tests.handler_harness import Library  # noqa: E402
 from tests.test_bulk_writes_start_from_the_file import EXIFTOOL, EXISTING, make_photo, tags_in  # noqa: E402
@@ -41,6 +45,7 @@ from tagpup.store import db, journal  # noqa: E402
 
 ROUTE = "/api/photos/write"
 TAKEN = "2020:06:01 10:00:00"
+SHIFT_REPLIES = page_fixtures.path_of("shift_replies.json")
 
 
 def date(photos, taken=TAKEN):
@@ -329,8 +334,10 @@ class AWriteThroughTheOneEntryPoint(unittest.TestCase):
         self.assertEqual([TAKEN] * 3, [taken_in(path) for path in self.photos])
         self.assertEqual([], self.changes())
 
-    def test_a_share_that_stops_answering_part_way_through_a_shift_ends_it_with_what_landed(self):
-        date(self.photos)
+    @contextlib.contextmanager
+    def a_share_that_stops_answering_at(self, stop):
+        """The held folder on a share of its own that stops answering at the photo `stop`: the write's own read of each
+        file just before it writes it does not answer for that one."""
         shares.forget()
         self.addCleanup(shares.forget)
         real_read_one, real_share_of, under = field_values.read_one, shares.share_of, os.path.normcase(self.held)
@@ -340,11 +347,15 @@ class AWriteThroughTheOneEntryPoint(unittest.TestCase):
             return "//nas/regatta" if os.path.normcase(str(folder)).startswith(under) else real_share_of(folder)
 
         def read_one(et, path, wanted):
-            # The write's own read of each file just before it writes it: the share stops answering at the second photo.
-            if paths.key(path) == paths.key(self.photos[1]):
+            if paths.key(path) == paths.key(stop):
                 raise field_values.NotAnswered("ExifTool did not answer for it in 1 s")
             return real_read_one(et, path, wanted)
         with mock.patch.object(field_values, "read_one", read_one), mock.patch.object(shares, "share_of", share_of):
+            yield
+
+    def test_a_share_that_stops_answering_part_way_through_a_shift_ends_it_with_what_landed(self):
+        date(self.photos)
+        with self.a_share_that_stops_answering_at(self.photos[1]):
             status, reply = self.lib.post(ROUTE, self.shift_op(dict(zip(self.photos, self.ids))))
         self.assertEqual(400, status, reply)
         self.assertIn("ExifTool stopped answering after 1 of 3 photos", reply["error"])
@@ -352,6 +363,29 @@ class AWriteThroughTheOneEntryPoint(unittest.TestCase):
         self.assertEqual([self.photos[0]], list(reply["written"]), "what landed, not what was asked")
         self.assertEqual(["2020:06:01 10:30:00", TAKEN, TAKEN], [taken_in(path) for path in self.photos])
         self.assertEqual([("time shift", "applied")], [(change["operation"], change["status"]) for change in self.changes()])
+
+    def test_the_shift_replies_the_page_reads_are_written_for_its_test(self):
+        # A folder's Time Shift as the page sends it (web/tagpup/rename.js applyTimeShift): its photos by path, no id (a
+        # folder's records carry none), in one request. `stopped`: the share stops answering at the second of three, the
+        # first written; `shifted`: two photos written. Each photo named PHOTO_<n> in the order sent, its stamp 1 and 1.
+        date(self.photos)
+        found = {}
+        for name, sent, stop in (("stopped", self.photos, self.photos[1]), ("shifted", self.photos[1:], None)):
+            body = {"op": "shift", "params": {"minutes": 30}, "changes": {path: {"id": None} for path in sent}}
+            with self.a_share_that_stops_answering_at(stop) if stop else contextlib.nullcontext():
+                status, reply = self.lib.post(ROUTE, body)
+            for own in reply["written"].values():
+                own.update(mtime=1, size=1)
+            text = json.dumps(reply)
+            for n, path in enumerate(sent):
+                text = text.replace(json.dumps(path)[1:-1], "PHOTO_%d" % n)
+            found[name] = {"status": status, "reply": json.loads(text)}
+        self.assertEqual((400, ["PHOTO_0"]), (found["stopped"]["status"], list(found["stopped"]["reply"]["written"])))
+        self.assertEqual((200, ["PHOTO_0", "PHOTO_1"]), (found["shifted"]["status"],
+                                                         sorted(found["shifted"]["reply"]["written"])))
+        self.assertNotIn(json.dumps(self.lib.photos)[1:-1], json.dumps(found), "a path of the test's home left in")
+        text = json.dumps(found, sort_keys=True, indent=1) + "\n"
+        page_fixtures.hold_to(self, SHIFT_REPLIES, text, "tests.test_a_write_through_the_one_entry_point", "the Time Shift")
 
     def test_a_held_folders_time_shift_answers_every_photo_shifted_when_its_listing_does_not_answer(self):
         # The owner opens a held folder and moves its Date Taken; the share is slow by the time the shift answers. The

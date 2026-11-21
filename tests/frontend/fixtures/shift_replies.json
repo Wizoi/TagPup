@@ -1,0 +1,64 @@
+{
+ "shifted": {
+  "reply": {
+   "attempted": 2,
+   "change": 3,
+   "changed": 2,
+   "error_count": 0,
+   "errors": [],
+   "file_only": 0,
+   "skipped": [],
+   "skipped_missing": 0,
+   "stopped": null,
+   "success": true,
+   "with_rows": 2,
+   "written": {
+    "PHOTO_0": {
+     "mtime": 1,
+     "size": 1,
+     "taken": "2020:06:01 10:30:00"
+    },
+    "PHOTO_1": {
+     "mtime": 1,
+     "size": 1,
+     "taken": "2020:06:01 10:30:00"
+    }
+   }
+  },
+  "status": 200
+ },
+ "stopped": {
+  "reply": {
+   "attempted": 3,
+   "change": 2,
+   "changed": 1,
+   "error": "ExifTool stopped answering after 1 of 3 photos: 1 file(s) were written, recorded as change 2 in History, which can be undone; the rest were not written. Check that the share or drive is there, then run it again.",
+   "error_count": 1,
+   "errors": [
+    {
+     "id": null,
+     "path": "PHOTO_1",
+     "why": "photo 2: ExifTool stopped answering before it was written, and nothing after it was; check that the share or drive is there"
+    }
+   ],
+   "file_only": 0,
+   "skipped": [],
+   "skipped_missing": 0,
+   "stopped": {
+    "after": 1,
+    "of": 3,
+    "share": true
+   },
+   "success": false,
+   "with_rows": 1,
+   "written": {
+    "PHOTO_0": {
+     "mtime": 1,
+     "size": 1,
+     "taken": "2020:06:01 10:30:00"
+    }
+   }
+  },
+  "status": 400
+ }
+}
