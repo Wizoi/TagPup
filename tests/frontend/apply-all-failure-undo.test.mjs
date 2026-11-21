@@ -38,7 +38,7 @@ function build() {
     .on("/api/folder/index-status", { status: "completed", percent: 100, message: "Ready" })
     .on("/api/folder/scan", () => PHOTOS.map((p) => ({ ...p, tags: [...(files[p.path] || p.tags)], people: [...p.people] })))
     .on("/api/photo-faces", { faces: [], total: 0, unmatched: 0 })
-    .on("/api/photos/bulk-tags", hold)
+    .on("/api/photos/write", hold)
     .on("/api/folder/auto-apply", hold)
     .on("/api/folder/suggest-status", SUGGESTIONS);
   server.files = files;
@@ -61,7 +61,7 @@ async function loadSelected(t) {
 }
 
 const applyAll = (ctx) => ctx.document.getElementById("btn-folder-auto-apply");
-const bulk = (ctx) => ctx.server.calls.filter((c) => c.url.includes("/api/photos/bulk-tags"));
+const bulk = (ctx) => ctx.server.calls.filter((c) => c.url.includes("/api/photos/write"));
 const pathsOf = (body) => Object.keys(body.changes);
 
 async function answer(ctx, reply) {

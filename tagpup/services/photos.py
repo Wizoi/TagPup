@@ -726,7 +726,7 @@ def date_shift_plan(minutes):
 
 
 @roots_service.canonical_args("photo_paths")
-def shift_date_taken(library, photo_paths, minutes, exiftool_path):
+def shift_date_taken(library, photo_paths, minutes, exiftool_path, group=None):
     """Move Date Taken in each photo by `minutes`, and tell the index. Time Shift.
 
     One change of photo files (tagpup.services.file_changes): every photo's dates read,
@@ -740,9 +740,11 @@ def shift_date_taken(library, photo_paths, minutes, exiftool_path):
     and its write, is an error. details: `records`, each photo as read back afterwards;
     `written`, the photos written (file_changes.write_fields'; a stopped shift's, those
     before the stop); `change`. Refused, and nothing written, for a shift that is not a
-    whole number of minutes (tagpup.core.validation).
+    whole number of minutes (tagpup.core.validation), or a `group` it cannot carry: the
+    token of the one action of the owner's this is a chunk of, written in the change's
+    summary as a tag write's is (batches.group_problem), so History lists the chunks as one line.
     """
-    problem = validation.problem("time shift", minutes)
+    problem = validation.problem("time shift", minutes) or batches.group_problem(group, len(photo_paths))
     if problem:
         result = Result(attempted=len(photo_paths))
         result.refuse(problem)
@@ -756,7 +758,8 @@ def shift_date_taken(library, photo_paths, minutes, exiftool_path):
     try:
         journaled = file_changes.write_fields(
             library, "time shift", exiftool_path, held, dates.SHIFTED_FIELDS, plan_one,
-            summary={"photos": len(held), "minutes": minutes}, unreadable="skip") if held else None
+            summary={"photos": len(held), "minutes": minutes, **({store_journal.GROUP: group} if group else {})},
+            unreadable="skip") if held else None
         files = file_only.write_fields(exiftool_path, loose, dates.SHIFTED_FIELDS, plan_one,
                                        unreadable="skip") if loose else None
         result = file_only.combined(journaled, files)

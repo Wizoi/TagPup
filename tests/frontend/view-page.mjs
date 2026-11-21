@@ -179,7 +179,7 @@ export async function loadViewPage(t, {
     .on("/api/photo-faces", { faces: [], total: 0, unmatched: 0 })
     .on("/api/photo/save-metadata", { success: true })
     .on("/api/photo/delete", { success: true })
-    .on("/api/photos/bulk-tags", { success: true })
+    .on("/api/photos/write", { success: true })
     .on("/api/library/bulk-edit", answer("bulkEdit", () => editReply(ctx.bulk.edit)))
     .on("/api/library/selection/tally", () => (typeof ctx.bulk.tally === "function" ? ctx.bulk.tally() : ctx.bulk.tally))
     .on("/api/folder/scan", () => (scan ? scan() : [photoRecord({ filename: "a.jpg" }), photoRecord({ filename: "b.jpg" })]))

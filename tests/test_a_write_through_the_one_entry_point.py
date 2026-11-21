@@ -241,9 +241,31 @@ class AWriteThroughTheOneEntryPoint(unittest.TestCase):
         self.assertEqual((2, 2, 2, 0, 0), (reply["attempted"], reply["changed"], reply["with_rows"], reply["file_only"],
                                            reply["error_count"]))
         self.assertEqual(["time shift"], [change["operation"] for change in self.changes()])
-        self.assertEqual({path: {"mtime": os.stat(path).st_mtime, "size": int(os.stat(path).st_size)}
-                          for path in self.photos[:2]}, reply["written"])
+        self.assertEqual({path: {"mtime": os.stat(path).st_mtime, "size": int(os.stat(path).st_size),
+                                 "taken": "2020:06:01 10:30:00"} for path in self.photos[:2]}, reply["written"])
         self.assertEqual(["2020:06:01 10:30:00"] * 2 + [TAKEN], [taken_in(path) for path in self.photos])
+
+    def test_a_shift_sent_in_chunks_of_one_group_is_one_line_of_history_each_photo_told_its_new_date(self):
+        # The page sends a folder's Time Shift as its tag changes go, a chunk a request under the one token of the owner's
+        # click (#3284): History shows one line for it, and each reply names every photo's Date Taken as its file holds it
+        # now, which the page shows without spelling a date of its own. A token that is not one is refused, nothing written.
+        date(self.photos)
+        status, refused = self.lib.post(ROUTE, {**self.shift_op({self.photos[0]: self.ids[0]}), "group": "a/b"})
+        self.assertEqual((400, {}), (status, refused["written"]), refused)
+        self.assertEqual([], self.changes())
+        replies = []
+        for named in ({self.photos[0]: self.ids[0], self.photos[1]: self.ids[1]}, {self.photos[2]: self.ids[2]}):
+            status, reply = self.lib.post(ROUTE, {**self.shift_op(named), "group": "shift-1"})
+            self.assertEqual(200, status, reply)
+            replies.append(reply)
+        self.assertEqual([{"2020:06:01 10:30:00"}] * 2, [{each["taken"] for each in reply["written"].values()}
+                                                         for reply in replies])
+        self.assertEqual(["2020:06:01 10:30:00"] * 3, [taken_in(path) for path in self.photos])
+        status, history = self.lib.get("/api/history", {"limit": 5})
+        self.assertEqual(200, status, history)
+        (line,) = [each for each in history["changes"] if each["files"]]   # the library's first settings stamp left out
+        self.assertEqual(("time shift", "shift-1", 2, 3), (line["operation"], line["group"], line["writes"],
+                                                           line["summary"]["photos"]))
 
     def test_a_shift_with_an_id_that_names_another_file_now_is_refused_409_and_nothing_is_written(self):
         date(self.photos)

@@ -37,7 +37,7 @@ async function open(t, { photos, suggestions = {}, tags = [] } = {}) {
     .on("/api/folder/scan", list)
     .on("/api/photo-faces", { faces: [], total: 0, unmatched: 0 })
     .on("/api/photo/save-metadata", { success: true })
-    .on("/api/photos/bulk-tags", { success: true })
+    .on("/api/photos/write", { success: true })
     .on("/api/folder/suggest-status", { status: "completed", suggestions });
   const ctx = await loadApp("tagpup", { t, url: "http://localhost:8090/photo_index/", server });
   await openFolder(ctx, "D:/Library/2020");
@@ -68,8 +68,8 @@ describe("a photo's pills", () => {
     click(ctx.window, pill);
     await flush(ctx.window, 8);
     // The pill's removal is a change of the one tag (pending.js); the title's save after it sends the photo's tags.
-    const removal = ctx.server.calls.find((c) => c.url.includes("bulk-tags"));
-    assert.deepEqual(Object.values(removal.body.changes), [{ add: [], remove: ["Banana"] }]);
+    const removal = ctx.server.calls.find((c) => c.url.includes("photos/write"));
+    assert.deepEqual(Object.values(removal.body.changes), [{ id: null, add: [], remove: ["Banana"] }]);
     ctx.document.getElementById("input-photo-title").value = "Fruit stall";
     ctx.document.getElementById("btn-save-title").click();
     await flush(ctx.window, 8);

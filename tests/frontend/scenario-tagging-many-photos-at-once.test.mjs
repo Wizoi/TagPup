@@ -15,7 +15,7 @@
  * folder was left reaches the records this browser kept of that folder, even while a view shows one of its photos, and a
  * page left with a write out forgets them; photos missing on disk are said once, when the click's change is done.
  *
- * The server's bulk-tags replies are held here until the test answers them, oldest first.
+ * The server's photos/write replies are held here until the test answers them, oldest first.
  */
 import { test, describe, afterEach } from "node:test";
 import assert from "node:assert/strict";
@@ -47,7 +47,7 @@ function heldPage(ctx, held) {
 async function viewableFolder(t, options = {}) {
   const held = [];
   const ctx = await loadViewPage(t, options);
-  ctx.server.first("/api/folder/scan", scanOf(50, [])).first("/api/photos/bulk-tags", () => new Promise((resolve) => held.push(resolve)));
+  ctx.server.first("/api/folder/scan", scanOf(50, [])).first("/api/photos/write", () => new Promise((resolve) => held.push(resolve)));
   await openFolder(ctx, FOLDER);
   await ctx.settle(60);
   ctx.document.getElementById("btn-select-all-thumbnails").click();
@@ -55,7 +55,7 @@ async function viewableFolder(t, options = {}) {
   return heldPage(ctx, held);
 }
 
-/** A folder of `n` photos holding `tags`, all selected; its bulk-tags replies wait for `answer`. */
+/** A folder of `n` photos holding `tags`, all selected; its photos/write replies wait for `answer`. */
 async function folderOf(t, n, { tags = [], bulk } = {}) {
   const held = [];
   const server = new FakeServer()
@@ -66,7 +66,7 @@ async function folderOf(t, n, { tags = [], bulk } = {}) {
     .on("/api/folder/index-status", { status: "completed", percent: 100, message: "Ready" })
     .on("/api/folder/scan", scanOf(n, tags))
     .on("/api/photo-faces", { faces: [], total: 0, unmatched: 0 })
-    .on("/api/photos/bulk-tags", bulk || (() => new Promise((resolve) => held.push(resolve))))
+    .on("/api/photos/write", bulk || (() => new Promise((resolve) => held.push(resolve))))
     .on("/api/photo/save-metadata", { success: true })
     .on("/api/taxonomy/create", { success: true })
     .on("/api/folder/suggest-status", { status: "completed", suggestions: {} });
@@ -77,7 +77,7 @@ async function folderOf(t, n, { tags = [], bulk } = {}) {
   return heldPage({ ...ctx }, held);
 }
 
-const writes = (ctx) => ctx.server.calls.filter((c) => c.url.includes("/api/photos/bulk-tags")).map((c) => c.body);
+const writes = (ctx) => ctx.server.calls.filter((c) => c.url.includes("/api/photos/write")).map((c) => c.body);
 const status = (ctx) => ctx.document.getElementById("status-text").textContent;
 const scans = (ctx, folder) => ctx.server.calls.filter((c) => c.url.includes(`/api/folder/scan?path=${encodeURIComponent(folder)}`)).length;
 const pendingOf = (ctx) => pageExports(ctx.window, "web/tagpup/state.js").state.pending;
@@ -126,13 +126,13 @@ describe("a tag added while a 50-photo change is being written", () => {
     await answer(ctx);
     const second = writes(ctx)[1];
     assert.deepEqual(Object.keys(second.changes), Array.from({ length: 25 }, (_, i) => pathOf(25 + i)));
-    for (const change of Object.values(second.changes)) assert.deepEqual(change, { add: ["Trips/Coast", "Places/Harbour"], remove: [] });
+    for (const change of Object.values(second.changes)) assert.deepEqual(change, { id: null, add: ["Trips/Coast", "Places/Harbour"], remove: [] });
     assert.equal(second.group, writes(ctx)[0].group, "the files not yet sent left their first click's group");
 
     await answer(ctx);
     const third = writes(ctx)[2];
     assert.deepEqual(Object.keys(third.changes), first);
-    for (const change of Object.values(third.changes)) assert.deepEqual(change, { add: ["Places/Harbour"], remove: [] });
+    for (const change of Object.values(third.changes)) assert.deepEqual(change, { id: null, add: ["Places/Harbour"], remove: [] });
     assert.notEqual(third.group, writes(ctx)[0].group, "a new change for files already written joined the first group");
     await answer(ctx);
     assert.equal(writes(ctx).length, 3);
@@ -162,11 +162,11 @@ describe("clicks that take each other back", () => {
     // Trips/Gone, added and taken off, is a removal (the last click wins), never an add.
     const second = writes(ctx)[1].changes;
     assert.equal(Object.keys(second).length, 5);
-    for (const change of Object.values(second)) assert.deepEqual(change, { add: ["Trips/Kept", "Places/Coast"], remove: ["Trips/Gone"] });
+    for (const change of Object.values(second)) assert.deepEqual(change, { id: null, add: ["Trips/Kept", "Places/Coast"], remove: ["Trips/Gone"] });
     await answer(ctx);
     const third = writes(ctx)[2].changes;
     assert.equal(Object.keys(third).length, 25);
-    for (const change of Object.values(third)) assert.deepEqual(change, { add: ["Places/Coast"], remove: ["Trips/Gone"] });
+    for (const change of Object.values(third)) assert.deepEqual(change, { id: null, add: ["Places/Coast"], remove: ["Trips/Gone"] });
     await answer(ctx);
     assert.equal(writes(ctx).length, 3);
     assert.ok(!JSON.stringify(writes(ctx).map((w) => Object.values(w.changes).map((c) => c.add))).includes("Trips/Gone"), "a tag taken off before it was sent was still added");
@@ -177,12 +177,12 @@ describe("a record older than its file", () => {
   test("an add the record says the file holds is still sent, and so is a removal of a tag the record lacks", async (t) => {
     const ctx = await folderOf(t, 3, { tags: ["Places/Coast"], bulk: () => ({ success: true }) });
     await addTags(ctx, "Places/Coast");
-    assert.deepEqual(Object.values(writes(ctx)[0].changes)[0], { add: ["Places/Coast"], remove: [] });
+    assert.deepEqual(Object.values(writes(ctx)[0].changes)[0], { id: null, add: ["Places/Coast"], remove: [] });
     const { removeTagFromAllSelected } = pageExports(ctx.window, "web/tagpup/selection.js");
     removeTagFromAllSelected("Trips/Elsewhere", false);
     await flush(ctx.window, 8);
     assert.equal(writes(ctx).length, 2, "a removal the record thought done was not sent");
-    assert.deepEqual(Object.values(writes(ctx)[1].changes)[0], { add: [], remove: ["Trips/Elsewhere"] });
+    assert.deepEqual(Object.values(writes(ctx)[1].changes)[0], { id: null, add: [], remove: ["Trips/Elsewhere"] });
   });
 });
 
@@ -252,8 +252,8 @@ describe("a single save clicked between two writes", () => {
     await flush(ctx.window, 8);
 
     await answer(ctx);
-    for (let i = 0; i < 20 && ctx.server.calls.filter((c) => c.url.includes("bulk-tags")).length < 3; i++) await flush(ctx.window, 2);
-    const order = ctx.server.calls.filter((c) => /bulk-tags|save-metadata/.test(c.url)).map((c) => (c.url.includes("bulk") ? "bulk" : "save"));
+    for (let i = 0; i < 20 && ctx.server.calls.filter((c) => c.url.includes("photos/write")).length < 3; i++) await flush(ctx.window, 2);
+    const order = ctx.server.calls.filter((c) => /photos\/write|save-metadata/.test(c.url)).map((c) => (c.url.includes("photos/write") ? "bulk" : "save"));
     assert.deepEqual(order, ["bulk", "bulk", "save", "bulk"]);
     const save = ctx.server.calls.find((c) => c.url.includes("save-metadata")).body;
     assert.deepEqual(save.tags, ["Trips/Coast", "Places/Beach"]);
@@ -402,7 +402,7 @@ describe("the record's own spelling of its path", () => {
     const ctx = await folderOf(t, 1);
     await addTags(ctx, "Trips/Coast");
     assert.deepEqual(Object.keys(writes(ctx)[0].changes), [pathOf(0)]);
-    await answer(ctx, { success: true, written: { [pathOf(0).toLowerCase()]: ["Places/Held", "Trips/Coast"] } });
+    await answer(ctx, { success: true, written: { [pathOf(0).toLowerCase()]: { tags: ["Places/Held", "Trips/Coast"] } } });
     const { state } = pageExports(ctx.window, "web/tagpup/state.js");
     assert.deepEqual(state.folderPhotos[0].tags, ["Places/Held", "Trips/Coast"]);
   });
@@ -541,8 +541,8 @@ describe("a library view between a folder and its changes", () => {
     ctx.cardById(11).querySelector(".btn-thumbnail-detail").click();
     await ctx.settle(80);
     assert.equal(ctx.state.folderPhotos[0].path, pathOf(0), "the view does not show the folder's photo");
-    const stamps = Object.fromEntries(Array.from({ length: 25 }, (_, i) => [pathOf(i), { mtime: 1700000000, size: 2048 }]));
-    await answer(ctx, { success: true, stamps });
+    const written = Object.fromEntries(Array.from({ length: 25 }, (_, i) => [pathOf(i), { tags: ["Trips/Coast"], mtime: 1700000000, size: 2048 }]));
+    await answer(ctx, { success: true, written });
     const record = kept(ctx, FOLDER).photos[0];
     assert.equal(record.mtime, 1700000000, "the kept record names the file's old stamp: a save from it is refused");
     assert.deepEqual(record.tags, ["Trips/Coast"]);
@@ -568,7 +568,7 @@ describe("an Undo pressed in another folder", () => {
     const { pendChanges } = pageExports(ctx.window, "web/tagpup/pending.js");
     pendChanges([{ path: pathOf(1), remove: ["Trips/Coast"] }]);
     await flush(ctx.window, 8);
-    await answer(ctx, { success: true, stamps: { [pathOf(1)]: { mtime: 1700000500, size: 4096 } }, written: { [pathOf(1)]: [] } });
+    await answer(ctx, { success: true, written: { [pathOf(1)]: { tags: [], mtime: 1700000500, size: 4096 } } });
     const record = kept(ctx, FOLDER).photos[1];
     assert.equal(record.mtime, 1700000500, "the kept record names the stamp the file had before the Undo: a save from it is refused");
     assert.deepEqual(record.tags, [], "the kept record still holds the tag the Undo took off");
@@ -584,8 +584,8 @@ describe("opening another folder while changes wait", () => {
     assert.ok(ctx.confirms.includes("Tag changes for 25 photos are not written yet. Leave without writing them?"), ctx.confirms.join("|"));
     const { state } = pageExports(ctx.window, "web/tagpup/state.js");
     assert.equal(state.scannedFolder, OTHER);
-    const stamps = Object.fromEntries(Array.from({ length: 25 }, (_, i) => [pathOf(i), { mtime: 1700000000, size: 2048 }]));
-    await answer(ctx, { success: true, stamps });
+    const written = Object.fromEntries(Array.from({ length: 25 }, (_, i) => [pathOf(i), { tags: ["Trips/Coast"], mtime: 1700000000, size: 2048 }]));
+    await answer(ctx, { success: true, written });
     assert.equal(writes(ctx).length, 1, "the files not sent were written after the owner left them");
 
     await openFolder(ctx, FOLDER);

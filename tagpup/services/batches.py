@@ -27,7 +27,7 @@ import threading
 import time
 
 from tagpup.core.result import Conflict, Refused
-from tagpup.store import db, file_journal
+from tagpup.store import db, file_journal, journal
 
 logger = logging.getLogger(__name__)
 
@@ -37,6 +37,16 @@ CHUNK = 25
 MAX_BATCH = 5_000
 #: How many batches wait behind the one running before another is refused.
 MOST_WAITING = 8
+
+
+def group_problem(group, photos):
+    """Why a write of `photos` photos cannot carry `group`, the token of the one action of the owner's it is a chunk of
+    (journal.GROUP: History lists the chunks as one line and undoes them together), or None: a token that is not one
+    (journal.group_problem), or a chunk of more than CHUNK photos -- a batch, which the batch strip finds in History by
+    its own id. The one rule of a group, for every write that carries one (tagging.change_each, photos.shift_date_taken)."""
+    return journal.group_problem(group) or (
+        group is not None and photos > CHUNK
+        and "A write of one group names at most %d photos (%d were named)." % (CHUNK, photos)) or None
 
 QUEUED, RUNNING, STOPPING = "queued", "running", "stopping"
 #: What a sentence naming the batches under way says they are.

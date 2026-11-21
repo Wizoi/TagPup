@@ -77,10 +77,10 @@ function serverFor({ photoFaces = THREE, tree = TAXONOMY, matches = MATCHES, pho
       return { success: true };
     })
     // A person taken off the photo goes as its pills' removals do (pending.js), a change of the tags it names.
-    .on("/api/photos/bulk-tags", () => {
+    .on("/api/photos/write", () => {
       const [[path, { add, remove }]] = Object.entries(written(server).changes);
       keywords = [...keywords.filter((tag) => !remove.includes(tag)), ...add.filter((tag) => !keywords.includes(tag))];
-      return { success: true, written: { [path]: [...keywords] } };
+      return { success: true, written: { [path]: { tags: [...keywords] } } };
     })
     .on("/api/face/match", () => {
       if (busy.on) return Promise.reject(new Error("the library is busy"));
@@ -143,7 +143,7 @@ async function openPhoto(t, options = {}) {
   ctx.boxes = () => [...ctx.layer().querySelectorAll(".face-box")];
   ctx.panel = () => ctx.layer().querySelector(".face-panel");
   ctx.posts = (route) => server.calls.filter((c) => c.method === "POST" && c.url.includes(route));
-  ctx.order = () => server.calls.filter((c) => /save-metadata|bulk-tags/.test(c.url)).map((c) => (c.url.includes("bulk") ? "bulk" : "save"));
+  ctx.order = () => server.calls.filter((c) => /save-metadata|photos\/write/.test(c.url)).map((c) => (c.url.includes("photos/write") ? "bulk" : "save"));
   ctx.wait = (ms) => new Promise((resolve) => ctx.window.setTimeout(resolve, ms));
   ctx.key = (target, key, extra = {}) => {
     const event = new ctx.window.KeyboardEvent("keydown", { key, bubbles: true, cancelable: true, ...extra });
@@ -587,7 +587,7 @@ describe("naming a face against the server", { skip: !REAL }, () => {
     click(ctx.window, ctx.box(1));
     await until(ctx, () => ctx.panel(), "the named face's panel");
     click(ctx.window, [...ctx.panel().querySelectorAll("button")].find((b) => b.textContent === "Not this person"));
-    await until(ctx, () => ctx.replies("/api/face/unmatch") === 1 && ctx.replies("bulk-tags") === 1, "the name to be taken off");
+    await until(ctx, () => ctx.replies("/api/face/unmatch") === 1 && ctx.replies("photos/write") === 1, "the name to be taken off");
     assert.deepEqual(await ctx.faceNames(), [null, null, null]);
     assert.deepEqual(await ctx.tagsOfPhoto(), ["Trips"]);
     assert.match(ctx.box(1).getAttribute("aria-label"), /not named/);
@@ -649,7 +649,7 @@ describe("taking a name off, and ruling a face out", () => {
     click(ctx.window, notThisPerson(ctx));
     await flush(ctx.window, 12);
     assert.equal(ctx.posts("/api/photo/save-metadata").length, 0, "the person is still on another face");
-    assert.equal(ctx.posts("/api/photos/bulk-tags").length, 0, "the person is still on another face");
+    assert.equal(ctx.posts("/api/photos/write").length, 0, "the person is still on another face");
     assert.match(ctx.$("detail-people").textContent, /Hazel Brookmire/);
   });
 
@@ -657,7 +657,7 @@ describe("taking a name off, and ruling a face out", () => {
     const photo = photoRecord({ filename: "a.jpg", tags: ["People/Hazel Brookmire"], people: ["Hazel Brookmire"] });
     const ctx = await openPhoto(t, {
       photoFaces: NAMED, photo,
-      extra: (server) => server.first("/api/photos/bulk-tags", { success: false, error: "locked" }),
+      extra: (server) => server.first("/api/photos/write", { success: false, error: "locked" }),
     });
     ctx.show();
     click(ctx.window, ctx.boxes()[0]);
@@ -680,8 +680,8 @@ describe("taking a name off, and ruling a face out", () => {
     await flush(ctx.window, 16);
     const saves = ctx.posts("/api/photo/save-metadata").map((c) => c.body.tags);
     assert.deepEqual(saves, [["Trips", "People/Hazel Brookmire", "People/Anh Tran"]], "the new person first");
-    const removals = ctx.posts("/api/photos/bulk-tags").map((c) => Object.values(c.body.changes));
-    assert.deepEqual(removals, [[{ add: [], remove: ["People/Hazel Brookmire"] }]], "then the old person off");
+    const removals = ctx.posts("/api/photos/write").map((c) => Object.values(c.body.changes));
+    assert.deepEqual(removals, [[{ id: null, add: [], remove: ["People/Hazel Brookmire"] }]], "then the old person off");
     assert.deepEqual(ctx.order(), ["save", "bulk"], "the old person went off before the new one was put on");
     assert.match(ctx.boxes()[0].getAttribute("aria-label"), /Anh Tran/);
   });
@@ -933,8 +933,8 @@ describe("in the full-window zoom (#859)", () => {
     await flush(ctx.window, 4);
     click(ctx.window, [...ctx.zoomPanel().querySelectorAll("button")].find((b) => b.textContent === "Not this person"));
     await flush(ctx.window, 12);
-    const removals = ctx.posts("/api/photos/bulk-tags").map((c) => Object.values(c.body.changes));
-    assert.deepEqual(removals, [[{ add: [], remove: ["People/Anh Tran"] }]]);
+    const removals = ctx.posts("/api/photos/write").map((c) => Object.values(c.body.changes));
+    assert.deepEqual(removals, [[{ id: null, add: [], remove: ["People/Anh Tran"] }]]);
     assert.match(ctx.zoomBoxes()[0].getAttribute("aria-label"), /not named/);
   });
 

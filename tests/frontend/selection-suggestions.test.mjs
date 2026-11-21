@@ -39,7 +39,7 @@ function build(photos, suggestions) {
     .on("/api/folder/index-status", { status: "completed", percent: 100, message: "Ready" })
     .on("/api/folder/scan", photos)
     .on("/api/photo-faces", { faces: [], total: 0, unmatched: 0 })
-    .on("/api/photos/bulk-tags", { success: true })
+    .on("/api/photos/write", { success: true })
     .on("/api/folder/suggest-status", suggestions);
 }
 
@@ -255,13 +255,13 @@ describe("a suggestion says how sure it is, and lands where it was asked for", (
     click(ctx.window, el);
     await flush(ctx.window, 6);
 
-    const body = ctx.server.lastBody("/api/photos/bulk-tags");
+    const body = ctx.server.lastBody("/api/photos/write");
     assert.ok(body, "clicking the suggestion sent nothing");
     assert.deepEqual(
       Object.keys(body.changes), [twoPhotos[0].path],
       `applied to photos that never suggested it: ${JSON.stringify(Object.keys(body.changes))}`
     );
-    assert.deepEqual(body.changes[twoPhotos[0].path], { add: ["Anh Tran"], remove: [] });
+    assert.deepEqual(body.changes[twoPhotos[0].path], { id: null, add: ["Anh Tran"], remove: [] });
   });
 });
 

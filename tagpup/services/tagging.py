@@ -513,13 +513,11 @@ def change_each(library, changes, exiftool_path, operation, persons=None, et=Non
     `on_planned` is told the id of the held photos' change (file_changes.write_fields).
 
     `group`: the token of the one action of the owner's this is a chunk of (journal.GROUP, written in the change's
-    summary): History lists the chunks as one line and undoes them together. A token that is not one (journal.group_problem),
-    or a chunk of more than batches.CHUNK photos -- a batch, which the batch strip finds in History by its own id -- refuses
-    the whole of it, nothing written."""
+    summary): History lists the chunks as one line and undoes them together. A group it cannot carry (batches.group_problem)
+    refuses the whole of it, nothing written."""
     adds = dict.fromkeys(t for add, _remove in changes.values() for t in add)
-    problem = (validation.first_problem("tag", adds) or refuse_under_people(library, adds) or journal.group_problem(group)
-               or (group is not None and len(changes) > batches.CHUNK
-                   and "A write of one group names at most %d photos (%d were named)." % (batches.CHUNK, len(changes))))
+    problem = (validation.first_problem("tag", adds) or refuse_under_people(library, adds)
+               or batches.group_problem(group, len(changes)))
     if problem:
         return _refused(len(changes), problem)
     refused = _refused(len(changes), None)

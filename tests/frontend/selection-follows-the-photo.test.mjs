@@ -56,10 +56,10 @@ describe("the selection follows its photos", () => {
     // A bulk write now names the file as it is called.
     ctx.window.confirm = () => true;
     ctx.document.getElementById("bulk-add-tags-input").value = "Trips/Lighthouse";
-    ctx.server.on("/api/photos/bulk-tags", { success: true });
+    ctx.server.on("/api/photos/write", { success: true });
     click(ctx.window, ctx.document.getElementById("btn-bulk-add-tags"));
     await flush(ctx.window, 8);
-    const sent = ctx.server.lastBody("/api/photos/bulk-tags");
+    const sent = ctx.server.lastBody("/api/photos/write");
     assert.deepEqual(Object.keys(sent.changes).sort(), [renamed, `${FOLDER}\\c.jpg`].sort());
   });
 

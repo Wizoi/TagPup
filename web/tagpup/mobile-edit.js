@@ -7,8 +7,10 @@
  * another screen) or the page being hidden (another app, the tab going: Android may discard a hidden tab, its timers
  * frozen) puts it in its turn then, the sheet left open: after a Save still out, never beside it (the Save would be
  * refused as changed on the PC); each write is keepalive, but a removal behind a Save still out when the page really
- * unloads is not sent (accepted, #3172). A tag is added or taken off through /api/photos/bulk-tags,
- * against what the file holds, so no stamp; the title and Date Taken through save-metadata (web/common/photo-write.js)
+ * unloads is not sent (accepted, #3172). A tag is added or taken off through the one entry point of photo writes
+ * (POST /api/photos/write, op `tags`), the photo named by its id, against what the file holds, so no stamp; refused because
+ * the photo is no longer at the path named (renamed on the PC: 409), it is read again by its id and sent once more, named
+ * where it is now. The title and Date Taken through save-metadata (web/common/photo-write.js)
  * with the stamp, which the server refuses when the file changed since it was read: nothing is written, the sheet says
  * so and reads the photo again, the text typed kept. Each write of the page waits for the one before it (state.writing).
  * A title or date typed and left by Back or another screen is kept (state.drafts) and put back when the photo's sheet
@@ -60,22 +62,57 @@ function toast(text, undo = null, ms = UNDO_MS) {
     return close;
 }
 
-/** Add `add` or take off `remove` in the file of `job` (a photo's id and path); the sheet's record of it becomes the file's. */
-async function writeTags(job) {
-    const { path, change } = job;
-    const res = await api.fetch('/api/photos/bulk-tags', {
+/**
+ * Add `add` or take off `remove` in the file of `job` (a photo's id and path); the sheet's record of it becomes the file's.
+ * Refused because the photo is not at `job.path` (409 changed_on_disk: renamed on the PC since it was read), it is read
+ * again by its id and sent once more where it is now (`again`); refused a second time, or gone, it fails.
+ */
+async function writeTags(job, again = true) {
+    const res = await api.fetch('/api/photos/write', {
         method: 'POST', headers: { 'Content-Type': 'application/json' }, keepalive: true,
-        body: JSON.stringify({ changes: { [path]: change } }),
+        body: JSON.stringify({ op: 'tags', changes: { [job.path]: { id: job.id, ...job.change } } }),
     });
-    const data = await api.answered(res, 'The tags were not written.');
-    const of = (map) => Object.entries(map || {}).find(([each]) => pathKey(each) === pathKey(path));
-    const written = of(data.written);
+    const data = await res.json().catch(() => null);
+    if (data && data.changed_on_disk && again) {
+        await followMoved(job);
+        return writeTags(job, false);
+    }
+    // A write that ran is answered 200 even when the photo failed: its sentence is among the `errors`.
+    if (!res.ok || !data || !data.success) {
+        throw new Error((data && (data.error || (data.errors && data.errors.length && data.errors[0].why))) || 'The tags were not written.');
+    }
+    const written = Object.entries(data.written || {}).find(([each]) => pathKey(each) === pathKey(job.path));
     if (!written) throw new Error('this file is not where the library last saw it.');
     const record = shownOf(job.id);    // read again since the change was asked, or not shown: the sheet's as it is now
     if (!record) return;
-    record.tags = written[1].slice();
-    takeWritten(record, (of(data.stamps) || [])[1], record.tags);
+    record.tags = written[1].tags.slice();
+    takeWritten(record, written[1], record.tags);
     drawChips();
+}
+
+/** `job`'s photo read again by its id: every write waiting for it, `job` too, names its file where it is now. */
+async function followMoved(job) {
+    const res = await api.fetch(`/api/library/photo?id=${job.id}`);
+    if (res.status === 404) throw new Error('this photo is no longer in the library.');
+    const body = await api.answered(res, 'Could not read this photo.');
+    photoMoved(job.id, body.photo.path);
+    job.path = body.photo.path;
+}
+
+/**
+ * Photo `id`'s file is at `path` now (a Save renamed it, or a tag change found it renamed on the PC): its card, the photo
+ * shown, the sheet's record and every tag change waiting for it name it there.
+ */
+function photoMoved(id, path) {
+    const card = state.photos && state.photos.cards.get(id);
+    for (const held of [card, state.photo && state.photo.id === id ? state.photo : null]) {
+        if (!held) continue;
+        held.path = path;
+        held.name = held.filename = baseName(path);
+    }
+    const record = shownOf(id);
+    if (record) record.path = path;
+    for (const each of [...state.removals, ...state.queued]) if (each.id === id) each.path = path;
 }
 
 /** A tag change of photo `id` at `path` in its turn, after every write sent before it (a Save renaming the file moves `path`). */
@@ -294,13 +331,11 @@ function save() {
         if (data.taken) record.taken = data.taken;
         const card = state.photos && state.photos.cards.get(edit.id);
         for (const held of [card, state.photo && state.photo.id === edit.id ? state.photo : null]) {
-            if (!held) continue;    // the photo's card, named and stamped as its file is now (a title can rename it)
-            Object.assign(held, { path: data.new_path || held.path, mtime: record.mtime, taken: record.taken });
-            held.name = held.filename = baseName(held.path);
+            if (held) Object.assign(held, { mtime: record.mtime, taken: record.taken });   // stamped as its file is now
         }
-        if (data.new_path) {    // a tag change of the photo still waiting names the file by its new name
+        if (data.new_path) {    // a title can rename it: a tag change of the photo still waiting names the file by its new name
             record.path = data.new_path;
-            for (const each of [...state.removals, ...state.queued]) if (each.id === edit.id) each.path = data.new_path;
+            photoMoved(edit.id, data.new_path);
         }
         state.drafts.delete(edit.id);
         if (state.edit === edit) {

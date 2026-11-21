@@ -39,7 +39,7 @@ function build() {
     .on("/api/folder/index-status", { status: "completed", percent: 100, message: "Ready" })
     .on("/api/folder/scan", () => PHOTOS.map((p) => ({ ...p, tags: [...p.tags], people: [...p.people] })))
     .on("/api/photo-faces", { faces: [], total: 0, unmatched: 0 })
-    .on("/api/photos/bulk-tags", hold)
+    .on("/api/photos/write", hold)
     .on("/api/folder/suggest-status", {
       status: "completed",
       suggestions: Object.fromEntries(PHOTOS.map((p) => [p.path, {
@@ -74,7 +74,7 @@ describe("choosing another library while a bulk write is queued", () => {
     click(ctx.window, chip(ctx, "Cross Country"));
     await flush(ctx.window, 8);
     assert.equal(ctx.held.length, 1, "the bulk write was not sent");
-    assert.equal(ctx.server.urls().at(-1), "/alpha/api/photos/bulk-tags");
+    assert.equal(ctx.server.urls().at(-1), "/alpha/api/photos/write");
     assert.equal(said(ctx), "Saving 1 of 1...");
 
     // Nothing asks to keep the write: only an open photo's own save blocks leaving
@@ -94,7 +94,7 @@ describe("choosing another library while a bulk write is queued", () => {
       "a request reached the library just chosen before its page loaded"
     );
     assert.ok(
-      ctx.server.urlsStartingWith("/alpha/").includes("/alpha/api/photos/bulk-tags"),
+      ctx.server.urlsStartingWith("/alpha/").includes("/alpha/api/photos/write"),
       "the queued write's URL no longer names the library it was opened in"
     );
 

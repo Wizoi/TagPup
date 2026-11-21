@@ -370,7 +370,7 @@ same transaction (`store/derived.py`, `people.tree_edit`).
   at a time, `mobile-grid.js` shows a view through library-source.js's card windows and `vgrid.js`, `mobile-photo.js`
   shows one photo large, swiped through with `web/common/swipe.js`, the swipe the desktop page uses too, and zoomed with
   `web/common/image-zoom.js`. `mobile-edit.js` is its Edit sheet, a history step of its own over the photo: a tag added
-  or taken off (behind an Undo) through `/api/photos/bulk-tags`, the title and Date Taken through `photo-write.js`, each
+  or taken off (behind an Undo) through `/api/photos/write` (op `tags`, by id), the title and Date Taken through `photo-write.js`, each
   write of the page in turn after the one before it.
 - No build step. Tests import the modules (`node --test tests/frontend/*.test.mjs`), jsdom loads a page's
   modules in import order for whole flows (`tests/frontend/harness.mjs`).

@@ -72,7 +72,7 @@ async function open(t, { faces = THREE, tags = [], status = 200 } = {}) {
     .on("/api/folder/index-status", { status: "completed", percent: 100, message: "Ready" })
     .on("/api/folder/scan", [{ ...A, tags: tags.slice() }, { ...B, tags: [] }])
     .on("/api/photo/save-metadata", () => (saves.length ? saves.shift() : { success: true }))
-    .on("/api/photos/bulk-tags", () => (bulks.length ? bulks.shift() : { success: true }))
+    .on("/api/photos/write", () => (bulks.length ? bulks.shift() : { success: true }))
     .on("/api/face/match", { success: true })
     .on("/api/photo-faces", (url) => (queued.length ? queued.shift()(url) : faces(url)), { status });
   const ctx = await loadApp("tagpup", { t, url: "http://localhost:8090/photo_index/", server });
@@ -164,7 +164,7 @@ describe("V19: tagging the open photo keeps its faces in place", () => {
     // A pill's removal is written as the page's tag changes are (pending.js), and its reply says the faces it unnamed.
     ctx.nextBulk(unnamed(1, JANE));
     await ctx.pill("Jane Doe");
-    assert.deepEqual(Object.values(ctx.server.lastBody("/api/photos/bulk-tags").changes), [{ add: [], remove: ["People/Jane Doe"] }],
+    assert.deepEqual(Object.values(ctx.server.lastBody("/api/photos/write").changes), [{ id: null, add: [], remove: ["People/Jane Doe"] }],
       "the person was not taken off");
     assert.equal(ctx.reads(), before + 1, "the faces were not read again after their person went");
   });
@@ -180,7 +180,7 @@ describe("V19: tagging the open photo keeps its faces in place", () => {
     const before = ctx.reads();
     ctx.nextBulk(unnamed(2, ALEX));
     await ctx.pill("Alex Roe");
-    assert.deepEqual(Object.values(ctx.server.lastBody("/api/photos/bulk-tags").changes), [{ add: [], remove: [ALEX.tag] }],
+    assert.deepEqual(Object.values(ctx.server.lastBody("/api/photos/write").changes), [{ id: null, add: [], remove: [ALEX.tag] }],
       "the person was not taken off");
     assert.equal(ctx.reads(), before + 1, "the faces were not read again after their person went");
     assert.doesNotMatch(ctx.summary(), /all identified/, "the strip still said the unnamed face was named");
@@ -253,7 +253,7 @@ describe("V19: tagging the open photo keeps its faces in place", () => {
     const before = ctx.reads();
     ctx.nextBulk({ success: true, unnamed_faces: [{ id: 9, name: JANE.name }] });
     await ctx.click("btn-undo");
-    assert.deepEqual(Object.keys(ctx.server.lastBody("/api/photos/bulk-tags").changes), [B.path], "the undo did not write B");
+    assert.deepEqual(Object.keys(ctx.server.lastBody("/api/photos/write").changes), [B.path], "the undo did not write B");
     assert.equal(ctx.reads(), before, "B's face in the undo's reply read A's faces again");
   });
 

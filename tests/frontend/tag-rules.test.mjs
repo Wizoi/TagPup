@@ -63,7 +63,7 @@ async function onAPhoto(t) {
     .on("/api/folder/scan", [photoRecord({ filename: "a.jpg", tags: ["Activity"] })])
     .on("/api/photo-faces", { faces: [], total: 0, unmatched: 0 })
     .on("/api/photo/save-metadata", { success: true })
-    .on("/api/photos/bulk-tags", { success: true });
+    .on("/api/photos/write", { success: true });
   const ctx = await loadApp("tagpup", { t, url: "http://localhost:8090/photo_index/", server });
   await openFolder(ctx, "D:/Library/2020", { settle: 6 });
   ctx.document.querySelector("li[data-path]").click();
@@ -83,7 +83,7 @@ function typeAndEnter(ctx, id, text) {
 }
 
 const writes = (ctx) =>
-  ctx.server.calls.filter((c) => /taxonomy\/create|save-metadata|bulk-tags/.test(c.url));
+  ctx.server.calls.filter((c) => /taxonomy\/create|save-metadata|photos\/write/.test(c.url));
 
 describe("TagPup: a tag that cannot be set", () => {
   test("typed on a photo, sends nothing, says why, and stays in the box", async (t) => {

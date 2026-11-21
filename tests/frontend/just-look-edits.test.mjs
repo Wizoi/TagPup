@@ -42,7 +42,7 @@ function server(scanned = photos) {
     .on("/api/folder/membership", (url) => (url.includes(encodeURIComponent(HELD_FOLDER)) ? HELD : NOT_HELD))
     .on("/api/photo-faces", { faces: [], total: 0, unmatched: 0 })
     .on("/api/photo/save-metadata", (url) => ({ success: true, new_path: A, taken: "2018:03:04 09:08:07", file_only: 1, with_rows: 0 }))
-    .on("/api/photos/bulk-tags", { success: true, written: {}, file_only: 2, with_rows: 0 })
+    .on("/api/photos/write", { success: true, written: {}, file_only: 2, with_rows: 0 })
     .on("/api/photo/rotate", { success: true, mtime: 1700000000, file_only: 1, with_rows: 0 })
     .on("/api/photo/delete", { success: true, file_only: 1, with_rows: 0,
       message: "Moved to the Recycle Bin. Nothing in kr-track changed: it does not hold this folder." })
@@ -142,25 +142,25 @@ describe("a caption and tags on one photo", () => {
 
 describe("tags on many photos", () => {
   test("added with the bulk field, and the answer says where", async (t) => {
-    const s = server().first("/api/photos/bulk-tags", { success: true, file_only: 2, with_rows: 0,
-      written: { [A]: ["Beach", "Trips/Lighthouse"], [B]: ["Trips/Lighthouse"] } });
+    const s = server().first("/api/photos/write", { success: true, file_only: 2, with_rows: 0,
+      written: { [A]: { tags: ["Beach", "Trips/Lighthouse"] }, [B]: { tags: ["Trips/Lighthouse"] } } });
     const ctx = await looking(t, s);
     ctx.select(0, 1);
     ctx.$("bulk-add-tags-input").value = "Trips/Lighthouse";
     click(ctx.window, ctx.$("btn-bulk-add-tags"));
     await flush(ctx.window, 10);
-    const sent = ctx.posts("/api/photos/bulk-tags");
+    const sent = ctx.posts("/api/photos/write");
     assert.equal(sent.length, 1, "nothing was sent");
     assert.deepEqual(Object.keys(sent[0].body.changes).sort(), [A, B]);
-    for (const change of Object.values(sent[0].body.changes)) assert.deepEqual(change, { add: ["Trips/Lighthouse"], remove: [] });
+    for (const change of Object.values(sent[0].body.changes)) assert.deepEqual(change, { id: null, add: ["Trips/Lighthouse"], remove: [] });
     assert.match(ctx.$("status-text").textContent, /Written to the files only: kr-track does not hold this folder/);
     assert.equal(ctx.posts("/api/taxonomy/create").length, 0);
     assert.equal(ctx.document.querySelectorAll(".photo-item-file").length, 2, "a photo left the list");
   });
 
   test("a partly held folder says how many went where", async (t) => {
-    const s = server().first("/api/photos/bulk-tags", { success: true, file_only: 1, with_rows: 1,
-      written: { [A]: ["Beach", "Trips/Lighthouse"], [B]: ["Trips/Lighthouse"] } });
+    const s = server().first("/api/photos/write", { success: true, file_only: 1, with_rows: 1,
+      written: { [A]: { tags: ["Beach", "Trips/Lighthouse"] }, [B]: { tags: ["Trips/Lighthouse"] } } });
     const ctx = await looking(t, s);
     ctx.select(0, 1);
     ctx.$("bulk-add-tags-input").value = "Trips/Lighthouse";
@@ -173,7 +173,7 @@ describe("tags on many photos", () => {
   test("a folder opened while the write is out is not touched by its answer", async (t) => {
     let release;
     const answer = new Promise((resolve) => { release = resolve; });
-    const s = server().first("/api/photos/bulk-tags", () => answer);
+    const s = server().first("/api/photos/write", () => answer);
     const ctx = await looking(t, s);
     ctx.select(0, 1);
     ctx.$("bulk-add-tags-input").value = "Trips/Lighthouse";
@@ -181,8 +181,8 @@ describe("tags on many photos", () => {
     await flush(ctx.window, 4);
     await openFolder(ctx, HELD_FOLDER);
     assert.ok(!ctx.document.body.classList.contains("just-looking"), "the new folder is held");
-    release({ success: true, file_only: 2, with_rows: 0, written: { [A]: ["Beach", "Trips/Lighthouse"],
-      [B]: ["Trips/Lighthouse"] } });
+    release({ success: true, file_only: 2, with_rows: 0, written: { [A]: { tags: ["Beach", "Trips/Lighthouse"] },
+      [B]: { tags: ["Trips/Lighthouse"] } } });
     await flush(ctx.window, 10);
     const names = [...ctx.document.querySelectorAll(".photo-item-file")].map((e) => e.getAttribute("data-path"));
     assert.deepEqual(names, ["D:\\Library\\2020\\held.jpg"], "the list is not the new folder's");
@@ -437,7 +437,7 @@ describe("what stays off", () => {
       && !item.hasAttribute("data-requires-selection")), "an entry was dimmed by just looking");
     click(ctx.window, menu.querySelector('[data-action="select-all"]'));
     await flush(ctx.window, 4);
-    assert.ok(ctx.server.calls.every((c) => c.method !== "POST" || !/save-metadata|bulk-tags|rotate|delete/.test(c.url)));
+    assert.ok(ctx.server.calls.every((c) => c.method !== "POST" || !/save-metadata|photos\/write|rotate|delete/.test(c.url)));
   });
 
   test("a library that holds the folder is written with its rows, with no note", async (t) => {
