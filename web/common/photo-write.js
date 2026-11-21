@@ -66,6 +66,32 @@ export function takeWritten(photo, stamp, tags) {
     }
 }
 
+/** Photo `id` as the library holds it now: its record, or null when the library no longer has it (404). A read that fails rejects. */
+export async function readById(id) {
+    const res = await api.fetch(`/api/library/photo?id=${id}`);
+    if (res.status === 404) return null;
+    const body = await api.answered(res, 'it could not be read again.');
+    return body.photo;
+}
+
+/**
+ * Both pages' one rule for a write that names its photos by id (POST /api/photos/write), refused whole because one of them
+ * is not at the path it names -- renamed, moved or deleted since the page read it (409 `changed_on_disk`), nothing
+ * written: each photo named by id is read again by it, once, and the write is sent again naming each where it is now; one
+ * the library no longer has is gone, as a file gone in Explorer is. Refused again after that read, it is the write's
+ * failure (a Retry of it reads them again: the caller clears `readAgain`). `items` are the write's photos, {id: photo id
+ * or null}. Resolves null when `reply` is not that refusal or they were read again once already (an item's `readAgain`);
+ * else, in their order, each one's record as the library holds it now, null for one it no longer has, undefined for one
+ * named by its path alone, each item marked `readAgain`. A read that fails rejects. Where and when the write goes again
+ * (at once, or given back to the page's queue) is the caller's.
+ */
+export async function readMoved(reply, items) {
+    if (!(reply && reply.changed_on_disk) || items.some(item => item.readAgain)) return null;
+    const found = await Promise.all(items.map(item => (item.id === null || item.id === undefined ? undefined : readById(item.id))));
+    items.forEach(item => { item.readAgain = true; });
+    return found;
+}
+
 /**
  * POST a photo's title and tags -- as they are now, unless given -- and check the reply. A refusal rejects with the
  * server's sentence; one because the file changed since it was read (409) is marked `changedOnDisk` and handed to

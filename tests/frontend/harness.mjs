@@ -289,6 +289,16 @@ export function pageSource(appName) {
 export const PUBLISHED_RULES = JSON.parse(
   fs.readFileSync(path.join(REPO_ROOT, "tests", "validation_rules.json"), "utf8"));
 
+const ANSWER = Symbol("answer");
+
+/**
+ * A fake route's reply with a status of its own, for a route that answers one request otherwise than the rest, as the
+ * real one does: `answer(409, { success: false, changed_on_disk: true, ... })` from a route's function.
+ */
+export function answer(status, body) {
+  return { [ANSWER]: { status, body } };
+}
+
 /** A fetch stub that routes by URL substring and records every call. */
 export class FakeServer {
   constructor() {
@@ -300,8 +310,9 @@ export class FakeServer {
   /**
    * Reply with `body` (JSON-encoded) for any URL containing `match` (a string), or that `match` (a RegExp) matches.
    *
-   * `body` may be a function of the URL returning the body or a promise of it, for a
-   * reply that has to arrive later -- a scan still running while someone types.
+   * `body` may be a function of the URL (and the request's body, parsed) returning the body or a promise of it, for a
+   * reply that has to arrive later -- a scan still running while someone types -- or one with a status of its own
+   * (`answer`).
    */
   on(match, body, { status = 200, headers = {} } = {}) {
     this.routes.push({ match, body, status, headers });
@@ -351,18 +362,20 @@ export class FakeServer {
         ? url.includes(r.match) || url.includes(r.match.replace(/^\//, ""))
         : r.match.test(url))
       ) || (url.includes("api/rules") ? { body: PUBLISHED_RULES, status: 200 } : undefined);
-      const status = route ? route.status : 200;
       const headers = (route && route.headers) || {};
-      const reply = (payload) => ({
-        ok: status >= 200 && status < 300,
-        status,
-        headers: { get: (name) => headers[name] ?? null },
-        clone: () => reply(payload),
-        json: () => Promise.resolve(payload),
-        text: () => Promise.resolve(JSON.stringify(payload)),
-      });
+      const reply = (sent) => {
+        const { status, body: payload } = sent && sent[ANSWER] ? sent[ANSWER] : { status: route ? route.status : 200, body: sent };
+        return {
+          ok: status >= 200 && status < 300,
+          status,
+          headers: { get: (name) => headers[name] ?? null },
+          clone: () => reply(sent),
+          json: () => Promise.resolve(payload),
+          text: () => Promise.resolve(JSON.stringify(payload)),
+        };
+      };
       const answer = route && typeof route.body === "function"
-        ? Promise.resolve(route.body(url)).then(reply)
+        ? Promise.resolve(route.body(url, body)).then(reply)
         : Promise.resolve(reply(route ? route.body : []));
       // An aborted request rejects with AbortError, as a browser's does. Ignoring the
       // signal hid every bug where one request cancelled another's.

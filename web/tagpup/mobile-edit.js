@@ -10,7 +10,7 @@
  * unloads is not sent (accepted, #3172). A tag is added or taken off through the one entry point of photo writes
  * (POST /api/photos/write, op `tags`), the photo named by its id, against what the file holds, so no stamp; refused because
  * the photo is no longer at the path named (renamed on the PC: 409), it is read again by its id and sent once more, named
- * where it is now. The title and Date Taken through save-metadata (web/common/photo-write.js)
+ * where it is now (photo-write.js readMoved, the PC's rule too). The title and Date Taken through save-metadata (web/common/photo-write.js)
  * with the stamp, which the server refuses when the file changed since it was read: nothing is written, the sheet says
  * so and reads the photo again, the text typed kept. Each write of the page waits for the one before it (state.writing).
  * A title or date typed and left by Back or another screen is kept (state.drafts) and put back when the photo's sheet
@@ -23,7 +23,7 @@
  */
 import { api } from './common/api.js';
 import { buildElement, replaceContent } from './common/dom.js';
-import { inTurn, postPhotoMetadata, takeWritten } from './common/photo-write.js';
+import { inTurn, postPhotoMetadata, readMoved, takeWritten } from './common/photo-write.js';
 import { baseName, pathKey } from './common/paths.js';
 import { PeopleDirectory, leafOf, photoAlreadyHas, rootOf, sortedTags } from './common/vocabulary.js';
 import { TAKEN_DIGITS } from './format.js';
@@ -65,17 +65,21 @@ function toast(text, undo = null, ms = UNDO_MS) {
 /**
  * Add `add` or take off `remove` in the file of `job` (a photo's id and path); the sheet's record of it becomes the file's.
  * Refused because the photo is not at `job.path` (409 changed_on_disk: renamed on the PC since it was read), it is read
- * again by its id and sent once more where it is now (`again`); refused a second time, or gone, it fails.
+ * again by its id and sent once more where it is now (readMoved), every write waiting for it, `job` too, naming it there;
+ * refused a second time, or gone, it fails.
  */
-async function writeTags(job, again = true) {
+async function writeTags(job) {
     const res = await api.fetch('/api/photos/write', {
         method: 'POST', headers: { 'Content-Type': 'application/json' }, keepalive: true,
         body: JSON.stringify({ op: 'tags', changes: { [job.path]: { id: job.id, ...job.change } } }),
     });
     const data = await res.json().catch(() => null);
-    if (data && data.changed_on_disk && again) {
-        await followMoved(job);
-        return writeTags(job, false);
+    const found = await readMoved(data, [job]);
+    if (found) {
+        if (found[0] === null) throw new Error('this photo is no longer in the library.');
+        photoMoved(job.id, found[0].path);
+        job.path = found[0].path;
+        return writeTags(job);
     }
     // A write that ran is answered 200 even when the photo failed: its sentence is among the `errors`.
     if (!res.ok || !data || !data.success) {
@@ -88,15 +92,6 @@ async function writeTags(job, again = true) {
     record.tags = written[1].tags.slice();
     takeWritten(record, written[1], record.tags);
     drawChips();
-}
-
-/** `job`'s photo read again by its id: every write waiting for it, `job` too, names its file where it is now. */
-async function followMoved(job) {
-    const res = await api.fetch(`/api/library/photo?id=${job.id}`);
-    if (res.status === 404) throw new Error('this photo is no longer in the library.');
-    const body = await api.answered(res, 'Could not read this photo.');
-    photoMoved(job.id, body.photo.path);
-    job.path = body.photo.path;
 }
 
 /**

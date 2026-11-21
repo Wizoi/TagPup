@@ -20,7 +20,7 @@
 import { test, describe, afterEach } from "node:test";
 import assert from "node:assert/strict";
 import {
-  loadApp, FakeServer, photoRecord, flush, openFolder, closeAllApps, pageExports, PEOPLE_ROUTE, peopleRecordsOf,
+  loadApp, FakeServer, answer, photoRecord, flush, openFolder, closeAllApps, pageExports, PEOPLE_ROUTE, peopleRecordsOf,
 } from "./harness.mjs";
 import { loadViewPage, recordOf } from "./view-page.mjs";
 
@@ -456,8 +456,8 @@ describe("V20: in a library view", () => {
     ctx.refuseWrite = async () => {
       const { body, resolve } = ctx.out.shift();
       const [path] = Object.keys(body.changes);
-      resolve({ success: false, changed_on_disk: true, written: {}, errors: [], skipped: [],
-        error: `${path.split("\\").pop()} is not the photo this page read (renamed, moved or deleted since): reload it first.` });
+      resolve(answer(409, { success: false, changed_on_disk: true, written: {}, errors: [], skipped: [],
+        error: `${path.split("\\").pop()} is not the photo this page read (renamed, moved or deleted since): reload it first.` }));
       await ctx.settle(40);
     };
     ctx.sent = () => ctx.server.calls.filter((c) => c.url.includes("/api/photos/write")).map((c) => c.body);

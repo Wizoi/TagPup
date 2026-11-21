@@ -28,7 +28,7 @@
  */
 import { test, describe, afterEach } from "node:test";
 import assert from "node:assert/strict";
-import { loadApp, FakeServer, flush, click, closeAllApps, pageExports, PEOPLE_ROUTE, PHOTO_WRITES, CLIP_WRITES } from "./harness.mjs";
+import { loadApp, FakeServer, answer, flush, click, closeAllApps, pageExports, PEOPLE_ROUTE, PHOTO_WRITES, CLIP_WRITES } from "./harness.mjs";
 import { PHONE_PAGE, el, shown, pageState, settle, phoneCard, phoneLayout } from "./phone-page.mjs";
 
 const KEYWORDS = { keywords: [{ tag: "Events", name: "Events", parent: null, count: 20 }], untagged: 0 };
@@ -66,7 +66,7 @@ async function phone(t, file = {}) {
     .on("/api/photos/write", () => {
       const [[path, change]] = Object.entries(server.lastBody("/api/photos/write").changes);
       if (change.id === 1 && path !== held.path) {
-        return { success: false, changed_on_disk: true, error: "A photo is not where the page last saw it.", written: {} };
+        return answer(409, { success: false, changed_on_disk: true, error: "A photo is not where the page last saw it.", written: {} });
       }
       held.tags = held.tags.filter((tag) => !(change.remove || []).includes(tag))
         .concat((change.add || []).filter((tag) => !held.tags.includes(tag)));
