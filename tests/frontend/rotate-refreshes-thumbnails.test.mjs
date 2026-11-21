@@ -13,7 +13,7 @@
  */
 import { test, describe, afterEach } from "node:test";
 import assert from "node:assert/strict";
-import { loadApp, FakeServer, closeAllApps, openFolder, PHOTO_WRITES } from "./harness.mjs";
+import { loadApp, FakeServer, closeAllApps, openFolder, PHOTO_WRITES, SAVE } from "./harness.mjs";
 
 const PHOTOS = [
   { path: "D:\\p\\a.jpg", filename: "a.jpg", tags: [], people: [], captions: [], title: "", writes: PHOTO_WRITES, mtime: 1000 },
@@ -114,7 +114,7 @@ describe("a rotate refreshes every image of the photo", () => {
       .on("/api/tags", [])
       .on("/api/photo-faces", { faces: [], total: 0, unmatched: 0 })
       .on("/api/folder/suggest-status", { status: "idle" })
-      .on("/api/photo/save-metadata", () => new Promise((resolve) => held.push(() => resolve({ success: true, mtime: 1500, size: 520 }))))
+      .on(SAVE, () => new Promise((resolve) => held.push(() => resolve({ success: true, mtime: 1500, size: 520 }))))
       .on("/api/photo/rotate", { success: true, mtime: 2000, size: 530 });
     const { window, document } = await loadApp("tagpup", { server, t });
     window.alert = () => {};

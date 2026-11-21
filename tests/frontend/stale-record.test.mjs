@@ -9,14 +9,16 @@
  */
 import { test, describe, afterEach } from "node:test";
 import assert from "node:assert/strict";
-import { loadApp, FakeServer, photoRecord, flush, click, openFolder, closeAllApps, pageExports } from "./harness.mjs";
+import { loadApp, FakeServer, photoRecord, flush, click, openFolder, closeAllApps, pageExports, SAVE, saveCalls, lastSave, saved,
+  changedOnDisk } from "./harness.mjs";
 
 afterEach(() => closeAllApps());
 
 const FOLDER = "D:\\Library\\2020";
 const wait = (window, ms) => new Promise((resolve) => window.setTimeout(resolve, ms));
 
-function folderServer(extra = {}) {
+/** A folder's page server; `save` answers a save (SAVE: saved, changedOnDisk), `extra` other routes by URL. */
+function folderServer(extra = {}, save = saved()) {
   const records = [
     photoRecord({ filename: "a.jpg", path: `${FOLDER}\\a.jpg`, mtime: 1700000000.5, size: 2048, tags: ["Trips/Coast"] }),
     photoRecord({ filename: "b.jpg", path: `${FOLDER}\\b.jpg`, mtime: 1700000100.5, size: 4096, tags: ["Activity/Sailing"] }),
@@ -32,6 +34,7 @@ function folderServer(extra = {}) {
     .on("/api/folder/scan", () => server.scanned.map((r) => ({ ...r })));
   server.scanned = records;
   Object.entries(extra).forEach(([match, body]) => server.on(match, body));
+  server.on(SAVE, save);
   return server;
 }
 
@@ -53,17 +56,17 @@ async function folderPage(t, server) {
 
 describe("a save names the stamp of the record it was built from", () => {
   test("adding a tag sends the photo's modified time and size", async (t) => {
-    const server = folderServer({ "/api/photo/save-metadata": { success: true, mtime: 1700000500.5, size: 2100 } });
+    const server = folderServer({}, saved({ mtime: 1700000500.5, size: 2100 }));
     const ctx = await folderPage(t, server);
     await openPhoto(ctx, "a.jpg");
     ctx.document.getElementById("input-add-tag").value = "Trips/Lakes";
     click(ctx.window, ctx.document.getElementById("btn-add-tag"));
     await flush(ctx.window, 8);
-    assert.deepEqual(server.lastBody("/api/photo/save-metadata").stamp, { mtime: 1700000500.5 - 500, size: 2048 });
+    assert.deepEqual(lastSave(server).stamp, { mtime: 1700000500.5 - 500, size: 2048 });
   });
 
   test("after a save the record has the file's new stamp, and the next save names that", async (t) => {
-    const server = folderServer({ "/api/photo/save-metadata": { success: true, mtime: 1700000500.5, size: 2100 } });
+    const server = folderServer({}, saved({ mtime: 1700000500.5, size: 2100 }));
     const ctx = await folderPage(t, server);
     await openPhoto(ctx, "a.jpg");
     ctx.document.getElementById("input-add-tag").value = "Trips/Lakes";
@@ -72,66 +75,62 @@ describe("a save names the stamp of the record it was built from", () => {
     ctx.document.getElementById("input-add-tag").value = "Trips/Harbour";
     click(ctx.window, ctx.document.getElementById("btn-add-tag"));
     await flush(ctx.window, 8);
-    assert.deepEqual(server.lastBody("/api/photo/save-metadata").stamp, { mtime: 1700000500.5, size: 2100 });
+    assert.deepEqual(lastSave(server).stamp, { mtime: 1700000500.5, size: 2100 });
   });
 });
 
 describe("a save names what the page read, and an undo keeps the record current (#549, #551, #552)", () => {
   test("a save sends the tags and caption as the record read them", async (t) => {
-    const server = folderServer({ "/api/photo/save-metadata": { success: true, mtime: 1700000500.5, size: 2100,
-      base: { tags: ["Trips/Coast", "Trips/Lakes"], title: "" } } });
+    const server = folderServer({}, saved({ mtime: 1700000500.5, size: 2100, base: { tags: ["Trips/Coast", "Trips/Lakes"], title: "" } }));
     const ctx = await folderPage(t, server);
     await openPhoto(ctx, "a.jpg");
     ctx.document.getElementById("input-add-tag").value = "Trips/Lakes";
     click(ctx.window, ctx.document.getElementById("btn-add-tag"));
     await flush(ctx.window, 8);
-    assert.deepEqual(server.lastBody("/api/photo/save-metadata").base, { tags: ["Trips/Coast"], title: "" });
+    assert.deepEqual(lastSave(server).base, { tags: ["Trips/Coast"], title: "" });
     ctx.document.getElementById("input-add-tag").value = "Trips/Harbour";
     click(ctx.window, ctx.document.getElementById("btn-add-tag"));
     await flush(ctx.window, 8);
-    assert.deepEqual(server.lastBody("/api/photo/save-metadata").base, { tags: ["Trips/Coast", "Trips/Lakes"], title: "" },
+    assert.deepEqual(lastSave(server).base, { tags: ["Trips/Coast", "Trips/Lakes"], title: "" },
       "the next save names the file as the last reply said it was left");
   });
 
   test("carry forward, then undo, then a tag: the undo's stamp and tags are the next save's, no refusal", async (t) => {
     const server = folderServer({
-      "/api/photo/save-metadata": { success: true, mtime: 1700000500.5, size: 2100, base: { tags: ["Activity/Sailing", "Trips/Coast"], title: "" } },
       "/api/photos/write": { success: true,
         written: { [`${FOLDER}\\b.jpg`]: { tags: ["Activity/Sailing"], mtime: 1700000900.5, size: 4200 } } },
-    });
+    }, saved({ mtime: 1700000500.5, size: 2100, base: { tags: ["Activity/Sailing", "Trips/Coast"], title: "" } }));
     const ctx = await folderPage(t, server);
     await openPhoto(ctx, "b.jpg");
     click(ctx.window, ctx.document.getElementById("btn-carry-forward"));
     await flush(ctx.window, 10);
-    assert.ok(server.lastBody("/api/photo/save-metadata"), "carried");
+    assert.ok(lastSave(server), "carried");
     click(ctx.window, ctx.document.getElementById("btn-undo"));
     await flush(ctx.window, 10);
     ctx.document.getElementById("input-add-tag").value = "Trips/Lakes";
     click(ctx.window, ctx.document.getElementById("btn-add-tag"));
     await flush(ctx.window, 10);
-    const sent = server.lastBody("/api/photo/save-metadata");
+    const sent = lastSave(server);
     assert.deepEqual(sent.stamp, { mtime: 1700000900.5, size: 4200 });
     assert.deepEqual(sent.base.tags, ["Activity/Sailing"]);
   });
 
   test("a photo ExifTool could not read is not saved from, and nothing is sent", async (t) => {
-    const server = folderServer({ "/api/photo/save-metadata": { success: true } });
+    const server = folderServer();
     server.scanned = [{ ...server.scanned[0], tags: [], unreadable: true, read_error: "File is empty" }, server.scanned[1]];
     const ctx = await folderPage(t, server);
     await openPhoto(ctx, "a.jpg");
     ctx.document.getElementById("input-add-tag").value = "Trips/Lakes";
     click(ctx.window, ctx.document.getElementById("btn-add-tag"));
     await flush(ctx.window, 8);
-    assert.equal(server.calls.filter((c) => c.url.includes("save-metadata")).length, 0);
+    assert.equal(saveCalls(server).length, 0);
     assert.match(ctx.document.getElementById("status-text").textContent, /could not be read just now: reopen it/);
   });
 });
 
 describe("a refusal because the file changed", () => {
   test("a folder's photo is read again (the folder is scanned afresh), the owner is told, and nothing is merged", async (t) => {
-    const server = folderServer({
-      "/api/photo/save-metadata": { success: false, error: "This photo changed on disk since you opened it: reload it first.", changed_on_disk: true },
-    });
+    const server = folderServer({}, changedOnDisk());
     const ctx = await folderPage(t, server);
     await openPhoto(ctx, "a.jpg");
     const scans = server.urls().filter((u) => u.includes("/api/folder/scan")).length;
@@ -157,15 +156,14 @@ describe("in a view of the library", () => {
     taken: "2020:01:01 10:00:00", ...extra,
   });
 
-  async function view(t, { photo, saved } = {}) {
-    const server = folderServer();
+  async function view(t, { photo, save = saved({ mtime: 1700000600.5, size: 2200 }) } = {}) {
+    const server = folderServer({}, save);
     const state = { photo: photo || record() };
     server
       .on("/api/library/ids", { total: 1, ids: [ID], complete: true })
       .on("/api/library/cards", { cards: [{ id: ID, name: "v.jpg", path: state.photo.path, taken: "2020:01:01 10:00:00",
         thumb: `/api/photo-thumb?id=${ID}&v=1700000000.5` }] })
-      .on("/api/library/photo", () => ({ photo: state.photo }))
-      .on("/api/photo/save-metadata", saved || { success: true, mtime: 1700000600.5, size: 2200 });
+      .on("/api/library/photo", () => ({ photo: state.photo }));
     const ctx = await loadApp("tagpup", { t, url: "http://localhost:8090/photo_index/?view=all", server });
     ctx.window.alert = (message) => { ctx.alerts.push(message); };
     ctx.alerts = [];
@@ -177,7 +175,7 @@ describe("in a view of the library", () => {
   }
 
   test("a refusal reads the photo again from the library and shows what the file holds", async (t) => {
-    const ctx = await view(t, { saved: { success: false, error: "This photo changed on disk since you opened it: reload it first.", changed_on_disk: true } });
+    const ctx = await view(t, { save: changedOnDisk() });
     ctx.document.querySelector(".btn-thumbnail-detail").click();
     await wait(ctx.window, 80);
     assert.equal(ctx.server.urls().filter((u) => u.includes("/api/library/photo")).length, 1);
@@ -188,7 +186,7 @@ describe("in a view of the library", () => {
     assert.equal(ctx.server.urls().filter((u) => u.includes("/api/library/photo")).length, 2, "read again");
     assert.match(ctx.document.getElementById("status-text").textContent, /changed on disk/);
     assert.match(ctx.document.getElementById("detail-tags").textContent, /Trips\/Lakes/, "the panel shows the file's tags now");
-    assert.equal(ctx.server.lastBody("/api/photo/save-metadata").stamp.size, 2048, "the refused save named the stamp it was built from");
+    assert.equal(lastSave(ctx.server).stamp.size, 2048, "the refused save named the stamp it was built from");
   });
 
 });

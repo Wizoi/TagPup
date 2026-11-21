@@ -14,7 +14,7 @@
  */
 import { test, describe, afterEach } from "node:test";
 import assert from "node:assert/strict";
-import { loadApp, FakeServer, closeAllApps, openFolder, click, peopleRecordsOf, PEOPLE_ROUTE, PHOTO_WRITES } from "./harness.mjs";
+import { loadApp, FakeServer, closeAllApps, openFolder, click, peopleRecordsOf, PEOPLE_ROUTE, PHOTO_WRITES, SAVE, saved, saveCalls, notSaved } from "./harness.mjs";
 
 const PHOTOS = [
   { path: "D:\\p\\a.jpg", filename: "a.jpg", tags: ["People/Tamsin Ashgrove"], people: ["Tamsin Ashgrove"], captions: [], title: "", writes: PHOTO_WRITES },
@@ -28,7 +28,7 @@ const TREE = [
   { id: 2, tag: "People/Tamsin Ashgrove", name: "Tamsin Ashgrove", parent_id: 1, has_face: 1 },
 ];
 
-function server({ save = { success: true }, people = peopleRecordsOf(TREE), tags = [] } = {}) {
+function server({ save = saved(), people = peopleRecordsOf(TREE), tags = [] } = {}) {
   return new FakeServer()
     .on("/api/folder/scan", PHOTOS.map((p) => ({ ...p, tags: [...p.tags], people: [...p.people] })))
     .on("/api/taxonomy/tree", TREE)
@@ -36,7 +36,7 @@ function server({ save = { success: true }, people = peopleRecordsOf(TREE), tags
     .on(PEOPLE_ROUTE, people)
     .on("/api/tags", tags)
     .on("/api/photo-faces", { faces: [], total: 0, unmatched: 0 })
-    .on("/api/photo/save-metadata", save)
+    .on(SAVE, save)
     .on("/api/folder/suggest-status", { status: "idle" });
 }
 
@@ -86,7 +86,7 @@ function prompt(document) {
 }
 
 function saves(s) {
-  return s.calls.filter((c) => c.url.includes("save-metadata"));
+  return saveCalls(s);
 }
 
 function swipe(window, el, dx) {
@@ -340,7 +340,7 @@ describe("answering the prompt", () => {
   });
 
   test("a failed save keeps you on the photo with the edit and the error", async (t) => {
-    const s = server({ save: { success: false, error: "file is read-only" } });
+    const s = server({ save: notSaved("file is read-only") });
     const { window, document, tagInput } = await prompted(t, s);
     press(document, "Enter", document.activeElement);
     await settle(window, 60);

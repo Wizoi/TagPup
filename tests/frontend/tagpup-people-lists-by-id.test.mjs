@@ -5,7 +5,7 @@
  */
 import { test, describe, afterEach } from "node:test";
 import assert from "node:assert/strict";
-import { closeAllApps, loadApp, FakeServer, photoRecord, flush, click, openFolder, PEOPLE_ROUTE } from "./harness.mjs";
+import { closeAllApps, loadApp, FakeServer, photoRecord, flush, click, openFolder, PEOPLE_ROUTE, SAVE, saved, saveCalls } from "./harness.mjs";
 import { loadViewPage, pageErrors } from "./view-page.mjs";
 
 afterEach(() => {
@@ -42,7 +42,7 @@ async function openPhoto(t, { tags = [], people = [], suggestions = {} } = {}) {
     .on("/api/folder/index-status", { status: "completed", percent: 100 })
     .on("/api/folder/scan", [photo])
     .on("/api/photo-faces", { faces: [], total: 0, unmatched: 0 })
-    .on("/api/photo/save-metadata", { success: true })
+    .on(SAVE, saved())
     .on("/api/folder/suggest-status", { status: "completed", suggestions: { [photo.path]: suggestions } });
   const ctx = await loadApp("tagpup", { t, url: "http://localhost:8090/photo_index/", server });
   await openFolder(ctx, "D:/Library/2020");
@@ -66,7 +66,7 @@ describe("Suggest's chips", () => {
     click(ctx.window, chip);
     await wait(ctx.window, 80);
     assert.equal(ctx.document.querySelector(".modal-overlay.active"), null, "no placement question");
-    const saved = ctx.server.calls.filter((call) => call.url.includes("/api/photo/save-metadata"));
+    const saved = saveCalls(ctx.server);
     assert.deepEqual(saved[0].body.tags, ["Pets/Sam"]);
   });
 

@@ -7,7 +7,7 @@
 import { test, describe, afterEach } from "node:test";
 import assert from "node:assert/strict";
 import { loadViewPage, recordOf } from "./view-page.mjs";
-import { loadApp, FakeServer, closeAllApps, openFolder, until, PHOTO_WRITES, CLIP_WRITES } from "./harness.mjs";
+import { loadApp, FakeServer, closeAllApps, openFolder, until, PHOTO_WRITES, CLIP_WRITES, SAVE, saved, saveCalls } from "./harness.mjs";
 
 const FOLDER = "D:\\Pictures\\Lighthouse";
 const record = (name, extra = {}) => ({
@@ -16,14 +16,14 @@ const record = (name, extra = {}) => ({
 });
 const clip = (name, extra = {}) => record(name, { media: "video", id: 40 + name.length, writes: CLIP_WRITES, ...extra });
 
-async function folder(t, scan, saved) {
+async function folder(t, scan) {
   const server = new FakeServer()
     .on("/api/folder/scan", scan.map((each) => ({ ...each, tags: [...each.tags] })))
     .on("/api/taxonomy/tree", [])
     .on("/api/people", [])
     .on("/api/tags", [])
     .on("/api/photo-faces", { faces: [], total: 0, unmatched: 0 })
-    .on("/api/photo/save-metadata", saved)
+    .on(SAVE, saved())
     .on("/api/folder/suggest-status", { status: "idle" });
   const ctx = await loadApp("tagpup", { server, t });
   ctx.window.alert = () => {};
@@ -35,7 +35,7 @@ async function folder(t, scan, saved) {
   return ctx;
 }
 
-const saved = (ctx) => until(ctx, () => ctx.server.calls.some((c) => c.url.includes("save-metadata")), "the save");
+const sent = (ctx) => until(ctx, () => saveCalls(ctx.server).length > 0, "the save");
 const press = (ctx, key) => ctx.document.dispatchEvent(new ctx.window.KeyboardEvent("keydown", { key, bubbles: true, cancelable: true }));
 const button = (ctx) => ctx.document.getElementById("btn-carry-forward");
 const status = (ctx) => ctx.document.getElementById("status-text")?.textContent
@@ -50,13 +50,13 @@ describe("Same as previous through clips", () => {
     ["a photo after a clip", [clip("a.mp4", { tags: ["Beach"] }), record("b.jpg")]],
   ]) {
     test(`${name}: the button is offered and copies the tags`, async (t) => {
-      const ctx = await folder(t, scan, { success: true });
+      const ctx = await folder(t, scan);
       press(ctx, "ArrowDown");
       press(ctx, "ArrowDown");
       assert.equal(button(ctx).disabled, false, "offered");
       button(ctx).click();
-      await saved(ctx);
-      assert.deepEqual(ctx.server.calls.filter((c) => c.url.includes("save-metadata")).at(-1).body.tags, ["Beach"]);
+      await sent(ctx);
+      assert.deepEqual(saveCalls(ctx.server).at(-1).body.tags, ["Beach"]);
     });
   }
 
@@ -77,7 +77,7 @@ describe("Same as previous in a library view", () => {
     await ctx.settle(80);
   };
   const carry = (ctx) => ctx.document.getElementById("btn-carry-forward");
-  const saves = (ctx) => ctx.server.calls.filter((c) => c.url.includes("save-metadata"));
+  const saves = (ctx) => saveCalls(ctx.server);
 
   test("a clip after a photo, a photo after a clip: offered, and copies the tags", async (t) => {
     const ctx = await view(t);

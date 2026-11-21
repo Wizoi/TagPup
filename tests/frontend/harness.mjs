@@ -289,6 +289,87 @@ export function pageSource(appName) {
 export const PUBLISHED_RULES = JSON.parse(
   fs.readFileSync(path.join(REPO_ROOT, "tests", "validation_rules.json"), "utf8"));
 
+const ANSWER = Symbol("answer");
+
+/**
+ * A fake route's reply with a status of its own, for a route that answers one request otherwise than the rest, as the
+ * real one does: `answer(409, { success: false, changed_on_disk: true, ... })` from a route's function.
+ */
+export function answer(status, body) {
+  return { [ANSWER]: { status, body } };
+}
+
+/**
+ * A page's save of one photo's title, tags and Date Taken (web/common/photo-write.js postPhotoMetadata): POST
+ * /api/photos/write, op `set`. A route matcher of FakeServer (tried before every URL route, so a test's route of the tag
+ * writes to /api/photos/write does not answer a save), and of the calls (saveCalls).
+ */
+export const SAVE = (url, body) => url.includes("/api/photos/write") && Boolean(body) && body.op === "set";
+
+/** A save's body as the page named its one photo in it: {path, id, title, tags, stamp, base, ...the rest it sent}. */
+export function savedPhoto(body) {
+  const [[path, own]] = Object.entries(body.changes);
+  return { path, ...own };
+}
+
+/** The saves the page sent, in order, each {url, method, body: savedPhoto}. */
+export function saveCalls(server) {
+  return server.calls.filter((c) => SAVE(c.url, c.body)).map((c) => ({ ...c, body: savedPhoto(c.body) }));
+}
+
+/** The last save's body (savedPhoto), or undefined when the page sent none. */
+export function lastSave(server) {
+  const sent = saveCalls(server);
+  return sent.length ? sent.at(-1).body : undefined;
+}
+
+/**
+ * The reply of a save that wrote, as tagpup_routes._envelope makes it, a route's function of (url, body): `own`, what
+ * it says of the photo (`written[path]`: mtime, size, base, new_path, taken, rename_failed), `top`, what it says of the
+ * write (file_only, with_rows, the faces it changed, pictures_refused).
+ */
+export function saved(own = {}, top = {}) {
+  return (url, body) => ({ ...envelope(1), ...top, written: { [savedPhoto(body).path]: own } });
+}
+
+/**
+ * A save's reply as the server made it (`reply`, a fixture written by a Python test, its one photo named "PHOTO"), for
+ * the photo this save names, `own` over what the server said of it.
+ */
+export function savedAs(reply, own = {}) {
+  return (url, body) => ({ ...reply, written: { [savedPhoto(body).path]: { ...reply.written.PHOTO, ...own } } });
+}
+
+/** The reply of a save the server could not write, `why` its sentence: a 200 with the photo among its `errors`. */
+export function notSaved(why) {
+  return (url, body) => {
+    const { path, id } = savedPhoto(body);
+    return { ...envelope(0), success: false, error_count: 1, errors: [{ path, id, why }], written: {} };
+  };
+}
+
+/**
+ * The reply of a save refused because the file is no longer the one the page read, or the id's photo no longer at its
+ * path (responses.refused: 409, `changed_on_disk`, the envelope beside the error), `why` its sentence. Nothing written.
+ */
+export function changedOnDisk(why = "This photo changed on disk since you opened it: reload it first.") {
+  return () => answer(409, { ...envelope(0), success: false, error: why, changed_on_disk: true, written: {} });
+}
+
+/**
+ * What a save's reply says of the write beside its photo's own part (`written`): the envelope the real entry point made
+ * of a save (fixtures/save_replies.json, tests/test_tag_a_photo_read_it_back_and_undo.py writes it), so that its fields
+ * are the server's and not a list kept here. `changed` of the one photo: 1 written, 0 not (no journal change then).
+ */
+const SAVE_ENVELOPE = (() => {
+  const { written, ...rest } = JSON.parse(fs.readFileSync(path.join(HERE, "fixtures", "save_replies.json"), "utf8")).no_rename;
+  return rest;
+})();
+
+function envelope(changed) {
+  return { ...SAVE_ENVELOPE, changed, with_rows: changed, change: changed ? SAVE_ENVELOPE.change : null };
+}
+
 /** A fetch stub that routes by URL substring and records every call. */
 export class FakeServer {
   constructor() {
@@ -298,10 +379,12 @@ export class FakeServer {
   }
 
   /**
-   * Reply with `body` (JSON-encoded) for any URL containing `match` (a string), or that `match` (a RegExp) matches.
+   * Reply with `body` (JSON-encoded) for any URL containing `match` (a string), or that `match` (a RegExp) matches, or
+   * for which `match` (a function of the URL and the request's body, parsed: SAVE) is true.
    *
-   * `body` may be a function of the URL returning the body or a promise of it, for a
-   * reply that has to arrive later -- a scan still running while someone types.
+   * `body` may be a function of the URL (and the request's body, parsed) returning the body or a promise of it, for a
+   * reply that has to arrive later -- a scan still running while someone types -- or one with a status of its own
+   * (`answer`).
    */
   on(match, body, { status = 200, headers = {} } = {}) {
     this.routes.push({ match, body, status, headers });
@@ -347,22 +430,26 @@ export class FakeServer {
       // Match on the path regardless of a leading slash: the apps issue both
       // absolute ("/api/x") and relative ("api/x") URLs, and a relative one would
       // otherwise fall through to the default empty reply.
-      const route = self.routes.find((r) => (typeof r.match === "string"
-        ? url.includes(r.match) || url.includes(r.match.replace(/^\//, ""))
-        : r.match.test(url))
-      ) || (url.includes("api/rules") ? { body: PUBLISHED_RULES, status: 200 } : undefined);
-      const status = route ? route.status : 200;
+      // A function route (SAVE) is of the request's body too, and is tried first.
+      const route = self.routes.find((r) => typeof r.match === "function" && r.match(url, body))
+        || self.routes.find((r) => (typeof r.match === "string"
+          ? url.includes(r.match) || url.includes(r.match.replace(/^\//, ""))
+          : r.match instanceof RegExp && r.match.test(url)))
+        || (url.includes("api/rules") ? { body: PUBLISHED_RULES, status: 200 } : undefined);
       const headers = (route && route.headers) || {};
-      const reply = (payload) => ({
-        ok: status >= 200 && status < 300,
-        status,
-        headers: { get: (name) => headers[name] ?? null },
-        clone: () => reply(payload),
-        json: () => Promise.resolve(payload),
-        text: () => Promise.resolve(JSON.stringify(payload)),
-      });
+      const reply = (sent) => {
+        const { status, body: payload } = sent && sent[ANSWER] ? sent[ANSWER] : { status: route ? route.status : 200, body: sent };
+        return {
+          ok: status >= 200 && status < 300,
+          status,
+          headers: { get: (name) => headers[name] ?? null },
+          clone: () => reply(sent),
+          json: () => Promise.resolve(payload),
+          text: () => Promise.resolve(JSON.stringify(payload)),
+        };
+      };
       const answer = route && typeof route.body === "function"
-        ? Promise.resolve(route.body(url)).then(reply)
+        ? Promise.resolve(route.body(url, body)).then(reply)
         : Promise.resolve(reply(route ? route.body : []));
       // An aborted request rejects with AbortError, as a browser's does. Ignoring the
       // signal hid every bug where one request cancelled another's.

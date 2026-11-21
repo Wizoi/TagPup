@@ -9,7 +9,9 @@ at once (both land, one after the other); a share that does not answer (that pho
 written, nothing waits on it), or stops answering part-way through a shift (the change ends there, `written` naming the
 photos that landed), or does not give a held folder's listing when its Time Shift answers (the folder's photos are
 answered as the write read them back, never scanned again); a page whose record is stale (its base, or its id now naming another file, is refused 409 and
-nothing is written); a photo of a folder the library does not hold, which has no row and is named by its path alone. A
+nothing is written); a chunk of the page's tag queue naming a photo renamed since it was read (refused 409, the photo
+read again by its id, the chunk sent where it is now and written: the pages' rule, web/common/photo-write.js readMoved,
+against the real route rather than the pages' fakes); a photo of a folder the library does not hold, which has no row and is named by its path alone. A
 library view's bulk edit goes through the same service and still lets a waiting save in between its chunks: that one is
 tests/test_batches.py's (ASaveBetweenTwoChunks), on the fake ExifTool, as it needs three chunks of photos.
 
@@ -132,6 +134,56 @@ class AWriteThroughTheOneEntryPoint(unittest.TestCase):
         for path in self.photos:
             self.assertNotIn("Places/Quay", tags_in(path))
         self.assertEqual([], self.changes())
+
+    def test_a_chunk_naming_a_photo_renamed_since_is_refused_409_read_again_by_its_id_and_written_where_it_is(self):
+        # The page read p0 at its old name; a Smart Rename in another tab renamed it since (a change of its own).
+        old, photo_id = self.photos[0], self.ids[0]
+        new = os.path.join(self.held, "p0 Quay at dusk.jpg")
+        file_changes.rename(self.lib.library, "smart rename", {old: new}, {}, EXIFTOOL)
+        before = len(self.changes())
+        chunk = lambda named: self.tags_op({named: (photo_id, ["Places/Quay"]),   # noqa: E731
+                                            self.photos[1]: (self.ids[1], ["Places/Quay"])}, group="tap-1")
+        status, reply = self.lib.post(ROUTE, chunk(old))
+        # What the pages read of it (readMoved): a 409 marked changed_on_disk, nothing written, the envelope beside it.
+        self.assertEqual(409, status, reply)
+        self.assertEqual((False, True, {}, 0), (reply["success"], reply["changed_on_disk"], reply["written"], reply["changed"]))
+        self.assertIn("p0.jpg", reply["error"])
+        self.assertEqual(before, len(self.changes()))
+        self.assertNotIn("Places/Quay", tags_in(self.photos[1]))
+
+        status, read = self.lib.get("/api/library/photo", {"id": photo_id})
+        self.assertEqual(200, status, read)
+        self.assertTrue(paths.same(new, read["photo"]["path"]), read["photo"]["path"])
+        status, reply = self.lib.post(ROUTE, chunk(read["photo"]["path"]))
+        self.assertEqual(200, status, reply)
+        self.assertTrue(reply["success"])
+        self.assertEqual(2, reply["changed"])
+        for path in (new, self.photos[1]):
+            self.assertIn("Places/Quay", tags_in(path))
+        self.assertEqual(before + 1, len(self.changes()))
+
+        # A photo the library no longer has reads 404: the page settles it skipped, gone as a file gone in Explorer is.
+        status, _gone = self.lib.get("/api/library/photo", {"id": max(self.ids) + 100})
+        self.assertEqual(404, status)
+
+    def test_a_set_of_a_photo_renamed_since_is_409_by_its_id_and_of_a_missing_file_by_path_only_is_400(self):
+        # #3295: the save of the record a page read before a rename answers as a chunk's does (409, read again), not 400.
+        old, photo_id = self.photos[0], self.ids[0]
+        new = os.path.join(self.held, "p0 Quay at dusk.jpg")
+        file_changes.rename(self.lib.library, "smart rename", {old: new}, {}, EXIFTOOL)
+        before = len(self.changes())
+
+        def save(path, named_id):
+            return self.lib.post(ROUTE, {"op": "set", "changes": {path: {
+                "id": named_id, "title": "Quay", "tags": EXISTING, "stamp": {"mtime": 1.0, "size": 1},
+                "base": {"tags": EXISTING, "title": ""}}}})
+        status, reply = save(old, photo_id)
+        self.assertEqual(409, status, reply)
+        self.assertEqual((False, True, {}), (reply["success"], reply["changed_on_disk"], reply["written"]))
+        self.assertEqual(before, len(self.changes()))
+        status, reply = save(os.path.join(self.held, "gone.jpg"), None)
+        self.assertEqual(400, status, reply)
+        self.assertEqual(before, len(self.changes()))
 
     def test_the_hold_of_the_lock_is_the_callers_alone(self):
         # One place decides which hold of the lock a write runs under: its caller (the route's batch_exclusively through

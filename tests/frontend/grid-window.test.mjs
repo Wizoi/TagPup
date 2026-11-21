@@ -12,6 +12,7 @@ import fs from "node:fs";
 import path from "node:path";
 import {
   loadApp, FakeServer, photoRecord, flush, click, openFolder, closeAllApps, pageExports, REPO_ROOT,
+  SAVE, saved, saveCalls,
 } from "./harness.mjs";
 
 afterEach(() => closeAllApps());
@@ -47,7 +48,7 @@ async function load(t, { n = N, routes = [], onSave } = {}) {
     .on("/api/folder/index-status", { status: "completed", percent: 100, message: "Ready" })
     .on("/api/folder/suggest-status", { status: "idle" })
     .on("/api/photo-faces", { faces: [], total: 0, unmatched: 0 })
-    .on("/api/photo/save-metadata", onSave || { success: true })
+    .on(SAVE, onSave || saved())
     .on("/api/photos/write", { success: true })
     .on("/api/folder/scan", (url) => {
       const folder = decodeURIComponent((url.match(/path=([^&]+)/) || [])[1] || FOLDER).replace(/\//g, "\\");
@@ -205,13 +206,13 @@ describe("a title typed in a card", () => {
     await ctx.scrollToRow(80);
     assert.equal(input.isConnected, true, "the editor is still in the page");
     assert.equal(ctx.document.activeElement, input, "and has the focus");
-    assert.equal(ctx.server.calls.filter((c) => c.url.includes("save-metadata")).length, 0, "scrolling saved nothing");
+    assert.equal(saveCalls(ctx.server).length, 0, "scrolling saved nothing");
     ctx.cards().forEach((c) => assert.ok(c.getAttribute("data-path")));
     await ctx.scrollToRow(0);
     assert.equal(ctx.cardOf(0).querySelector(".thumbnail-filename-input"), input, "the same editor, in its place");
     input.dispatchEvent(new ctx.window.KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }));
     await flush(ctx.window, 6);
-    const saved = ctx.server.calls.find((c) => c.url.includes("save-metadata"));
+    const saved = saveCalls(ctx.server)[0];
     assert.equal(saved.body.path, `${FOLDER}\\${name(0)}`);
     assert.equal(saved.body.title, "Harbour at dusk");
     assert.equal(ctx.cardOf(0).querySelector(".thumbnail-filename").textContent, "Harbour at dusk");
@@ -220,7 +221,7 @@ describe("a title typed in a card", () => {
 
   test("a photo renamed by its save keeps its selection and its card under the new path", async (t) => {
     const renamed = `${FOLDER}\\Harbour - 01.jpg`;
-    const ctx = await load(t, { onSave: { success: true, new_path: renamed } });
+    const ctx = await load(t, { onSave: saved({ new_path: renamed }) });
     click(ctx.window, ctx.box(0));
     click(ctx.window, ctx.box(2));
     const input = edit(ctx, 0, "Harbour");

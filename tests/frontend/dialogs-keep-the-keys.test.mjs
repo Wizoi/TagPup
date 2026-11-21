@@ -12,7 +12,7 @@
  */
 import { test, describe, afterEach } from "node:test";
 import assert from "node:assert/strict";
-import { loadApp, FakeServer, photoRecord, flush, click, openFolder, closeAllApps, pageExports } from "./harness.mjs";
+import { loadApp, FakeServer, photoRecord, flush, click, openFolder, closeAllApps, pageExports, SAVE, saved, saveCalls } from "./harness.mjs";
 
 afterEach(() => closeAllApps());
 
@@ -41,7 +41,7 @@ async function tagpupOnSecondPhoto(t, server = new FakeServer(), second = {}) {
     .on("/api/folder/index-status", { status: "completed", percent: 100, message: "Ready" })
     .on("/api/folder/scan", [photoRecord({ filename: "a.jpg", tags: ["Activity"] }), photoRecord({ filename: "b.jpg", ...second })])
     .on("/api/photo-faces", { faces: [], total: 0, unmatched: 0 })
-    .on("/api/photo/save-metadata", { success: true });
+    .on(SAVE, saved());
   const ctx = await loadApp("tagpup", { t, server });
   ctx.window.alert = () => {};
   await openFolder(ctx, "D:/Library/2020", { settle: 6 });
@@ -49,7 +49,7 @@ async function tagpupOnSecondPhoto(t, server = new FakeServer(), second = {}) {
   await flush(ctx.window, 6);
   ctx.shown = () => ctx.document.querySelector(".photo-item-file.active")?.getAttribute("data-path");
   ctx.status = () => ctx.document.getElementById("status-text").textContent;
-  ctx.saves = () => server.calls.filter((c) => c.url.includes("save-metadata")).length;
+  ctx.saves = () => saveCalls(server).length;
   return ctx;
 }
 

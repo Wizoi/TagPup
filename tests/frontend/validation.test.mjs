@@ -13,6 +13,7 @@ import fs from "node:fs";
 import path from "node:path";
 import {
   REPO_ROOT, PUBLISHED_RULES, loadApp, FakeServer, flush, click, closeAllApps, photoRecord, openFolder,
+  SAVE, saved, lastSave,
 } from "./harness.mjs";
 import { ruleProblem as problem, useRules, rulesVersion } from "../../web/common/validate.js";
 import { tagProblem, nameProblem, textProblem } from "../../web/common/vocabulary.js";
@@ -162,7 +163,7 @@ describe("TagPup: a caption is checked before it is saved", () => {
       .on("/api/folder/index-status", { status: "completed", percent: 100, message: "Ready" })
       .on("/api/folder/scan", [photoRecord({ filename: "a.jpg" })])
       .on("/api/photo-faces", { faces: [], total: 0, unmatched: 0 })
-      .on("/api/photo/save-metadata", { success: true });
+      .on(SAVE, saved());
     const ctx = await loadApp("tagpup", { t, server });
     const alerts = [];
     ctx.window.alert = (message) => alerts.push(message);
@@ -175,7 +176,7 @@ describe("TagPup: a caption is checked before it is saved", () => {
     title.dispatchEvent(new ctx.window.KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
     await flush(ctx.window, 8);
 
-    assert.equal(server.lastBody("/api/photo/save-metadata"), undefined, "the caption was sent");
+    assert.equal(lastSave(server), undefined, "the caption was sent");
     assert.equal(alerts.length, 1);
     assert.match(alerts[0], /A caption cannot contain a control character/);
   });

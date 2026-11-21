@@ -15,12 +15,14 @@
  * shows the tags the file holds now (pending.js readHeld).
  *
  * Every write is held until the test answers it, oldest first, as the routes answer it: the server keeps a model of each
- * file's tags, and a photos/write reply's `written` (a save-metadata reply's `base`) is what the file holds after it.
+ * file's tags, and a photos/write reply's `written` (a save's, op `set`: its `base`) is what the file holds after it.
  */
 import { test, describe, afterEach } from "node:test";
 import assert from "node:assert/strict";
 import {
-  loadApp, FakeServer, photoRecord, flush, openFolder, closeAllApps, pageExports, PEOPLE_ROUTE, peopleRecordsOf,
+  loadApp, FakeServer, answer, photoRecord, flush, openFolder, closeAllApps, pageExports, PEOPLE_ROUTE, peopleRecordsOf,
+  SAVE, saveCalls,
+  saved, notSaved, savedPhoto,
 } from "./harness.mjs";
 import { loadViewPage, recordOf } from "./view-page.mjs";
 
@@ -45,7 +47,9 @@ async function open(t, { b = [], faces = { faces: [], total: 0, unmatched: 0 } }
   // The files as the server would hold them; a write changes its file when it is answered, in the order it was sent.
   const files = new Map([[A.path, TAGS.slice()], [B.path, b.slice()]]);
   // The request just made is the last call the server saw (FakeServer hands a route only its url).
-  const hold = (kind) => () => new Promise((resolve) => held.push({ kind, body: server.calls.at(-1).body, resolve }));
+  // A save's body is held as the photo it names (savedPhoto), the request as it was sent (`sent`).
+  const hold = (kind) => (url, sent) => new Promise((resolve) => held.push({
+    kind, body: kind === "save" ? savedPhoto(sent) : sent, reply: (made) => resolve(made(url, sent)), resolve }));
   const server = new FakeServer()
     .on("/api/tags", TAGS)
     .first(PEOPLE_ROUTE, peopleRecordsOf(TAXONOMY))
@@ -57,7 +61,7 @@ async function open(t, { b = [], faces = { faces: [], total: 0, unmatched: 0 } }
     .on("/api/folder/scan", [{ ...A, tags: TAGS.slice() }, { ...B, tags: b.slice() }])
     .on("/api/photo-faces", faces)
     .on("/api/photos/write", hold("bulk"))
-    .on("/api/photo/save-metadata", hold("save"));
+    .on(SAVE, hold("save"));
   const ctx = await loadApp("tagpup", { t, url: "http://localhost:8090/photo_index/", server });
   ctx.window.console.error = () => {};
   ctx.alerts = [];
@@ -66,20 +70,20 @@ async function open(t, { b = [], faces = { faces: [], total: 0, unmatched: 0 } }
   const $ = (id) => ctx.document.getElementById(id);
   ctx.$ = $;
   ctx.file = (photo) => files.get(photo.path).slice().sort();
-  ctx.bulks = () => server.calls.filter((c) => c.url.includes("photos/write")).map((c) => c.body);
-  ctx.saves = () => server.calls.filter((c) => c.url.includes("save-metadata")).map((c) => c.body);
-  ctx.order = () => server.calls.filter((c) => /photos\/write|save-metadata/.test(c.url)).map((c) => (c.url.includes("photos/write") ? "bulk" : "save"));
+  ctx.bulks = () => server.calls.filter((c) => c.url.includes("photos/write") && !SAVE(c.url, c.body)).map((c) => c.body);
+  ctx.saves = () => saveCalls(server).map((c) => c.body);
+  ctx.order = () => server.calls.filter((c) => c.url.includes("photos/write")).map((c) => (SAVE(c.url, c.body) ? "save" : "bulk"));
   // Which photos each write named, in the order sent: "bulk:a,b", "save:b".
   const named = (path) => (path === A.path ? "a" : "b");
-  ctx.writes = () => server.calls.filter((c) => /photos\/write|save-metadata/.test(c.url))
-    .map((c) => (c.url.includes("photos/write") ? `bulk:${Object.keys(c.body.changes).map(named).join(",")}` : `save:${named(c.body.path)}`));
+  ctx.writes = () => server.calls.filter((c) => c.url.includes("photos/write"))
+    .map((c) => (SAVE(c.url, c.body) ? `save:${named(savedPhoto(c.body).path)}` : `bulk:${Object.keys(c.body.changes).map(named).join(",")}`));
   // Answer the oldest write still held: written, the file then holding what the route leaves in it; or refused with `error`.
   ctx.answer = async (error = null) => {
-    const { kind, body, resolve } = held.shift();
+    const { kind, body, reply, resolve } = held.shift();
     if (error) {
-      // A tag write that failed answers each photo among its `errors`, nothing written; a save says why in `error`.
-      resolve(kind === "bulk" ? { success: false, errors: Object.keys(body.changes).map((path) => ({ path, id: null, why: error })), written: {} }
-        : { success: false, error });
+      // A write that failed answers each photo among its `errors`, nothing written.
+      if (kind === "bulk") resolve({ success: false, errors: Object.keys(body.changes).map((path) => ({ path, id: null, why: error })), written: {} });
+      else reply(notSaved(error));
     } else if (kind === "bulk") {
       const written = {};
       for (const [path, change] of Object.entries(body.changes)) {
@@ -94,7 +98,7 @@ async function open(t, { b = [], faces = { faces: [], total: 0, unmatched: 0 } }
         add: body.tags.filter((t) => !was.includes(t)),
         remove: was.filter((t) => !body.tags.includes(t)),
       }));
-      resolve({ success: true, base: { tags: files.get(body.path).slice(), title: body.title || "" } });
+      reply(saved({ base: { tags: files.get(body.path).slice(), title: body.title || "" } }));
     }
     await flush(ctx.window, 12);
   };
@@ -456,8 +460,8 @@ describe("V20: in a library view", () => {
     ctx.refuseWrite = async () => {
       const { body, resolve } = ctx.out.shift();
       const [path] = Object.keys(body.changes);
-      resolve({ success: false, changed_on_disk: true, written: {}, errors: [], skipped: [],
-        error: `${path.split("\\").pop()} is not the photo this page read (renamed, moved or deleted since): reload it first.` });
+      resolve(answer(409, { success: false, changed_on_disk: true, written: {}, errors: [], skipped: [],
+        error: `${path.split("\\").pop()} is not the photo this page read (renamed, moved or deleted since): reload it first.` }));
       await ctx.settle(40);
     };
     ctx.sent = () => ctx.server.calls.filter((c) => c.url.includes("/api/photos/write")).map((c) => c.body);
@@ -471,7 +475,7 @@ describe("V20: in a library view", () => {
       Array.from(ctx.document.querySelectorAll(".tag-pill")).find((each) => each.textContent === text).click();
       await ctx.settle(20);
     };
-    ctx.saves = () => ctx.server.calls.filter((c) => c.url.includes("save-metadata")).map((c) => c.body);
+    ctx.saves = () => saveCalls(ctx.server).map((c) => c.body);
     return ctx;
   }
 

@@ -8,7 +8,7 @@
  */
 import { test, describe, afterEach } from "node:test";
 import assert from "node:assert/strict";
-import { loadApp, FakeServer, flush, click, openFolder, closeAllApps, PHOTO_WRITES } from "./harness.mjs";
+import { loadApp, FakeServer, flush, click, openFolder, closeAllApps, PHOTO_WRITES, SAVE, lastSave } from "./harness.mjs";
 
 afterEach(() => closeAllApps());
 
@@ -33,7 +33,7 @@ async function load(t, { parts = (url) => ({ grouping: GROUPING[decodeURICompone
     .on("/api/photo-faces", { faces: [], total: 0, unmatched: 0 })
     .on("/api/photo/smart-rename-parts", parts)
     .on(RENAME, rename)
-    .on("/api/photo/save-metadata", { success: true, new_path: RENAMED, mtime: 4, size: 5 })
+    .on(SAVE, { success: true, new_path: RENAMED, mtime: 4, size: 5 })
     .on("/api/folder/scan", () => [record(A), record(B)]);
   const ctx = await loadApp("tagpup", { t, url: "http://localhost:8090/photo_index/", server });
   ctx.window.alert = () => {};
@@ -82,7 +82,7 @@ describe("Smart Rename of the open photo", () => {
     title.dispatchEvent(new ctx.window.Event("input", { bubbles: true }));
     ctx.document.getElementById("btn-save-details").click();
     await flush(ctx.window, 10);
-    const saved = ctx.server.lastBody("save-metadata");
+    const saved = lastSave(ctx.server);
     assert.deepEqual([saved.path, saved.stamp], [RENAMED, { mtime: 2, size: 3 }]);
   });
 

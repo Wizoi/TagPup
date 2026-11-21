@@ -6,7 +6,7 @@
 import fs from "node:fs";
 import { test, describe, afterEach } from "node:test";
 import assert from "node:assert/strict";
-import { loadApp, FakeServer, closeAllApps, openFolder, click, PHOTO_WRITES } from "./harness.mjs";
+import { loadApp, FakeServer, closeAllApps, openFolder, click, PHOTO_WRITES, SAVE, savedAs, saveCalls } from "./harness.mjs";
 
 const served = JSON.parse(fs.readFileSync(new URL("./fixtures/save_replies.json", import.meta.url), "utf8"));
 const A = "D:\\p\\a.jpg";
@@ -20,7 +20,7 @@ async function openA(t, reply) {
     .on("/api/tags", [])
     .on("/api/databases", { databases: ["photo_index"], selected: "photo_index" })
     .on("/api/photo-faces", { faces: [], total: 0, unmatched: 0 })
-    .on("/api/photo/save-metadata", () => ({ ...reply, new_path: A }));
+    .on(SAVE, savedAs(reply, { new_path: A }));
   const { window, document } = await loadApp("tagpup", { server, t });
   window.alert = () => {};
   await openFolder({ document, window }, "D:\\p");
@@ -47,7 +47,7 @@ describe("A save whose rename failed", () => {
     const app = await openA(t, served.rename_failed);
     await saveCaption(app, "Start line");
     assert.equal(status(app.document),
-      `Saved the title, but could not rename the photo: ${served.rename_failed.rename_failed}`);
+      `Saved the title, but could not rename the photo: ${served.rename_failed.written.PHOTO.rename_failed}`);
     assert.ok(!app.document.querySelector('.write-queue-entry[data-status="failed"]'), "the caption saved: no Retry");
   });
 
@@ -58,7 +58,7 @@ describe("A save whose rename failed", () => {
     await saveCaption(app, "Start line 3");
     const text = status(app.document);
     assert.equal(text.split("could not rename").length, 2, text);
-    assert.equal(app.server.calls.filter((c) => c.url.includes("save-metadata")).length, 3);
+    assert.equal(saveCalls(app.server).length, 3);
   });
 
   test("a save with no rename wanted says Saved, as it always did", async (t) => {

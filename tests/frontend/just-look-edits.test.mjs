@@ -13,7 +13,7 @@
  */
 import { test, describe, afterEach } from "node:test";
 import assert from "node:assert/strict";
-import { loadApp, FakeServer, photoRecord, flush, click, openFolder, closeAllApps, PEOPLE_ROUTE } from "./harness.mjs";
+import { loadApp, FakeServer, photoRecord, flush, click, openFolder, closeAllApps, PEOPLE_ROUTE, SAVE, saved, saveCalls } from "./harness.mjs";
 
 afterEach(() => closeAllApps());
 
@@ -41,7 +41,7 @@ function server(scanned = photos) {
     .on("/api/folder/index-status", { status: "completed", percent: 100, message: "Ready" })
     .on("/api/folder/membership", (url) => (url.includes(encodeURIComponent(HELD_FOLDER)) ? HELD : NOT_HELD))
     .on("/api/photo-faces", { faces: [], total: 0, unmatched: 0 })
-    .on("/api/photo/save-metadata", (url) => ({ success: true, new_path: A, taken: "2018:03:04 09:08:07", file_only: 1, with_rows: 0 }))
+    .on(SAVE, saved({ new_path: A, taken: "2018:03:04 09:08:07" }, { file_only: 1, with_rows: 0 }))
     .on("/api/photos/write", { success: true, written: {}, file_only: 2, with_rows: 0 })
     .on("/api/photo/rotate", { success: true, mtime: 1700000000, file_only: 1, with_rows: 0 })
     .on("/api/photo/delete", { success: true, file_only: 1, with_rows: 0,
@@ -86,7 +86,7 @@ describe("a caption and tags on one photo", () => {
     ctx.$("input-photo-title").dispatchEvent(new ctx.window.Event("input", { bubbles: true }));
     click(ctx.window, ctx.$("btn-save-details"));
     await flush(ctx.window, 10);
-    const sent = ctx.posts("/api/photo/save-metadata");
+    const sent = saveCalls(ctx.server);
     assert.equal(sent.length, 1, "nothing was sent");
     assert.equal(sent[0].body.title, "Lamp room");
     assert.deepEqual(sent[0].body.tags, ["Beach", "Trips/Lighthouse"]);
@@ -102,18 +102,18 @@ describe("a caption and tags on one photo", () => {
     ctx.$("input-add-tag").value = "Trips/Lighthouse";
     ctx.key(ctx.$("input-add-tag"), "Enter");
     await flush(ctx.window, 10);
-    assert.equal(ctx.posts("/api/photo/save-metadata").length, 1, "Enter wrote nothing");
+    assert.equal(saveCalls(ctx.server).length, 1, "Enter wrote nothing");
 
     ctx.$("input-photo-title").value = "Stairs";
     ctx.$("input-photo-title").dispatchEvent(new ctx.window.Event("input", { bubbles: true }));
     ctx.key(ctx.document.body, "s", { ctrlKey: true });
     await flush(ctx.window, 10);
-    assert.equal(ctx.posts("/api/photo/save-metadata").length, 2, "Ctrl+S wrote nothing");
+    assert.equal(saveCalls(ctx.server).length, 2, "Ctrl+S wrote nothing");
 
     ctx.$("input-add-tag").value = "Not wanted";
     ctx.key(ctx.$("input-add-tag"), "Escape");
     assert.equal(ctx.$("input-add-tag").value, "");
-    assert.equal(ctx.posts("/api/photo/save-metadata").length, 2);
+    assert.equal(saveCalls(ctx.server).length, 2);
   });
 
   test("a new person is filed under People without making a node in the library's tree", async (t) => {
@@ -122,7 +122,7 @@ describe("a caption and tags on one photo", () => {
     ctx.$("input-add-person").value = "Fictional Newcomer";
     click(ctx.window, ctx.$("btn-add-person"));
     await flush(ctx.window, 10);
-    const sent = ctx.posts("/api/photo/save-metadata");
+    const sent = saveCalls(ctx.server);
     assert.equal(sent.length, 1);
     assert.ok(sent[0].body.tags.includes("People/Fictional Newcomer"), JSON.stringify(sent[0].body.tags));
     assert.equal(ctx.posts("/api/taxonomy/create").length, 0, "a node was made in the tree of a library that does not hold the folder");
@@ -136,7 +136,7 @@ describe("a caption and tags on one photo", () => {
     input.value = "Beacon";
     ctx.key(input, "Enter");
     await flush(ctx.window, 10);
-    assert.equal(ctx.posts("/api/photo/save-metadata")[0].body.title, "Beacon");
+    assert.equal(saveCalls(ctx.server)[0].body.title, "Beacon");
   });
 });
 
@@ -299,13 +299,13 @@ describe("the other file edits", () => {
     ctx.$("input-date-taken").value = "2018-03-04T09:08:07";
     click(ctx.window, ctx.$("btn-save-date-modal"));
     await flush(ctx.window, 10);
-    const sent = ctx.posts("/api/photo/save-metadata");
+    const sent = saveCalls(ctx.server);
     assert.equal(sent.length, 1, "the date was held back");
     assert.match(sent[0].body.date_taken, /^2018-03-04T09:08:07/);
   });
 
   test("the date taken saved is shown as the server's reply spells it, the page spelling none", async (t) => {
-    const ctx = await looking(t, server().first("/api/photo/save-metadata", { success: true, new_path: A, taken: "2001:02:03 04:05:06" }));
+    const ctx = await looking(t, server().first(SAVE, saved({ new_path: A, taken: "2001:02:03 04:05:06" })));
     await ctx.open();
     click(ctx.window, ctx.$("btn-edit-date-taken"));
     ctx.$("input-date-taken").value = "2018-03-04T09:08:07";
@@ -393,7 +393,7 @@ describe("Suggest while just looking", () => {
     assert.ok(chip, "the suggestion is not offered");
     click(ctx.window, chip);
     await flush(ctx.window, 12);
-    const sent = ctx.posts("/api/photo/save-metadata");
+    const sent = saveCalls(ctx.server);
     assert.equal(sent.length, 1, "taking the suggestion wrote nothing");
     assert.ok(sent[0].body.tags.includes("Trips/Lighthouse"), JSON.stringify(sent[0].body.tags));
     assert.equal(sent[0].body.just_looking, undefined, "the page sends no flag; the server decides");
@@ -424,7 +424,7 @@ describe("what stays off", () => {
     click(ctx.window, ctx.$("faces-strip"));
     await flush(ctx.window, 8);
     assert.equal(ctx.posts("/api/faces/name").length + ctx.posts("/api/photo-faces/name").length, before);
-    assert.equal(ctx.posts("/api/photo/save-metadata").length, 0);
+    assert.equal(saveCalls(ctx.server).length, 0);
   });
 
   test("the right-click menu offers what it always did, and writes nothing", async (t) => {
@@ -437,7 +437,7 @@ describe("what stays off", () => {
       && !item.hasAttribute("data-requires-selection")), "an entry was dimmed by just looking");
     click(ctx.window, menu.querySelector('[data-action="select-all"]'));
     await flush(ctx.window, 4);
-    assert.ok(ctx.server.calls.every((c) => c.method !== "POST" || !/save-metadata|photos\/write|rotate|delete/.test(c.url)));
+    assert.ok(ctx.server.calls.every((c) => c.method !== "POST" || !/photos\/write|rotate|delete/.test(c.url)));
   });
 
   test("a library that holds the folder is written with its rows, with no note", async (t) => {

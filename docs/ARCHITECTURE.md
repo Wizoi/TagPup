@@ -354,8 +354,8 @@ same transaction (`store/derived.py`, `people.tree_edit`).
   `/api/rules` publishes), `dom.js` (elements built from text), `dialog.js`, `press.js` (a pill, chip, card or row the keyboard presses
   as a click: Tab reaches it, Enter or Space clicks it), `file-addresses.js` (the one spelling of a photo's file and a
   clip's address, `/api/photo-file` and `/api/video-file`, versioned by the record's or card's `mtime`), `photo-write.js`
-  (both pages' write of one photo's title, tags and Date Taken through `/api/photo/save-metadata`, named by the stamp and
-  base of the file as read), and the gear's tag editor, settings and history dialogs.
+  (both pages' write of one photo's title, tags and Date Taken through `/api/photos/write`, op `set`, named by its id,
+  and the stamp and base of the file as read), and the gear's tag editor, settings and history dialogs.
 - `web/activity/` is the Activity page; `web/tagpup/` and `web/tuner/` have a `main.js` that only wires the
   page, plus one module per feature, and their mutable state in one `state` object.
 - `web/common/theme.css` is the one place the dark theme's tokens live (colours, fonts and the card

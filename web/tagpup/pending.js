@@ -11,7 +11,7 @@
 // Each chunk goes through the one entry point of photo writes (POST /api/photos/write, op `tags`; plan one-write-path),
 // a photo named by its id when the page holds a record of it with one (a clip, a library view's open photo), else by
 // its path. A chunk refused because a photo it names by id is no longer there (409 changed_on_disk) is read again by id
-// and given back, once (readAgain).
+// and given back, once (photo-write.js readMoved, the phone's rule too; followMoved).
 //
 // The open photo's own removals (its pills, a face's person: removePhotoTags) enter the map too, first in line (takeChunk), and
 // are answered at the click, and a write of them that fails puts them back rather than waiting for Retry. Any other change
@@ -27,7 +27,7 @@ import { state } from './state.js';
 import { setStatus } from './status.js';
 import { changeCachedPhotos, forgetCachedFolder, saveToLocalStorageCache } from './cache.js';
 import { leavePhotoThen, photoRenamed, queuePhotoWrite, redrawIfShowing } from './edits.js';
-import { takeWritten } from './common/photo-write.js';
+import { readMoved, takeWritten } from './common/photo-write.js';
 import { renderWriteQueue, whereWritten } from './write-queue.js';
 import { namesAPerson, normalizeTag, updatePeopleDatalist, updateTagsDatalist } from './tags.js';
 import { offerWrites } from './stale.js';
@@ -380,10 +380,18 @@ async function sendChunk(entry) {
         } catch (err) {
             data = { success: false, error: err.message };
         }
-        const dropped = drops !== state.pending.drops;
-        // Refused again after a read, it is a failure (takeReply), and its Retry reads them again.
-        if (data.changed_on_disk && !dropped && !chunk.some(item => item.readAgain)) return await readAgain(chunk, data, entry, drops);
-        return takeReply(chunk, data, entry, dropped);
+        if (drops === state.pending.drops) {
+            // Refused again after a read, it is a failure (takeReply), and its Retry reads them again.
+            let found;
+            try {
+                found = await readMoved(data, chunk);
+            } catch (err) {
+                return takeReply(chunk, { success: false, error: `photos moved since they were read, and ${err.message}` }, entry,
+                    drops !== state.pending.drops);
+            }
+            if (found) return followMoved(chunk, found, data, entry, drops);
+        }
+        return takeReply(chunk, data, entry, drops !== state.pending.drops);
     } finally {
         state.pending.out = null;
         drain();
@@ -391,30 +399,14 @@ async function sendChunk(entry) {
     }
 }
 
-/** Photo `id` as the library holds it now: its record, or null when the library no longer has it (404). */
-async function readById(id) {
-    const res = await api.fetch(`/api/library/photo?id=${id}`);
-    if (res.status === 404) return null;
-    const body = await api.answered(res, 'it could not be read again');
-    return body.photo;
-}
-
 /**
- * A chunk refused whole, nothing written, because a photo it names by id is not at the path it names (renamed or deleted
- * since the page read it: 409 changed_on_disk). Each photo of it named by id is read again from the library: one the
- * library no longer has is settled skipped (it is gone, as a file gone in Explorer is); one at another path is named
- * there from now on, its entry and the page's records of it (photoRenamed). The chunk goes back to the front of the map
- * and the drain goes on: not a failure, and once per chunk (`readAgain`; refused again, it is one, sendChunk). A read
- * that fails is the chunk's failure, said, the drain stopped until Retry; a Cancel while they are read drops them.
+ * A chunk refused whole, nothing written, because a photo it names by id is not at the path it names, its photos read
+ * again by id (readMoved: `found`, each one's record, null for one the library no longer has). One gone is settled
+ * skipped (as a file gone in Explorer is); one at another path is named there from now on, its entry and the page's
+ * records of it (photoRenamed). The rest go back to the front of the map and the drain goes on: not a failure. A Cancel
+ * while they were read drops them.
  */
-async function readAgain(chunk, data, entry, drops) {
-    let found;
-    try {
-        found = await Promise.all(chunk.map(item => (item.id === null ? undefined : readById(item.id))));
-    } catch (err) {
-        return takeReply(chunk, { success: false, error: `photos moved since they were read, and ${err.message}` }, entry,
-            drops !== state.pending.drops);
-    }
+function followMoved(chunk, found, data, entry, drops) {
     if (drops !== state.pending.drops) return takeReply(chunk, data, entry, true);   // cancelled while they were read
     const again = [];
     let gone = 0;
@@ -426,7 +418,6 @@ async function readAgain(chunk, data, entry, drops) {
             return;
         }
         if (record && !samePath(record.path, item.path)) readdress(item, record.path);
-        item.readAgain = true;
         again.push(item);
     });
     giveBack(again);
@@ -521,7 +512,7 @@ function takeReply(chunk, data, entry, dropped) {
     if (!data.success && dropped) {
         back.forEach(item => settle(item, 'failed'));
     } else if (!data.success) {
-        back.forEach(item => { item.readAgain = false; });   // its Retry may read a photo moved since again (readAgain)
+        back.forEach(item => { item.readAgain = false; });   // its Retry may read a photo moved since again (readMoved)
         ({ kept, putBack } = answerPanel(back));
         giveBack(kept);
         state.pending.stopped = state.pending.stopped || kept.length > 0;   // stopped already: own removals sent meanwhile

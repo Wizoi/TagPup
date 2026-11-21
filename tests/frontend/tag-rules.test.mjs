@@ -14,7 +14,7 @@ import { test, describe, afterEach } from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
-import { REPO_ROOT, loadApp, FakeServer, photoRecord, flush, openFolder, closeAllApps, pageSource, peopleRecordsOf, PEOPLE_ROUTE } from "./harness.mjs";
+import { REPO_ROOT, loadApp, FakeServer, photoRecord, flush, openFolder, closeAllApps, pageSource, peopleRecordsOf, PEOPLE_ROUTE, SAVE, saved, lastSave } from "./harness.mjs";
 
 const RULES = JSON.parse(fs.readFileSync(path.join(REPO_ROOT, "tests", "validation_cases.json"), "utf8"));
 
@@ -62,7 +62,7 @@ async function onAPhoto(t) {
     .on("/api/folder/index-status", { status: "completed", percent: 100, message: "Ready" })
     .on("/api/folder/scan", [photoRecord({ filename: "a.jpg", tags: ["Activity"] })])
     .on("/api/photo-faces", { faces: [], total: 0, unmatched: 0 })
-    .on("/api/photo/save-metadata", { success: true })
+    .on(SAVE, saved())
     .on("/api/photos/write", { success: true });
   const ctx = await loadApp("tagpup", { t, url: "http://localhost:8090/photo_index/", server });
   await openFolder(ctx, "D:/Library/2020", { settle: 6 });
@@ -83,7 +83,7 @@ function typeAndEnter(ctx, id, text) {
 }
 
 const writes = (ctx) =>
-  ctx.server.calls.filter((c) => /taxonomy\/create|save-metadata|photos\/write/.test(c.url));
+  ctx.server.calls.filter((c) => /taxonomy\/create|photos\/write/.test(c.url));
 
 describe("TagPup: a tag that cannot be set", () => {
   test("typed on a photo, sends nothing, says why, and stays in the box", async (t) => {
@@ -112,7 +112,7 @@ describe("TagPup: a tag that cannot be set", () => {
     typeAndEnter(ctx, "input-add-tag", "People / Rowan Thackeray");
     await flush(ctx.window, 12);
 
-    const saved = ctx.server.lastBody("/api/photo/save-metadata");
+    const saved = lastSave(ctx.server);
     assert.ok(saved, "nothing was saved");
     assert.ok(saved.tags.includes("People/Rowan Thackeray"), `wrote: ${saved.tags}`);
     assert.ok(!saved.tags.includes("People / Rowan Thackeray"), `wrote: ${saved.tags}`);
@@ -128,7 +128,7 @@ describe("TagPup: a tag that cannot be set", () => {
     typeAndEnter(ctx, "input-add-tag", "Places/Harbour");
     await flush(ctx.window, 12);
 
-    assert.equal(ctx.server.lastBody("/api/photo/save-metadata"), undefined);
+    assert.equal(lastSave(ctx.server), undefined);
     assert.match(ctx.alerts[0] || "", /Tag name cannot be empty/);
   });
 

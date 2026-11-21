@@ -13,7 +13,7 @@
  */
 import { test, describe, afterEach } from "node:test";
 import assert from "node:assert/strict";
-import { loadApp, FakeServer, photoRecord, flush, click, openFolder, closeAllApps, pageExports } from "./harness.mjs";
+import { loadApp, FakeServer, photoRecord, flush, click, openFolder, closeAllApps, pageExports, SAVE, saved, saveCalls } from "./harness.mjs";
 
 const FOLDER = "D:/Library/2020";
 
@@ -47,7 +47,7 @@ function build() {
     .on("/api/photo-faces", { faces: [], total: 0, unmatched: 0 })
     .on("/api/photos/write", hold)
     .on("/api/folder/auto-apply", hold)
-    .on("/api/photo/save-metadata", { success: true })
+    .on(SAVE, saved())
     .on("/api/taxonomy/create", { success: true })
     .on("/api/folder/suggest-status", SUGGESTIONS);
   server.files = files;
@@ -196,7 +196,7 @@ describe("Ctrl+Z while a later write is out", () => {
       key: "z", ctrlKey: true, bubbles: true, cancelable: true,
     }));
     await flush(ctx.window, 8);
-    assert.equal(ctx.server.calls.filter((c) => c.url.includes("save-metadata")).length, 0,
+    assert.equal(saveCalls(ctx.server).length, 0,
       "undo posted whole tag lists");
     assert.equal(writes(ctx).length, 3, "undo was sent while the later write was still out");
 
@@ -234,7 +234,7 @@ describe("moving on while a bulk write is out", () => {
       "Save is held back by another photo's bulk write");
     key(ctx, "Enter", input);
     await flush(ctx.window, 8);
-    const saves = () => ctx.server.calls.filter((c) => c.url.includes("save-metadata"));
+    const saves = () => saveCalls(ctx.server);
     assert.equal(saves().length, 0, "the save went beside the bulk write");
 
     await answer(ctx, { success: true, written: {} });

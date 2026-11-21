@@ -7,7 +7,7 @@
  */
 import { test, describe, afterEach } from "node:test";
 import assert from "node:assert/strict";
-import { loadApp, FakeServer, closeAllApps, openFolder, flush, pageExports, peopleRecordsOf, PEOPLE_ROUTE } from "./harness.mjs";
+import { loadApp, FakeServer, closeAllApps, openFolder, flush, pageExports, peopleRecordsOf, PEOPLE_ROUTE, SAVE, saved, saveCalls, notSaved } from "./harness.mjs";
 
 const PHOTOS = [
   { path: "D:\\p\\a.jpg", filename: "a.jpg", tags: [], people: [], captions: [], title: "", mtime: 1600000000, size: 10 },
@@ -27,8 +27,8 @@ function saves() {
   const gates = [];
   return {
     gates,
-    reply: () => new Promise((resolve) => gates.push(resolve)),
-    release: (reply = { success: true }) => gates.shift()(reply),
+    reply: (url, body) => new Promise((resolve) => gates.push((reply) => resolve(reply(url, body)))),
+    release: (reply = saved()) => gates.shift()(reply),
   };
 }
 
@@ -40,7 +40,7 @@ function server(save) {
     .on(PEOPLE_ROUTE, peopleRecordsOf(TREE))
     .on("/api/tags", ["Places/Beach", "People/Rowan Thackeray"])
     .on("/api/photo-faces", { faces: [], total: 0, unmatched: 0 })
-    .on("/api/photo/save-metadata", save ? save.reply : { success: true })
+    .on(SAVE, save ? save.reply : saved())
     .on("/api/folder/suggest-status", { status: "idle" });
 }
 
@@ -83,7 +83,7 @@ function activePath(document) {
 }
 
 function saveBodies(s) {
-  return s.calls.filter((c) => c.url.includes("save-metadata")).map((c) => c.body);
+  return saveCalls(s).map((c) => c.body);
 }
 
 afterEach(() => closeAllApps());
@@ -209,7 +209,7 @@ describe("what is typed while a save is out goes to the next tag (#2836)", () =>
     type(window, tagBox, "Places/Beach");
     press(document, "Enter", tagBox);
     await flush(window, 4);
-    save.release({ success: false, error: "the share stopped answering" });
+    save.release(notSaved("the share stopped answering"));
     await flush(window, 6);
     assert.equal(tagBox.value, "Places/Beach");
   });

@@ -14,7 +14,7 @@
  */
 import { test, describe, afterEach } from "node:test";
 import assert from "node:assert/strict";
-import { loadApp, FakeServer, photoRecord, flush, click, openFolder, closeAllApps } from "./harness.mjs";
+import { loadApp, FakeServer, photoRecord, flush, click, openFolder, closeAllApps, SAVE, saved } from "./harness.mjs";
 
 afterEach(() => closeAllApps());
 
@@ -42,7 +42,7 @@ function server(membership, indexing = { status: "completed", percent: 100, mess
       queued: [FOLDER], already_queued: [], invalid: [], pending: 1 })
     .on("/api/folder/suggest-start", { success: true, status: "running" })
     .on("/api/photos/write", { success: true })
-    .on("/api/photo/save-metadata", { success: true })
+    .on(SAVE, saved())
     .on("/api/photo-faces", { faces: [], total: 0, unmatched: 0 })
     .on("/api/folder/scan", scanned);
 }
@@ -166,8 +166,7 @@ describe("the write queue while just looking", () => {
     press("ArrowDown");
     click(ctx.window, $("btn-carry-forward"));
     await flush(ctx.window, 8);
-    const writes = () => s.calls.filter((c) => c.method === "POST"
-      && (c.url.includes("/api/photos/write") || c.url.includes("/api/photo/save-metadata"))).length;
+    const writes = () => s.calls.filter((c) => c.method === "POST" && c.url.includes("/api/photos/write")).length;
     const before = writes();
     assert.equal(before, 1, "the carried tags were not written");
     assert.ok(!$("btn-undo").disabled);

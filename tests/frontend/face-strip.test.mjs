@@ -7,7 +7,7 @@
  */
 import { test, describe } from "node:test";
 import assert from "node:assert/strict";
-import { loadApp, FakeServer, photoRecord, flush, click, openFolder, peopleRecordsOf, PEOPLE_ROUTE } from "./harness.mjs";
+import { loadApp, FakeServer, photoRecord, flush, click, openFolder, peopleRecordsOf, PEOPLE_ROUTE, SAVE, saved, notSaved, lastSave, saveCalls } from "./harness.mjs";
 
 const PHOTO = photoRecord({ filename: "a.jpg" });
 
@@ -162,7 +162,7 @@ describe("face strip", () => {
     click(ctx.window, card);
     await flush(ctx.window, 4);
 
-    const asked = ctx.server.urls().some((u) => u.includes("/api/photo/save-metadata"));
+    const asked = saveCalls(ctx.server).length > 0;
     assert.ok(asked, "clicking a suggestion did not apply the person");
   });
 
@@ -205,7 +205,7 @@ describe("acting on a face", () => {
       .on("/api/folder/index-status", { status: "completed", percent: 100 })
       .on("/api/folder/scan", [photo])
       .on("/api/photo-faces", faces)
-      .on("/api/photo/save-metadata", { success: true });
+      .on(SAVE, saved());
 
     const ctx = await loadApp("tagpup", {
       t, url: "http://localhost:8090/photo_index/", server,
@@ -236,7 +236,7 @@ describe("acting on a face", () => {
     click(ctx.window, ctx.document.querySelector(".face-card"));
     await flush(ctx.window, 8);
 
-    const body = ctx.server.lastBody("/api/photo/save-metadata");
+    const body = lastSave(ctx.server);
     assert.ok(body, "clicking a recognised face saved nothing");
     assert.ok(body.tags.includes("People/Jane Doe"), JSON.stringify(body.tags));
   });
@@ -247,7 +247,7 @@ describe("acting on a face", () => {
     const before = loads();
     click(ctx.window, ctx.document.querySelector(".face-card"));
     await flush(ctx.window, 8);
-    assert.ok(ctx.server.lastBody("/api/photo/save-metadata"), "the person was not saved");
+    assert.ok(lastSave(ctx.server), "the person was not saved");
     assert.equal(ctx.server.urls().filter((u) => u.includes("/api/taxonomy/create")).length, 0, "the person was created again");
     assert.equal(loads(), before, "the tree was read again");
   });
@@ -265,7 +265,7 @@ describe("acting on a face", () => {
     assert.equal(label(ctx), "Jane Doe?");
     let release;
     const gate = new Promise((resolve) => { release = resolve; });
-    ctx.server.first("/api/photo/save-metadata", () => gate.then(() => ({ success: true })));
+    ctx.server.first(SAVE, (url, body) => gate.then(() => saved()(url, body)));
     const asked = photoFacesAsked(ctx);
     click(ctx.window, ctx.document.querySelector(".face-card"));
     await flush(ctx.window, 6);
@@ -278,7 +278,7 @@ describe("acting on a face", () => {
 
   test("a suggestion whose write fails is shown as it was", async (t) => {
     const ctx = await openWith(t, { faces: suggested(), tags: [], people: [] });
-    ctx.server.first("/api/photo/save-metadata", { success: false, error: "disk full" });
+    ctx.server.first(SAVE, notSaved("disk full"));
     ctx.window.alert = () => {};
     click(ctx.window, ctx.document.querySelector(".face-card"));
     await flush(ctx.window, 12);
@@ -291,7 +291,7 @@ describe("acting on a face", () => {
     assert.ok(!button.classList.contains("hidden"), "no Add all beside faces that can be named");
     click(ctx.window, button);
     await flush(ctx.window, 8);
-    const body = ctx.server.lastBody("/api/photo/save-metadata");
+    const body = lastSave(ctx.server);
     assert.ok(body && body.tags.includes("People/Jane Doe"), "Add all saved nothing");
   });
 
@@ -304,9 +304,9 @@ describe("acting on a face", () => {
     const ctx = await openWith(t, { faces: two, tags: [], people: [] });
     click(ctx.window, ctx.document.getElementById("btn-add-all-faces"));
     await flush(ctx.window, 12);
-    const writes = ctx.server.urls().filter((u) => u.includes("/api/photo/save-metadata"));
+    const writes = saveCalls(ctx.server);
     assert.equal(writes.length, 1, "the file was written once per person");
-    const body = ctx.server.lastBody("/api/photo/save-metadata");
+    const body = lastSave(ctx.server);
     assert.deepEqual([...body.tags].sort(), ["People/Alex Roe", "People/Jane Doe"]);
     assert.equal(ctx.server.urls().filter((u) => u.includes("/api/face/match")).length, 2, "each face is named");
   });

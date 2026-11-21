@@ -13,12 +13,12 @@
  *   - a second Save chained behind the first was not waited for, so the "Save
  *     changes?" question could offer Discard for text that was then written anyway.
  *
- * The server's save-metadata replies are held back here until the test releases
+ * The server's replies to a save (op `set` of /api/photos/write) are held back here until the test releases
  * them, which is what makes "a reply that lands after the arrow key" reproducible.
  */
 import { test, describe, afterEach } from "node:test";
 import assert from "node:assert/strict";
-import { loadApp, FakeServer, closeAllApps, openFolder, click, peopleRecordsOf, PEOPLE_ROUTE, PHOTO_WRITES } from "./harness.mjs";
+import { loadApp, FakeServer, closeAllApps, openFolder, click, peopleRecordsOf, PEOPLE_ROUTE, PHOTO_WRITES, SAVE, saved, saveCalls } from "./harness.mjs";
 
 const TAXONOMY = [
   { id: 1, tag: "People", name: "People", parent_id: null, has_face: 1 },
@@ -52,14 +52,14 @@ function server(aTags) {
     .on("/api/tags", ["Cross Country", "Harbourside", "Kentridge"])
     .on("/api/databases", { databases: ["photo_index"], selected: "photo_index" })
     .on("/api/photo-faces", { faces: [], total: 0, unmatched: 0 })
-    .on("/api/photo/save-metadata", { success: true })
+    .on(SAVE, saved())
     .on("/api/folder/suggest-status", { status: "completed", suggestions: SUGGESTIONS });
 }
 
 const settle = (window, ms = 40) => new Promise((r) => window.setTimeout(r, ms));
 
 /**
- * Hold every save-metadata reply until released. The request is still recorded
+ * Hold every save's reply (SAVE) until released. The request is still recorded
  * the moment it is sent; only the answer waits.
  */
 function holdSaves(window) {
@@ -68,7 +68,7 @@ function holdSaves(window) {
   window.fetch = function (input, init) {
     const url = typeof input === "string" ? input : String(input && input.url);
     const reply = inner.call(this, input, init);
-    if (!url.includes("save-metadata")) return reply;
+    if (!SAVE(url, init && typeof init.body === "string" ? JSON.parse(init.body) : undefined)) return reply;
     return new Promise((resolve) => held.push(() => resolve(reply)));
   };
   return {
@@ -129,7 +129,7 @@ function type(window, input, text) {
   input.dispatchEvent(new window.Event("input", { bubbles: true }));
 }
 
-const saves = (s) => s.calls.filter((c) => c.url.includes("save-metadata"));
+const saves = (s) => saveCalls(s);
 const pills = (document) =>
   [...document.querySelectorAll("#detail-tags .tag-pill, #detail-people .tag-pill")].map((p) => p.textContent);
 const chipEls = (document) => [...document.querySelectorAll("#suggestions-section .suggestion-chip")];

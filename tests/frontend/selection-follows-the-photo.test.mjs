@@ -10,7 +10,7 @@
  */
 import { test, describe, afterEach } from "node:test";
 import assert from "node:assert/strict";
-import { loadApp, FakeServer, photoRecord, flush, click, openFolder, closeAllApps } from "./harness.mjs";
+import { loadApp, FakeServer, photoRecord, flush, click, openFolder, closeAllApps, SAVE, saved } from "./harness.mjs";
 
 afterEach(() => closeAllApps());
 
@@ -26,7 +26,7 @@ async function load(t, save) {
     .on("/api/folder/index-status", { status: "completed", percent: 100, message: "Ready" })
     .on("/api/folder/suggest-status", { status: "idle" })
     .on("/api/photo-faces", { faces: [], total: 0, unmatched: 0 })
-    .on("/api/photo/save-metadata", save || { success: true })
+    .on(SAVE, save || saved())
     .on("/api/folder/scan", () => PHOTOS.map((p) => ({ ...p })));
   const ctx = await loadApp("tagpup", { t, url: "http://localhost:8090/photo_index/", server });
   ctx.window.alert = () => {};
@@ -39,7 +39,7 @@ async function load(t, save) {
 describe("the selection follows its photos", () => {
   test("a photo renamed by saving its title stays selected, under its new path", async (t) => {
     const renamed = `${FOLDER}\\Harbour - 01.jpg`;
-    const ctx = await load(t, { success: true, new_path: renamed });
+    const ctx = await load(t, saved({ new_path: renamed }));
     click(ctx.window, ctx.card("a.jpg").querySelector(".thumbnail-checkbox"));
     click(ctx.window, ctx.card("c.jpg").querySelector(".thumbnail-checkbox"));
     ctx.card("a.jpg").querySelector(".thumbnail-filename").dispatchEvent(new ctx.window.MouseEvent("click", { bubbles: true }));

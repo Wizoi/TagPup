@@ -8,7 +8,7 @@
  */
 import { test, describe, afterEach } from "node:test";
 import assert from "node:assert/strict";
-import { loadApp, FakeServer, closeAllApps, openFolder, REAL, realLibrary, until, PHOTO_WRITES } from "./harness.mjs";
+import { loadApp, FakeServer, closeAllApps, openFolder, REAL, realLibrary, until, PHOTO_WRITES, SAVE, saved, lastSave } from "./harness.mjs";
 
 const PHOTOS = [
   { path: "D:\\p\\a.jpg", filename: "a.jpg", tags: ["Beach"], people: [], captions: [], title: "", writes: PHOTO_WRITES },
@@ -23,7 +23,7 @@ function server(photos = PHOTOS) {
     .on("/api/people", [])
     .on("/api/tags", [])
     .on("/api/photo-faces", { faces: [], total: 0, unmatched: 0 })
-    .on("/api/photo/save-metadata", { success: true })
+    .on(SAVE, saved())
     .on("/api/folder/suggest-status", { status: "idle" });
 }
 
@@ -224,8 +224,10 @@ describe("carrying tags forward against the server", { skip: !REAL }, () => {
     document.getElementById("btn-carry-forward").click();
     await until(ctx, () => !undo.disabled, "the write to be undoable");
     assert.deepEqual((await ctx.tagsOnServer())["b.jpg"], ["Beach", "Portrait"], "it adds to the photo's own tags");
+    const writes = () => ctx.server.replied.filter((url) => url.includes("photos/write")).length;
+    const carried = writes();                      // the carry's own save went there too (op set)
     undo.click();
-    await until(ctx, () => ctx.server.replied.some((url) => url.includes("photos/write")), "the server to take the tags off");
+    await until(ctx, () => writes() > carried, "the server to take the tags off");
     assert.equal(undo.disabled, true, "Undo empties itself: it cannot be applied twice");
     assert.deepEqual(await ctx.tagsOnServer(), { "a.jpg": ["Beach"], "b.jpg": ["Portrait"], "c.jpg": [] }, "only what the write added was taken off");
   });
@@ -254,7 +256,7 @@ describe("not losing what was typed", () => {
     tagInput.dispatchEvent(new window.Event("blur"));
     await new Promise((r) => window.setTimeout(r, 60));
 
-    assert.equal(s.lastBody("save-metadata"), undefined, "it saved on blur");
+    assert.equal(lastSave(s), undefined, "it saved on blur");
     assert.equal(document.querySelector(".modal-overlay.active"), null, "it asked on blur");
     assert.equal(tagInput.value, "Sunset", "the typed text was cleared");
   });
@@ -283,7 +285,7 @@ describe("not losing what was typed", () => {
     tagInput.value = "   ";
     tagInput.dispatchEvent(new window.Event("blur"));
     await new Promise((r) => window.setTimeout(r, 40));
-    assert.equal(s.lastBody("save-metadata"), undefined);
+    assert.equal(lastSave(s), undefined);
   });
 
   test("Escape abandons the text instead of saving it", async (t) => {
@@ -298,7 +300,7 @@ describe("not losing what was typed", () => {
     await new Promise((r) => window.setTimeout(r, 40));
 
     assert.equal(tagInput.value, "");
-    assert.equal(s.lastBody("save-metadata"), undefined, "the abandoned tag was saved");
+    assert.equal(lastSave(s), undefined, "the abandoned tag was saved");
   });
 });
 

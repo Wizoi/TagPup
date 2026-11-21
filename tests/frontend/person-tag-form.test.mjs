@@ -15,7 +15,7 @@
  */
 import { test, describe } from "node:test";
 import assert from "node:assert/strict";
-import { loadApp, FakeServer, photoRecord, flush, click, openFolder, peopleRecordsOf, PEOPLE_ROUTE } from "./harness.mjs";
+import { loadApp, FakeServer, photoRecord, flush, click, openFolder, peopleRecordsOf, PEOPLE_ROUTE, SAVE, saved, lastSave } from "./harness.mjs";
 
 const TAXONOMY = [
   { id: 1, tag: "People", name: "People", parent_id: null, has_face: 1 },
@@ -36,7 +36,7 @@ function serverFor(photo, faces, suggestions) {
     .on("/api/folder/index-status", { status: "completed", percent: 100, message: "Ready" })
     .on("/api/folder/scan", [photo])
     .on("/api/photo-faces", faces)
-    .on("/api/photo/save-metadata", { success: true });
+    .on(SAVE, saved());
 }
 
 async function openPhoto(t, { photo, faces, suggestions }) {
@@ -54,7 +54,7 @@ async function openPhoto(t, { photo, faces, suggestions }) {
 }
 
 const savedTags = (ctx) => {
-  const body = ctx.server.lastBody("/api/photo/save-metadata");
+  const body = lastSave(ctx.server);
   return body ? body.tags : undefined;
 };
 
