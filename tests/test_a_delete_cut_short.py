@@ -34,7 +34,7 @@ from view_library import ViewLibrary, make_jpeg  # noqa: E402
 
 from tagpup.core import paths  # noqa: E402
 from tagpup.files import recycle_bin, shares  # noqa: E402
-from tagpup.services import batches, file_changes  # noqa: E402
+from tagpup.services import batches, bulk_edit, file_changes  # noqa: E402
 from tagpup.services import journal as journal_service  # noqa: E402
 from tagpup.services import photos as photo_actions  # noqa: E402
 from tagpup.store import db, file_journal, journal  # noqa: E402
@@ -151,6 +151,26 @@ class ADeleteCutShort(unittest.TestCase):
         self.assertEqual([self.local], self.binned, "sent once")
         self.assertFalse(self.held(self.local_id))
         self.assertEqual(([], []), (self.changes(), self.files()), "the dead change is finished, not left beside a new one")
+
+    def test_a_bulk_delete_of_a_photo_a_dead_process_left_writing_settles_first_like_the_single_delete(self):
+        # #3279: one place settles, the plan both Deletes pass through.
+        with mock.patch.object(photo_actions, "_reached", side_effect=crash_at("delete writing")):
+            with self.assertRaises(Crash):
+                self.delete(self.local)
+        self.died()
+        out = bulk_edit.run(self.library, bulk_edit.Edit(bulk_edit.DELETE), [self.local_id], None)
+        self.assertEqual(1, out.skipped_missing, "the settle sent it: the bulk Delete finds it gone")
+        self.assertEqual([self.local], self.binned, "sent once, by the settle")
+        self.assertEqual(([], []), (self.changes(), self.files()), "the dead change is finished, not left beside a new one")
+
+    def test_a_delete_of_a_file_a_settle_of_this_process_still_has_to_write_is_refused_and_leaves_no_record(self):
+        # #3280: as a write, a rename and a convert refuse it.
+        with mock.patch.object(file_changes, "unsettled", return_value=file_changes.UNSETTLED):
+            result = self.delete(self.local)
+        self.assertEqual(file_changes.UNSETTLED, result.refused)
+        self.assertEqual([], self.binned)
+        self.assertTrue(self.held(self.local_id))
+        self.assertEqual(([], []), (self.changes(), self.files()))
 
     def test_killed_after_the_copy_is_in_the_bin_and_before_the_original_goes_it_is_sent_again(self):
         self.crash_in_bin = True

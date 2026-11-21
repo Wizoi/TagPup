@@ -216,7 +216,7 @@ def _write(library, edit, ids, exiftool_path):
     if not present:
         return out
     if edit.op == DELETE:
-        return _delete(library, edit, present, out)
+        return _delete(library, edit, present, out, exiftool_path)
     by_key = {paths.key(path): photo_id for photo_id, path in present}
     chosen = [path for _photo_id, path in present]
     # Read, planned and written by file_changes.write_fields: one change, a chunk at a time, others let in between the chunks.
@@ -282,7 +282,7 @@ def refuse_if_changed(edit, photo_ids, token_of, deleted_for_good):
     edit.for_good_ids = confirmed
 
 
-def _delete(library, edit, present, out):
+def _delete(library, edit, present, out, exiftool_path):
     """Delete the photos `present` ([(id, path)], reachable) as Organize's Delete does each (photos.delete: the file to the
     Recycle Bin -- through this PC's where its place has none, #694 -- then its row, faces and thumbnail), under the one lock of
     changes of photo files, so that no write of one of them runs while it goes. A file gone already is counted missing and its
@@ -295,6 +295,7 @@ def _delete(library, edit, present, out):
     The photos that go are ONE change, carried out a chunk at a time, each with the look this start took of it
     (photos.delete_in_chunks: a stop between chunks, the rest not deleted, or, an update's, deleted at the next start)."""
     with file_changes.exclusively():
+        photo_actions.settle_before_delete(library, exiftool_path)
         # Where each file is, and its size, by one bounded stat of each (file_changes.file_stamps): one on a share that did
         # not answer is its error, one gone missing.
         stamps = file_changes.file_stamps([path for _id, path in present])

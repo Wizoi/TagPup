@@ -810,7 +810,7 @@ def delete(library, photo_path, exiftool_path, for_good=False, fresh=True):
     with file_changes.exclusively():
         held, loose = libraries.split(library, [photo_path])
         if held:
-            file_changes.settle(library, exiftool_path)
+            settle_before_delete(library, exiftool_path)
         why = recycle_bin.problem(photo_path)
         if why:
             result.refuse(why)
@@ -858,6 +858,13 @@ DELETED_WHEN_TAGPUP_STARTS = "stopped for an update: it is deleted when TagPup s
 LEFT_FOR_THE_NEXT_START = "left for the next start"
 
 
+def settle_before_delete(library, exiftool_path):
+    """What a process no longer running left half done on a photo is finished (file_changes.settle, as a write and a rename
+    do) before a Delete, single or bulk, looks at its files, so it never plans over a change left on one (#3263, #3279); a
+    share that does not answer leaves that change for the next settle. The caller holds the lock of changes of photo files."""
+    file_changes.settle(library, exiftool_path)
+
+
 def _reached(step):
     """A step of a Delete is done (DELETE_STEPS). Nothing happens here; the tests stop a Delete at each by patching it."""
 
@@ -878,7 +885,8 @@ def plan_deletes(library, deletes):
     goes by); `for_good` in its fields_after, for a settle that sends it again; and `look`, the stamp the caller's own look
     at the file found (shares.stamp_of, None for none), in its fields_before: the file the Delete is of, which delete_planned
     marks `writing` with instead of looking again, and which a resume after a clean stop deletes only while it is there
-    (settle_delete). Returns (change id, [FileRow]). The caller holds the lock of changes of photo files, and ends the change
+    (settle_delete). Returns (change id, [FileRow]). The caller holds the lock of changes of photo files, has settled what a
+    process no longer running left half done (settle_before_delete) before it looked at the files, and ends the change
     (end_deletes)."""
     files = [{"photo_id": photo_id, "path": path, "after": {"for_good": bool(for_good)},
               "before": {"stamp": list(look)} if look else {}} for photo_id, path, for_good, look in deletes]
@@ -901,6 +909,12 @@ def delete_planned(library, rows, result, fresh=True):
     that does not answer, left `writing` for a settle. `result` is told of each. The caller holds the lock of changes of
     photo files, and ends the change (end_deletes)."""
     for row in rows:
+        unsettled = file_changes.unsettled(row.path)
+        if unsettled:
+            # A settle in this process still has this file to write: a Delete now would leave it a conflict (#3280).
+            file_journal.withdraw(library.path, [row.id])
+            result.refuse(unsettled)
+            continue
         stamp = _look_of(row) or shares.stamp_of(row.path)
         if stamp is shares.UNANSWERED or stamp is shares.CANNOT_READ:
             # No stamp, so a settle could not tell this file from another put at its path: nothing is sent, nothing is promised.
