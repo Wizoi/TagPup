@@ -9,7 +9,7 @@ after the index read it, or the row was made for a photo nobody read (Suggest's 
   row's, and the file read with ExifTool when they differ or the row has none;
 * a write from the page names the stamp (mtime, size) of the record it was built from, and the server refuses
   with 409 "changed on disk" when the file's own stamp differs -- held and file-only writes alike -- and never
-  writes. A call without a stamp (the CLI, the MCP) behaves as it always did.
+  writes. Each save is made as the page makes it, to POST /api/photos/write op `set` (tests/page_writes.py).
 
 Real ExifTool and real Pillow on photos made here; rows as the indexer and Suggest make them
 (tests/photo_rows.py); fictional names.
@@ -23,6 +23,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import damaged_photos  # noqa: E402
 import own_home  # noqa: E402
+import page_writes  # noqa: E402
 import photo_rows  # noqa: E402
 import web_client  # noqa: E402
 
@@ -112,11 +113,14 @@ class Fresh(unittest.TestCase):
         return reply.get_json()["photo"]
 
     def save(self, record, **changes):
-        body = {"path": record["path"], "title": record.get("title", ""), "tags": record["tags"],
-                "stamp": {"mtime": record["mtime"], "size": record["size"]},
-                "base": {"tags": record["tags"], "title": record.get("title", "")}}
-        body.update(changes)
-        return self.post("/photo/save-metadata", body)
+        """The panel's save from `record` (page_writes.set_from): its `title`, `tags`, `date_taken`, the `path` it names,
+        and a `stamp` or `base` other than the record's, as named."""
+        return self.post("/photos/write", page_writes.set_from(record, **changes))
+
+    def assertSaved(self, reply):
+        """The save succeeded, as the page reads the envelope; its photo's part of it (page_writes.saved)."""
+        self.assertEqual((200, True), (reply.status_code, reply.get_json()["success"]), reply.data)
+        return page_writes.saved(reply.get_json())
 
 
 class TheViewReadsTheFile(Fresh):
@@ -126,7 +130,7 @@ class TheViewReadsTheFile(Fresh):
         record = self.record(photo_id)
         self.assertEqual(["Trips/Coast", "Trips/Lakes"], sorted(record["tags"]))
         reply = self.save(record, tags=record["tags"] + ["Activity/Sailing"])
-        self.assertEqual(200, reply.status_code, reply.data)
+        self.assertSaved(reply)
         self.assertEqual(["Activity/Sailing", "Trips/Coast", "Trips/Lakes"], sorted(tags_in(path)))
 
     def test_a_record_that_the_file_still_matches_is_the_rows_and_carries_the_files_stamp(self):
@@ -143,7 +147,7 @@ class TheViewReadsTheFile(Fresh):
         self.assertEqual(["Activity/Sailing", "Trips/Coast"], sorted(record["tags"]))
         self.assertEqual("Harbour at dawn", record["title"])
         reply = self.save(record, tags=record["tags"] + ["Trips/Lakes"])
-        self.assertEqual(200, reply.status_code, reply.data)
+        self.assertSaved(reply)
         self.assertEqual(["Activity/Sailing", "Trips/Coast", "Trips/Lakes"], sorted(tags_in(path)))
         self.assertEqual(("Harbour at dawn", ""), (title_in(path), caption_in(path)),
                          "the caption the file held, shown as its title, is kept: moved into the title")
@@ -154,14 +158,14 @@ class TheViewReadsTheFile(Fresh):
         record = self.record(photo_id)
         self.assertEqual("Written elsewhere", record["title"])
         reply = self.save(record, tags=record["tags"] + ["Trips/Lakes"])
-        self.assertEqual(200, reply.status_code, reply.data)
+        self.assertSaved(reply)
         self.assertEqual(("Written elsewhere", ""), (title_in(path), caption_in(path)))
 
     def test_a_date_taken_edit_from_the_view_keeps_the_files_tags(self):
         path, photo_id = self.make("a.jpg", 5, ["Trips/Coast"], row="unread")
         record = self.record(photo_id)
         reply = self.save(record, date_taken="2021-05-06T07:08:09")
-        self.assertEqual(200, reply.status_code, reply.data)
+        self.assertSaved(reply)
         self.assertEqual(["Trips/Coast"], tags_in(path))
 
     def test_carry_forward_adds_to_what_the_file_holds(self):
@@ -169,7 +173,7 @@ class TheViewReadsTheFile(Fresh):
         record = self.record(photo_id)
         carried = ["Activity/Sailing"]                      # the previous photo's tags, merged by the page
         reply = self.save(record, tags=sorted(set(record["tags"]) | set(carried)))
-        self.assertEqual(200, reply.status_code, reply.data)
+        self.assertSaved(reply)
         self.assertEqual(["Activity/Sailing", "Trips/Coast"], sorted(tags_in(path)))
 
     def test_a_file_gone_is_the_row_with_a_flag(self):
@@ -201,33 +205,23 @@ class AWriteNamesTheStampItWasBuiltFrom(Fresh):
         self.assertEqual(409, reply.status_code)
         self.assertEqual([], tags_in(path))
 
-    def test_without_a_stamp_a_save_behaves_as_it_always_did(self):
-        path, photo_id = self.make("a.jpg", 10, ["Trips/Coast"])
-        write_into(path, Subject=["Trips/Coast", "Trips/Lakes"])
-        reply = self.post("/photo/save-metadata", {"path": path, "title": "", "tags": ["Activity/Sailing"]})
-        self.assertEqual(200, reply.status_code, reply.data)
-        self.assertEqual(["Activity/Sailing"], tags_in(path))
-
     def test_the_reply_gives_the_new_stamp_and_the_next_save_with_it_passes(self):
         path, photo_id = self.make("a.jpg", 11, ["Trips/Coast"])
         record = self.record(photo_id)
-        first = self.save(record, tags=["Trips/Coast", "Activity/Sailing"])
-        self.assertEqual(200, first.status_code, first.data)
-        stamp = {"mtime": first.get_json()["mtime"], "size": first.get_json()["size"]}
+        first = self.assertSaved(self.save(record, tags=["Trips/Coast", "Activity/Sailing"]))
+        stamp = {"mtime": first["mtime"], "size": first["size"]}
         self.assertEqual(stamp_of(path)["size"], stamp["size"])
         again = self.save(record, tags=["Trips/Coast", "Activity/Sailing", "Trips/Lakes"], stamp=stamp,
-                          base=first.get_json()["base"])
-        self.assertEqual(200, again.status_code, again.data)
+                          base=first["base"])
+        self.assertSaved(again)
         stale = self.save(record, tags=["Trips/Coast"])                # the old stamp
         self.assertEqual(409, stale.status_code)
 
     def test_a_rename_by_the_caption_reports_the_stamp_of_the_file_under_its_new_name(self):
         path, photo_id = self.make("a.jpg", 12, ["Trips/Coast"])
         record = self.record(photo_id)
-        reply = self.save(record, title="Harbour")
-        self.assertEqual(200, reply.status_code, reply.data)
-        new_path = reply.get_json()["new_path"]
-        self.assertEqual(stamp_of(new_path)["size"], reply.get_json()["size"])
+        saved = self.assertSaved(self.save(record, title="Harbour"))
+        self.assertEqual(stamp_of(saved["new_path"])["size"], saved["size"])
 
     def test_the_folder_views_cached_record_is_protected_the_same_way(self):
         path, _photo_id = self.make("a.jpg", 13, ["Trips/Coast"])
@@ -240,22 +234,19 @@ class AWriteNamesTheStampItWasBuiltFrom(Fresh):
 
     def test_a_photo_of_a_folder_the_library_does_not_hold_is_protected_too(self):
         path, _none = self.make("b.jpg", 14, ["Trips/Coast"], row=None, folder=self.elsewhere)
-        stamp = stamp_of(path)
+        record = {"path": path, "id": None, "title": "", "tags": ["Trips/Coast"], **stamp_of(path)}   # no row: Just look
         write_into(path, Subject=["Trips/Coast", "Trips/Lakes"])
-        held = {"tags": ["Trips/Coast"], "title": ""}
-        reply = self.post("/photo/save-metadata", {"path": path, "title": "", "tags": ["Activity/Sailing"], "stamp": stamp,
-                                                  "base": held})
+        reply = self.save(record, tags=["Activity/Sailing"])
         self.assertEqual(409, reply.status_code)
         self.assertEqual(["Trips/Coast", "Trips/Lakes"], sorted(tags_in(path)))
-        fresh = self.post("/photo/save-metadata", {"path": path, "title": "", "tags": ["Activity/Sailing"],
-                                                  "stamp": stamp_of(path), "base": {"tags": ["Trips/Coast", "Trips/Lakes"], "title": ""}})
-        self.assertEqual(200, fresh.status_code, fresh.data)
+        fresh = self.save({**record, "tags": ["Trips/Coast", "Trips/Lakes"], **stamp_of(path)}, tags=["Activity/Sailing"])
+        self.assertSaved(fresh)
 
     def test_a_bulk_write_reports_each_written_photos_new_stamp(self):
         path, _photo_id = self.make("a.jpg", 15, ["Trips/Coast"])
-        reply = self.post("/photos/bulk-tags", {"changes": {path: {"add": ["Activity/Sailing"]}}})
-        self.assertEqual(200, reply.status_code, reply.data)
-        stamps = reply.get_json()["stamps"]
+        reply = self.post("/photos/write", page_writes.tags({path: {"add": ["Activity/Sailing"]}}))
+        self.assertSaved(reply)
+        stamps = reply.get_json()["written"]
         self.assertEqual({stamp_of(path)["size"]}, {each["size"] for each in stamps.values()})
 
     def test_a_rotate_reports_the_size_as_well_as_the_time(self):
@@ -333,7 +324,7 @@ class TheFileIsComparedWithWhatThePageRead(Fresh):
         record = self.record(photo_id)
         write_into(path, Rating=4)                                      # another program rated it; tags and caption are as read
         reply = self.save(record, tags=["Trips/Coast", "Activity/Sailing"], stamp=stamp_of(path))
-        self.assertEqual(200, reply.status_code, reply.data)
+        self.assertSaved(reply)
         self.assertEqual(["Activity/Sailing", "Trips/Coast"], sorted(tags_in(path)))
 
     def test_a_foreign_tag_is_refused_with_the_stamp_restored_to_what_the_page_has(self):
@@ -355,16 +346,15 @@ class TheFileIsComparedWithWhatThePageRead(Fresh):
     def test_the_reply_gives_the_base_the_next_save_names(self):
         path, photo_id = self.make("a.jpg", 26, ["Trips/Coast"], caption="One")
         record = self.record(photo_id)
-        first = self.save(record, tags=["Trips/Coast", "Activity/Sailing"], title="Two", stamp=stamp_of(path))
-        self.assertEqual(200, first.status_code, first.data)
-        base = first.get_json()["base"]
+        first = self.assertSaved(self.save(record, tags=["Trips/Coast", "Activity/Sailing"], title="Two",
+                                           stamp=stamp_of(path)))
+        base = first["base"]
         self.assertEqual(["Activity/Sailing", "Trips/Coast"], sorted(base["tags"]))
         self.assertEqual("Two", base["title"])
-        new_path = first.get_json()["new_path"]
-        stamp = {"mtime": first.get_json()["mtime"], "size": first.get_json()["size"]}
-        again = self.post("/photo/save-metadata", {"path": new_path, "title": "Two", "tags": base["tags"] + ["Trips/Lakes"],
-                                                  "stamp": stamp, "base": base})
-        self.assertEqual(200, again.status_code, again.data)
+        stamp = {"mtime": first["mtime"], "size": first["size"]}
+        again = self.save(record, path=first["new_path"], title="Two", tags=base["tags"] + ["Trips/Lakes"], stamp=stamp,
+                          base=base)
+        self.assertSaved(again)
 
     def test_the_folder_views_stale_cache_is_refused_by_the_base_alone(self):
         path, _id = self.make("a.jpg", 27, ["Trips/Coast"])
@@ -374,23 +364,18 @@ class TheFileIsComparedWithWhatThePageRead(Fresh):
         reply = self.save(record, tags=["Trips/Coast"], stamp=stamp_of(path))
         self.assertEqual(409, reply.status_code, reply.data)
 
-    def test_a_call_with_neither_stamp_nor_base_is_as_it_always_was(self):
-        path, _id = self.make("a.jpg", 28, ["Trips/Coast"])
-        write_into(path, Subject=["Trips/Coast", "Trips/Lakes"])
-        reply = self.post("/photo/save-metadata", {"path": path, "title": "", "tags": ["Activity/Sailing"]})
-        self.assertEqual(200, reply.status_code, reply.data)
-
     def test_a_malformed_base_is_a_400(self):
-        path, _id = self.make("a.jpg", 29, ["Trips/Coast"])
+        path, photo_id = self.make("a.jpg", 29, ["Trips/Coast"])
+        record = self.record(photo_id)
         for base in ("x", {"tags": "Trips/Coast"}, {"tags": [1]}, {"tags": [], "title": 3}):
-            reply = self.post("/photo/save-metadata", {"path": path, "title": "", "tags": [], "base": base})
+            reply = self.save(record, tags=[], base=base)
             self.assertEqual(400, reply.status_code, base)
 
     def test_bulk_tags_never_sends_a_whole_list_and_is_unchanged(self):
         path, _id = self.make("a.jpg", 30, ["Trips/Coast"])
         write_into(path, Subject=["Trips/Coast", "Trips/Lakes"])
-        reply = self.post("/photos/bulk-tags", {"changes": {path: {"add": ["Activity/Sailing"]}}})
-        self.assertEqual(200, reply.status_code, reply.data)
+        reply = self.post("/photos/write", page_writes.tags({path: {"add": ["Activity/Sailing"]}}))
+        self.assertSaved(reply)
         self.assertEqual(["Activity/Sailing", "Trips/Coast", "Trips/Lakes"], sorted(tags_in(path)))
 
     def test_the_extra_request_is_small(self):
@@ -428,10 +413,7 @@ class ACaptionHeldAsATitleOnly(Fresh):
         where, tags = record["path"], list(record["tags"])
         for person in ("People/Tamsin Okonkwo", "People/Ewan Marchetti", "People/Bryony Sallis"):
             tags = tags + [person]
-            reply = self.post("/photo/save-metadata", {"path": where, "title": record["title"], "tags": tags,
-                                                      "stamp": stamp, "base": base})
-            self.assertEqual(200, reply.status_code, reply.data)
-            body = reply.get_json()
+            body = self.assertSaved(self.save(record, path=where, tags=tags, stamp=stamp, base=base))
             where, base = body["new_path"], body["base"]
             stamp = {"mtime": body["mtime"], "size": body["size"]}
         self.assertEqual(sorted(tags), sorted(tags_in(where)))
@@ -450,14 +432,14 @@ class TheServersCacheCarriesTheFilesStamp(Fresh):
         a, _ida = self.make("a.jpg", 40, ["Trips/Coast"])
         b, _idb = self.make("b.jpg", 41, ["Activity/Sailing"])
         scan = self.api("/folder/scan", query_string={"path": self.folder}).get_json()       # the folder is cached
-        reply = self.post("/photos/bulk-tags", {"changes": {a: {"add": ["Trips/Lakes"]}}})
-        self.assertEqual(200, reply.status_code, reply.data)
+        reply = self.post("/photos/write", page_writes.tags({a: {"add": ["Trips/Lakes"]}}))
+        self.assertSaved(reply)
         again = self.api("/folder/scan", query_string={"path": self.folder}).get_json()      # served from the cache
         record = [each for each in again if each["path"] == a][0]
         self.assertEqual(stamp_of(a)["size"], record["size"])
         self.assertAlmostEqual(stamp_of(a)["mtime"], record["mtime"], places=3)
         saved = self.save(record, tags=record["tags"] + ["Activity/Sailing"])
-        self.assertEqual(200, saved.status_code, saved.data)
+        self.assertSaved(saved)
         self.assertEqual(2, len(scan))
         self.assertTrue(os.path.exists(b))
 
