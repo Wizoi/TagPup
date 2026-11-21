@@ -417,10 +417,12 @@ async function readAgain(chunk, data, entry, drops) {
     }
     if (drops !== state.pending.drops) return takeReply(chunk, data, entry, true);   // cancelled while they were read
     const again = [];
+    let gone = 0;
     chunk.forEach((item, i) => {
         const record = found[i];
         if (record === null) {
             settle(item, 'skipped');
+            gone += 1;
             return;
         }
         if (record && !samePath(record.path, item.path)) readdress(item, record.path);
@@ -428,7 +430,13 @@ async function readAgain(chunk, data, entry, drops) {
         again.push(item);
     });
     giveBack(again);
-    entry.label = `${entry.label}: read again, a photo had moved`;
+    if (gone) {
+        // Said as the phone says it, through the sentence of the files missing on disk (#3289); the row does not read as done.
+        entry.label = `${entry.label}: ${photosWord(gone)} no longer in the library`;
+        if (!again.length) sayMissing(chunk, data);
+    } else {
+        entry.label = `${entry.label}: read again, a photo had moved`;
+    }
     return true;
 }
 
@@ -445,6 +453,16 @@ function readdress(item, path) {
     const [was, now] = [pathKey(item.path), pathKey(path)];
     item.actions.forEach(action => { if (action.left.delete(was)) action.left.add(now); });
     item.path = path;
+    // A click on the photo while it was read again waits at the old key: it moves to the new one, where giveBack joins it
+    // to this item, so one chunk never holds both paths of one id (#3290).
+    const files = state.pending.files;
+    const newer = files.get(was);
+    if (newer && newer !== item && !files.has(now)) {
+        files.delete(was);
+        newer.path = path;
+        newer.actions.forEach(action => { if (action.left.delete(was)) action.left.add(now); });
+        files.set(now, newer);
+    }
 }
 
 /**
@@ -543,7 +561,12 @@ function takeReply(chunk, data, entry, dropped) {
         say('error', STOPPED);
         return true;
     }
-    // Photos missing on disk are said once, when each owner action they belong to is done (counted over its chunks).
+    sayMissing(chunk, data);
+    return true;
+}
+
+/** Photos missing on disk are said once, when each owner action they belong to is done (counted over its chunks); else Ready. */
+function sayMissing(chunk, data) {
     const finished = new Set(chunk.flatMap(item => [...item.actions].filter(action => !action.left.size)));
     const gone = [...finished].reduce((n, action) => n + action.skipped, 0);
     if (gone) {
@@ -551,7 +574,6 @@ function takeReply(chunk, data, entry, dropped) {
     } else {
         say('ready', data.file_only ? `Saved.${whereWritten(data)}` : 'Ready');
     }
-    return true;
 }
 
 /** What the file holds now: the server's list when it names one, else the ops on the record; `people` follows by leaf. */
