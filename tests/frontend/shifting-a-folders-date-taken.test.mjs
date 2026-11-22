@@ -13,7 +13,7 @@ import { test, afterEach } from "node:test";
 import assert from "node:assert/strict";
 import {
   loadApp, FakeServer, closeAllApps, openFolder, click, flush, photoRecord, pageExports, SHIFT, shiftedAs,
-  SHIFT_REPLIES,
+  SHIFT_REPLIES, SAVE, SAVE_REPLIES, savedAs,
 } from "./harness.mjs";
 
 afterEach(() => closeAllApps());
@@ -41,6 +41,7 @@ const HARBOUR = [0, 1, 2].map((n) => at(OTHER, `IMG_100${n}.jpg`, { taken: "2020
 function server(shift) {
   return new FakeServer()
     .first(SHIFT, shift)
+    .first(SAVE, savedAs(SAVE_REPLIES.dated, { new_path: C.path }))
     .on("/api/folder/scan", (url) => (url.includes(encodeURIComponent(OTHER)) ? HARBOUR : [CLIP, A, B, C, UNDATED])
       .map((record) => ({ ...record })))
     .on("/api/taxonomy/tree", [])
@@ -174,4 +175,22 @@ test("photos holding no Date Taken are said as such, not as photos that could no
   const one = await opened(t, shiftedAs("shifted", [], { attempted: 2, changed: 1, skipped: skipped(1) }));
   await one.shift(CAMERA);
   assert.equal(one.said(), "Time shift applied to 1 photo; 1 had no Date Taken to move.");
+});
+
+test("a photo whose Date Taken was saved sits at its new date's place when a shift then re-sorts the folder", async (t) => {
+  // The save's reply gives the photo's new `order` with its date; a shift of the other camera's photos puts the folder back
+  // in order, and the photo saved is not among those it moves, so it must carry the order the save gave it.
+  const ctx = await opened(t, shiftedAs("shifted", [dated("2020:06:01 10:30:00"), dated("2020:06:01 10:50:00")]));
+  click(ctx.window, [...ctx.document.querySelectorAll(".photo-item-file")].find((el) => el.dataset.path.endsWith("IMG_0003.jpg")));
+  await flush(ctx.window, 6);
+  click(ctx.window, ctx.$("btn-edit-date-taken"));
+  ctx.$("input-date-taken").value = "2019-03-02T09:15:00";
+  click(ctx.window, ctx.$("btn-save-date-modal"));
+  await flush(ctx.window, 10);
+  const { state } = pageExports(ctx.window, "web/tagpup/state.js");
+  assert.equal(state.folderPhotos.find((p) => p.path === C.path).order, SAVE_REPLIES.dated.written.PHOTO.order);
+
+  await ctx.shift(CAMERA);
+  assert.deepEqual(ctx.order(), ["IMG_0003.jpg", "MVI_0004.mp4", "IMG_0001.jpg", "IMG_0002.jpg", "IMG_0005.jpg"],
+    "the photo saved is first, at its 2019 date, not where its old date put it");
 });

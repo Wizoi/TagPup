@@ -330,7 +330,7 @@ export function lastSave(server) {
  * file is no longer what the page read), `not_written` (a file ExifTool could not write: a 200 with the photo among its
  * `errors`). Every fake reply of a save below is one of them, so that its fields are the server's, not a list kept here.
  */
-const SAVE_REPLIES = JSON.parse(fs.readFileSync(path.join(HERE, "fixtures", "save_replies.json"), "utf8"));
+export const SAVE_REPLIES = JSON.parse(fs.readFileSync(path.join(HERE, "fixtures", "save_replies.json"), "utf8"));
 
 /**
  * The reply of a save that wrote, as the real entry point made it (SAVE_REPLIES.no_rename), a route's function of (url,

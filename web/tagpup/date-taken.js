@@ -78,6 +78,8 @@ export function wireDateTakenModal() {
 
                 // What the server now records as when it was taken.
                 photo.taken = formattedDate;
+                // And its place in the folder, as the server keys it: a shift afterwards puts the folder in order by it.
+                if ('order' in saved) photo.order = saved.order;
 
                 // Format and display in UI -- if this photo is still the one shown.
                 if (state.activePhotoPath === photo.path) detailDateTaken.textContent = takenSaid(formattedDate);
