@@ -93,11 +93,7 @@ function keptScans() {
  */
 function forgetKept(key, why) {
     console.warn('A folder kept in this browser could not be written back, and is forgotten:', why);
-    try {
-        localStorage.removeItem(key);
-    } catch (e) {
-        console.warn('Could not forget the scan kept for a folder:', e);
-    }
+    localStorage.removeItem(key);
 }
 
 /**
@@ -119,11 +115,7 @@ export function changeCachedPhotos(folder, change) {
 
 /** Forget the scan this browser kept of `folder`: opened again, it is scanned. */
 export function forgetCachedFolder(folder) {
-    try {
-        localStorage.removeItem(folderCacheKey(folder));
-    } catch (e) {
-        console.warn('Could not forget the scan kept for a folder:', e);
-    }
+    localStorage.removeItem(folderCacheKey(folder));
 }
 
 /** A photo deleted from a folder that is not the one open any more. */
