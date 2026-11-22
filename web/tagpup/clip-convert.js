@@ -198,10 +198,13 @@ function pollTicket(key, live) {
 
 /**
  * The ticket ended: what the conversion changed, and only that -- the file's name and its stamp -- is taken by every record
- * of the clip the page holds or keeps that still names the file converted: at the path and with the stamp sent
- * (photosWritten). A record the server gave since the conversion ended (the clip read again, or tagged since: under its
- * new name, or with a newer stamp) is already the file's, and keeps what it holds (#3331). The panel is redrawn while it
- * is still the clip shown.
+ * of the clip the page holds or keeps that still names the file converted (photosWritten). A record the server gave since
+ * the conversion ended (the clip read again, or tagged since) is under the new name or has a newer stamp: it is already the
+ * file's, and keeps what it holds (#3331). A Convert that renamed the clip left no file at the old name, so every record
+ * there takes the new name and stamp, one with an older stamp too (tagged since from the phone, kept by this browser): it
+ * keeps its `base`, which the reply does not give, so a save from it is still refused if the file holds other tags
+ * (#3337). Make smaller keeps the name: only a record with the stamp sent is the file converted. The panel is redrawn
+ * while it is still the clip shown.
  */
 function converted(key, live, said) {
     if (!said.success) {
@@ -210,17 +213,17 @@ function converted(key, live, said) {
     }
     delete state.clipConvert.live[key];
     const path = said.renamed ? said.new_path : live.from;
-    const converts = (record) => samePath(record.path, live.from) && record.mtime === live.stamp.mtime
-        && record.size === live.stamp.size;
+    const renames = said.renamed ? { [live.from]: path } : {};
+    const converts = (record) => said.renamed || (record.mtime === live.stamp.mtime && record.size === live.stamp.size);
     // The clip is converted: a failure redrawing the page is logged, not said as a conversion that failed.
     try {
-        if (said.renamed) photosRenamed({ [live.from]: path });
+        photosRenamed(renames);
         photosWritten([live.from], (record) => {
             if (!converts(record)) return;
             record.path = path;
             record.filename = baseName(path);
             takeStamp(record, said);
-        });
+        }, renames);
         if (samePath(state.activePhotoPath, live.from)) {
             state.activePhotoPath = path;
             upper.selectPhoto(path);

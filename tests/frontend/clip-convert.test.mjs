@@ -8,11 +8,14 @@
  * touched), the Cancel of one under way (by its ticket), a stamp the clip no longer has (409 changed_on_disk: read
  * again, said), and the clip read again after the server ended its conversion and before the page read that end (tagged
  * since, in another window): the end changes only the name and stamp of a record still naming the file converted (#3331).
+ * A scan this browser keeps holding the clip with an older stamp (tagged since, from the phone) holds it under its MP4's
+ * name after a Convert that renamed it, its suggestions with it, since no file is left at the old name (#3337); after a
+ * Make smaller, which keeps the name, a record with an older stamp is left as it was (the stamp says it is not the file's).
  * Fictional names only.
  */
 import { test, describe, afterEach } from "node:test";
 import assert from "node:assert/strict";
-import { closeAllApps, CLIP_WRITES } from "./harness.mjs";
+import { closeAllApps, CLIP_WRITES, pageExports } from "./harness.mjs";
 import { loadViewPage, pageErrors, recordOf, speedUp } from "./view-page.mjs";
 
 afterEach(() => {
@@ -265,6 +268,39 @@ describe("the clip panel's Convert and Make smaller (MP4)", () => {
       assert.deepEqual([record.path, record.filename, record.tags, record.mtime, record.size],
         [NEW, "IMG_13.mp4", ["Places/Harbour"], since.mtime, since.size],
         "the record from the click was copied over the clip as the library holds it now");
+    });
+  }
+
+  for (const [what, path, end] of [
+    ["Convert, its MP4 a name of its own", OLD, converted],
+    ["Make smaller, an MP4 keeping its name", NEW, { ...converted, new_path: NEW, renamed: false }],
+  ]) {
+    test(`${what}: a scan this browser keeps holding the clip with an older stamp, when the conversion ends`, async (t) => {
+      const ctx = await viewWithAClip(t, path === OLD ? { path } : { path, plan: { action: "NOTHING", sentence: "", replaces: REPLACES } });
+      // The clip's folder kept by this browser from before the clip was tagged on the phone: its stamp older than the one
+      // the panel converts from, its suggestions under the name it had.
+      const { folderCacheKey, CACHE_VERSION } = pageExports(ctx.window, "web/tagpup/cache.js");
+      const key = folderCacheKey("D:\\Library\\2020\\Event 01");
+      const older = clipRecord({ path, mtime: MTIME - 600, size: 120 * MB - 512, order: "2020:01:01 10:00:00" });
+      const offer = { tags: [{ tag: "Places/Harbour", score: 0.9 }], people: [], title: "" };
+      ctx.window.localStorage.setItem(key, JSON.stringify({ version: CACHE_VERSION, timestamp: Date.now(), photos: [older],
+        suggestions: { [path]: offer }, inMemory: false }));
+      ctx.ends = [end];
+      await open(ctx, CLIP);
+      if (path === OLD) await fails(ctx); else await plays(ctx);
+      el(ctx, path === OLD ? "btn-clip-convert" : "btn-clip-shrink").click();
+      assert.ok(await ctx.until(() => ctx.said.some((each) => /(Converted|Made smaller) IMG_13\.mp4/.test(each))), ctx.said.join(" | "));
+      const kept = JSON.parse(ctx.window.localStorage.getItem(key));
+      const record = kept.photos[0];
+      if (path === OLD) {
+        assert.deepEqual([record.path, record.filename, record.mtime, record.size], [NEW, "IMG_13.mp4", end.mtime, end.size],
+          "the kept scan holds the clip under a name no file has");
+        assert.deepEqual(Object.keys(kept.suggestions), [NEW], "its suggestions stayed under the old name");
+      } else {
+        assert.deepEqual([record.path, record.filename, record.mtime, record.size], [NEW, "IMG_13.mp4", older.mtime, older.size],
+          "a record with a stamp the file did not have took the conversion's");
+        assert.deepEqual(Object.keys(kept.suggestions), [NEW]);
+      }
     });
   }
 
