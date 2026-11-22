@@ -854,6 +854,7 @@ DELETED_WHEN_THE_SHARE_ANSWERS = ("The share did not answer: the photo is delete
 
 #: What a Delete is told when the look at its file before the Bin step gave no answer (a share away, a file held open).
 NOTHING_DELETED_NO_LOOK = "The share did not answer: nothing was deleted. Try again when it does."
+NOTHING_DELETED_CANNOT_READ = "This photo could not be read (no permission), so nothing was deleted."
 
 #: What each photo a bulk Delete had not reached is told when the owner stopped it (Cancel): taken out, nothing deleted.
 STOPPED_NOT_DELETED = "stopped as asked: not deleted"
@@ -930,7 +931,7 @@ def delete_planned(library, rows, result, fresh=True):
         if stamp is shares.UNANSWERED or stamp is shares.CANNOT_READ:
             # No stamp, so a settle could not tell this file from another put at its path: nothing is sent, nothing is promised.
             file_journal.withdraw(library.path, [row.id])
-            result.fail(row.path, NOTHING_DELETED_NO_LOOK)
+            result.fail(row.path, NOTHING_DELETED_CANNOT_READ if stamp is shares.CANNOT_READ else NOTHING_DELETED_NO_LOOK)
             continue
         file_journal.writing(library.path, row.id, stamp if isinstance(stamp, tuple) else None)
         _reached("delete writing")
