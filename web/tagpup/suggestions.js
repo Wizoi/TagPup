@@ -649,7 +649,7 @@ export function applyFolderSuggestionsLevel() {
  * alone would leave those without a way back (findings #879).
  */
 function queueApplyAll(folder, targets, prior) {
-    return queuePhotoWrite((entry) => {
+    return queuePhotoWrite(() => targets, (entry) => {
         const before = snapshotPhotos(targets);
         entry.undoSoFar = prior;
         setStatus('busy', `Applying suggestions to ${targets.length} photo(s)...`);

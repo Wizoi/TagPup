@@ -232,10 +232,10 @@ export function applyTimeShift() {
     const paths = shifted.map(p => p.path);
     const said = `Shifting ${affected} photo(s) by ${minutes} minute(s)...`;
     setStatus('busy', state.detailSaveInFlight ? `Shift of ${affected} photo(s) waits for the writes before it...` : said);
-    queuePhotoWrite((entry) => {
+    // The page going while it is out forgets the scans kept of its photos (write-queue.js photosOut).
+    queuePhotoWrite(() => paths, (entry) => {
         // Never sent again by the queue's Retry: what landed before a failure would move twice.
         entry.retry = null;
-        entry.photos = paths;   // the page going while it is out forgets the scans kept of them (write-queue.js photosOut)
         setStatus('busy', said);
         return api.json('/api/photos/write', {
             method: 'POST',

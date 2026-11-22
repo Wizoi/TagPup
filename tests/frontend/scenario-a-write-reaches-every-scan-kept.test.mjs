@@ -47,10 +47,10 @@ const SCANS = { [CHILD]: [H1, H3, H2], [PARENT]: [P1, H1, H3, H2, P2, P3] };
 // The camera moved by 30 minutes, as the server gives the two photos back (in the order sent: H1, H2).
 const SHIFTED = shiftedAs("shifted", [dated("2020:06:01 10:40:00"), dated("2020:06:01 10:50:00")]);
 
-function server(shift) {
+function server(shift, save) {
   return new FakeServer()
     .first(SHIFT, shift)
-    .first(SAVE, saved())
+    .first(SAVE, save)
     .on("/api/folder/scan", (url) => (url.includes(encodeURIComponent(CHILD)) ? SCANS[CHILD] : SCANS[PARENT])
       .map((record) => ({ ...record })))
     .on("/api/taxonomy/tree", [])
@@ -60,8 +60,8 @@ function server(shift) {
     .on("/api/folder/suggest-status", { status: "idle" });
 }
 
-async function page(t, { library = "alpha", storage = {}, shift = SHIFTED } = {}) {
-  const fake = server(shift);
+async function page(t, { library = "alpha", storage = {}, shift = SHIFTED, save = saved() } = {}) {
+  const fake = server(shift, save);
   const ctx = await loadApp("tagpup", {
     t, server: fake, url: `http://localhost:8090/${library}/`,
     before: (window) => Object.entries(storage).forEach(([key, value]) => window.localStorage.setItem(key, value)),
@@ -88,6 +88,17 @@ async function page(t, { library = "alpha", storage = {}, shift = SHIFTED } = {}
     click(ctx.window, apply);
     await flush(ctx.window, 10);
   };
+  // The photo's panel opened from its folder's list, and its title saved with the panel's Save.
+  ctx.select = async (record) => {
+    click(ctx.window, [...ctx.document.querySelectorAll(".photo-item-file")].find((el) => el.dataset.path === record.path));
+    await flush(ctx.window, 6);
+  };
+  ctx.saveTitle = async (title) => {
+    ctx.$("input-photo-title").value = title;
+    click(ctx.window, ctx.$("btn-save-title"));
+    await flush(ctx.window, 10);
+  };
+  ctx.kept = () => Object.keys(ctx.storage()).filter((key) => key.startsWith("tagpup_cache_alpha/"));
   ctx.storage = () => Object.fromEntries(Object.keys(ctx.window.localStorage)
     .map((key) => [key, ctx.window.localStorage.getItem(key)]));
   return ctx;
@@ -189,4 +200,17 @@ test("the page left while a shift is out forgets every kept scan holding its pho
   ctx.window.dispatchEvent(new ctx.window.Event("pagehide"));
   assert.deepEqual(Object.keys(ctx.storage()).filter((key) => key.startsWith("tagpup_cache_alpha/")), [],
     "a kept scan holding the photos as they were before the shift is left");
+});
+
+test("the page left while a single save is out forgets every kept scan holding its photo", async (t) => {
+  // A title save of one photo, its reply never taken: the page reloaded, or another library chosen, with it out.
+  const ctx = await page(t, { save: () => new Promise(() => {}) });
+  await ctx.open(PARENT);
+  await ctx.open(CHILD);
+  await ctx.select(H1);
+  await ctx.saveTitle("Start line");
+  assert.equal(lastSave(ctx.fake).path, H1.path, "the save was not sent");
+  assert.equal(ctx.kept().length, 2, "both folders kept");
+  ctx.window.dispatchEvent(new ctx.window.Event("pagehide"));
+  assert.deepEqual(ctx.kept(), [], "a kept scan holding the photo as it was before the save is left");
 });

@@ -43,10 +43,10 @@ export function pictureCheckSaid(data) {
 export const KEEP_DONE = 10;
 
 /**
- * A new entry, waiting: `label` says what it does. Its job names the photos it sends in `photos` (their paths), for
- * photosOut.
+ * A new entry, waiting: `label` says what it does; `photos()` gives the paths of the photos its write sends, asked while
+ * it is out (photosOut): a tag drain's chunk is chosen only when its turn comes.
  */
-export function queueEntry(label) {
+export function queueEntry(label, photos) {
     const queue = state.writeQueue;
     if (!pendingWrites()) {
         // A new run of writes: "Saving 1 of 1" again, not "Saving 7 of 7".
@@ -54,7 +54,7 @@ export function queueEntry(label) {
         queue.batchSettled = 0;
     }
     queue.batchTotal += 1;
-    const entry = { id: queue.nextId++, label, status: 'waiting', error: '', at: new Date() };
+    const entry = { id: queue.nextId++, label, photos, status: 'waiting', error: '', at: new Date() };
     queue.entries.push(entry);
     renderWriteQueue();
     return entry;
@@ -85,11 +85,11 @@ export function pendingWrites() {
 }
 
 /**
- * The photos of the write under way, as its job named them (`photos`: a tag chunk's, a Time Shift's; a write that names
- * none, a single save, gives none): what a page going now leaves unknown (edits.js wireUnsavedEdits).
+ * The photos of the write under way, as it was queued naming them (queueEntry's `photos`: a single save's one, a tag
+ * chunk's, a Time Shift's, an Apply All's): what a page going now leaves unknown (edits.js wireUnsavedEdits).
  */
 export function photosOut() {
-    return state.writeQueue.entries.filter(e => e.status === 'writing').flatMap(e => e.photos || []);
+    return state.writeQueue.entries.filter(e => e.status === 'writing').flatMap(e => e.photos());
 }
 
 function failedEntries() {

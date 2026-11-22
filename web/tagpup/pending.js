@@ -226,7 +226,12 @@ function drain() {
     const pending = state.pending;
     if (pending.queued || !pending.files.size || (pending.stopped && !ownRemovals().length)) return;
     pending.queued = true;
-    queuePhotoWrite(sendChunk, 'Write tag changes', () => resume());
+    queuePhotoWrite(chunkOut, sendChunk, 'Write tag changes', () => resume());
+}
+
+/** The photos of the chunk out: the page going while they are out forgets the scans kept of them (write-queue.js photosOut). */
+function chunkOut() {
+    return (state.pending.out || []).map(item => item.path);
 }
 
 /** Retry: the drain goes on from the files a failed chunk gave back. */
@@ -359,7 +364,6 @@ async function sendChunk(entry) {
         const drops = state.pending.drops;
         chunk = takeChunk();
         state.pending.out = chunk;
-        entry.photos = chunk.map(item => item.path);   // the page going while they are out (write-queue.js photosOut)
         if (!chunk.length) {
             // Queued at a click while the chunk before was out, and that one failed: the changes wait for its Retry.
             entry.label = state.pending.stopped ? 'Tag changes: waiting for the failed write' : 'Tag changes: nothing left to write';

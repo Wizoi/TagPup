@@ -188,7 +188,7 @@ function giveBack(taken, fields) {
 export function queueWriteOf(path, job, label = `Save photo ${baseName(path)}`, again = () => queueWriteOf(path, job, label)) {
     const key = pathKey(path);
     // A failed save's Retry is a write of this photo too: the one leaving the photo waits for.
-    const run = queuePhotoWrite(job, label, again).finally(() => {
+    const run = queuePhotoWrite(() => [path], job, label, again).finally(() => {
         if (state.photoWrites[key] === run) delete state.photoWrites[key];
         updateSaveButton();
     });
@@ -224,16 +224,17 @@ export function openPhotoWrite() {
  * (queueWriteOf). Resolves to the job's result, or false if it threw; the queue carries on either way.
  */
 /**
- * Queue `job`, a write to photo files, behind every write queued before it. A photo of a
+ * Queue `job`, a write to photo files, behind every write queued before it. `photos()` gives the paths it sends, asked
+ * while it is out: the page going then forgets every scan kept of them (write-queue.js photosOut). A photo of a
  * folder the library does not hold is written to its file only, which the server decides per
  * photo (tagpup.services.file_only); the queue does not ask.
  */
-export function queuePhotoWrite(job, label = 'Save a photo', again = () => queuePhotoWrite(job, label)) {
+export function queuePhotoWrite(photos, job, label = 'Save a photo', again = () => queuePhotoWrite(photos, job, label)) {
     // `again` is given the entry that failed: a save's entry holds what it tried to write (`intent`).
     // An entry of the queue's status (write-queue.js): `label` says what it does, and
     // the job is given it, to put a failure's reason in `error`. A job that resolves
     // false failed; Retry queues it again, as `again` says (a write of one photo is queued again as that photo's).
-    const entry = queueEntry(label);
+    const entry = queueEntry(label, photos);
     entry.retry = () => again(entry);
     const run = inTurn(state, 'detailSaveInFlight', () => {
         markEntry(entry, 'writing');
