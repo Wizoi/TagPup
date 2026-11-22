@@ -80,7 +80,15 @@ export function renamedBy(renames) {
     return (path) => (moves.has(pathKey(path)) ? moves.get(pathKey(path)) : path);
 }
 
-/** `held`, kept by photo path (a folder's suggestions), under the paths `now` (renamedBy) gives: a new object. */
+/**
+ * `held`, kept by photo path (a folder's suggestions), under the paths `now` (renamedBy) gives: a new object. An entry
+ * that stays is written first, so a photo that moved onto its name wins over a stale entry there (a deleted photo's).
+ */
 export function rekeyed(held, now) {
-    return Object.fromEntries(Object.entries(held).map(([path, value]) => [now(path), value]));
+    const entries = Object.entries(held);
+    const moved = ([path]) => now(path) !== path;
+    return Object.fromEntries([
+        ...entries.filter(entry => !moved(entry)),
+        ...entries.filter(moved).map(([path, value]) => [now(path), value]),
+    ]);
 }

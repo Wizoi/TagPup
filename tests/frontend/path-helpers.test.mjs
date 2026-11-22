@@ -21,7 +21,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
 import { REPO_ROOT, APPS, loadApp, FakeServer, photoRecord, openFolder, pageModules } from "./harness.mjs";
-import { baseName, isUnder, pathKey, samePath } from "../../web/common/paths.js";
+import { baseName, isUnder, pathKey, renamedBy, rekeyed, samePath } from "../../web/common/paths.js";
 
 const PATHS_JS = path.join(REPO_ROOT, "web", "common", "paths.js");
 
@@ -260,5 +260,14 @@ describe("TagPup: a folder typed two ways is one folder", () => {
     // Back to the first folder, spelled the way the server would spell it.
     await openFolder(ctx, "D:\\Training\\Pictures\\Meet 3");
     assert.equal(scans(ctx), 2, "the cached scan was missed because of the spelling");
+  });
+});
+
+describe("a folder's suggestions follow a rename map", () => {
+  test("a photo that moved onto a name wins over a stale entry already there", () => {
+    // A deleted photo's suggestions stayed at R3; the chain then moves the photo at R2 onto it.
+    const now = renamedBy({ "D:/Trip/R1.jpg": "D:/Trip/R2.jpg", "D:/Trip/R2.jpg": "D:/Trip/R3.jpg" });
+    const held = { "D:/Trip/R1.jpg": ["first"], "D:/Trip/R2.jpg": ["second"], "D:/Trip/R3.jpg": ["deleted"] };
+    assert.deepEqual(rekeyed(held, now), { "D:/Trip/R2.jpg": ["first"], "D:/Trip/R3.jpg": ["second"] });
   });
 });
