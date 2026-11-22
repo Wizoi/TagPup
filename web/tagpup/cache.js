@@ -1,7 +1,7 @@
 // TagPup's page: a folder's scan, kept in this browser for half an hour, so opening it
 // again does not scan it again. Each library's own: two libraries can hold one folder.
 import { libraryIn } from './common/api.js';
-import { pathKey, samePath } from './common/paths.js';
+import { isUnder, pathKey, samePath } from './common/paths.js';
 import { state } from './state.js';
 
 // Browser local storage cache configuration (30 minutes timeout)
@@ -13,8 +13,9 @@ export const CACHE_TTL_MS = 30 * 60 * 1000;
 // folder's clips, with `media` and a recorded clip's `id` and `thumb`: an older entry lists none of them; 4: `writes`, the
 // edits a photo's panel offers (stale.js): a record without it offers none; 5: `writes` naming "name", a photo's and a
 // clip's Smart Rename button: an older record holds it inert; 6: a clip's `writes` naming "date", and its `taken` read
-// from its XMP date first: an older record holds a clip's date inert, or shows its QuickTime date).
-export const CACHE_VERSION = 6;
+// from its XMP date first: an older record holds a clip's date inert, or shows its QuickTime date; 7: `order`, the key a
+// folder's records are put in its order by, given by the server (inFolderOrder): an older record holds none).
+export const CACHE_VERSION = 7;
 
 export function saveToLocalStorageCache() {
     if (!state.scannedFolder) return;
@@ -26,10 +27,76 @@ export function saveToLocalStorageCache() {
         // Found by a Suggest that only looked, and kept in the server's memory (suggestions.js).
         inMemory: Boolean(state.suggestionsInMemory)
     };
+    const key = folderCacheKey(state.scannedFolder);
     try {
-        localStorage.setItem(folderCacheKey(state.scannedFolder), JSON.stringify(cacheEntry));
+        localStorage.setItem(key, JSON.stringify(cacheEntry));
     } catch (e) {
-        console.warn("Storage quota exceeded, could not cache folder data.");
+        forgetKept(key, e);
+    }
+}
+
+/**
+ * Photos written, `paths` as the write's reply names them: `take(record)` changes one record of one of them, and is applied
+ * the same to every record of it the page holds and this browser keeps -- the open view's (a folder's, or a library view's),
+ * and every scan kept of this library whose folder holds the photo, its own folder's or one above it (a scan is recursive:
+ * isUnder; #3308). A folder's records are put back in its order (inFolderOrder); a library view's keep theirs. Another
+ * library's kept scans are its own (#1359). Returns how many of the open view's records took it, for the caller to draw.
+ */
+export function photosWritten(paths, take) {
+    const keys = new Set(paths.map(pathKey));
+    const takeAll = (records) => records.filter(record => keys.has(pathKey(record.path))).map(take).length;
+    const shown = takeAll(state.folderPhotos);
+    const open = state.scannedFolder ? folderCacheKey(state.scannedFolder) : null;
+    if (open && shown) {
+        state.folderPhotos = inFolderOrder(state.folderPhotos);
+        saveToLocalStorageCache();
+    }
+    for (const [key, folder] of keptScans()) {
+        if (key === open || !paths.some(path => isUnder(path, folder))) continue;
+        try {
+            const kept = JSON.parse(localStorage.getItem(key));
+            // A scan an older page kept is scanned again when opened (folder.js): nothing to change in it.
+            if (!kept || kept.version !== CACHE_VERSION || !Array.isArray(kept.photos) || !takeAll(kept.photos)) continue;
+            kept.photos = inFolderOrder(kept.photos);
+            localStorage.setItem(key, JSON.stringify(kept));
+        } catch (e) {
+            forgetKept(key, e);
+        }
+    }
+    return shown;
+}
+
+/**
+ * A folder's records in its order: by each one's `order`, the key the server gives every record of a scan and every photo
+ * a write gave a Date Taken (tagpup.core.dates.taken_sort_key); the page holds no rule of its own (#3304). Stable: records
+ * of one key keep their places, as the server's sort keeps them.
+ */
+export function inFolderOrder(records) {
+    return [...records].sort((a, b) => (a.order < b.order ? -1 : a.order > b.order ? 1 : 0));
+}
+
+/** This library's kept scans, [key, folder] (the folder as its key spells it, pathKey). */
+function keptScans() {
+    const prefix = folderCacheKey('');
+    const found = [];
+    for (let at = 0; at < localStorage.length; at++) {
+        const key = localStorage.key(at);
+        if (key && key.startsWith(prefix)) found.push([key, key.slice(prefix.length)]);
+    }
+    return found;
+}
+
+/**
+ * A kept scan that could not be written back (local storage full) is forgotten, never left holding the records from
+ * before a write: their stamps would have a save refused as changed on disk, and their dates would be shown. Opened again,
+ * the folder is scanned.
+ */
+function forgetKept(key, why) {
+    console.warn('A folder kept in this browser could not be written back, and is forgotten:', why);
+    try {
+        localStorage.removeItem(key);
+    } catch (e) {
+        console.warn('Could not forget the scan kept for a folder:', e);
     }
 }
 
@@ -105,7 +172,7 @@ export function forgetFolderCaches({ before = Infinity } = {}) {
  * Where a folder's scan is cached: one entry per library and folder, however the folder was typed. The library is the
  * page's (its URL): choosing another keeps the folder (?path, web/common/library.js goToLibrary), and a key of the folder
  * alone showed the first library's records and suggestions there as "(cached)" (docs/findings.md, #1359). A library's name
- * holds no "/" (it is a segment of the URL).
+ * holds no "/" (it is a segment of the URL), so `folderCacheKey('')` begins every key of this library's scans and no other's.
  */
 export function folderCacheKey(folder) {
     return `tagpup_cache_${libraryIn(window.location.pathname)}/${pathKey(folder)}`;

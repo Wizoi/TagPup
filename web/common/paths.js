@@ -43,7 +43,7 @@ export function folderOf(p) {
     return at < 0 ? '' : text.slice(0, at);
 }
 
-/** Whether two spellings name the same file or folder. *//**
+/**
  * Is `p` spelled as a network share (\\\\server\\share\\..., or //server/share/...)? Windows has no
  * Recycle Bin there: a delete goes through this PC's (#694). (A mapped drive letter is not told by its
  * spelling; the server says it in the folder's membership, `permanent_delete`.)
@@ -52,8 +52,17 @@ export function isUnc(p) {
     return /^[\\/]{2}[^\\/]/.test(String(p || '').trim());
 }
 
-
+/** Whether two spellings name the same file or folder. */
 export function samePath(a, b) {
     if (!a || !b) return false;
     return pathKey(a) === pathKey(b);
+}
+
+/**
+ * Is `p` inside `folder`, at any depth? A folder is not under itself. By pathKey, as the server's paths.is_under: a
+ * folder's scan is recursive, so it holds every photo under it (web/tagpup/cache.js photosWritten).
+ */
+export function isUnder(p, folder) {
+    const at = pathKey(folder);
+    return Boolean(at) && pathKey(p).startsWith(at + '\\');
 }
