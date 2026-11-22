@@ -7,8 +7,10 @@ named by its path and by its row's id when it has one. The reply is one envelope
 through: an update stopping the server's batches while a write is asked (nothing begins, nothing is written); two writes
 at once (both land, one after the other); a share that does not answer (that photo is its error at once, the others are
 written, nothing waits on it), or stops answering part-way through a shift (the change ends there, `written` naming the
-photos that landed), or does not give a held folder's listing when its Time Shift answers (the folder's photos are
-answered as the write read them back, never scanned again); a page whose record is stale (its base, or its id now naming another file, is refused 409 and
+photos that landed; a Just-look folder's photo that landed keeps the stamp written in the server's kept scan, #3306), or
+does not give a held folder's listing when its Time Shift answers (the folder's photos are answered as the write read them
+back, never scanned again); a Date Taken saved in a Just-look folder, shown in its new place when the folder is opened
+again from the server's kept scan (#3318: each reply's `order` is the scan's); a page whose record is stale (its base, or its id now naming another file, is refused 409 and
 nothing is written); a chunk of the page's tag queue naming a photo renamed since it was read (refused 409, the photo
 read again by its id, the chunk sent where it is now and written: the pages' rule, web/common/photo-write.js readMoved,
 against the real route rather than the pages' fakes); a photo of a folder the library does not hold, which has no row and is named by its path alone. A
@@ -317,7 +319,8 @@ class AWriteThroughTheOneEntryPoint(unittest.TestCase):
                                            reply["error_count"]))
         self.assertEqual(["time shift"], [change["operation"] for change in self.changes()])
         self.assertEqual({path: {"mtime": os.stat(path).st_mtime, "size": int(os.stat(path).st_size),
-                                 "taken": "2020:06:01 10:30:00"} for path in self.photos[:2]}, reply["written"])
+                                 "taken": "2020:06:01 10:30:00", "order": "2020:06:01 10:30:00"}
+                          for path in self.photos[:2]}, reply["written"])
         self.assertEqual(["2020:06:01 10:30:00"] * 2 + [TAKEN], [taken_in(path) for path in self.photos])
 
     def test_a_shift_sent_in_chunks_of_one_group_is_one_line_of_history_each_photo_told_its_new_date(self):
@@ -353,14 +356,14 @@ class AWriteThroughTheOneEntryPoint(unittest.TestCase):
         self.assertEqual([], self.changes())
 
     @contextlib.contextmanager
-    def a_share_that_stops_answering_at(self, stop):
-        """The held folder on a share of its own that stops answering at the photo `stop`: the write's own read of each
-        file just before it writes it does not answer for that one, and from then on no read of a file on it answers
-        (the read back after the write included: what landed before the stop is not read again)."""
+    def a_share_that_stops_answering_at(self, stop, folder=None):
+        """The held folder (or `folder`) on a share of its own that stops answering at the photo `stop`: the write's own
+        read of each file just before it writes it does not answer for that one, and from then on no read of a file on it
+        answers (the read back after the write included: what landed before the stop is not read again)."""
         shares.forget()
         self.addCleanup(shares.forget)
         real_read_one, real_read, real_share_of = field_values.read_one, field_values.read, shares.share_of
-        under, stopped = os.path.normcase(self.held), []
+        under, stopped = os.path.normcase(folder or self.held), []
 
         def on_it(path):
             return os.path.normcase(str(path)).startswith(under)
@@ -397,6 +400,74 @@ class AWriteThroughTheOneEntryPoint(unittest.TestCase):
                          "its read back did not answer: its new date is not known, which is not none (#3300)")
         self.assertEqual(["2020:06:01 10:30:00", TAKEN, TAKEN], [taken_in(path) for path in self.photos])
         self.assertEqual([("time shift", "applied")], [(change["operation"], change["status"]) for change in self.changes()])
+
+    def opened_again(self, folder):
+        """The folder opened again after the page's own copy of its scan expired (half an hour): the server's kept scan,
+        {path key: record}, which is not scanned again (a write of a folder the library does not hold moves no counter)."""
+        with mock.patch.object(photo_actions, "scan_folder", wraps=photo_actions.scan_folder) as scan:
+            status, opened = self.lib.get("/api/folder/scan", {"path": folder})
+        self.assertEqual((200, 0), (status, scan.call_count), "the kept scan, not a new one")
+        return {paths.key(record["path"]): record for record in opened}
+
+    def test_a_shift_whose_share_stops_after_a_photo_landed_leaves_its_kept_record_with_the_stamp_written(self):
+        # #3306: the owner shifts a Just-look folder on a share that stops answering after the first photo landed and
+        # before its read back. The reply names it written with its stamp, its date not known (#3300). Opened again
+        # within the server's keep, its record carries that stamp, so the next save from it is not refused as changed
+        # on disk; it keeps the Date Taken it showed, and the photos not written are as they were.
+        loose = os.path.join(self.lib.root, "Just Looking")
+        photos = [make_photo(os.path.join(loose, "q%d.jpg" % n)) for n in range(3)]
+        date(photos)
+        status, opened = self.lib.get("/api/folder/scan", {"path": loose})
+        self.assertEqual((200, 3), (status, len(opened)), opened)
+        before = {paths.key(record["path"]): (record["mtime"], record["size"]) for record in opened}
+        with self.a_share_that_stops_answering_at(photos[1], folder=loose):
+            status, reply = self.lib.post(ROUTE, {"op": "shift", "params": {"minutes": 30},
+                                                  "changes": {record["path"]: {"id": None} for record in opened}})
+        # A file-only shift is not one change to stop: each photo after the share went is its error, what landed written.
+        self.assertEqual((200, [paths.key(path) for path in photos[1:]]),
+                         (status, [paths.key(error["path"]) for error in reply["errors"]]), reply)
+        (landed, own), = reply["written"].items()
+        self.assertTrue(paths.same(photos[0], landed), landed)
+        self.assertEqual((os.stat(photos[0]).st_mtime, os.stat(photos[0]).st_size), (own["mtime"], own["size"]))
+        self.assertNotIn("order", own, "its date is not known, nor its place")
+        kept = self.opened_again(loose)
+        first = kept[paths.key(photos[0])]
+        self.assertEqual((own["mtime"], own["size"], TAKEN), (first["mtime"], first["size"], first["taken"]))
+        self.assertEqual({key: before[key] for key in map(paths.key, photos[1:])},
+                         {key: (kept[key]["mtime"], kept[key]["size"]) for key in map(paths.key, photos[1:])})
+        status, saved = self.lib.post(ROUTE, {"op": "set", "changes": {first["path"]: {
+            "id": None, "title": "Quay", "tags": first["tags"], "stamp": {"mtime": first["mtime"], "size": first["size"]},
+            "base": {"tags": first["tags"], "title": first["title"]}}}})
+        self.assertEqual(200, status, saved)
+
+    def test_a_date_taken_saved_in_a_folder_the_library_does_not_hold_shows_when_the_folder_is_opened_again(self):
+        # #3318: the owner saves one photo's Date Taken in a Just-look folder; the photo moves to its new place at once
+        # (the reply's `order`), and the folder opened again after the page's own copy expired, served from the
+        # server's kept scan, shows the new date in the same place: the kept record's `taken` and `order` are the reply's.
+        loose = os.path.join(self.lib.root, "Just Looking")
+        photos = [make_photo(os.path.join(loose, "q%d.jpg" % n)) for n in range(2)]
+        date(photos[:1], "2020:06:01 09:00:00")
+        date(photos[1:])
+        status, opened = self.lib.get("/api/folder/scan", {"path": loose})
+        self.assertEqual(200, status, opened)
+        self.assertEqual([paths.key(path) for path in photos], [paths.key(record["path"]) for record in opened])
+        record = opened[1]
+        status, reply = self.lib.post(ROUTE, {"op": "set", "changes": {record["path"]: {
+            "id": None, "title": record["title"], "tags": record["tags"], "date_taken": "2019-03-02T09:15",
+            "stamp": {"mtime": record["mtime"], "size": record["size"]},
+            "base": {"tags": record["tags"], "title": record["title"]}}}})
+        self.assertEqual(200, status, reply)
+        own = reply["written"][record["path"]]
+        kept = self.opened_again(loose)
+        moved = kept[paths.key(photos[1])]
+        self.assertEqual(own["taken"], moved["taken"], "the kept record shows the date saved")
+        self.assertEqual([paths.key(photos[1]), paths.key(photos[0])], list(kept), "in its new place")
+        self.assertEqual(["2020:06:01 09:00:00", TAKEN], [each["order"] for each in opened],
+                         "each record leaves with the key the page sorts by")
+        self.assertEqual(("2019:03:02 09:15:00", "2019:03:02 09:15:00"), (own["taken"], own["order"]))
+        self.assertEqual((own["taken"], own["order"], own["mtime"], own["size"]),
+                         (moved["taken"], moved["order"], moved["mtime"], moved["size"]))
+        self.assertNotIn("order", self.lib.folders().snapshot(loose)[paths.key(photos[1])], "given, never kept")
 
     def as_the_page_test_reads(self, reply, sent):
         """`reply` as a page's test answers from it: each photo's stamp 1 and 1, each path of `sent` named PHOTO_<n> in the
@@ -494,6 +565,11 @@ class AWriteThroughTheOneEntryPoint(unittest.TestCase):
                          {key: (record["mtime"], record["taken"]) for key, record in kept.items()},
                          "the folder's kept map holds each photo as the write read it back")
         self.assertEqual(["time shift"], [change["operation"] for change in self.changes()])
+        # The share answers again and the folder is opened: each photo is where the reply's `order` put it.
+        status, reopened = self.lib.get("/api/folder/scan", {"path": self.held})
+        self.assertEqual(200, status, reopened)
+        self.assertEqual({key: own["order"] for key, own in written.items()},
+                         {paths.key(record["path"]): record["order"] for record in reopened})
 
     def test_a_body_that_means_nothing_is_refused_400(self):
         photo, photo_id = self.photos[0], self.ids[0]

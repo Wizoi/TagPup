@@ -15,6 +15,38 @@
   "with_rows": 0,
   "written": {}
  },
+ "dated": {
+  "attempted": 1,
+  "change": 8,
+  "changed": 1,
+  "error_count": 0,
+  "errors": [],
+  "file_only": 0,
+  "skipped": [],
+  "skipped_missing": 0,
+  "stopped": null,
+  "success": true,
+  "with_rows": 1,
+  "written": {
+   "PHOTO": {
+    "base": {
+     "tags": [
+      "Trips/Coast"
+     ],
+     "title": "A caption"
+    },
+    "mtime": 1,
+    "new_path": "IMG_0002.jpg",
+    "order": "2019:03:02 09:15:00",
+    "rename_failed": null,
+    "size": 1,
+    "tags": [
+     "Trips/Coast"
+    ],
+    "taken": "2019:03:02 09:15:00"
+   }
+  }
+ },
  "no_rename": {
   "attempted": 1,
   "change": 4,
@@ -139,6 +171,7 @@
  },
  "status": {
   "changed_on_disk": 409,
+  "dated": 200,
   "no_rename": 200,
   "not_written": 200,
   "picture_changed": 200,

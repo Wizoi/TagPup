@@ -488,7 +488,8 @@ class ASaveFromThePage(S.Fresh):
 
     def test_the_replies_the_page_reads_are_written_for_its_test(self):
         # Each reply as the route made it, and its status (`status`, by name): a save that wrote (`no_rename`), whose
-        # rename failed, whose picture changed and was written again; a turn; a save from a base the file no longer holds
+        # rename failed, whose picture changed and was written again; one that saved a Date Taken (`dated`: its `taken`
+        # and its `order`, the place the page moves it to); a turn; a save from a base the file no longer holds
         # (`changed_on_disk`, refused 409); a save of a read-only file ExifTool could not write (`not_written`).
         path, record = self.smart_renamed()
         refused = names.RenameFailed("The file is open in another program (held by Viewer)", [])
@@ -510,6 +511,7 @@ class ASaveFromThePage(S.Fresh):
         os.chmod(locked, stat.S_IREAD)
         self.addCleanup(os.chmod, locked, stat.S_IREAD | stat.S_IWRITE)
         replies["not_written"] = self.sent(held, title="A caption")
+        replies["dated"] = self.sent(self.record(plain_id), date_taken="2019-03-02T09:15")
         found = {name: reply.get_json() for name, reply in replies.items()}
         for each in found.values():
             # The photo a save wrote is named in the page's test by the path it sends (harness.mjs savedAs).

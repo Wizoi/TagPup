@@ -22,7 +22,7 @@ from flask import Blueprint, Response, jsonify, request
 
 from tagpup import config
 from tagpup import runtime as runtimes
-from tagpup.core import paths, renaming, vocabulary
+from tagpup.core import dates, paths, renaming, vocabulary
 from tagpup.core.library import picker_name
 from tagpup.jobs import suggestions as suggestion_jobs
 from tagpup.services import bulk_edit
@@ -240,8 +240,10 @@ def _a_folder(folder):
 
 
 def _sorted(photos):
-    """A folder's records in the order the page shows them."""
-    return sorted(photos.values(), key=photo_actions.taken_order)
+    """A folder's records in the order the page shows them, each a copy carrying its `order` (photos.taken_order), the
+    key the page sorts by: given in the reply, never kept in the FolderCache, whose records a write patches."""
+    return [{**record, "order": order} for order, record in
+            sorted(((photo_actions.taken_order(record), record) for record in photos.values()), key=lambda pair: pair[0])]
 
 
 # ---- The folder ---------------------------------------------------------------------------
@@ -1030,8 +1032,8 @@ def _followed_rename(library, moves, stamps=None):
         seen = stamps or {}
         written_stamp = (seen[paths.key(new)] if paths.key(new) in seen else photo_actions.file_stamp(new)) if entries \
             else None
-        for _held, record in (entries if written_stamp else ()):
-            record["mtime"], record["size"] = written_stamp
+        for _held, record in entries:
+            _stamped(record, written_stamp)
     # The keys move last, under the cache's lock, all of them at once (#2907).
     cache.move_all([(old, new, None) for old, new, renamed, entries in found if renamed and entries])
     return records
@@ -1141,10 +1143,17 @@ def _told(library, op, changes, result):
     if op == photo_writes.TAGS:
         return records_written(library, result) if result.details.get("written") else {}
     if op == photo_writes.SHIFT:
-        folders.of(library).move_all([(path, path, record) for path, record in _shifted(result)])
+        cache, read_back = folders.of(library), _shifted(result)
+        cache.move_all([(path, path, record) for path, record in read_back])
+        stamps = _stamps_after(result) if result.details.get("written") else {}
+        # One whose read back did not answer (a share gone after its write landed) keeps its record, Date Taken and all
+        # (#3300), and takes the stamp the write left, or the next save from it is refused as changed on disk (#3306).
+        read = {paths.key(path) for path, _record in read_back}
+        for path, stamp in stamps.items():
+            for _held, record in (cache.entries_for(path) if paths.key(path) not in read else ()):
+                _stamped(record, stamp)
         asked = {paths.key(path): path for path in changes}
-        return {asked.get(paths.key(path), path): stamp
-                for path, stamp in (_stamps_after(result) if result.details.get("written") else {}).items()}
+        return {asked.get(paths.key(path), path): stamp for path, stamp in stamps.items()}
     if not result.ok:
         return {}
     ((asked, (_id, own)),) = changes.items()
@@ -1159,6 +1168,10 @@ def _told(library, op, changes, result):
         record["tags"] = vocabulary.extract_tags(raw_meta)
         record["captions"] = [own["title"]] if own["title"] else []
         record["title"] = own["title"]
+        if result.details["taken"] is not None:
+            # The Date Taken saved, as the reply gives it: a folder the library does not hold is served this record
+            # again, never scanned, while nothing moves its counter (#3318).
+            record["taken"] = result.details["taken"]
     return {asked: left}
 
 
@@ -1173,8 +1186,9 @@ def _envelope(op, changes, result, stamps):
     `attempted`, `skipped_missing` and `skipped` [{"path", "why"}], `error_count` and `errors` [{"path", "id", "why"}],
     `stopped` ({"after", "of"} when a stop ended it part-way, else null), `change` (the journal's, null for a file-only
     write), `file_only` and `with_rows`, `written` {path: {"mtime", "size"}, and a tag write's and a set's "tags", a set's
-    and a shift's "taken" (a shift's only for a photo its read back read), a set's "base", "new_path", "rename_failed"}, and `pictures_refused` and the faces it changed when there are any. What was written, not
-    attempted."""
+    and a shift's "taken" (a shift's only for a photo its read back read) and with it "order" (_taken_reply; a set's
+    only when it saved a Date Taken), a set's "base", "new_path", "rename_failed"}, and `pictures_refused` and the faces
+    it changed when there are any. What was written, not attempted."""
     ids = {paths.key(path): photo_id for path, (photo_id, _own) in changes.items()}
     details = result.details
     if op == photo_writes.TAGS:
@@ -1182,12 +1196,14 @@ def _envelope(op, changes, result, stamps):
                    for path, (tags, _flat, _hierarchical) in details.get("written", {}).items()}
     elif op == photo_writes.SHIFT:
         taken = details.get(photo_actions.TAKEN_OF, {})
-        written = {path: {**_stamp_reply(stamp), **({"taken": taken[paths.key(path)]} if paths.key(path) in taken else {})}
+        written = {path: {**_stamp_reply(stamp), **(_taken_reply(taken[paths.key(path)], stamp)
+                                                    if paths.key(path) in taken else {})}
                    for path, stamp in stamps.items()}
     else:
         written = {asked: {"tags": details["tags"], "base": details["base"], "new_path": details["new_path"],
-                           "taken": details["taken"], "rename_failed": details.get("rename_failed"),
-                           **_stamp_reply(stamp)} for asked, stamp in stamps.items()}
+                           "rename_failed": details.get("rename_failed"), **_stamp_reply(stamp),
+                           **(_taken_reply(details["taken"], stamp) if details["taken"] is not None
+                              else {"taken": None})} for asked, stamp in stamps.items()}
     return {"success": result.ok, "changed": result.changed, "attempted": result.attempted,
             "skipped_missing": details.get(tagging_actions.SKIPPED_MISSING, 0),
             "skipped": [{"path": what, "why": why} for what, why in result.skipped],
@@ -1195,6 +1211,13 @@ def _envelope(op, changes, result, stamps):
             "errors": [{"path": what, "id": ids.get(paths.key(what)), "why": why} for what, why in result.errors],
             "stopped": details.get("stopped"), "change": details.get("change"), **_where(result), "written": written,
             **_pictures_refused(result), **_faces_unnamed(result)}
+
+
+def _taken_reply(taken, stamp):
+    """{"taken", "order"} of a photo a write gave the Date Taken `taken`, its file's `stamp` (mtime, size) after it: its
+    date as the library spells it, and its place in its folder as a scan gives it (`order`, _sorted), so the page moves
+    it there without a rule of its own."""
+    return {"taken": taken, "order": dates.taken_sort_key(taken, stamp[0] if stamp else 0.0)}
 
 
 #: What one photo of a bulk tag write's `changes` may say: the tags to add and the tags to take off.
@@ -1358,13 +1381,17 @@ def records_written(library, result):
     cache = folders.of(library)
     stamps = _stamps_after(result)
     for path, (tags, flat, hierarchical) in result.details["written"].items():
-        stamp = stamps[path]
         for _held, record in cache.entries_for(path):
             photo_actions.record_written(library, record, path, tags, flat, hierarchical)
-            if stamp:
-                # The cached scan carries the file's stamp now, or the next save from it is refused.
-                record["mtime"], record["size"] = stamp
+            _stamped(record, stamps[path])
     return stamps
+
+
+def _stamped(record, stamp):
+    """A kept record takes its file's `stamp` (mtime, size) after a write (None: none was seen, left as it was), or the
+    next save from it is refused as changed on disk."""
+    if stamp:
+        record["mtime"], record["size"] = stamp
 
 
 # ---- Autocomplete -----------------------------------------------------------------

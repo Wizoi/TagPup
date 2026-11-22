@@ -190,7 +190,13 @@ def date_taken_sort_key(raw_metadata, path, kind, mtime=0.0):
     A string, as the folder view has always sorted: the date as ExifTool gives it, or
     "mtime_<file time>", which sorts after every date.
     """
-    taken = date_taken(raw_metadata, path, kind)
+    return taken_sort_key(date_taken(raw_metadata, path, kind), mtime)
+
+
+def taken_sort_key(taken, mtime=0.0):
+    """The folder view's order of a photo taken at `taken` (date_taken's spelling, None for none) whose file time is
+    `mtime`: the date, or "mtime_<file time>", after every date. What a page sorts a folder's records by (their
+    `order`, tagpup.web.tagpup_routes), given by the server so the page holds no rule of its own."""
     return taken if taken is not None else "mtime_%s" % (mtime,)
 
 
