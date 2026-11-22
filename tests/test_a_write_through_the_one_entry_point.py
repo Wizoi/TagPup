@@ -359,10 +359,12 @@ class AWriteThroughTheOneEntryPoint(unittest.TestCase):
     def a_share_that_stops_answering_at(self, stop, folder=None):
         """The held folder (or `folder`) on a share of its own that stops answering at the photo `stop`: the write's own
         read of each file just before it writes it does not answer for that one, and from then on no read of a file on it
-        answers (the read back after the write included: what landed before the stop is not read again)."""
+        answers (the read back after the write included: what landed before the stop is not read again), nor a look at
+        one (shares.stamp_of: a stamp not taken by the write itself is not known)."""
         shares.forget()
         self.addCleanup(shares.forget)
         real_read_one, real_read, real_share_of = field_values.read_one, field_values.read, shares.share_of
+        real_stamp_of = shares.stamp_of
         under, stopped = os.path.normcase(folder or self.held), []
 
         def on_it(path):
@@ -384,8 +386,11 @@ class AWriteThroughTheOneEntryPoint(unittest.TestCase):
             found = real_read(et, [path for path in photo_paths if path not in away], wanted, *args, **kwargs)
             found.update({paths.key(path): field_values.NotAnswered("ExifTool did not answer in 1 s") for path in away})
             return found
+
+        def stamp_of(path):
+            return shares.UNANSWERED if stopped and on_it(path) else real_stamp_of(path)
         with mock.patch.object(field_values, "read_one", read_one), mock.patch.object(field_values, "read", read), \
-                mock.patch.object(shares, "share_of", share_of):
+                mock.patch.object(shares, "share_of", share_of), mock.patch.object(shares, "stamp_of", stamp_of):
             yield
 
     def test_a_share_that_stops_answering_part_way_through_a_shift_ends_it_with_what_landed(self):

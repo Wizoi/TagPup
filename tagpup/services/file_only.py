@@ -49,8 +49,8 @@ WITH_ROWS = "with_rows"
 def combined(held, loose):
     """One Result for a write made in two parts: `held`, the photos of folders the library
     holds, written as always, and `loose`, the others, written to files only. Counts add;
-    details keep `held`'s with the files each wrote under them -- `written` joined -- and FILE_ONLY and WITH_ROWS say how many files each part wrote. Either may be
-    None."""
+    details keep `held`'s with the files each wrote under them -- `written` and `stamps` joined -- and FILE_ONLY and
+    WITH_ROWS say how many files each part wrote. Either may be None."""
     if loose is None and held is None:
         return Result(details={WITH_ROWS: 0, FILE_ONLY: 0, "written": {}})
     if loose is None:
@@ -65,7 +65,7 @@ def combined(held, loose):
                  skipped=held.skipped + loose.skipped, errors=held.errors + loose.errors,
                  refused=held.refused or loose.refused)
     out.details = dict(held.details)
-    for name in ("written",):
+    for name in ("written", "stamps"):
         if name in held.details or name in loose.details:
             out.details[name] = {**held.details.get(name, {}), **loose.details.get(name, {})}
     if "conflicts" in held.details or "conflicts" in loose.details:
@@ -84,8 +84,9 @@ def write_fields(exiftool_path, photo_paths, read, plan_one, unreadable="fail", 
     (`read` the fields to read of each file, `plan_one(path, held)` a Plan from what it
     holds, `unreadable`, `stop_at_first_error`, an `et` session and what the caller `held`
     of the files in it) and the same Result -- `changed` the files written, errors the photos
-    that failed, details `written` {path: detail} of each written or already holding it,
-    `conflicts`, `pictures_refused` when a write was made once more -- but only the files are written: no
+    that failed, details `written` {path: detail} of each written or already holding it, `stamps` {path key: (mtime,
+    size) or None} of each file written, taken just after its write (file_changes.stamp_after_write), `conflicts`,
+    `pictures_refused` when a write was made once more -- but only the files are written: no
     journal change (details["change"] is None), no row, nothing after."""
     if et is None:
         with exiftool_session.ExifToolSession(executable=exiftool_path) as session:
@@ -138,6 +139,8 @@ def _write_fields(et, photo_paths, read, plan_one, unreadable, stop_at_first_err
             continue
         result.changed += 1
         written[path] = detail
+        # Its stamp now, before the read back: the reply's, never looked at after a share that may have stopped (#3306).
+        result.details.setdefault("stamps", {})[paths.key(path)] = file_changes.stamp_after_write(path)
         wrote.append((path, before, after))
     _read_back(et, wrote, result)
     logger.info("Wrote %d file(s) only, no row of any library (%d failed)", result.changed, len(result.errors))

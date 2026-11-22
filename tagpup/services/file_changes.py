@@ -835,6 +835,14 @@ def _stat(path):
         return None
 
 
+def stamp_after_write(path):
+    """(mtime, size) of a file a write just wrote, taken by the write itself as the journaled one takes its row's, or None
+    when it cannot be taken: the reply's stamp (details["stamps"]), so nothing looks at the file again once its share may
+    have stopped answering (file_only's write of a folder the library does not hold)."""
+    seen = _stat(path)
+    return (seen.st_mtime, seen.st_size) if seen is not None else None
+
+
 def _read_only(seen):
     """Is the file whose stat is `seen` (None: not there) marked read-only? The one rule of it (row.read_only, writable)."""
     return seen is not None and not seen.st_mode & S_IWRITE
