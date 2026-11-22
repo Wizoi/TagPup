@@ -1,0 +1,112 @@
+{
+ "chained": {
+  "reply": {
+   "file_only": 0,
+   "index_rows_moved": 3,
+   "index_skipped": [],
+   "success": true,
+   "updated_paths": {
+    "FOLDER\\IMG_0001.jpg": "FOLDER\\Regatta - 1.jpg",
+    "FOLDER\\Regatta - 1.jpg": "FOLDER\\Regatta - 2.jpg",
+    "FOLDER\\Regatta - 2.jpg": "FOLDER\\Regatta - 3.jpg"
+   },
+   "updated_photos": [
+    {
+     "camera": "",
+     "filename": "Regatta - 1.jpg",
+     "lens": "",
+     "media": "photo",
+     "mtime": 1,
+     "order": "2020:06:01 10:00:00",
+     "path": "FOLDER\\Regatta - 1.jpg",
+     "people": [],
+     "raw_metadata": {
+      "DateTimeOriginal": "2020:06:01 10:00:00",
+      "EXIF:DateTimeOriginal": "2020:06:01 10:00:00",
+      "SourceFile": "FOLDER/Regatta - 1.jpg",
+      "Subject": "Trips/Coast",
+      "XMP:Subject": "Trips/Coast"
+     },
+     "size": 1,
+     "tags": [
+      "Trips/Coast"
+     ],
+     "taken": "2020:06:01 10:00:00",
+     "title": "",
+     "writes": [
+      "tags",
+      "title",
+      "date",
+      "rotate",
+      "name"
+     ],
+     "year": "2020"
+    },
+    {
+     "camera": "",
+     "filename": "Regatta - 2.jpg",
+     "lens": "",
+     "media": "photo",
+     "mtime": 1,
+     "order": "2020:06:01 10:10:00",
+     "path": "FOLDER\\Regatta - 2.jpg",
+     "people": [],
+     "raw_metadata": {
+      "DateTimeOriginal": "2020:06:01 10:10:00",
+      "EXIF:DateTimeOriginal": "2020:06:01 10:10:00",
+      "SourceFile": "FOLDER/Regatta - 2.jpg",
+      "Subject": "Trips/Coast",
+      "XMP:Subject": "Trips/Coast"
+     },
+     "size": 1,
+     "tags": [
+      "Trips/Coast"
+     ],
+     "taken": "2020:06:01 10:10:00",
+     "title": "",
+     "writes": [
+      "tags",
+      "title",
+      "date",
+      "rotate",
+      "name"
+     ],
+     "year": "2020"
+    },
+    {
+     "camera": "",
+     "filename": "Regatta - 3.jpg",
+     "lens": "",
+     "media": "photo",
+     "mtime": 1,
+     "order": "2020:06:01 10:20:00",
+     "path": "FOLDER\\Regatta - 3.jpg",
+     "people": [],
+     "raw_metadata": {
+      "DateTimeOriginal": "2020:06:01 10:20:00",
+      "EXIF:DateTimeOriginal": "2020:06:01 10:20:00",
+      "SourceFile": "FOLDER/Regatta - 3.jpg",
+      "Subject": "Trips/Coast",
+      "XMP:Subject": "Trips/Coast"
+     },
+     "size": 1,
+     "tags": [
+      "Trips/Coast"
+     ],
+     "taken": "2020:06:01 10:20:00",
+     "title": "",
+     "writes": [
+      "tags",
+      "title",
+      "date",
+      "rotate",
+      "name"
+     ],
+     "year": "2020"
+    }
+   ],
+   "with_rows": 3
+  },
+  "status": 200
+ }
+}

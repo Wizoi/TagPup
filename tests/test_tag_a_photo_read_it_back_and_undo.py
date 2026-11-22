@@ -32,6 +32,10 @@ test_save_reply_says_rename_failed (#884: a caption saved whose rename then fail
 fixture of those replies, tests/frontend/fixtures/save_replies.json, is written here: ASaveFromThePage). Broken in a scratch
 copy and this file fails (2026-10-15): date_taken_fields writing no EXIF:DateTimeOriginal, save_photo setting a tag without its
 check, the save route dropping `rename_failed`.
+
+A folder's Smart Rename whose names renumber (a photo taken first, the two Smart-Renamed before it moved up one) answers a
+chain, 17 -> 18 and 18 -> 19; the page's fixture of that reply, tests/frontend/fixtures/rename_replies.json, is written
+here (AFolderSmartRenameFromThePage; #3330).
 """
 import json
 import os
@@ -528,6 +532,43 @@ class ASaveFromThePage(S.Fresh):
         text = json.dumps(found, sort_keys=True, indent=1) + "\n"
         self.assertNotIn(json.dumps(self.home.root)[1:-1], text, "a path of the test's home left in")
         page_fixtures.hold_to(self, SAVE_REPLIES, text, "tests.test_tag_a_photo_read_it_back_and_undo", "the photo panel's save")
+
+
+#: The replies of a folder's Smart Rename the page test reads (tests/frontend/scenario-a-write-reaches-every-scan-kept.test.mjs).
+RENAME_REPLIES = page_fixtures.path_of("rename_replies.json")
+
+
+@unittest.skipIf(S.EXIFTOOL is None, "ExifTool not installed")
+class AFolderSmartRenameFromThePage(S.Fresh):
+    """A folder's Smart Rename as the page sends it (web/tagpup/rename.js: the folder, the photos selected, a grouping),
+    through the real route, its reply written for the page's test."""
+
+    def test_the_chained_rename_reply_the_page_reads_is_written_for_its_test(self):
+        # `chained`: a photo taken before two already Smart-Renamed takes the first number, and each of the two moves up
+        # one, so an old name of one is the new name of another (live: 1 of 11 folder Smart Renames in photo_index). The
+        # folder scanned first, as the page opened it (the route orders the photos by the Date Taken of that scan).
+        sent = []
+        for name, seed, taken in (("IMG_0001.jpg", 1, "2020:06:01 10:00:00"), ("Regatta - 1.jpg", 2, "2020:06:01 10:10:00"),
+                                  ("Regatta - 2.jpg", 3, "2020:06:01 10:20:00")):
+            path, _photo_id = self.make(name, seed, ["Trips/Coast"])
+            S.write_into(path, DateTimeOriginal=taken)
+            sent.append(path)
+        self.assertEqual(200, self.api("/folder/scan", query_string={"path": self.folder}).status_code)
+        reply = self.post("/folder/rename-photos", {"folder_path": self.folder, "photo_paths": sent, "grouping": "Regatta"})
+        body = reply.get_json()
+        self.assertEqual((200, True), (reply.status_code, body["success"]), body)
+        moved = {os.path.basename(old): os.path.basename(new) for old, new in body["updated_paths"].items()}
+        self.assertEqual({"IMG_0001.jpg": "Regatta - 1.jpg", "Regatta - 1.jpg": "Regatta - 2.jpg",
+                          "Regatta - 2.jpg": "Regatta - 3.jpg"}, moved, "not a chain")
+        for record in body["updated_photos"]:
+            record.update(mtime=1, size=1)
+        # The folder named FOLDER, in both of its spellings (the reply's paths, ExifTool's SourceFile).
+        text = json.dumps({"chained": {"status": reply.status_code, "reply": body}}, sort_keys=True, indent=1) + "\n"
+        for spelled in (self.folder, self.folder.replace(os.sep, "/")):
+            text = text.replace(json.dumps(spelled)[1:-1], "FOLDER")
+        self.assertNotIn(json.dumps(self.home.root)[1:-1], text, "a path of the test's home left in")
+        page_fixtures.hold_to(self, RENAME_REPLIES, text, "tests.test_tag_a_photo_read_it_back_and_undo",
+                              "a folder's Smart Rename")
 
 
 class TheUndoOrder(ReadFilesCase):

@@ -415,6 +415,21 @@ export function shiftedAs(name, own = [], top = {}) {
   };
 }
 
+export const RENAME_REPLIES = JSON.parse(fs.readFileSync(path.join(HERE, "fixtures", "rename_replies.json"), "utf8"));
+
+/**
+ * A folder's Smart Rename's reply as the real route made it (POST /api/folder/rename-photos; fixtures/rename_replies.json,
+ * written by tests/test_tag_a_photo_read_it_back_and_undo.py AFolderSmartRenameFromThePage): `chained`, three photos
+ * renamed where an old name of one is the new name of another (IMG_0001.jpg -> Regatta - 1.jpg, Regatta - 1.jpg ->
+ * Regatta - 2.jpg, Regatta - 2.jpg -> Regatta - 3.jpg; taken 10:00, 10:10, 10:20 on 2020:06:01), each stamp 1 and 1.
+ * Its folder, FOLDER, is named again `folder`, the folder the page test opened.
+ */
+export function renamedAs(name, folder) {
+  const { status, reply } = RENAME_REPLIES[name];
+  const text = JSON.stringify(reply).replaceAll("FOLDER", JSON.stringify(folder).slice(1, -1));
+  return () => answer(status, JSON.parse(text));
+}
+
 /** A route matcher of FakeServer for a page's tag change (web/common/photo-write.js): POST /api/photos/write, op `tags`. */
 export const TAGS = (url, body) => url.includes("/api/photos/write") && Boolean(body) && body.op === "tags";
 
