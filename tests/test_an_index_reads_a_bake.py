@@ -78,6 +78,7 @@ from stand_in_models import Hold, NewFaces, RefusableFaces  # noqa: E402
 
 import tagpup_cli  # noqa: E402
 from tagpup import runtime as runtimes  # noqa: E402
+import page_writes  # noqa: E402
 from tagpup.core import fields, orientation, paths, processes, progress_line, validation  # noqa: E402
 from tagpup.core.library import Library  # noqa: E402
 from tagpup.files import bake, field_values, images  # noqa: E402
@@ -431,7 +432,8 @@ class AnIndexReadsABake(unittest.TestCase):
 
         # The owner tags both in the app: the write restamps each photo's vector over its own change, the bake stays.
         for path in (kept, edited):
-            saved = tagging.save_photo(Library(self.db_path), path, "", ["Places/Harbour"], None, EXIFTOOL, "")
+            saved = tagging.save_photo(Library(self.db_path), path, "", ["Places/Harbour"], None, EXIFTOOL, "",
+                                       base=page_writes.base(self.db_path, path))
             self.assertEqual(1, saved.changed, saved.errors)
             self.assertIsInstance(self.plan(path), baking.Current, path)
             self.assertEqual(1, len(baked_files.held(path).faces))

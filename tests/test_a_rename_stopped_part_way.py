@@ -37,6 +37,7 @@ import tagpup_cli  # noqa: E402
 
 from tagpup.core import paths  # noqa: E402
 from tagpup.files import names as file_names  # noqa: E402
+import page_writes  # noqa: E402
 from tagpup.services import file_changes, tagging, photos as photo_actions  # noqa: E402
 from tagpup.services import journal as journal_service  # noqa: E402
 from tagpup.services import libraries as library_actions  # noqa: E402
@@ -278,7 +279,8 @@ class ALaterWriteOfTheRenamedPhoto(RenameCase):
 
     def save(self):
         """Save on the photo panel: a tag added, the caption as it was (so the name it gives is the one it has)."""
-        saved = tagging.save_photo(self.library, self.new, "Start", ["Beach", "Harbour"], None, EXIFTOOL, FORMAT)
+        saved = tagging.save_photo(self.library, self.new, "Start", ["Beach", "Harbour"], None, EXIFTOOL, FORMAT,
+                                   base=page_writes.base(self.library, self.new))
         self.assertEqual([NEW_NAME], self.names())
         self.assertTrue(saved.changed, saved.message())
         return saved.details["change"]
@@ -421,7 +423,8 @@ class AnIdentityTheIndexGivesTheRenamedPhotos(FilesCase):
         # Two writers of one photo: the Save's (journaled) and then the mint's (not). Each carries the rename over its
         # own write, the mint from what the Save left.
         rename = self.rename()
-        saved = tagging.save_photo(self.library, self.new[0], "Start", ["Beach", "Harbour"], None, EXIFTOOL, FORMAT)
+        saved = tagging.save_photo(self.library, self.new[0], "Start", ["Beach", "Harbour"], None, EXIFTOOL, FORMAT,
+                                   base=page_writes.base(self.library, self.new[0]))
         self.assertTrue(saved.changed, saved.message())
         self.index()
         self.assertIn("undo it first", str(self.undo(rename).refused))

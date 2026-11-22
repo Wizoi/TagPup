@@ -51,6 +51,7 @@ from test_a_photo_patched_in_place import PRINT_FLAGS, away_at, open_elsewhere, 
 from test_file_journal import (EXIFTOOL, Crash, FilesCase, crash_at, cut_patch, field_of, keywords_of,  # noqa: E402
                                requires_exiftool, write_outside)
 
+import page_writes  # noqa: E402
 from tagpup.core import fields, paths  # noqa: E402
 from tagpup.files import containers, field_values, in_place, segment_edits, xmp_packet  # noqa: E402
 from tagpup.files.exiftool_session import ExifToolSession  # noqa: E402
@@ -309,7 +310,8 @@ class APhotoWrittenByItsOwnEditors(FilesCase):
         # as it was and every byte outside the EXIF, IPTC and XMP segments the photo's own (the XMP editor may lay a
         # property it put back elsewhere in the packet).
         saves = {
-            "caption": lambda a: tagging.save_photo(self.library, a, "Harbour at dusk", ["Beach"], None, EXIFTOOL, ""),
+            "caption": lambda a: tagging.save_photo(self.library, a, "Harbour at dusk", ["Beach"], None, EXIFTOOL, "",
+                                                    base=page_writes.base(self.library, a)),
             "date taken": lambda a: photo_actions.shift_date_taken(self.library, [a], 90, EXIFTOOL),
             "turn": lambda a: photo_actions.rotate_photos(self.library, [a], "right", EXIFTOOL),
         }
@@ -429,11 +431,13 @@ class APhotoWrittenByItsOwnEditors(FilesCase):
         # changed nothing.
         a = self.make("a.jpg")
         original = read(a)
-        first = tagging.save_photo(self.library, a, "", ["Beach", "Harbour"], None, EXIFTOOL, "")
+        first = tagging.save_photo(self.library, a, "", ["Beach", "Harbour"], None, EXIFTOOL, "",
+                                   base=page_writes.base(self.library, a))
         self.assertEqual((1, []), (first.changed, first.errors), first.message())
         change, held = first.details["change"], read(a)
         with mock.patch.object(field_values, "write", wraps=field_values.write) as wrote, saves_counted() as saved:
-            again = tagging.save_photo(self.library, a, "", ["Beach", "Harbour"], None, EXIFTOOL, "")
+            again = tagging.save_photo(self.library, a, "", ["Beach", "Harbour"], None, EXIFTOOL, "",
+                                       base=first.details["base"])   # the page's next base: the first save's reply
             tagged = self.add([a])
         self.assertEqual(((0, [], None), (0, [], None)),
                          ((again.changed, again.errors, again.details["change"]),

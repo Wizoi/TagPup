@@ -7,6 +7,9 @@ tagpup.web.tagpup_routes.photos_write), built as the pages build it, for a test 
     set_from(record, ...)     one photo's save from that record (web/common/photo-write.js postPhotoMetadata): its title,
                               tags and Date Taken, the record's id and stamp, and the base it read.
     save(library, path, ...)  the two together: the record read now, the save made from it.
+    base_of(record)           the base a page keeps of its record (photo-write.js baseOf): the tags and title it read.
+    base(library, path)       the base of the photo at `path` as the page has it now: what a save names (a test that
+                              calls tagging.save_photo itself names it as the entry point does).
     shift(photos, minutes)    a Time Shift of the photos the page chose (web/tagpup/rename.js applyTimeShift).
     shift_all(library, folder, minutes)
                               a folder's Time Shift for every camera: each photo of the folder, never a clip, as the page
@@ -54,7 +57,7 @@ def set_from(found, title=None, tags=None, date_taken=None, path=None, **named):
     own = {"id": found.get("id"), "title": (found.get("title") or "") if title is None else title,
            "tags": list(found.get("tags") or []) if tags is None else list(tags),
            "stamp": {"mtime": found["mtime"], "size": found["size"]},
-           "base": {"tags": list(found.get("tags") or []), "title": found.get("title") or ""}, **named}
+           "base": base_of(found), **named}
     if date_taken is not None:
         own["date_taken"] = date_taken
     return {"op": "set", "changes": {path or found["path"]: own}}
@@ -63,6 +66,17 @@ def set_from(found, title=None, tags=None, date_taken=None, path=None, **named):
 def save(library, path, title=None, tags=None, date_taken=None, exiftool=EXIFTOOL, **named):
     """The body of a save of the photo at `path` from the record the page has of it now, named by `path` as asked."""
     return set_from(record(library, path, exiftool), title, tags, date_taken, path=path, **named)
+
+
+def base_of(found):
+    """The base a page keeps of its record `found` (web/common/photo-write.js baseOf): the tags and title it read of the
+    photo, which its save names and the server compares with the file under its lock (tagging.save_photo `base`)."""
+    return {"tags": list(found.get("tags") or []), "title": found.get("title") or ""}
+
+
+def base(library, path, exiftool=EXIFTOOL):
+    """The base of the photo at `path` as the page has it now, on opening its folder (record)."""
+    return base_of(record(library, path, exiftool))
 
 
 def why(reply):

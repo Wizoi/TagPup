@@ -14,6 +14,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import test_bulk_edits as T  # noqa: E402
 
+import page_writes  # noqa: E402
 from tagpup.files import exiftool_session, field_values, metadata, shares  # noqa: E402
 from tagpup.core import paths  # noqa: E402
 from tagpup.services import batches, file_changes, journal, relink_photos, tagging  # noqa: E402
@@ -235,6 +236,7 @@ class AShareThatStopsAnsweringMidWrite(T.Bulk):
         # Two photos the stop did not reach: a save of them is unrelated to the stopped change, and leaves it undoable.
         reached = {photo_id for (photo_id,) in self.vl.rows("SELECT photo_id FROM change_files WHERE change_id = ?", change_id)}
         others = [self.path(photo_id) for photo_id in self.ids if photo_id not in reached][:2]
+        bases = [page_writes.base(self.library, path, "exiftool") for path in others]   # the page read them before
 
         def read(path, _n):
             if paths.key(path) in under_way:
@@ -243,7 +245,8 @@ class AShareThatStopsAnsweringMidWrite(T.Bulk):
         self.files.on_write, self.files.on_read = None, read
         reads = self.files.reads.get(under_way[0], 0)
         with mock.patch.object(shares, "stamp_of", lambda path: shares.UNANSWERED if paths.key(path) in under_way else real(path)):
-            saved = tagging.save_photo(self.library, others[0], "", ["Trips/Lakes"], None, "exiftool", "")
+            saved = tagging.save_photo(self.library, others[0], "", ["Trips/Lakes"], None, "exiftool", "",
+                                       base=bases[0])
         self.assertTrue(saved.ok, saved.errors)
         self.assertEqual(reads, self.files.reads.get(under_way[0], 0), "the file on the share away was read")
         self.assertEqual([("done", k - 1), ("writing", 1)],
@@ -252,7 +255,7 @@ class AShareThatStopsAnsweringMidWrite(T.Bulk):
         self.assertNotEqual("applied", self.changes("bulk tags%")[0][2])
         # The share answers again: the next write settles the file under way by what it holds (what it held: written on).
         self.files.on_read = None
-        again = tagging.save_photo(self.library, others[1], "", ["Trips/Lakes"], None, "exiftool", "")
+        again = tagging.save_photo(self.library, others[1], "", ["Trips/Lakes"], None, "exiftool", "", base=bases[1])
         self.assertTrue(again.ok, again.errors)
         self.assertEqual([(change_id, "applied")], [(each[0], each[2]) for each in self.changes("bulk tags%")])
         self.assertEqual([("done", k)],
@@ -276,9 +279,10 @@ class AShareThatStopsAnsweringMidWrite(T.Bulk):
             if waited:
                 waited.append("read")
                 raise exiftool_session.ExifToolTimeout(STALLED)
-        self.files.on_write, self.files.on_read = write, read
         path = self.path(self.ids[0])
-        saved = tagging.save_photo(self.library, path, "", ["Trips/Coast"], None, "exiftool", "")
+        base = page_writes.base(self.library, path, "exiftool")
+        self.files.on_write, self.files.on_read = write, read
+        saved = tagging.save_photo(self.library, path, "", ["Trips/Coast"], None, "exiftool", "", base=base)
         self.assertFalse(saved.ok)
         self.assertIn("ExifTool stopped answering as it was written", str(saved.errors[0][1]))
         self.assertEqual(["write"], waited, "the commands that waited out a deadline")

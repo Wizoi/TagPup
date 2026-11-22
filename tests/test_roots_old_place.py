@@ -19,6 +19,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import own_home  # noqa: E402
+import page_writes  # noqa: E402
 import roots_library as rl  # noqa: E402
 
 from tagpup import config  # noqa: E402
@@ -88,7 +89,8 @@ class AfterAMove(unittest.TestCase):
         self.assertEqual(paths.canonical(self.held[0], None), self.held[0])
 
     def test_a_save_with_the_old_spelling_writes_the_first_place(self):
-        result = tagging.save_photo(self.library, self.held[0], "A title", ["Harbour"], None, rl.EXIFTOOL, "")
+        result = tagging.save_photo(self.library, self.held[0], "A title", ["Harbour"], None, rl.EXIFTOOL, "",
+                                    base=page_writes.base(self.library, self.held[0], rl.EXIFTOOL))
         self.assertEqual((True, 1), (result.ok, result.changed), result.message())
         self.assertIn("Harbour", keywords(self.moved[0]))
         self.old_untouched()

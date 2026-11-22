@@ -18,6 +18,7 @@ from service_fixture import TempLibrary  # noqa: E402
 import own_home  # noqa: E402
 import web_client  # noqa: E402
 
+from tagpup.core import fields, vocabulary  # noqa: E402
 from tagpup.core.result import Result  # noqa: E402
 from tagpup.services import indexing, libraries, photos, tagging, tags  # noqa: E402
 
@@ -55,6 +56,11 @@ def fake_exiftool(fields):
     return session, et
 
 
+def base_read(held):
+    """The base a page read of a file holding `held`: its tags and its title as the page shows them."""
+    return {"tags": vocabulary.extract_tags(held), "title": fields.title_of(held)}
+
+
 class PhotoCase(unittest.TestCase):
     def setUp(self):
         self.lib = TempLibrary(self)
@@ -62,6 +68,7 @@ class PhotoCase(unittest.TestCase):
         self.lib.add_row(self.photo, tags=["Places/Harbour"])
 
     def exiftool(self, fields=None):
+        self.base = base_read(fields or {"XMP:Subject": ["Places/Harbour"]})
         session, et = fake_exiftool(fields or {"XMP:Subject": ["Places/Harbour"]})
         patcher = mock.patch("tagpup.files.exiftool_session.ExifToolSession", session)
         patcher.start()
@@ -98,7 +105,7 @@ class Tagging(PhotoCase):
     def test_a_caption_being_set(self):
         _session, et = self.exiftool()
         result = tagging.save_photo(self.lib.library, self.photo, "Relays" + BELL, ["Places/Harbour"],
-                                    None, "exiftool", "{grouping} - {index} - {caption}")
+                                    None, "exiftool", "{grouping} - {index} - {caption}", base=self.base)
         self.assertEqual(result.refused, CAPTION)
         et.set_tags.assert_not_called()
         et.execute.assert_not_called()
@@ -108,7 +115,7 @@ class Tagging(PhotoCase):
         _session, et = self.exiftool({"XMP:Subject": ["Places/Harbour"], "XMP:Description": "Relays" + BELL})
         with mock.patch("tagpup.files.metadata.title_filename", side_effect=lambda p, *rest: p):
             result = tagging.save_photo(self.lib.library, self.photo, "Relays" + BELL, ["Places/Harbour"],
-                                        None, "exiftool", "{grouping} - {index} - {caption}")
+                                        None, "exiftool", "{grouping} - {index} - {caption}", base=self.base)
         self.assertIsNone(result.refused)
         et.set_tags.assert_called()
 
@@ -116,6 +123,7 @@ class Tagging(PhotoCase):
         """ExifTool as it answers: only the fields asked for."""
         _session, et = self.exiftool()
         held = dict(fields)
+        self.base = base_read(held)
         et.get_tags.return_value = None
         et.get_tags.side_effect = lambda files, tags=None, params=None: [
             {key: value for key, value in held.items() if tags is None or key in tags}]
@@ -126,7 +134,7 @@ class Tagging(PhotoCase):
     def save(self, caption):
         with mock.patch("tagpup.files.metadata.title_filename", side_effect=lambda p, *rest: p):
             return tagging.save_photo(self.lib.library, self.photo, caption, ["Places/Harbour"],
-                                      None, "exiftool", "{grouping} - {index} - {caption}")
+                                      None, "exiftool", "{grouping} - {index} - {caption}", base=self.base)
 
     def test_a_caption_held_only_in_exif_is_not_being_set(self):
         # Another program's caption, in EXIF ImageDescription alone: the save that keeps

@@ -139,7 +139,7 @@ class ASaveAfterATitle(Follows, unittest.TestCase):
     TELLS_TAGS = True
 
     def write(self, new):
-        def saving(_library, photo_path, title, tags, _date, _exiftool, _format, _stamp, _base):
+        def saving(_library, photo_path, title, tags, _date, _exiftool, _format, _stamp, *, base):
             moved = not paths.same(photo_path, new)
             if moved:
                 self.renamed_on_disk(new)

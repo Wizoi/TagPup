@@ -61,7 +61,7 @@ def write(library, op, changes, exiftool_path, rename_format, group=None, params
         return photo_actions.shift_date_taken(library, list(changes), params["minutes"], exiftool_path, group=group)
     ((path, (_id, own)),) = changes.items()
     return tagging.save_photo(library, path, own["title"], own["tags"], own["date_taken"], exiftool_path,
-                              rename_format, own["stamp"], own["base"])
+                              rename_format, own["stamp"], base=own["base"])
 
 
 def _moved(library, changes):

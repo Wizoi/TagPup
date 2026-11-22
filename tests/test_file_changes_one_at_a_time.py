@@ -17,6 +17,7 @@ from unittest import mock
 from tests.handler_harness import Library
 from tests.test_bulk_writes_start_from_the_file import EXISTING, make_photo, tags_in
 from tests.test_taxonomy_lifecycle import EXIFTOOL, requires_exiftool
+from tests import page_writes
 
 from tagpup.services import tagging
 
@@ -87,6 +88,7 @@ class ASaveAndABulkWriteAtOnce(unittest.TestCase):
     def test_the_bulk_write_waits_for_the_save(self):
         save_read, bulk_done = threading.Event(), threading.Event()
         caption_problem = tagging._caption_problem
+        base = page_writes.base(self.lib.library, self.photo)   # the page opened the photo before either began
 
         def after_the_read(*args):
             # The save has read the photo. Give a bulk write the time to get in.
@@ -97,7 +99,7 @@ class ASaveAndABulkWriteAtOnce(unittest.TestCase):
         def save():
             with mock.patch.object(tagging, "_caption_problem", side_effect=after_the_read):
                 return tagging.save_photo(self.lib.library, self.photo, "", EXISTING + ["Places/Harbour"], None,
-                                          EXIFTOOL, "")
+                                          EXIFTOOL, "", base=base)
 
         def bulk():
             save_read.wait(30)

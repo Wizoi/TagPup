@@ -15,10 +15,6 @@ from tagpup.store import db, journal, person_ids, photos, taxonomy
 logger = logging.getLogger(__name__)
 
 
-#: `base` not given: no check of the file's tags and title (the CLI, the MCP). None is a page's record of a photo
-#: ExifTool could not read; a dict is what the page read.
-NO_BASE = object()
-
 
 def refuse_under_people(library, tags):
     """Rule (a), the owner's own writes *(owner, 2026-10-09)*: the sentence that refuses `tags` when one of them would be a new
@@ -201,7 +197,7 @@ def clear_duplicate_captions(library, exiftool_path, apply=False, on_planned=Non
 
 @file_changes.exclusively()
 @roots_service.canonical_args("photo_path")
-def save_photo(library, photo_path, title, tags, date_taken, exiftool_path, rename_format, stamp=None, base=NO_BASE):
+def save_photo(library, photo_path, title, tags, date_taken, exiftool_path, rename_format, stamp=None, *, base):
     """Save one photo's title, tags and Date Taken -- the photo panel -- and rename it
     after its new title if Smart Rename named it.
 
@@ -236,15 +232,16 @@ def save_photo(library, photo_path, title, tags, date_taken, exiftool_path, rena
 
     `stamp`, (mtime, size), is the file's stamp as the record the page built the save from had it: a file whose stamp
     is not that has changed since the page read it, and the save is refused (as CHANGED_ON_DISK, the web route's
-    409) and writes nothing -- the whole tag list it carries may be missing what the file now holds. None (the CLI,
-    the MCP) is no check, as it was.
+    409) and writes nothing -- the whole tag list it carries may be missing what the file now holds. None (a record
+    with no stamp, findings #533) is no check.
 
     `base`, {"tags": [...], "title": "..."}, is the tags and caption the page read of the photo: the stamp can be
     kept (a copy keeps its times; a same-length rename of a tag then the time put back), so under the same lock,
     after the read of the file's current state, the file's tags (as a set) and caption are compared with `base` and
-    any difference refuses the save the same way, writing nothing. Not given at all is no check. A page never saves
+    any difference refuses the save the same way, writing nothing. Every save names one: the one entry point refuses
+    a `set` without it, or with a null one, as a shape (tagpup.web.tagpup_routes._set_change), and a page never saves
     from the record of a photo ExifTool could not read when it was opened: it refuses that save itself, in its own
-    words (web/common/photo-write.js UNREADABLE_SAVE), and the entry point refuses a null `base` as a shape.
+    words (web/common/photo-write.js UNREADABLE_SAVE).
 
     details: `new_path`, `renamed`, `tags` as written, `flat` and `hierarchical` as
     written, `change`, `stamp`, the file's (mtime, size) as the write recorded it, after the write, when it wrote the
@@ -286,7 +283,7 @@ def save_photo(library, photo_path, title, tags, date_taken, exiftool_path, rena
     read = list(dict.fromkeys(SAVE_READ + BASE_READ + tuple(wanted) + tuple(fields.caption_fields(""))))
     with exiftool_session.ExifToolSession(executable=exiftool_path) as et:
         now = field_values.read_one(et, photo_path, read)
-        if base is not NO_BASE and _differs_from_base(now, base):
+        if _differs_from_base(now, base):
             result.refuse(CHANGED_ON_DISK_SENTENCE, CHANGED_ON_DISK)
             return result
         held = set(_tags_held(now))

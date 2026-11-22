@@ -141,7 +141,7 @@ class TheOwnersFlows(Twins):
     def test_a_tag_save_with_its_rename(self):
         def flow(side):
             result = tagging.save_photo(side.library, side.real[0], "Start line", ["Activity/Sailing", "Harbour"],
-                                        None, EXIFTOOL, FORMAT)
+                                        None, EXIFTOOL, FORMAT, base=page_writes.base(side.library, side.real[0]))
             return [result.attempted, result.changed, result.errors, result.refused, result.details.get("new_path"),
                     result.details.get("renamed"), self.seen(side)]
         found = self.both(flow)

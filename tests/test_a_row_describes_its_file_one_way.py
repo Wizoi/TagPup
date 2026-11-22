@@ -25,6 +25,7 @@ from test_file_journal import EXIFTOOL, Crash, crash_at  # noqa: E402
 from test_one_photo_whatever_its_spelling import CliDatabaseCase, expected_dim, make_jpeg  # noqa: E402
 
 from tagpup.files import field_values, metadata  # noqa: E402
+import page_writes  # noqa: E402
 from tagpup.services import file_changes, refresh_rows, settings, tagging, thumbnails  # noqa: E402
 from tagpup.services.search import PhotoEmbeddings, PhotoIndex  # noqa: E402
 from tagpup.store import photos as store_photos  # noqa: E402
@@ -108,12 +109,13 @@ class AFileChangedWhileItIsRead(ReadFilesCase):
     def test_a_saves_row_is_stamped_as_the_file_was_before_its_read_back(self):
         a = self.make_read("a.jpg")
         real = file_changes._read_whole
+        base = page_writes.base(self.library, a)
 
         def read_whole(et, row, read):
             touched_by_another_program(row.path)
             return real(et, row, read)
         with mock.patch.object(file_changes, "_read_whole", read_whole):
-            saved = tagging.save_photo(self.library, a, "Quay at dusk", ["Beach"], None, EXIFTOOL, "")
+            saved = tagging.save_photo(self.library, a, "Quay at dusk", ["Beach"], None, EXIFTOOL, "", base=base)
         self.assertTrue(saved.ok, saved.message())
         stamp = self.rows("SELECT mtime, size FROM photos WHERE path = ?", (a,))[0]
         self.assertFalse(describes_its_file(stamp, a), "a change made during the read back was stamped as read")

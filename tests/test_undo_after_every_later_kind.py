@@ -37,6 +37,7 @@ from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import migration_names  # noqa: E402
+import page_writes  # noqa: E402
 import own_home  # noqa: E402
 import photo_rows  # noqa: E402
 import face_rows  # noqa: E402
@@ -176,7 +177,7 @@ def a_refresh(case, library):
 def a_save(case, library):
     """Save on the second photo: a caption and a tag (the photo panel)."""
     saved = tagging.save_photo(library, case.photo[2], "Ferry at the quay", ["Harbour/Ferry", "Harbour/Quay"], None,
-                               EXIFTOOL, "")
+                               EXIFTOOL, "", base=page_writes.base(library, case.photo[2]))
     return saved.details.get("change") if saved.changed else None
 
 
@@ -502,7 +503,8 @@ class UndoAfterEveryLaterKind(unittest.TestCase):
         self.put_files_back("base")
         library = self.copy(self.base, "sync_then_save")
         synced = a_sync(self, library)
-        saved = tagging.save_photo(library, self.photo[4], "Ferry at the quay", ["Harbour/Ferry"], None, EXIFTOOL, "")
+        saved = tagging.save_photo(library, self.photo[4], "Ferry at the quay", ["Harbour/Ferry"], None, EXIFTOOL, "",
+                                   base=page_writes.base(library, self.photo[4]))
         self.assertTrue(saved.changed, saved.refused)
         said = journal.FILE_WRITTEN_SINCE % {
             "other": saved.details["change"], "operation": "save photo", "photos": 1, "change": synced}

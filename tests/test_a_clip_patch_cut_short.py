@@ -27,6 +27,7 @@ import test_a_clip_tagged_through_the_journal as tagged  # noqa: E402
 from test_file_journal import Crash, Torn, crash_at, cut_patch  # noqa: E402
 
 from tagpup.files import clip_patch, containers, in_place, segment_edits  # noqa: E402
+import page_writes  # noqa: E402
 from tagpup.services import file_changes, tagging  # noqa: E402
 from tagpup.store import file_journal  # noqa: E402
 
@@ -113,9 +114,10 @@ class AClipPatchCutShort(tagged.ALibraryHoldingAClip):
 
     def test_a_date_save_killed_half_way_through_its_first_header_range_is_torn_and_settled_by_its_bytes_at_the_next_start(self):
         saved = "2024:08:15 09:30:00"
+        base = page_writes.base(self.vl.library, self.clip_path)
         with cut_half_way() as cut:
             with self.assertRaises(Crash):
-                tagging.save_photo(self.vl.library, self.clip_path, "", [], saved, EXIFTOOL, "")
+                tagging.save_photo(self.vl.library, self.clip_path, "", [], saved, EXIFTOOL, "", base=base)
         mvhd = next(box for box in containers.read(io.BytesIO(self.original)).headers if box.type == "mvhd")
         self.assertEqual(mvhd.payload + 4, cut[0][0][0], "the first range is the movie header's creation field")
         self.assertEqual(["writing"], self.change_states(self.clip))

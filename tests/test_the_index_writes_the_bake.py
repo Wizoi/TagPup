@@ -47,6 +47,7 @@ from PIL import Image
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import baked_files  # noqa: E402
+import page_writes  # noqa: E402
 import own_home  # noqa: E402
 from stand_in_models import Hold, NewFaces, RefusableFaces  # noqa: E402
 from test_file_journal import Crash, crash_at  # noqa: E402
@@ -187,7 +188,8 @@ class TheIndexWritesTheBake(unittest.TestCase):
         a = self.picture("a.jpg", (200, 40, 40))
         with mock.patch.object(bake_after_index, "bake_folders"):
             self.index()   # indexed, not baked yet
-        saved = tagging.save_photo(self.library, a, "Ferry at the quay", ["Harbour/Ferry"], None, EXIFTOOL, "")
+        saved = tagging.save_photo(self.library, a, "Ferry at the quay", ["Harbour/Ferry"], None, EXIFTOOL, "",
+                                   base=page_writes.base(self.library, a))
         self.assertTrue(saved.changed, saved.refused)
         self.picture("b.jpg", (40, 200, 40))
         self.index()   # the folder's bake writes a.jpg, after the save

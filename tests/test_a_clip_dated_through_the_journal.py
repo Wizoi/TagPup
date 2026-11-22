@@ -337,10 +337,11 @@ class AClipDatedThroughTheJournal(tagged.ALibraryHoldingAClip):
         clip, = self.index(path)
         other = "2021:02:03 04:05:06"
         results, start = {}, threading.Barrier(2)
+        base = page_writes.base(self.vl.library, path)   # both tabs read the clip before either saves
 
         def save(date):
             start.wait(10)
-            results[date] = tagging.save_photo(self.vl.library, path, "", [], date, EXIFTOOL, "")
+            results[date] = tagging.save_photo(self.vl.library, path, "", [], date, EXIFTOOL, "", base=base)
         saves = [threading.Thread(target=save, args=(date,)) for date in (SAVED, other)]
         for one in saves:
             one.start()
@@ -447,7 +448,8 @@ class AClipDatedThroughTheJournal(tagged.ALibraryHoldingAClip):
         clip, = self.index(held)
         lagging = {"raw_metadata": {"QuickTime:CreateDate": "2020:07:04 18:30:00"}, "tags": []}
 
-        result = tagging.save_photo(self.vl.library, held, "", [], SAVED_AS_THE_PAGE_SENDS, EXIFTOOL, "")
+        result = tagging.save_photo(self.vl.library, held, "", [], SAVED_AS_THE_PAGE_SENDS, EXIFTOOL, "",
+                                    base=page_writes.base(self.vl.library, held))
         self.assertTrue(result.ok, result.message())
         self.assertEqual(SAVED, result.details["taken"])
         photo_actions.record_written(self.vl.library, lagging, held, [], result.details["flat"],
@@ -550,9 +552,10 @@ class AClipDatedThroughTheJournal(tagged.ALibraryHoldingAClip):
     def save_cut_short(self, cutting):
         """A Date Taken save of the clip killed part-way (the process gone: a Crash), then the next start's settle."""
         self.clip, = self.index(self.clip_path)
+        base = page_writes.base(self.vl.library, self.clip_path)
         with cutting:
             with self.assertRaises(Crash):
-                tagging.save_photo(self.vl.library, self.clip_path, "", [], SAVED, EXIFTOOL, "")
+                tagging.save_photo(self.vl.library, self.clip_path, "", [], SAVED, EXIFTOOL, "", base=base)
         self.assertEqual(["writing"], self.change_states(self.clip))
         with mock.patch.object(file_changes, "_settled", set()):
             self.assertEqual(1, file_changes.settle_once(self.vl.library, EXIFTOOL))

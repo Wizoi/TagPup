@@ -34,6 +34,7 @@ import own_home  # noqa: E402
 from tagpup.core.library import Library  # noqa: E402
 from tagpup.files import exiftool_session  # noqa: E402
 from tagpup.services import photos as photo_actions  # noqa: E402
+import page_writes  # noqa: E402
 from tagpup.services import tagging  # noqa: E402
 from tagpup.store import db, schema  # noqa: E402
 from tagpup.store import photos as store_photos  # noqa: E402
@@ -159,7 +160,8 @@ class PartialWritesOnAnUnreadRow(Photos):
         """The save reads the file back whole, so it may record it all."""
         path = make_photo(self.folder, "h.jpg")
         self.suggested(path)
-        result = tagging.save_photo(self.library, path, "", ["Activity/Sailing"], None, EXIFTOOL, "")
+        result = tagging.save_photo(self.library, path, "", ["Activity/Sailing"], None, EXIFTOOL, "",
+                                    base=page_writes.base(self.library, path))
         self.assertTrue(result.ok)
         self.assertUnreadOrWhole(path)
 
@@ -227,7 +229,8 @@ class PartialWritesOnARowTheFileHasMovedOnFrom(Photos):
 
     def test_saving_one_photo_reads_the_file_back_whole_and_records_all_of_it(self):
         path, _read_at = self.moved_on("save.jpg")
-        self.assertTrue(tagging.save_photo(self.library, path, "", ["Activity/Rowing"], None, EXIFTOOL, "").ok)
+        self.assertTrue(tagging.save_photo(self.library, path, "", ["Activity/Rowing"], None, EXIFTOOL, "",
+                                           base=page_writes.base(self.library, path)).ok)
         mtime, size, raw, _taken = self.row(path)
         stat = os.stat(path)
         self.assertEqual((mtime, size), (stat.st_mtime, stat.st_size))

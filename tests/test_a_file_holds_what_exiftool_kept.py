@@ -43,6 +43,7 @@ from test_file_journal import EXIFTOOL, Crash, FilesCase, crash_at, keywords_of,
 
 import baked_files  # noqa: E402
 import photo_rows  # noqa: E402
+import page_writes  # noqa: E402
 from tagpup.core import fields, orientation  # noqa: E402
 from tagpup.files import bake, containers, exiftool_session, field_values, lock_owners  # noqa: E402
 from tagpup.files.exiftool_session import ExifToolSession  # noqa: E402
@@ -78,7 +79,8 @@ class ReadFilesCase(FilesCase):
     def caption(self, photo_paths, caption):
         # The page's save of one photo: its caption, the tags it holds already.
         for path in photo_paths:
-            result = tagging.save_photo(self.library, path, caption, ["Beach"], None, EXIFTOOL, "")
+            result = tagging.save_photo(self.library, path, caption, ["Beach"], None, EXIFTOOL, "",
+                                        base=page_writes.base(self.library, path))
         return result
 
 

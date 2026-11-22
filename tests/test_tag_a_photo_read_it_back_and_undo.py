@@ -124,7 +124,8 @@ class TaggingAPhoto(ReadFilesCase):
         self.assertEqual([], result.errors)
         self.assertEqual((["Relay"], []), (keywords_of(a), keywords_of(b)))
         self.assertEqual(["Relay"], self.indexed(a))
-        self.assertTrue(tagging.save_photo(self.library, a, "", [], None, EXIFTOOL, "").ok)
+        self.assertTrue(tagging.save_photo(self.library, a, "", [], None, EXIFTOOL, "",
+                                           base=page_writes.base(self.library, a)).ok)
         self.assertEqual([], keywords_of(a))
 
     def damaged(self, name, shape):
@@ -161,7 +162,8 @@ class TaggingAPhoto(ReadFilesCase):
         self.assertEqual(["Activity/Rowing", "Beach"], self.indexed(cut), "the row says what the file says")
         self.assertEqual(picture, picture_of(cut), "the picture data after the start of scan changed")
         self.assert_row_describes_file(cut)
-        saved = tagging.save_photo(self.library, cut, "", ["Activity/Rowing", "Beach", "Places/Quay"], None, EXIFTOOL, "")
+        saved = tagging.save_photo(self.library, cut, "", ["Activity/Rowing", "Beach", "Places/Quay"], None, EXIFTOOL, "",
+                                   base=page_writes.base(self.library, cut))
         self.assertEqual((True, 1), (saved.ok, saved.changed), saved.message())
         self.assertEqual(["Activity/Rowing", "Beach", "Places/Quay"], keywords_of(cut))
         self.assertEqual(picture, picture_of(cut))
@@ -274,9 +276,10 @@ class TaggingAPhoto(ReadFilesCase):
             session.set_tags = lambda *a, **k: writes.append(a) or put(session, *a, **k)
             return session
 
+        base = page_writes.base(self.library, a)
         with mock.patch.object(exiftool_session, "ExifToolSession", side_effect=counted):
             result = tagging.save_photo(self.library, a, "Quay at dusk", ["Beach", "Places/Quay/Pier"],
-                                        "2019-06-15T10:30:00", EXIFTOOL, "")
+                                        "2019-06-15T10:30:00", EXIFTOOL, "", base=base)
 
         self.assertEqual((True, 1), (result.ok, result.changed), result.message())
         self.assertEqual("2019:06:15 10:30:00", str(field_of(a, "EXIF:DateTimeOriginal")))
@@ -309,7 +312,7 @@ class TaggingAPhoto(ReadFilesCase):
             (json.dumps(dict(raw, Title="Quay at noon", **{"XMP:Title": "Quay at noon"})), a)))
         with self.assertNoLogs(file_changes.logger.name, level="WARNING"):
             again = tagging.save_photo(self.library, a, "Quay at dusk", ["Beach", "Places/Quay/Pier"],
-                                       "2019-06-15T10:30:00", EXIFTOOL, "")
+                                       "2019-06-15T10:30:00", EXIFTOOL, "", base=result.details["base"])
         self.assertEqual((True, 0, None, written), (again.ok, again.changed, again.details["change"],
                                                     os.stat(a).st_mtime_ns), "a file holding it all was written")
         followed = json.loads(self.rows("SELECT raw_metadata FROM photos WHERE path = ?", (a,))[0][0])
@@ -329,15 +332,16 @@ class TaggingAPhoto(ReadFilesCase):
 
     def test_a_save_takes_a_date_refuses_a_tag_it_may_not_set_and_answers_a_write_that_fails(self):
         a = self.make_read("a.jpg")
-        refused = tagging.save_photo(self.library, a, "Start", ["Beach", "Places|Harbour"], None, EXIFTOOL, "")
+        base = page_writes.base(self.library, a)
+        refused = tagging.save_photo(self.library, a, "Start", ["Beach", "Places|Harbour"], None, EXIFTOOL, "", base=base)
         self.assertIn('"|"', refused.refused)
         self.assertEqual((["Beach"], None), (keywords_of(a), field_of(a, "XMP:Title")), "a refused save wrote")
-        timed = tagging.save_photo(self.library, a, "Start", ["Beach"], "2019-06-15T10:30:07", EXIFTOOL, "")
+        timed = tagging.save_photo(self.library, a, "Start", ["Beach"], "2019-06-15T10:30:07", EXIFTOOL, "", base=base)
         self.assertTrue(timed.ok, timed.message())
         self.assertEqual("2019:06:15 10:30:07", str(field_of(a, "EXIF:DateTimeOriginal")), "the date in the same write")
         os.chmod(a, stat.S_IREAD)
         self.addCleanup(self.writable_again)
-        failed = tagging.save_photo(self.library, a, "Finish", ["Beach"], None, EXIFTOOL, "")
+        failed = tagging.save_photo(self.library, a, "Finish", ["Beach"], None, EXIFTOOL, "", base=timed.details["base"])
         # #299: the route answers from the Result: a write that fails is in it, not raised.
         self.assertEqual((False, 0, None), (failed.ok, failed.changed, failed.refused))
         self.assertIn("the new file was removed and the photo is as it was", failed.message())
@@ -352,7 +356,8 @@ class TaggingAPhoto(ReadFilesCase):
                 raise KeyboardInterrupt("the server was closed")
 
         with mock.patch.object(file_changes, "_reached", side_effect=stopped), self.assertRaises(KeyboardInterrupt):
-            tagging.save_photo(self.library, a, "Quay at dusk", ["Beach", "Places/Quay"], "2019-06-15T10:30:00", EXIFTOOL, "")
+            tagging.save_photo(self.library, a, "Quay at dusk", ["Beach", "Places/Quay"], "2019-06-15T10:30:00", EXIFTOOL, "",
+                               base=page_writes.base(self.library, a))
 
         raw = json.loads(self.rows("SELECT raw_metadata FROM photos WHERE path = ?", (a,))[0][0])
         self.assertEqual(MetadataExtractor(exiftool_path=EXIFTOOL).batch_read([a])[0]["raw_metadata"], raw)
@@ -367,7 +372,8 @@ class TaggingAPhoto(ReadFilesCase):
         write_outside(a, {"XMP-xmpMM:DocumentID": "xmp.did:5b2c-quay"})
         photo_id = self.rows("SELECT id FROM photos WHERE path = ?", (a,))[0][0]
 
-        self.assertTrue(tagging.save_photo(self.library, a, "Quay at dusk", ["Beach"], None, EXIFTOOL, "").ok)
+        self.assertTrue(tagging.save_photo(self.library, a, "Quay at dusk", ["Beach"], None, EXIFTOOL, "",
+                                           base=page_writes.base(self.library, a)).ok)
 
         self.assertEqual([("xmp.did:5b2c-quay",)], self.rows("SELECT document_id FROM photos WHERE path = ?", (a,)),
                          "the row took the file whole but not its identity")
@@ -385,7 +391,7 @@ class TaggingAPhoto(ReadFilesCase):
         db.write_with_connection(self.library.path, lambda conn: face_rows.add_face(conn, renamed, name="Rowan Thackeray",
                                                                                  name_source="manual"))
         result = tagging.save_photo(self.library, renamed, "Start", ["Beach"], None, EXIFTOOL,
-                                    "{grouping} - {index} - {caption}")
+                                    "{grouping} - {index} - {caption}", base=page_writes.base(self.library, renamed))
         new = os.path.join(self.folder, "Regatta - 1 - Start.jpg")
         self.assertEqual((new, True), (result.details["new_path"], result.details["renamed"]))
         self.assertEqual([(new,)], self.rows("SELECT p.path FROM faces f JOIN photos p ON p.id = f.photo_id"),
