@@ -66,7 +66,7 @@ export function markEntry(entry, status) {
     // A write that finished may have changed what the library's navigator counts (keywords, people): read again, after a moment.
     if (status === 'done') {
         upper.navigatorCountsChanged();
-        upper.photosWritten();
+        upper.selectionWritten();
     }
     const done = queue.entries.filter(e => e.status === 'done');
     if (done.length > KEEP_DONE) {

@@ -131,7 +131,7 @@ function dropPending() {
  * A write to a photo finished (the details panel's save, a pill's edit, the queue's done path): what a selected photo carries may have
  * changed without the selection changing, so a view's selection is counted again (250 ms later, once for a run of writes).
  */
-export function photosWritten() {
+export function selectionWritten() {
     const lib = state.library;
     if (!lib || selectionCount() === 0) return;
     state.tally.key = '';
@@ -149,7 +149,7 @@ export function clearTally() {
 
 /**
  * The selection of the open library view may have changed: count it again, 250 ms after the last change. The same selection (the page's
- * `version` of it) that was counted is not counted again, unless `photosWritten` ran.
+ * `version` of it) that was counted is not counted again, unless `selectionWritten` ran.
  */
 export function selectionTallied() {
     const tally = state.tally;

@@ -41,7 +41,7 @@ import { showMediaFilter, wireFilterMenu } from './filter-menu.js';
 import { searchFollows, searchVocabularyChanged, wireSearch } from './search.js';
 import { addedFromView, wireBanner } from './library-banner.js';
 import { renderSyncInfo } from './sync-state.js';
-import { photosWritten } from './tally.js';
+import { selectionWritten } from './tally.js';
 import { landOnAnchor, libraryViewPainted, openInOrganize, wireMoves } from './library-moves.js';
 import {
     carryTagsForward, deleteActivePhoto, facesFollowReply, openLibraryPhoto, openPhotoInDefaultApp,
@@ -84,7 +84,7 @@ Object.assign(upper, {
     selectPhoto,
     landOnAnchor, leaveLibraryView, libraryChanged, libraryViewPainted, navigatorCountsChanged, navigatorFollows, openInOrganize,
     openLibraryPhoto, openLibraryView, restoreViewAsLeft,
-    photosDeleted, photosWritten, reloadChangedPhoto, showMediaFilter, showSortOrder, suggested,
+    photosDeleted, selectionWritten, reloadChangedPhoto, showMediaFilter, showSortOrder, suggested,
     updateCameraHighlights, updateCarryForwardState, updateFolderAutoApplyState,
     updateSelectedThumbnailsCount, updateSuggestButtonState
 });

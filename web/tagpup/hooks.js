@@ -25,7 +25,7 @@ export const upper = {
     openLibraryPhoto: null,
     openLibraryView: null,
     photosDeleted: null,
-    photosWritten: null,
+    selectionWritten: null,
     populateCameraModelsDropdown: null,
     recordUndo: null,
     removePhotoTags: null,
