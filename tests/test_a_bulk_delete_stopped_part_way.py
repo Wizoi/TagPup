@@ -206,7 +206,7 @@ class ABulkDeleteStoppedPartWay(Delete):
                                lambda path: shares.CANNOT_READ if paths.key(path) == unreadable else real(path)):
             done = self.start({"ids": self.coast[:3]})
         self.assertEqual((2, 1), (done["changed"], done["error_count"]))
-        self.assertEqual(photo_actions.NOTHING_DELETED_NO_LOOK, done["errors"][0]["why"])
+        self.assertEqual("This photo could not be read (no permission), so nothing was deleted.", done["errors"][0]["why"])
         self.assertEqual([self.coast[1]], self.held(self.coast[:3]))
         self.assertEqual([], self.changes())
 

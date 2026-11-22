@@ -338,7 +338,7 @@ describe("the other file edits", () => {
     click(ctx.window, apply);
     await flush(ctx.window, 10);
     assert.equal(ctx.posts("/api/photos/write").filter((c) => c.body.op === "shift").length, 1, "the time shift was held back");
-    assert.match(ctx.$("status-text").textContent, /Time shift applied to 2 photo\(s\)\. Written to the files only/);
+    assert.match(ctx.$("status-text").textContent, /Time shift applied to 2 photos\. Written to the files only/);
   });
 
   test("a time shift's question says it cannot be undone: nothing is journaled while just looking", async (t) => {

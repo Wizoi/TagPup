@@ -82,7 +82,7 @@ test("a camera's photos are sent by path in one request, and the folder takes th
   assert.deepEqual(ctx.order(), ["MVI_0004.mp4", "IMG_0001.jpg", "IMG_0003.jpg", "IMG_0002.jpg", "IMG_0005.jpg"],
     "in Date Taken order again, the undated last");
   assert.match(ctx.$("detail-date-taken").textContent, /10:50/, "the open photo shows its new Date Taken");
-  assert.match(ctx.said(), /^Time shift applied to 2 photo\(s\)$/);
+  assert.match(ctx.said(), /^Time shift applied to 2 photos$/);
 
   // A second click straight after: the minutes are 0, nothing more is sent.
   click(ctx.window, ctx.$("btn-apply-timeshift"));
@@ -144,7 +144,7 @@ test("a folder left before the shift's reply came is not touched by it, and its 
   await flush(ctx.window, 10);
   assert.deepEqual(state.folderPhotos.map((p) => [p.filename, p.taken, p.mtime]),
     [["IMG_0002.jpg", B.taken, B.mtime], ["IMG_0001.jpg", A.taken, A.mtime]], "neither patched nor put in another order");
-  assert.match(ctx.said(), /^Time shift applied to 2 photo\(s\)$/, "what was written is still said");
+  assert.match(ctx.said(), /^Time shift applied to 2 photos$/, "what was written is still said");
 
   // The folder opened again within the half hour is drawn from the scan this browser kept of it, not scanned: that scan
   // took the shift's dates and stamps, and its Date Taken order (#3301).
@@ -156,4 +156,15 @@ test("a folder left before the shift's reply came is not touched by it, and its 
   assert.deepEqual([...state.folderPhotos].map((p) => [p.filename, p.taken, p.mtime]), [
     ["MVI_0004.mp4", CLIP.taken, CLIP.mtime], ["IMG_0002.jpg", "2020:06:01 09:30:00", 1],
     ["IMG_0003.jpg", C.taken, C.mtime], ["IMG_0001.jpg", "2020:06:01 11:30:00", 1], ["IMG_0005.jpg", undefined, UNDATED.mtime]]);
+});
+
+test("photos holding no Date Taken are said as such, not as photos that could not be written (#3305)", async (t) => {
+  const skipped = (n) => Array.from({ length: n }, (_, i) => ({ path: `PHOTO_${i}`, why: "holds no Date Taken to move" }));
+  const ctx = await opened(t, shiftedAs("shifted", [], { attempted: 4, changed: 2, skipped: skipped(2) }));
+  await ctx.shift(CAMERA);
+  assert.equal(ctx.said(), "Time shift applied to 2 photos; 2 had no Date Taken to move.");
+
+  const one = await opened(t, shiftedAs("shifted", [], { attempted: 2, changed: 1, skipped: skipped(1) }));
+  await one.shift(CAMERA);
+  assert.equal(one.said(), "Time shift applied to 1 photo; 1 had no Date Taken to move.");
 });

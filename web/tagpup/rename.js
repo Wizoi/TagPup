@@ -283,14 +283,18 @@ function tookShift(folder, data) {
     // What was written, not what was asked: a photo that could not be written keeps its old time, and saying so is the
     // only way to know.
     const changed = data.changed ?? 0;
-    const attempted = data.attempted;
+    // A photo holding no Date Taken has nothing to move: it is left alone, not a failure (#3305).
+    const undated = (data.skipped || []).filter((s) => /holds no Date Taken/.test(s.why || '')).length;
+    const attempted = data.attempted - undated;
+    const undatedSaid = undated ? `; ${undated} had no Date Taken to move.` : '';
     if (changed < attempted) {
         const why = data.error || (data.errors && data.errors[0] && data.errors[0].why)
             || (data.skipped && data.skipped[0] && data.skipped[0].why) || '';
         setStatus('error', `Time shift applied to ${changed} of ${attempted} photo(s); ${attempted - changed} could not be `
-            + `written${why ? `: ${why}` : ''}`, { transient: false });
+            + `written${why ? `: ${why}` : ''}${undatedSaid}`, { transient: false });
     } else {
-        setStatus('ready', `Time shift applied to ${changed} photo(s).${whereWritten(data)}`.replace(/\.$/, ''));
+        const said = `Time shift applied to ${changed} photo${changed === 1 ? '' : 's'}${undatedSaid || '.'}${whereWritten(data)}`;
+        setStatus('ready', undated ? said : said.replace(/\.$/, ''));
     }
 }
 
