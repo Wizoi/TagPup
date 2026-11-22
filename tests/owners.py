@@ -118,7 +118,8 @@ SCENARIOS = {
     "I6": ("apps", "The same flows with and without roots, end to end."),
     "I7": ("apps", "The CLI, the MCP server and the server act on one library at once."),
     "I8": ("apps", "A page save from a stale record is refused, not overwritten."),
-    "I9": ("apps", "A page's saved scan of an older shape is read again, not trusted."),
+    "I9": ("apps", "A page's saved scan of an older shape is read again, not trusted; a write's reply reaches every scan "
+                   "this browser keeps of its photos (a subfolder's, a parent's), and one that cannot be written back is forgotten."),
     "I10": ("apps", "A background run that failed overnight says, from its row, what happened and what to do next; TagPup's own work in the way never asks."),
     "I11": ("apps", "On a machine without ffmpeg (or with one that does not run) the server and the CLI's index runs start nothing and say what to install; an install says so and leaves the old server running."),
     "I12": ("apps", "Refresh on a folder syncs it through the library's walk, and a file it finds gone starts the whole sync once, which removes it or follows its move; pressed again while that walks, a share that does not answer, another process's run and a server with no runner each sync or start nothing more and say why in Run now's words."),
@@ -205,7 +206,7 @@ _SCENARIO_FILES = {
     "I6": "test_roots_scenarios",
     "I7": "test_mcp_server test_one_library_three_programs",
     "I8": "test_stale_record_precondition test_what_the_server_keeps_follows_a_rename",
-    "I9": "scenario-a-scan-kept-by-an-older-page",
+    "I9": "scenario-a-scan-kept-by-an-older-page scenario-a-write-reaches-every-scan-kept",
     "I10": "test_a_failed_run_says_what_to_do",
     "I11": "test_ffmpeg_is_a_prerequisite",
     "I12": "test_a_folders_refresh_syncs_it",
