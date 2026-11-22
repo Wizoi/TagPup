@@ -76,10 +76,14 @@ is replaced.
   photo, its folder's and every one above it (`cache.js` `photosWritten`, by `isUnder`), put in the server's order by
   `order`. Every writer reaches them through that one function: a tag change and a Time Shift directly; a single save (the
   six `postPhotoMetadata` callers), a turn, and Smart Rename of one photo and of a folder through
-  `recordsWritten(records, renames)`, which gives each record the page holds the writer's reply (a renamed photo found by the
-  rename map first, by its current path only when no rename names it, so a chained rename keeps every photo once); a Convert's
-  end goes through `photosWritten` and changes only the name and stamp, and only of a record that still names the file
-  converted with the stamp sent, so tags added meanwhile stay; and a single save's new Date Taken moves the photo at once in the open grid. A Delete forgets every
+  `recordsWritten(records, renames)`, which gives each record the page holds the writer's reply; a Convert's end goes
+  through `photosWritten` and changes only the name and stamp of a record still naming the file converted (with the stamp
+  sent when it kept its name, Make smaller, so tags added meanwhile stay; any stamp when it renamed the clip, which left no
+  file at the old name, the record's `base` kept so a save from a stale one is still refused); and a single save's new Date
+  Taken moves the photo at once in the open grid. A rename map (`updated_paths`, a save's or a Convert's new path) is read in
+  one place, `web/common/paths.js` `renamedBy`: every move resolved from the map before any is taken, so a chain (an old
+  name of one photo the new name of another) or a swap leaves each photo's records (`recordsWritten`), suggestions (the
+  page's, `edits.js` `photosRenamed`; each kept scan's, `photosWritten`) and place in the selection under its own new name. A Delete forgets every
   kept scan holding the photo (`photosGone(paths)`); `bulk-run.js` forgets every scan (a library-wide write). A kept scan
   that cannot be written back is forgotten (I9). Every write is queued naming its photos (`queuePhotoWrite(photos, job,
   ...)`, `photos()` asked while it is out), so the page going with a write under way (a reload, another library chosen)
