@@ -21,7 +21,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
 import { REPO_ROOT, APPS, loadApp, FakeServer, photoRecord, openFolder, pageModules } from "./harness.mjs";
-import { baseName, pathKey, samePath } from "../../web/common/paths.js";
+import { baseName, isUnder, pathKey, samePath } from "../../web/common/paths.js";
 
 const PATHS_JS = path.join(REPO_ROOT, "web", "common", "paths.js");
 
@@ -128,6 +128,35 @@ for (const app of Object.keys(APPS)) {
     });
   });
 }
+
+describe("web/common/paths.js: isUnder, which kept scans hold a photo (a folder's scan is recursive)", () => {
+  // The page's paths.is_under (tagpup/core/paths.py): cache.js photosWritten asks it of every scan this browser keeps.
+  test("a photo at any depth below the folder, however either is spelled", () => {
+    assert.ok(isUnder("D:\\Pictures\\Regatta\\a.jpg", "D:\\Pictures\\Regatta"));
+    assert.ok(isUnder("D:\\Pictures\\Regatta\\Heats\\Day 2\\a.jpg", "d:/pictures/regatta/"));
+  });
+
+  test("a drive root holds everything on its drive, and nothing on another", () => {
+    assert.ok(isUnder("D:\\Pictures\\a.jpg", "D:\\"));
+    assert.ok(isUnder("D:\\a.jpg", "D:"));
+    assert.ok(!isUnder("E:\\Pictures\\a.jpg", "D:\\"));
+  });
+
+  test("a network share holds its own photos, not a share whose name starts the same", () => {
+    assert.ok(isUnder("\\\\nas\\photos\\2020\\a.jpg", "\\\\nas\\photos"));
+    assert.ok(isUnder("//NAS/Photos/2020/a.jpg", "\\\\nas\\photos\\"));
+    assert.ok(!isUnder("\\\\nas\\photos2\\2020\\a.jpg", "\\\\nas\\photos"));
+    assert.ok(!isUnder("D:\\Run 2\\a.jpg", "D:\\Run"));
+  });
+
+  test("a folder is not under itself, and nothing is under no folder", () => {
+    assert.ok(!isUnder("D:\\Pictures\\Regatta", "d:/pictures/regatta/"));
+    assert.ok(!isUnder("D:\\Pictures", "D:\\Pictures\\Regatta"));
+    assert.ok(!isUnder("D:\\Pictures\\a.jpg", ""));
+    assert.ok(!isUnder("", "D:\\Pictures"));
+    assert.ok(!isUnder(null, null));
+  });
+});
 
 describe("web/common/paths.js: baseName, the one last segment (#146)", () => {
   // TagPup's baseName and TagTuner's basename differed at the edges: for null one
