@@ -10,18 +10,19 @@
  * while the shift is out never takes its reply: every kept scan holding its photos is forgotten (#3323). A save of one
  * photo (its title, its Date Taken) reaches every kept scan holding it the same, re-keyed when its caption renamed it, and
  * its new Date Taken moves it in the open folder at once, as a shift does (owner, 2026-11-22); its reply taken after the
- * folder was left still reaches that folder's kept scan. A tag write's side of the same:
- * scenario-tagging-many-photos-at-once.test.mjs.
+ * folder was left still reaches that folder's kept scan. A Smart Rename of the subfolder whose names renumber (an old
+ * name of one photo the new name of another) leaves the kept parent holding each photo once, under its new name (#3329).
+ * A tag write's side of the same: scenario-tagging-many-photos-at-once.test.mjs.
  *
  * Contract table row 23 (pages -> the page's saved scan cache), cache.js photosWritten, recordsWritten and photosGone. The
  * replies are the real entry point's (fixtures/shift_replies.json, harness.mjs shiftedAs; fixtures/save_replies.json,
- * saved and savedAs); the records carry `order` as the scan's reply does.
+ * saved and savedAs; fixtures/rename_replies.json, renamedAs); the records carry `order` as the scan's reply does.
  */
 import { test, afterEach } from "node:test";
 import assert from "node:assert/strict";
 import {
   loadApp, FakeServer, closeAllApps, openFolder, click, flush, photoRecord, pageExports, SHIFT, shiftedAs, SAVE, saved,
-  lastSave, savedAs, SAVE_REPLIES,
+  lastSave, savedAs, SAVE_REPLIES, renamedAs,
 } from "./harness.mjs";
 
 afterEach(() => closeAllApps());
@@ -51,12 +52,13 @@ const SCANS = { [CHILD]: [H1, H3, H2], [PARENT]: [P1, H1, H3, H2, P2, P3] };
 // The camera moved by 30 minutes, as the server gives the two photos back (in the order sent: H1, H2).
 const SHIFTED = shiftedAs("shifted", [dated("2020:06:01 10:40:00"), dated("2020:06:01 10:50:00")]);
 
-function server(shift, save) {
+function server(shift, save, scans = SCANS) {
   return new FakeServer()
     .first(SHIFT, shift)
     .first(SAVE, save)
-    .on("/api/folder/scan", (url) => (url.includes(encodeURIComponent(CHILD)) ? SCANS[CHILD] : SCANS[PARENT])
+    .on("/api/folder/scan", (url) => (url.includes(encodeURIComponent(CHILD)) ? scans[CHILD] : scans[PARENT])
       .map((record) => ({ ...record })))
+    .on("/api/folder/rename-photos", renamedAs("chained", CHILD))
     .on("/api/photo/rotate", { ...SAVE_REPLIES.rotated_picture_changed, pictures_refused: 0 })
     .on("/api/photo/delete", { success: true })
     .on("/api/taxonomy/tree", [])
@@ -66,8 +68,8 @@ function server(shift, save) {
     .on("/api/folder/suggest-status", { status: "idle" });
 }
 
-async function page(t, { library = "alpha", storage = {}, shift = SHIFTED, save = saved() } = {}) {
-  const fake = server(shift, save);
+async function page(t, { library = "alpha", storage = {}, shift = SHIFTED, save = saved(), scans = SCANS } = {}) {
+  const fake = server(shift, save, scans);
   const ctx = await loadApp("tagpup", {
     t, server: fake, url: `http://localhost:8090/${library}/`,
     before: (window) => Object.entries(storage).forEach(([key, value]) => window.localStorage.setItem(key, value)),
@@ -310,4 +312,36 @@ test("a Date Taken saved moves the photo to its new place at once, in the open f
     [H3.path, H2.path, H1.path], "the folder's list was not drawn in the new order");
   assert.deepEqual(keptOf(ctx, PARENT).map(BEFORE), [BEFORE(P1), BEFORE(H3), BEFORE(H2), moved, BEFORE(P2), BEFORE(P3)],
     "the kept parent holds the old date, in the old order");
+});
+
+// The subfolder before a Smart Rename that renumbers (fixtures/rename_replies.json `chained`): a photo taken first, and two
+// Smart-Renamed after it, each moving up one: IMG_0001 -> Regatta - 1, Regatta - 1 -> Regatta - 2, Regatta - 2 -> Regatta - 3.
+const R0 = at(CHILD, "IMG_0001.jpg", { taken: "2020:06:01 10:00:00" });
+const R1 = at(CHILD, "Regatta - 1.jpg", { taken: "2020:06:01 10:10:00" });
+const R2 = at(CHILD, "Regatta - 2.jpg", { taken: "2020:06:01 10:20:00" });
+const RENUMBERED = { [CHILD]: [R0, R1, R2], [PARENT]: [P1, R0, R1, R2, P2, P3] };
+
+test("a Smart Rename that renumbers the subfolder leaves the kept parent holding each photo once, under its new name and stamp", async (t) => {
+  const ctx = await page(t, { scans: RENUMBERED });
+  await ctx.open(PARENT);
+  await ctx.open(CHILD);
+  for (const box of ctx.document.querySelectorAll(".thumbnail-card .thumbnail-checkbox")) click(ctx.window, box);
+  ctx.$("rename-grouping-input").value = "Regatta";
+  const apply = ctx.$("btn-apply-rename");
+  apply.disabled = false;   // enabled by the panel's own toggle, which is not under test
+  click(ctx.window, apply);
+  await flush(ctx.window, 10);
+  assert.deepEqual(new Set(ctx.fake.calls.find((c) => c.url.includes("rename-photos")).body.photo_paths),
+    new Set([R0.path, R1.path, R2.path]), "the whole subfolder was not sent");
+  const renamed = [["Regatta - 1.jpg", "2020:06:01 10:00:00", 1, 1], ["Regatta - 2.jpg", "2020:06:01 10:10:00", 1, 1],
+    ["Regatta - 3.jpg", "2020:06:01 10:20:00", 1, 1]];
+  assert.deepEqual(ctx.shown(), renamed, "the open subfolder as the reply gave it");
+  const NAMED = (record) => [record.filename, record.taken, record.mtime, record.size, record.path.split("\\").pop()];
+  assert.deepEqual(keptOf(ctx, PARENT).map(NAMED), [BEFORE(P1), ...renamed, BEFORE(P2), BEFORE(P3)]
+    .map(([filename, ...rest]) => [filename, ...rest, filename]),
+  "the kept parent holds a photo twice, or one gone, or a record under a name it no longer has");
+
+  await ctx.open(PARENT);
+  assert.equal(ctx.scansOf(PARENT), 1, "the parent was scanned again, not drawn from its kept scan");
+  assert.deepEqual(ctx.shown(), [BEFORE(P1), ...renamed, BEFORE(P2), BEFORE(P3)]);
 });

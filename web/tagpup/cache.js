@@ -71,22 +71,27 @@ export function photosWritten(paths, take) {
  * reply (its stamp and base, tags and title, Date Taken and `order`, its new path) -- and every other record of each that
  * the page holds or this browser keeps takes the same, a copy of the written record over it (photosWritten: the open
  * folder and every kept scan holding it, put back in its order, so a new Date Taken moves the photo at once). `renames`
- * {path sent: path now}, photosRenamed's shape, names a photo the write renamed: its other records are found by the path
- * sent, matched before any is re-keyed. Returns photosWritten's count of the open view's records.
+ * {path sent: path now}, photosRenamed's shape, names a photo the write renamed: its other records hold the path sent, so
+ * each is matched by that first and by the path now only when no rename names its path -- in a chain (17 -> 18, 18 -> 19)
+ * an old name of one photo is the new name of another, and a record still at 18 is the photo now at 19 (#3329). The
+ * records given are the write's own, already as it left them, and take nothing. Returns photosWritten's count of the open
+ * view's records.
  */
 export function recordsWritten(records, renames = {}) {
+    const own = new Set(records);
     const now = new Map(records.map(record => [pathKey(record.path), record]));
-    const paths = records.map(record => record.path);
+    const sent = new Map();
     for (const [from, to] of Object.entries(renames)) {
         const record = now.get(pathKey(to));
-        if (!record || now.has(pathKey(from))) continue;
-        now.set(pathKey(from), record);
-        paths.push(from);
+        if (record && pathKey(from) !== pathKey(to)) sent.set(pathKey(from), [from, record]);
     }
+    const paths = [...records.map(record => record.path), ...[...sent.values()].map(([from]) => from)];
     const copies = new Map(records.map(record => [record, JSON.stringify(record)]));
     return photosWritten(paths, (record) => {
-        const written = now.get(pathKey(record.path));
-        if (written !== record) Object.assign(record, JSON.parse(copies.get(written)));
+        if (own.has(record)) return;
+        const key = pathKey(record.path);
+        const written = sent.has(key) ? sent.get(key)[1] : now.get(key);
+        Object.assign(record, JSON.parse(copies.get(written)));
     });
 }
 
