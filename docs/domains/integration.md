@@ -70,14 +70,19 @@ is replaced.
   CSS reaches. Decided by design: the owner is asked for a screenshot with the browser, display scale and zoom, and a
   screenshot reopens it as a new fact; no fix is guessed. The next step, an own listbox for the picker, is a one-way UI
   change and is not built.
-- **The page's kept scan of a folder** lives 30 minutes with no server check, and `forgetCachedPhoto` cleans only the
-  open library's scan: a save from a scan kept too long is refused by the stamp precondition (I8,
-  `tests/test_stale_record_precondition.py`), and a scan of an older shape (`CACHE_VERSION`) is scanned again (I9). A
-  write's reply reaches every scan this library keeps that holds the photo, its folder's and every one above it
-  (`cache.js` `photosWritten`, by `isUnder`; a Time Shift and a tag change today, the single saves by the plan
-  photos-written), put in the server's order by `order`; a kept scan that cannot be written back is forgotten (I9). The
-  page going with a write under way (a reload, another library chosen) forgets every kept scan holding the photos its
-  job named (`write-queue.js` `photosOut`, `cache.js` `photosGone`, wired in `edits.js`; I9, V22).
+- **The page's kept scan of a folder** lives 30 minutes with no server check, in this library's keys only: a save from a scan
+  kept too long is refused by the stamp precondition (I8, `tests/test_stale_record_precondition.py`), and a scan of an
+  older shape (`CACHE_VERSION`) is scanned again (I9). A write's reply reaches every scan this library keeps that holds the
+  photo, its folder's and every one above it (`cache.js` `photosWritten`, by `isUnder`), put in the server's order by
+  `order`. Every writer reaches them through that one function: a tag change and a Time Shift directly; a single save (the
+  six `postPhotoMetadata` callers), a turn, Smart Rename of one photo and of a folder, and a Convert through
+  `recordsWritten(records, renames)`, which gives each record the page holds the writer's reply (a renamed photo found by the
+  path it was sent under) and a single save's new Date Taken moves the photo at once in the open grid. A Delete forgets every
+  kept scan holding the photo (`photosGone(paths)`); `bulk-run.js` forgets every scan (a library-wide write). A kept scan
+  that cannot be written back is forgotten (I9). Every write is queued naming its photos (`queuePhotoWrite(photos, job,
+  ...)`, `photos()` asked while it is out), so the page going with a write under way (a reload, another library chosen)
+  forgets every kept scan holding them (`write-queue.js` `photosOut`, `cache.js` `photosGone`, wired in `edits.js`; I9, V22).
+  Two writes still out of that line, a folder Smart Rename's request and a Convert's ticket, are findings, not built.
 - **Page tests that answer from a fake server**: accepted by the decision of 2026-10-11 (#1326), with the count in
   condition 6; a flow converted deletes its fake copy unless the fake holds a reply shape no seed makes (contract row
   22).

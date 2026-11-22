@@ -1,6 +1,7 @@
 # Photos written: a write's reply reaches every scan the browser and the server keep of its photos, in the server's order
 
-Status: PLAN, not built. Findings #3304, #3306, #3308 (all `low`, open), and one new row (B-1 below, `wrong`).
+Status: BUILT (2026-11-22), all four cuts on the trunk (see the cuts below). Owner's answer to the question: a single Date
+Taken save moves the photo at once. Findings #3304, #3306, #3308 (all `low`, open), and one new row (B-1 below, `wrong`).
 Live count (read-only, 2026-11-21, `db.readonly_uri`): photos photo_index 60,270, kr-track 2,186, renton_parkrun 1,309.
 Undated photos (`taken IS NULL`, the ones the copied order's undated arm sorts): 74 photo_index, 0 kr-track, 4 renton_parkrun
 (78, #3304's count holds). Folders whose recursive scan holds a subfolder's photos (a proper ancestor of a photo folder):
@@ -17,7 +18,9 @@ Files (`web/tagpup/rename.js`, `edits.js`, `date-taken.js`, `web/common/paths.js
 | The order key the page sorts by: `order` on each record a scan (or a folder rename) replies with, and on each photo a write's reply gives `taken` for (shift, set) | `tagpup_routes._sorted` (records leave the server with `order`; never stored in `FolderCache`) and `_envelope` (`written[path].order`) | Integration | new field |
 | What the server keeps of a photo written: every map holding it (its folder's, an ancestor's) | `tagpup_routes._told`, through `FolderCache.entries_for` / `move_all` | Integration | existing; the shift arm gives a photo whose read back did not answer its stamp from `written` (#3306); the set arm gives the record its new `taken` (B-1) |
 | What the browser keeps of a photo written: the open folder's records and every scan this library keeps that holds it (its own folder, every ancestor) | `web/tagpup/cache.js` `photosWritten(paths, take)`; `take` is the writer's change of one record, applied the same to each | Integration | new; replaces `changeCachedPhotos`, the open/left branches of `rename.js tookShift` and `pending.js takeReply` |
-| A photo gone (deleted; the page left with its write out): every kept scan holding it forgets it | `cache.js` `photosGone(paths, { scans })` | Integration | new; replaces `forgetCachedPhoto`, `forgetCachedFolder(folderOf(...))` |
+| A photo gone (deleted; the page left with its write out): every kept scan holding it forgets it | `cache.js` `photosGone(paths)` (as built: no `scans` option; every kept scan holding a path, the open folder's too) | Integration | new; replaces `forgetCachedPhoto`, `forgetCachedFolder(folderOf(...))` |
+| A writer's reply as the page holds it, put in every record of the photo (a save, a turn, Smart Rename, Convert, a folder rename; a renamed photo found by the path it was sent under) | `cache.js` `recordsWritten(records, renames)`, over `photosWritten` | Integration | new, built in cut 4 (not in the first plan); Apply All (`suggestions.js`) uses it and `photosGone` |
+| Every write names its photos | `edits.js queuePhotoWrite(photos, job, ...)`, `write-queue.js queueEntry(label, photos)` / `photosOut` | Files | existing, a first parameter added in cut 4 |
 | Which kept scans hold a photo | `cache.js`, by a new `isUnder(path, folder)` in `web/common/paths.js` (the page's `paths.is_under`) | Files (paths), Integration | new helper beside `samePath` |
 | Records put in the folder's order on the page | `cache.js` `inFolderOrder(records)`: a stable sort by `order`, no rule of its own | Integration | new; deletes `rename.js inTakenOrder` |
 | A kept scan's shape | `cache.js` `CACHE_VERSION` 6 -> 7 (records carry `order`) | Integration | existing |
@@ -52,16 +55,16 @@ at the next scan, as today.
 
 ## Cuts (each about 1,200 lines or fewer, one concern, the trunk whole after each)
 
-1. **Server (Integration; Files reviews `dates.py`), about 350 lines.** `dates.taken_sort_key`; `order` on `_sorted`'s records and
+1. **DONE (c36ad698, 21d73e6f).** **Server (Integration; Files reviews `dates.py`), about 350 lines.** `dates.taken_sort_key`; `order` on `_sorted`'s records and
    on `_envelope`'s `written` where `taken` is given; `_told` shift arm stamps a written photo with no read-back record (#3306);
    `_told` set arm sets the kept record's `taken` (B-1, test fails on the old code first). The fixture writer in
    `tests/test_a_write_through_the_one_entry_point.py` regenerates `shift_replies.json` and the save and tag replies.
-2. **The browser's kept scans and Time Shift (Integration; Files reviews `rename.js`, `paths.js`), about 500 lines.**
+2. **DONE (be983df3, 5720f1de, b338b85a).** **The browser's kept scans and Time Shift (Integration; Files reviews `rename.js`, `paths.js`), about 500 lines.**
    `photosWritten`, `inFolderOrder`, `isUnder`, `CACHE_VERSION` 7; `tookShift` through `photosWritten` and the write line;
    delete `inTakenOrder` and the left-folder branch. Closes #3304, and #3308 for shifts.
-3. **Tag writes (Views), about 300 lines.** `takeReply`'s `left` map and `pagehide` through `photosWritten` / `photosGone`;
+3. **DONE (6d69fb4a).** **Tag writes (Views), about 300 lines.** `takeReply`'s `left` map and `pagehide` through `photosWritten` / `photosGone`;
    delete `changeCachedPhotos`, `forgetCachedFolder`. Closes #3308.
-4. **Single saves and the other writers (Files; Views and Media review their call sites), about 400 lines.** The six
+4. **DONE (f73048a4, 6205fcb6, e2ace0ff; as built `recordsWritten`, `photosGone(paths)`, Apply All through both, `forgetCachedPhoto` deleted).** **Single saves and the other writers (Files; Views and Media review their call sites), about 400 lines.** The six
    `postPhotoMetadata` callers' `saveToLocalStorageCache()` become one `cache.js` call that takes the saved record into every
    kept scan (a caption rename re-keyed); the siblings found by the sweep -- rotate (`photo.js`), Smart Rename of one and of a
    folder (`rename-one.js`, `rename.js`), Convert (`clip-convert.js`), Delete (`forgetCachedPhoto`) -- the same. `bulk-run.js`
