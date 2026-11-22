@@ -20,12 +20,12 @@
 // it applied (shownTags), redrawn whenever the map changes for a photo of the page (pageFollows); a record read from the
 // library while a write is out takes the replies that came back meanwhile (readHeld).
 import { api } from './common/api.js';
-import { folderOf, pathKey, samePath } from './common/paths.js';
+import { pathKey, samePath } from './common/paths.js';
 import { leafOf } from './common/vocabulary.js';
 import { upper } from './hooks.js';
 import { state } from './state.js';
 import { setStatus } from './status.js';
-import { changeCachedPhotos, forgetCachedFolder, saveToLocalStorageCache } from './cache.js';
+import { photosWritten } from './cache.js';
 import { leavePhotoThen, photoRenamed, queuePhotoWrite, redrawIfShowing } from './edits.js';
 import { readMoved, takeWritten } from './common/photo-write.js';
 import { renderWriteQueue, whereWritten } from './write-queue.js';
@@ -263,7 +263,7 @@ function cancelPending() {
  * its path; from a library view too). Every question comes before anything is dropped or discarded: the tag changes not
  * sent for a folder other than `to`, then the open photo's edits (edits.js leavePhotoThen: Save, Discard or Cancel). Only
  * when both are yes are the changes dropped and `go` run; else `stay`. A chunk already out is a normal write and does not
- * ask (its reply reaches the records kept of a folder left, takeReply).
+ * ask (its reply reaches every scan kept of a folder holding its photos, a folder left too: takeReply).
  */
 export function leaveThen(go, stay = () => {}, to = null) {
     if (state.leavePrompt) return stay();   // a question about the photo is open: this route waits its turn (edits.js)
@@ -277,17 +277,16 @@ export function leaveThen(go, stay = () => {}, to = null) {
     }, { onStay: stay });
 }
 
-/** Closing the page asks while changes are not sent (a drain stopped by a failure has no write waiting). */
+/**
+ * Closing the page asks while changes are not sent (a drain stopped by a failure has no write waiting). A chunk out
+ * when the page goes is the write line's (sendChunk names its photos; edits.js wireUnsavedEdits forgets the scans kept
+ * of them).
+ */
 export function wirePending() {
     window.addEventListener('beforeunload', (e) => {
         if (!unsentCount()) return;
         e.preventDefault();
         e.returnValue = '';
-    });
-    // A page left with a chunk out abandons its fetch, written or not: the photos' folders forget the records kept of them
-    // (their stamps may be older than the files), so opened again they are scanned rather than refused a save.
-    window.addEventListener('pagehide', () => {
-        new Set((state.pending.out || []).map(item => folderOf(item.path))).forEach(forgetCachedFolder);
     });
 }
 
@@ -360,6 +359,7 @@ async function sendChunk(entry) {
         const drops = state.pending.drops;
         chunk = takeChunk();
         state.pending.out = chunk;
+        entry.photos = chunk.map(item => item.path);   // the page going while they are out (write-queue.js photosOut)
         if (!chunk.length) {
             // Queued at a click while the chunk before was out, and that one failed: the changes wait for its Retry.
             entry.label = state.pending.stopped ? 'Tag changes: waiting for the failed write' : 'Tag changes: nothing left to write';
@@ -457,10 +457,10 @@ function readdress(item, path) {
 }
 
 /**
- * The reply into the records: each file written takes the stamp and the tags its file holds now, in any record of it
- * the page holds (heldRecords) and, its folder not the one open, in the records this browser kept of the photo's own folder
- * (whatever the page shows meanwhile: a library view, another folder where an Undo of it was pressed); a file gone was
- * skipped and keeps its record. A failed chunk's
+ * The reply into the records: each file written takes the stamp and the tags its file holds now, in every record of it
+ * the page holds (heldRecords) and every scan this browser keeps of a folder holding it -- its own folder's and each one
+ * above, whatever the page shows meanwhile: a library view, another folder where an Undo of it was pressed (cache.js
+ * photosWritten, #3308); a file gone was skipped and keeps its record. A failed chunk's
  * unwritten files go back to the front of the map and the drain stops, unless the changes were dropped while it was out
  * (`dropped`): then they are not written, and Cancel's message stands.
  */
@@ -468,11 +468,8 @@ function takeReply(chunk, data, entry, dropped) {
     const byKey = (obj) => new Map(Object.entries(obj || {}).map(([path, v]) => [pathKey(path), v]));
     const held = byKey(data.written);   // {path: {tags, mtime, size}} of each file written
     const skipped = new Set((data.skipped || []).map(s => pathKey(s.path)));
-    const photos = new Map();   // key -> the records the page holds of it
-    heldRecords().forEach(p => photos.set(pathKey(p.path), [...(photos.get(pathKey(p.path)) || []), p]));
     const back = [];
-    const written = [];
-    const left = new Map();   // a photo's folder not open -> its items written
+    const taken = new Map();   // key -> its item, written
     const take = (photo, item) => {
         const written = held.get(pathKey(item.path));
         takeWritten(photo, written, written && written.tags);
@@ -485,27 +482,19 @@ function takeReply(chunk, data, entry, dropped) {
         if (skipped.has(key)) {
             settle(item, 'skipped');
         } else if (data.success || held.has(key)) {
-            (photos.get(key) || []).forEach(photo => {
-                take(photo, item);
-                written.push(photo);
-            });
-            const home = folderOf(item.path);
-            if (!(state.scannedFolder && samePath(home, state.scannedFolder))) {
-                left.set(home, [...(left.get(home) || []), item]);
-            }
+            taken.set(key, item);
             forReads(item);
             settle(item, 'written');
         } else {
             back.push(item);
         }
     }
-    for (const [folder, items] of left) {
-        changeCachedPhotos(folder, (kept) => {
-            const records = new Map(kept.map(p => [pathKey(p.path), p]));
-            items.forEach(item => { const photo = records.get(pathKey(item.path)); if (photo) take(photo, item); });
-            return kept;
-        });
-    }
+    const takeOf = (photo) => take(photo, taken.get(pathKey(photo.path)));
+    photosWritten([...taken.values()].map(item => item.path), takeOf);
+    // A library view's photo before the open one is held by no scan.
+    const previous = state.library && state.library.previous;
+    if (previous && taken.has(pathKey(previous.record.path))) takeOf(previous.record);
+    const written = heldRecords().filter(photo => taken.has(pathKey(photo.path)));
     // The map first: a throw in drawing below must not lose the unwritten files' changes nor leave the drain running.
     let kept = back;
     let putBack = [];
@@ -522,7 +511,6 @@ function takeReply(chunk, data, entry, dropped) {
         upper.renderThumbnails();
         updateTagsDatalist();
         if (chunk.some(e => [...e.add, ...e.remove].some(t => state.pending.people.has(t)))) updatePeopleDatalist();
-        saveToLocalStorageCache();
         written.forEach(photo => redrawIfShowing(photo, data));
     }
     if (!data.success) {

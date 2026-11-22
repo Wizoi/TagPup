@@ -6,9 +6,11 @@
  * the server's order and the new stamps, and a save from it is sent with the stamp the file has now -- never the old one,
  * which the server would refuse as changed on disk (#3308). Another library's kept scan of the same folder is its own
  * (#1359) and is not touched; a kept scan that cannot be written back (local storage full) is forgotten, so the folder is
- * scanned when opened again, never shown from the records before the write.
+ * scanned when opened again, never shown from the records before the write. The page reloaded, or the library switched,
+ * while the shift is out never takes its reply: every kept scan holding its photos is forgotten (#3323). A tag write's
+ * side of the same: scenario-tagging-many-photos-at-once.test.mjs.
  *
- * Contract table row 23 (pages -> the page's saved scan cache), cache.js photosWritten. The replies are the real entry
+ * Contract table row 23 (pages -> the page's saved scan cache), cache.js photosWritten and photosGone. The replies are the real entry
  * point's (fixtures/shift_replies.json, harness.mjs shiftedAs); the records carry `order` as the scan's reply does.
  */
 import { test, afterEach } from "node:test";
@@ -45,9 +47,9 @@ const SCANS = { [CHILD]: [H1, H3, H2], [PARENT]: [P1, H1, H3, H2, P2, P3] };
 // The camera moved by 30 minutes, as the server gives the two photos back (in the order sent: H1, H2).
 const SHIFTED = shiftedAs("shifted", [dated("2020:06:01 10:40:00"), dated("2020:06:01 10:50:00")]);
 
-function server() {
+function server(shift) {
   return new FakeServer()
-    .first(SHIFT, SHIFTED)
+    .first(SHIFT, shift)
     .first(SAVE, saved())
     .on("/api/folder/scan", (url) => (url.includes(encodeURIComponent(CHILD)) ? SCANS[CHILD] : SCANS[PARENT])
       .map((record) => ({ ...record })))
@@ -58,8 +60,8 @@ function server() {
     .on("/api/folder/suggest-status", { status: "idle" });
 }
 
-async function page(t, { library = "alpha", storage = {} } = {}) {
-  const fake = server();
+async function page(t, { library = "alpha", storage = {}, shift = SHIFTED } = {}) {
+  const fake = server(shift);
   const ctx = await loadApp("tagpup", {
     t, server: fake, url: `http://localhost:8090/${library}/`,
     before: (window) => Object.entries(storage).forEach(([key, value]) => window.localStorage.setItem(key, value)),
@@ -175,4 +177,16 @@ test("a kept scan that cannot be written back is forgotten, and the folder opene
 
   await ctx.open(CHILD);
   assert.equal(ctx.scansOf(CHILD), 2, "the subfolder was not scanned again");
+});
+
+test("the page left while a shift is out forgets every kept scan holding its photos", async (t) => {
+  // The reply never comes: the page reloaded, or another library was chosen (a page load), with the shift out.
+  const ctx = await page(t, { shift: () => new Promise(() => {}) });
+  await ctx.open(CHILD);
+  await ctx.open(PARENT);
+  await ctx.shift();
+  assert.ok(ctx.fake.calls.some((c) => SHIFT(c.url, c.body)), "the shift was not sent");
+  ctx.window.dispatchEvent(new ctx.window.Event("pagehide"));
+  assert.deepEqual(Object.keys(ctx.storage()).filter((key) => key.startsWith("tagpup_cache_alpha/")), [],
+    "a kept scan holding the photos as they were before the shift is left");
 });

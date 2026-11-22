@@ -42,7 +42,10 @@ export function pictureCheckSaid(data) {
 
 export const KEEP_DONE = 10;
 
-/** A new entry, waiting: `label` says what it does. */
+/**
+ * A new entry, waiting: `label` says what it does. Its job names the photos it sends in `photos` (their paths), for
+ * photosOut.
+ */
 export function queueEntry(label) {
     const queue = state.writeQueue;
     if (!pendingWrites()) {
@@ -79,6 +82,14 @@ export function markEntry(entry, status) {
 /** How many writes are waiting or under way. */
 export function pendingWrites() {
     return state.writeQueue.entries.filter(e => e.status === 'waiting' || e.status === 'writing').length;
+}
+
+/**
+ * The photos of the write under way, as its job named them (`photos`: a tag chunk's, a Time Shift's; a write that names
+ * none, a single save, gives none): what a page going now leaves unknown (edits.js wireUnsavedEdits).
+ */
+export function photosOut() {
+    return state.writeQueue.entries.filter(e => e.status === 'writing').flatMap(e => e.photos || []);
 }
 
 function failedEntries() {

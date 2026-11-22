@@ -11,16 +11,21 @@
  * many photos it left unwritten, and a write already out neither says Ready over it nor gives its files back; choosing
  * another library or opening another folder asks while changes are not sent -- the tag question and the open photo's
  * together, nothing dropped or discarded until both are yes -- and leaving drops them; back from a library view to the
- * folder whose changes they are asks nothing, and staying leaves the view standing; a write that finishes after its
- * folder was left reaches the records this browser kept of that folder, even while a view shows one of its photos, and a
- * page left with a write out forgets them; photos missing on disk are said once, when the click's change is done.
+ * folder whose changes they are asks nothing, and staying leaves the view standing; a write's reply reaches every scan
+ * this browser keeps of a folder holding its photos -- their own folder's, every folder above, while it is open or after it
+ * was left, even while a view shows one of its photos -- and a page left with a write out forgets each of them (#3308);
+ * photos missing on disk are said once, when the click's change is done.
  *
- * The server's photos/write replies to a tag write (op `tags`) are held here until the test answers them, oldest first;
- * a save of one photo (op `set`) is answered at once.
+ * The server's photos/write replies to a tag write (op `tags`) are held here until the test answers them, oldest first,
+ * with the real entry point's reply where the test reads what it wrote (harness.mjs taggedAs); a save of one photo (op
+ * `set`) is answered at once.
  */
 import { test, describe, afterEach } from "node:test";
 import assert from "node:assert/strict";
-import { loadApp, FakeServer, photoRecord, flush, click, openFolder, closeAllApps, pageExports, SAVE, saved, saveCalls } from "./harness.mjs";
+import {
+  loadApp, FakeServer, photoRecord, flush, click, openFolder, closeAllApps, pageExports, SAVE, saved, saveCalls, taggedAs,
+  TAGS_REPLIES,
+} from "./harness.mjs";
 import { loadViewPage, recordOf } from "./view-page.mjs";
 
 const FOLDER = "D:\\Library\\2020";
@@ -57,7 +62,7 @@ async function viewableFolder(t, options = {}) {
 }
 
 /** A folder of `n` photos holding `tags`, all selected; its photos/write replies wait for `answer`. */
-async function folderOf(t, n, { tags = [], bulk } = {}) {
+async function folderOf(t, n, { tags = [], bulk, scan = scanOf(n, tags) } = {}) {
   const held = [];
   const server = new FakeServer()
     .on("/api/tags", [])
@@ -65,7 +70,7 @@ async function folderOf(t, n, { tags = [], bulk } = {}) {
     .on("/api/taxonomy/tree", [])
     .on("/api/databases", { databases: ["alpha", "beta"] })
     .on("/api/folder/index-status", { status: "completed", percent: 100, message: "Ready" })
-    .on("/api/folder/scan", scanOf(n, tags))
+    .on("/api/folder/scan", scan)
     .on("/api/photo-faces", { faces: [], total: 0, unmatched: 0 })
     .on("/api/photos/write", bulk || (() => new Promise((resolve) => held.push(resolve))))
     .on(SAVE, saved())
@@ -100,6 +105,9 @@ async function choose(ctx, choice) {
   ctx.document.querySelector(`.unsaved-edits-modal.active [data-choice='${choice}']`).click();
   await flush(ctx.window, 8);
 }
+
+/** The real entry point's reply `name` to the last tag write sent (harness.mjs taggedAs), `own(path, n)` over each photo's. */
+const replyTo = (ctx, name, own) => taggedAs(name, own)("", writes(ctx).at(-1));
 
 async function answer(ctx, reply = { success: true }) {
   assert.ok(ctx.held.length, "no write was waiting for an answer");
@@ -543,21 +551,76 @@ describe("a library view between a folder and its changes", () => {
     ctx.cardById(11).querySelector(".btn-thumbnail-detail").click();
     await ctx.settle(80);
     assert.equal(ctx.state.folderPhotos[0].path, pathOf(0), "the view does not show the folder's photo");
-    const written = Object.fromEntries(Array.from({ length: 25 }, (_, i) => [pathOf(i), { tags: ["Trips/Coast"], mtime: 1700000000, size: 2048 }]));
-    await answer(ctx, { success: true, written });
+    await answer(ctx, replyTo(ctx, "written", () => ({ tags: ["Trips/Coast"], mtime: 1700000000, size: 2048 })));
     const record = kept(ctx, FOLDER).photos[0];
     assert.equal(record.mtime, 1700000000, "the kept record names the file's old stamp: a save from it is refused");
     assert.deepEqual(record.tags, ["Trips/Coast"]);
   });
 });
 
-describe("a page left while a write is out", () => {
-  test("forgets the records kept of the write's folder: the fetch is abandoned, so opened again it is scanned", async (t) => {
-    const ctx = await folderOf(t, 50);
+describe("a write's reply and the scans this browser keeps of folders holding its photos", () => {
+  // A scan is recursive: LIBRARY's holds FOLDER's photos, SUB's and OTHER's; FOLDER's holds its own and SUB's.
+  const LIBRARY = "D:\\Library";
+  const SUB = `${FOLDER}\\Heats`;
+  const NESTED = [
+    [FOLDER, "IMG_0001.JPG"], [FOLDER, "IMG_0002.JPG"], [SUB, "IMG_0101.JPG"], [SUB, "IMG_0102.JPG"], [OTHER, "IMG_9001.JPG"],
+  ].map(([folder, filename]) => photoRecord({ filename, path: `${folder}\\${filename}`, tags: [] }));
+  const nestedScan = (url) => {
+    const asked = new URL(url, "http://localhost:8090/").searchParams.get("path");
+    return NESTED.filter((p) => p.path.startsWith(`${asked}\\`)).map((p) => ({ ...p, tags: [...p.tags] }));
+  };
+  const WRITTEN = NESTED.slice(0, 4).map((p) => p.path);
+  const FILE_TAGS = TAGS_REPLIES.written.reply.written.PHOTO_0.tags;
+
+  /** LIBRARY, SUB and OTHER looked at first, then FOLDER opened and its photos (its own and SUB's) all selected. */
+  async function nestedFolder(t) {
+    const ctx = await folderOf(t, 0, { scan: nestedScan });
+    for (const folder of [LIBRARY, SUB, OTHER, FOLDER]) await openFolder(ctx, folder);
+    ctx.document.getElementById("btn-select-all-thumbnails").click();
+    await flush(ctx.window, 4);
+    return ctx;
+  }
+
+  for (const left of [false, true]) {
+    test(`reaches the kept scan of the folder above and of the subfolder${left ? ", the folder left before the reply" : ""}`, async (t) => {
+      const ctx = await nestedFolder(t);
+      await addTags(ctx, "Trips/Coast");
+      assert.deepEqual(Object.keys(writes(ctx)[0].changes), WRITTEN);
+      if (left) await openFolder(ctx, OTHER);
+      await answer(ctx, replyTo(ctx, "written", (path, n) => ({ mtime: 1700000000 + n })));
+      for (const folder of [LIBRARY, FOLDER, SUB]) {
+        const records = kept(ctx, folder).photos.filter((p) => WRITTEN.includes(p.path));
+        assert.ok(records.length, `${folder} kept none of the photos`);
+        for (const record of records) {
+          assert.equal(record.mtime, 1700000000 + WRITTEN.indexOf(record.path),
+            `${folder}'s kept ${record.filename} names its file's old stamp: a save from it is refused`);
+          assert.deepEqual(record.tags, FILE_TAGS, `${folder}'s kept ${record.filename} does not hold what its file holds`);
+        }
+      }
+      const other = kept(ctx, LIBRARY).photos.find((p) => p.path === NESTED[4].path);
+      assert.deepEqual(other.tags, [], "a photo the write did not name took its tags");
+      await openFolder(ctx, SUB);
+      assert.equal(scans(ctx, SUB), 1, "the subfolder was scanned again rather than drawn from its kept scan");
+    });
+  }
+
+  test("a write that wrote nothing (a share gone) changes no kept scan", async (t) => {
+    const ctx = await nestedFolder(t);
+    const before = [LIBRARY, SUB].map((folder) => kept(ctx, folder));
     await addTags(ctx, "Trips/Coast");
-    assert.ok(kept(ctx, FOLDER), "the folder's scan was not kept");
+    await answer(ctx, replyTo(ctx, "not_written"));
+    assert.deepEqual([LIBRARY, SUB].map((folder) => kept(ctx, folder)), before);
+  });
+
+  test("the page left with a write out forgets every kept scan holding its photos, above and below; another stays", async (t) => {
+    const ctx = await nestedFolder(t);
+    await addTags(ctx, "Trips/Coast");
+    assert.equal(ctx.held.length, 1, "the write is not out");
     ctx.window.dispatchEvent(new ctx.window.Event("pagehide"));
-    assert.equal(kept(ctx, FOLDER), null, "the folder's records keep the stamps from before a write that may have happened");
+    for (const folder of [LIBRARY, FOLDER, SUB]) {
+      assert.equal(kept(ctx, folder), null, `${folder}'s kept records keep the stamps from before a write that may have happened`);
+    }
+    assert.ok(kept(ctx, OTHER), "a kept scan holding none of the photos was forgotten");
   });
 });
 
@@ -570,7 +633,7 @@ describe("an Undo pressed in another folder", () => {
     const { pendChanges } = pageExports(ctx.window, "web/tagpup/pending.js");
     pendChanges([{ path: pathOf(1), remove: ["Trips/Coast"] }]);
     await flush(ctx.window, 8);
-    await answer(ctx, { success: true, written: { [pathOf(1)]: { tags: [], mtime: 1700000500, size: 4096 } } });
+    await answer(ctx, replyTo(ctx, "written", () => ({ tags: [], mtime: 1700000500, size: 4096 })));
     const record = kept(ctx, FOLDER).photos[1];
     assert.equal(record.mtime, 1700000500, "the kept record names the stamp the file had before the Undo: a save from it is refused");
     assert.deepEqual(record.tags, [], "the kept record still holds the tag the Undo took off");
@@ -586,8 +649,7 @@ describe("opening another folder while changes wait", () => {
     assert.ok(ctx.confirms.includes("Tag changes for 25 photos are not written yet. Leave without writing them?"), ctx.confirms.join("|"));
     const { state } = pageExports(ctx.window, "web/tagpup/state.js");
     assert.equal(state.scannedFolder, OTHER);
-    const written = Object.fromEntries(Array.from({ length: 25 }, (_, i) => [pathOf(i), { tags: ["Trips/Coast"], mtime: 1700000000, size: 2048 }]));
-    await answer(ctx, { success: true, written });
+    await answer(ctx, replyTo(ctx, "written", () => ({ tags: ["Trips/Coast"], mtime: 1700000000, size: 2048 })));
     assert.equal(writes(ctx).length, 1, "the files not sent were written after the owner left them");
 
     await openFolder(ctx, FOLDER);

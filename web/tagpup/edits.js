@@ -13,8 +13,10 @@ import {
 } from './elements.js';
 import { setStatus } from './status.js';
 import { MOVE_WAIT_SHOWN_AFTER_MS, hideMoveWaiting, showMoveWaiting } from './move-waits.js';
-import { saveToLocalStorageCache } from './cache.js';
-import { dismissEntry, markEntry, pendingWrites, pictureCheckSaid, queueEntry, whereWritten } from './write-queue.js';
+import { photosGone, saveToLocalStorageCache } from './cache.js';
+import {
+    dismissEntry, markEntry, pendingWrites, photosOut, pictureCheckSaid, queueEntry, whereWritten
+} from './write-queue.js';
 import {
     fetchKnownTagsAndPeople, namesAPerson, resolveTagOrPerson, updateTagsDatalist
 } from './tags.js';
@@ -107,6 +109,9 @@ export function wireUnsavedEdits() {
         e.preventDefault();
         e.returnValue = '';
     });
+    // A page going with a write under way (reloaded, another library chosen, closed) abandons its fetch, written or not:
+    // every scan this browser keeps holding its photos is forgotten, so opened again it is scanned (cache.js photosGone).
+    window.addEventListener('pagehide', () => photosGone(photosOut()));
 }
 
 /**

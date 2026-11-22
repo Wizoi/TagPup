@@ -67,6 +67,19 @@ export function photosWritten(paths, take) {
 }
 
 /**
+ * Photos this browser can no longer vouch for: the page going with a write of them out (a reload, another library chosen,
+ * the tab closed) abandons its reply, written or not. Every scan kept of this library whose folder holds one of `paths`
+ * -- its own folder's, every one above it (isUnder), the open folder's too -- is forgotten, so opened again it is scanned
+ * rather than drawn with stamps older than the files, which a save would be refused for as changed on disk (#3308,
+ * #3323). Another library's kept scans are its own (#1359). Returns how many were forgotten.
+ */
+export function photosGone(paths) {
+    const gone = keptScans().filter(([, folder]) => paths.some(path => isUnder(path, folder)));
+    gone.forEach(([key]) => localStorage.removeItem(key));
+    return gone.length;
+}
+
+/**
  * A folder's records in its order: by each one's `order`, the key the server gives every record of a scan and every photo
  * a write gave a Date Taken (tagpup.core.dates.taken_sort_key); the page holds no rule of its own (#3304). Stable: records
  * of one key keep their places, as the server's sort keeps them.
@@ -96,31 +109,17 @@ function forgetKept(key, why) {
     localStorage.removeItem(key);
 }
 
-/**
- * A photo written or deleted while its folder is not the one open any more: the scan this browser kept for that folder
- * must say so (the open folder's is saved as it stands, saveToLocalStorageCache). `change` is given the kept records and
- * returns them; nothing is kept for a folder never scanned, and the scan keeps its age.
- */
-export function changeCachedPhotos(folder, change) {
+/** A photo deleted from a folder that is not the one open any more: the scan this browser kept of that folder forgets it. */
+export function forgetCachedPhoto(folder, photoPath) {
     try {
         const key = folderCacheKey(folder);
         const kept = JSON.parse(localStorage.getItem(key) || 'null');
         if (!kept || !Array.isArray(kept.photos)) return;
-        kept.photos = change(kept.photos);
+        kept.photos = kept.photos.filter(photo => !samePath(photo.path, photoPath));
         localStorage.setItem(key, JSON.stringify(kept));
     } catch (e) {
         console.warn('Could not change the scan kept for a folder:', e);
     }
-}
-
-/** Forget the scan this browser kept of `folder`: opened again, it is scanned. */
-export function forgetCachedFolder(folder) {
-    localStorage.removeItem(folderCacheKey(folder));
-}
-
-/** A photo deleted from a folder that is not the one open any more. */
-export function forgetCachedPhoto(folder, photoPath) {
-    changeCachedPhotos(folder, photos => photos.filter(photo => !samePath(photo.path, photoPath)));
 }
 
 /**
