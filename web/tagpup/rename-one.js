@@ -9,7 +9,7 @@ import { upper } from './hooks.js';
 import { state } from './state.js';
 import { btnSmartRenameOne, inputSmartRenameOne } from './elements.js';
 import { flagField, setStatus } from './status.js';
-import { saveToLocalStorageCache } from './cache.js';
+import { recordsWritten } from './cache.js';
 import { whereWritten } from './write-queue.js';
 import { hasUnsavedEdits, photoRenamed, queueWriteOf } from './edits.js';
 import { takeStamp } from './common/photo-write.js';
@@ -78,7 +78,7 @@ export function smartRenameOpenPhoto() {
         if (data.renamed) photoRenamed(photo, data.new_path);
         // The file is renamed: a failure redrawing the page is logged, not said as a rename that failed.
         try {
-            saveToLocalStorageCache();
+            recordsWritten([photo], { [from]: photo.path });
             // `from !== photo.path`: the spelling changed (a rename, even of case only), exact on purpose.
             if (from !== photo.path && samePath(state.activePhotoPath, from)) {
                 state.activePhotoPath = photo.path;

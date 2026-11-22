@@ -23,7 +23,7 @@ import {
 import { setStatus } from './status.js';
 import { isJustLooking, libraryName } from './looking.js';
 import { pictureCheckSaid, whereWritten } from './write-queue.js';
-import { forgetCachedPhoto, recordsWritten, saveToLocalStorageCache } from './cache.js';
+import { photosGone, recordsWritten, saveToLocalStorageCache } from './cache.js';
 import { fileSizeSaid, takenOf, takenSaid } from './format.js';
 import { namesAPerson, normalizeTag } from './tags.js';
 import { deleteWaits, pendingOf, readHeld, removePhotoTags, shownTags } from './pending.js';
@@ -813,7 +813,10 @@ export function rotatePhoto(direction) {
                 thumb.dataset.src = photoFileUrl(photo, 300);
                 thumb.src = thumb.dataset.src;
             }
-            saveToLocalStorageCache();
+            // Every record of it the page holds or keeps names the new stamp; a stamp not looked at, none: the scans kept
+            // holding it are forgotten, and scanned when opened again.
+            if (data.mtime == null) photosGone([path]);
+            else recordsWritten([photo]);
             statusDot.className = 'status-indicator-dot';
             statusText.textContent = data.file_only || data.pictures_refused
                 ? `Rotated.${whereWritten(data)}${pictureCheckSaid(data)}` : 'Ready';
@@ -847,7 +850,6 @@ export function deleteActivePhoto() {
     const asked = state.folderPhotos[index];
     // And where it was asked: the view or folder open now may be another by then, and its records are not this photo's.
     const askedInView = state.library;
-    const askedInFolder = state.scannedFolder;
     const filename = asked.filename || 'this photo';
     // A photo of a folder the library does not hold: say that only the file moves. And on a network
     // share there is no Recycle Bin: it goes through this PC's (#694), and where it restores to is said before it goes.
@@ -897,6 +899,9 @@ export function deleteActivePhoto() {
             stayed = true;
             return;
         }
+        // Deleted: every scan this browser keeps holding it is forgotten, and scanned when opened again (cache.js photosGone);
+        // the open folder's is kept again below, without it.
+        if (data.success) photosGone([path]);
         if (data.success && askedInView && state.library !== askedInView) {
             // Another view (or a folder) was opened while the delete was out: nothing of it is this photo's.
             statusDot.className = 'status-indicator-dot';
@@ -922,7 +927,6 @@ export function deleteActivePhoto() {
             const at = state.folderPhotos.findIndex(p => samePath(p.path, path));
             if (at === -1) {
                 removeFromSelection([path]);
-                if (askedInFolder) forgetCachedPhoto(askedInFolder, path);
                 statusDot.className = 'status-indicator-dot';
                 statusText.textContent = data.message || 'Ready';
                 return;
@@ -933,7 +937,7 @@ export function deleteActivePhoto() {
             // Remove from selection array if selected
             removeFromSelection([path]);
 
-            // Update cache
+            // The open folder kept again, without it.
             saveToLocalStorageCache();
 
             // Update UI statistics

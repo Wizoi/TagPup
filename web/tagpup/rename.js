@@ -10,7 +10,7 @@ import {
     timeshiftPanel
 } from './elements.js';
 import { flagField, setStatus } from './status.js';
-import { photosWritten, saveToLocalStorageCache } from './cache.js';
+import { photosWritten, recordsWritten } from './cache.js';
 import { updatePeopleDatalist, updateTagsDatalist } from './tags.js';
 import { countSaid, renderFileList } from './folder.js';
 import { renderThumbnails } from './grid.js';
@@ -96,7 +96,7 @@ export function wireRenameAndTimeShift() {
                         renderFileList();
                         renderThumbnails();
                         updateSelectedThumbnailsCount();
-                        saveToLocalStorageCache();
+                        recordsWritten(e.updated_photos, e.updated_paths || {});
                     }
                     throw new Error(e.error || 'Rename failed');
                 });
@@ -120,7 +120,8 @@ export function wireRenameAndTimeShift() {
             renderFileList();
             renderThumbnails();
             updateSelectedThumbnailsCount();
-            saveToLocalStorageCache();
+            // The folder's records as the server gave them, in every scan kept holding them, by the names they had.
+            recordsWritten(data.updated_photos, data.updated_paths || {});
             
             setStatus('ready', `Renamed ${renamedCount} photo(s)` + whereWritten(data));
         })

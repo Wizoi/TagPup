@@ -20,7 +20,7 @@ import { upper } from './hooks.js';
 import { state } from './state.js';
 import { btnClipConvert, btnClipConvertCancel, btnClipShrink, clipConvertNote, mainVideo } from './elements.js';
 import { setStatus } from './status.js';
-import { saveToLocalStorageCache } from './cache.js';
+import { recordsWritten } from './cache.js';
 import { hasUnsavedEdits, photoRenamed, queueWriteOf } from './edits.js';
 import { stampOf, takeStamp } from './common/photo-write.js';
 import { refetchCards } from './library-source.js';
@@ -204,7 +204,7 @@ function converted(key, live, said) {
     if (said.renamed) photoRenamed(photo, said.new_path);
     // The clip is converted: a failure redrawing the page is logged, not said as a conversion that failed.
     try {
-        saveToLocalStorageCache();
+        recordsWritten([photo], { [live.from]: photo.path });
         if (samePath(state.activePhotoPath, live.from)) {
             state.activePhotoPath = photo.path;
             upper.selectPhoto(photo.path);

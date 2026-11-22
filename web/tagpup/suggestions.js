@@ -13,7 +13,7 @@ import {
     suggestProgressContainer, suggestProgressText
 } from './elements.js';
 import { setStatus } from './status.js';
-import { recordsWritten, saveToLocalStorageCache } from './cache.js';
+import { photosGone, recordsWritten, saveToLocalStorageCache } from './cache.js';
 import { fetchKnownTagsAndPeople, namesAPerson, resolveTagOrPerson } from './tags.js';
 import { shownTags } from './pending.js';
 import { photoChangedOnDisk, queuePhotoWrite, queueWriteOf, redrawIfShowing } from './edits.js';
@@ -674,7 +674,9 @@ function queueApplyAll(folder, targets, prior) {
             }
             recordAutoApplyUndo(before, data.written, true, prior);
             setStatus('ready', `Suggestions applied to ${before.length} photo(s)` + ' \u2014 Ctrl+Z to undo');
-            scanFolder(true); // Rescan folder to load updated tags
+            // The reply names no stamps: every scan kept holding them is forgotten, and the folder read again.
+            photosGone(targets);
+            scanFolder(true);
             return true;
         })
         .catch(err => {
@@ -687,7 +689,8 @@ function queueApplyAll(folder, targets, prior) {
                 return false;
             }
             // Some photos may have been written before the one that failed: the
-            // folder is read again, so the page's records say what the files hold.
+            // folder is read again, so the page's records say what the files hold, and every scan kept of them forgotten.
+            photosGone(targets);
             scanFolder(true);
             // A failure that would otherwise pass unnoticed still earns a modal.
             setStatus('error', 'Applying suggestions failed', { transient: false });

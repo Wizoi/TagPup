@@ -57,6 +57,8 @@ function server(shift, save) {
     .first(SAVE, save)
     .on("/api/folder/scan", (url) => (url.includes(encodeURIComponent(CHILD)) ? SCANS[CHILD] : SCANS[PARENT])
       .map((record) => ({ ...record })))
+    .on("/api/photo/rotate", { ...SAVE_REPLIES.rotated_picture_changed, pictures_refused: 0 })
+    .on("/api/photo/delete", { success: true })
     .on("/api/taxonomy/tree", [])
     .on("/api/people", [])
     .on("/api/tags", [])
@@ -217,6 +219,30 @@ test("the page left while a single save is out forgets every kept scan holding i
   assert.equal(ctx.kept().length, 2, "both folders kept");
   ctx.window.dispatchEvent(new ctx.window.Event("pagehide"));
   assert.deepEqual(ctx.kept(), [], "a kept scan holding the photo as it was before the save is left");
+});
+
+test("a photo turned from its subfolder: the kept parent names the stamp the turn left", async (t) => {
+  const ctx = await page(t);
+  await ctx.open(PARENT);
+  await ctx.open(CHILD);
+  await ctx.select(H1);
+  click(ctx.window, ctx.$("btn-rotate-right"));
+  await flush(ctx.window, 10);
+  const record = keptOf(ctx, PARENT).find((p) => p.path === H1.path);
+  assert.deepEqual([record.mtime, record.size], [1, 1], "the kept parent names the stamp from before the turn");
+});
+
+test("a photo deleted from its subfolder: no kept scan holds it, and the parent opened again is scanned", async (t) => {
+  const ctx = await page(t);
+  await ctx.open(PARENT);
+  await ctx.open(CHILD);
+  await ctx.select(H1);
+  click(ctx.window, ctx.$("btn-delete-photo"));
+  await flush(ctx.window, 10);
+  assert.deepEqual(ctx.kept().map((key) => JSON.parse(ctx.storage()[key]).photos.some((p) => p.path === H1.path)), [false],
+    "a kept scan still holds the photo deleted");
+  await ctx.open(PARENT);
+  assert.equal(ctx.scansOf(PARENT), 2, "the parent was drawn from a kept scan holding the photo deleted");
 });
 
 const keptOf = (ctx, folder) => JSON.parse(ctx.storage()[`tagpup_cache_alpha/${folder.toLowerCase()}`]).photos;
