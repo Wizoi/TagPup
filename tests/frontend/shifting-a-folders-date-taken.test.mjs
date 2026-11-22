@@ -3,9 +3,10 @@
  *
  * The page chooses the photos (the camera's, never a clip) and sends them by path in one request to the one entry point of
  * photo writes (POST /api/photos/write, op `shift`; plan one-write-path, cut 3b). What the owner lives through: the folder
- * put back in Date Taken order with each photo's new date as the server spells it, a second click finding the minutes
- * reset; a share that stops answering part-way (what landed is shown, the rest said); a refusal before any write (names
- * being given from tags) that changes nothing; a folder left before the reply came, which the reply does not touch. The
+ * put back in the server's order with each photo's new date as the server spells it, a second click finding the minutes
+ * reset; a second shift clicked before the first one's reply, sent after it; a share that stops answering part-way (what
+ * landed is shown, the rest said); a refusal before any write (names being given from tags) that changes nothing. Every
+ * scan this browser keeps that holds the photos takes the reply too (scenario-a-write-reaches-every-scan-kept). The
  * replies are the real entry point's (fixtures/shift_replies.json, harness.mjs shiftedAs).
  */
 import { test, afterEach } from "node:test";
@@ -20,7 +21,14 @@ afterEach(() => closeAllApps());
 const FOLDER = "D:\\Pictures\\Regatta";
 const OTHER = "D:\\Pictures\\Harbour";
 const CAMERA = "Tidewater TX R6m2";
-const at = (folder, filename, own) => photoRecord({ path: `${folder}\\${filename}`, filename, camera: CAMERA, ...own });
+// A record as a scan's reply gives it: `order`, the server's key of its place in the folder (tagpup.core.dates
+// taken_sort_key: its Date Taken, the undated after by file time).
+const at = (folder, filename, own) => {
+  const record = photoRecord({ path: `${folder}\\${filename}`, filename, camera: CAMERA, ...own });
+  return { order: record.taken ?? `mtime_${record.mtime}`, ...record };
+};
+// A photo's new Date Taken as a shift's reply gives it (`written[path]`): its `order` is the date.
+const dated = (taken) => ({ taken, order: taken });
 
 // As the server orders a folder: by Date Taken, the undated after.
 const CLIP = at(FOLDER, "MVI_0004.mp4", { media: "video", taken: "2020:06:01 09:00:00" });
@@ -68,9 +76,9 @@ async function opened(t, shift, folder = FOLDER) {
   return ctx;
 }
 
-test("a camera's photos are sent by path in one request, and the folder takes their new dates in Date Taken order", async (t) => {
-  // B moved past C: the server's folder order would put it after C, and so does the page.
-  const ctx = await opened(t, shiftedAs("shifted", [{ taken: "2020:06:01 10:30:00" }, { taken: "2020:06:01 10:50:00" }]));
+test("a camera's photos are sent by path in one request, and the folder takes their new dates in the server's order", async (t) => {
+  // B moved past C: the server's folder order puts it after C, and so does the page.
+  const ctx = await opened(t, shiftedAs("shifted", [dated("2020:06:01 10:30:00"), dated("2020:06:01 10:50:00")]));
   click(ctx.window, [...ctx.document.querySelectorAll(".photo-item-file")].find((el) => el.dataset.path.endsWith("IMG_0002.jpg")));
   await flush(ctx.window, 6);
   assert.deepEqual(ctx.order(), ["MVI_0004.mp4", "IMG_0001.jpg", "IMG_0002.jpg", "IMG_0003.jpg", "IMG_0005.jpg"]);
@@ -97,7 +105,7 @@ test("a share that stops answering part-way: the photo that landed takes its sta
   await ctx.shift(CAMERA);
   assert.equal(Object.keys(ctx.shifts()[0].changes).length, 3);
   const { state } = pageExports(ctx.window, "web/tagpup/state.js");
-  assert.deepEqual(state.folderPhotos.map((p) => [p.filename, p.taken, p.mtime]), [
+  assert.deepEqual([...state.folderPhotos].map((p) => [p.filename, p.taken, p.mtime]), [
     ["IMG_1000.jpg", "2020:06:01 10:00:00", 1], ["IMG_1001.jpg", "2020:06:01 10:00:00", HARBOUR[1].mtime],
     ["IMG_1002.jpg", "2020:06:01 10:00:00", HARBOUR[2].mtime]], "the written one takes its stamp, and no date not read");
   assert.deepEqual(ctx.order(), ["IMG_1000.jpg", "IMG_1001.jpg", "IMG_1002.jpg"]);
@@ -127,35 +135,34 @@ test("an envelope that wrote nothing and says why is the failure it says, not a 
   assert.deepEqual(ctx.alerts, [`Error shifting time: ${why}`]);
 });
 
-test("a folder left before the shift's reply came is not touched by it, and its kept scan, opened again, shows the new dates", async (t) => {
-  let reply;
+test("a second shift clicked before the first one's reply is sent after it is taken, never beside it", async (t) => {
+  // The owner clicks Apply again while the first shift is out: the second waits in the page's one line of writes (a reply
+  // taken out of order would give a photo the stamp the earlier write left), and the status says it waits.
+  const held = [];
   const ctx = await opened(t, (url, body) => new Promise((resolve) => {
-    reply = () => resolve(shiftedAs("shifted", [{ taken: "2020:06:01 11:30:00" }, { taken: "2020:06:01 09:30:00" }])(url, body));
+    const minutes = body.params.minutes;
+    const own = minutes === 30
+      ? [dated("2020:06:01 10:30:00"), dated("2020:06:01 10:50:00")]
+      : [dated("2020:06:01 10:45:00"), dated("2020:06:01 11:05:00")];
+    held.push(() => resolve(shiftedAs("shifted", own)(url, body)));
   }));
   await ctx.shift(CAMERA);
-  await openFolder(ctx, OTHER);
-  await flush(ctx.window, 10);
-  assert.deepEqual(ctx.order(), ["IMG_1000.jpg", "IMG_1001.jpg", "IMG_1002.jpg"]);
-  // Then a library view, listing the two photos shifted, by name the other way: its records and order are its own.
-  const { state } = pageExports(ctx.window, "web/tagpup/state.js");
-  state.library = { name: "photo_index" };
-  state.folderPhotos = [{ ...B }, { ...A }];
-  reply();
-  await flush(ctx.window, 10);
-  assert.deepEqual(state.folderPhotos.map((p) => [p.filename, p.taken, p.mtime]),
-    [["IMG_0002.jpg", B.taken, B.mtime], ["IMG_0001.jpg", A.taken, A.mtime]], "neither patched nor put in another order");
-  assert.match(ctx.said(), /^Time shift applied to 2 photos$/, "what was written is still said");
+  await ctx.shift(CAMERA, "15");
+  assert.equal(ctx.shifts().length, 1, "the second is not sent while the first is out");
+  assert.match(ctx.said(), /^Shift of 2 photo\(s\) waits for the writes before it/);
 
-  // The folder opened again within the half hour is drawn from the scan this browser kept of it, not scanned: that scan
-  // took the shift's dates and stamps, and its Date Taken order (#3301).
-  state.library = null;
-  const scans = ctx.fake.calls.filter((c) => c.url.includes("/api/folder/scan")).length;
-  await openFolder(ctx, FOLDER);
+  held[0]();
   await flush(ctx.window, 10);
-  assert.equal(ctx.fake.calls.filter((c) => c.url.includes("/api/folder/scan")).length, scans, "drawn from the kept scan");
-  assert.deepEqual([...state.folderPhotos].map((p) => [p.filename, p.taken, p.mtime]), [
-    ["MVI_0004.mp4", CLIP.taken, CLIP.mtime], ["IMG_0002.jpg", "2020:06:01 09:30:00", 1],
-    ["IMG_0003.jpg", C.taken, C.mtime], ["IMG_0001.jpg", "2020:06:01 11:30:00", 1], ["IMG_0005.jpg", undefined, UNDATED.mtime]]);
+  assert.deepEqual(ctx.shifts().map((body) => body.params.minutes), [30, 15], "sent once the first reply is taken");
+  assert.deepEqual(Object.keys(ctx.shifts()[1].changes), [A.path, B.path]);
+
+  held[1]();
+  await flush(ctx.window, 10);
+  const { state } = pageExports(ctx.window, "web/tagpup/state.js");
+  assert.deepEqual([...state.folderPhotos].filter((p) => p.camera === CAMERA && p.media !== "video").map((p) => [p.filename, p.taken]),
+    [["IMG_0001.jpg", "2020:06:01 10:45:00"], ["IMG_0002.jpg", "2020:06:01 11:05:00"]], "the last reply's dates, taken last");
+  assert.match(ctx.said(), /^Time shift applied to 2 photos$/);
+  assert.deepEqual(ctx.alerts, []);
 });
 
 test("photos holding no Date Taken are said as such, not as photos that could not be written (#3305)", async (t) => {
