@@ -24,7 +24,7 @@ is replaced.
    service's exception to a reply (`responses.ANSWERS`, `responses.ANSWERED`, `responses.of`: a route catches
    `ANSWERED` and answers `of(it)`; `tests/test_rules_have_one_owner.py` holds the list of exceptions a route may
    answer); the write transaction (`db.begin`, the one place a transaction is begun, `tests/test_db_access.py`); the
-   page's kept scan and its shape (`CACHE_VERSION` in `web/tagpup/cache.js`, 6 today; `tests/test_page_record_fields.py`
+   page's kept scan and its shape (`CACHE_VERSION` in `web/tagpup/cache.js`, 7 today; `tests/test_page_record_fields.py`
    fails when `page_record`'s fields change without raising it and regenerating the fixture). Open and not Integration's
    alone: what is this PC's alone is not yet one rule of what a route carries (`/api/photo-file`, `/api/face-crop`,
    `/api/folder/scan`, `/api/photos` carry the same pictures and names as the refused `/api/library/*`; and some routes
@@ -44,7 +44,7 @@ is replaced.
    I1 switching library mid-folder; I2 a write through a server update; I3 an update by a launch and by an install;
    I4 a library one migration behind served at start; I5 a page against the real server; I6 the same flows with and
    without roots; I7 the CLI, the MCP server and the server on one library; I8 a save from a stale record; I9 a scan
-   kept by an older page; I10 `test_a_failed_run_says_what_to_do` (a failed background run says what to do next); I11
+   kept by an older page, and a write's reply reaching every scan this browser keeps of its photos; I10 `test_a_failed_run_says_what_to_do` (a failed background run says what to do next); I11
    `test_ffmpeg_is_a_prerequisite` (no ffmpeg: the server and the CLI's index start nothing and say what to install,
    an install leaves the old server running). `tests/test_the_test_map.py` holds every test file to one owner and every
    module of the package and of the pages to one charter's Scope. **Not met for what the charter lists as having no
@@ -72,7 +72,10 @@ is replaced.
   change and is not built.
 - **The page's kept scan of a folder** lives 30 minutes with no server check, and `forgetCachedPhoto` cleans only the
   open library's scan: a save from a scan kept too long is refused by the stamp precondition (I8,
-  `tests/test_stale_record_precondition.py`), and a scan of an older shape (`CACHE_VERSION`) is scanned again (I9).
+  `tests/test_stale_record_precondition.py`), and a scan of an older shape (`CACHE_VERSION`) is scanned again (I9). A
+  write's reply reaches every scan this library keeps that holds the photo, its folder's and every one above it
+  (`cache.js` `photosWritten`, by `isUnder`; a Time Shift today, the other writers by the plan photos-written), put in
+  the server's order by `order`; a kept scan that cannot be written back is forgotten (I9).
 - **Page tests that answer from a fake server**: accepted by the decision of 2026-10-11 (#1326), with the count in
   condition 6; a flow converted deletes its fake copy unless the fake holds a reply shape no seed makes (contract row
   22).
