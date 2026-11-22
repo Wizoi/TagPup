@@ -74,8 +74,10 @@ is replaced.
   open library's scan: a save from a scan kept too long is refused by the stamp precondition (I8,
   `tests/test_stale_record_precondition.py`), and a scan of an older shape (`CACHE_VERSION`) is scanned again (I9). A
   write's reply reaches every scan this library keeps that holds the photo, its folder's and every one above it
-  (`cache.js` `photosWritten`, by `isUnder`; a Time Shift today, the other writers by the plan photos-written), put in
-  the server's order by `order`; a kept scan that cannot be written back is forgotten (I9).
+  (`cache.js` `photosWritten`, by `isUnder`; a Time Shift and a tag change today, the single saves by the plan
+  photos-written), put in the server's order by `order`; a kept scan that cannot be written back is forgotten (I9). The
+  page going with a write under way (a reload, another library chosen) forgets every kept scan holding the photos its
+  job named (`write-queue.js` `photosOut`, `cache.js` `photosGone`, wired in `edits.js`; I9, V22).
 - **Page tests that answer from a fake server**: accepted by the decision of 2026-10-11 (#1326), with the count in
   condition 6; a flow converted deletes its fake copy unless the fake holds a reply shape no seed makes (contract row
   22).
