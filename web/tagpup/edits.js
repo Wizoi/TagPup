@@ -2,12 +2,12 @@
 // a photo goes through.
 import { dialogOpen, holdFocus, releaseFocus } from './common/dialog.js';
 import { buildElement, replaceContent } from './common/dom.js';
-import { baseName, pathKey, samePath } from './common/paths.js';
+import { baseName, pathKey, rekeyed, renamedBy, samePath } from './common/paths.js';
 import { UNREADABLE_SAVE, inTurn, postPhotoMetadata } from './common/photo-write.js';
 import { leafOf, photoAlreadyHas, tagProblem, textProblem } from './common/vocabulary.js';
 import { upper } from './hooks.js';
 import { state } from './state.js';
-import { renameInSelection } from './selected.js';
+import { selectionRenamed } from './selected.js';
 import {
     btnSaveDetails, inputAddPerson, inputAddTag, inputPhotoTitle, peopleDatalist, tagsDatalist
 } from './elements.js';
@@ -280,20 +280,14 @@ export function photoRenamed(photo, newPath) {
 }
 
 /**
- * Photos were renamed, `renames` {old path: new path} (a save, or Smart Rename's `updated_paths`): their selection and
- * suggestions move to the new names. Old paths are matched by pathKey, as the server may spell a path other than the scan did (#92).
+ * Photos were renamed, `renames` {old path: new path} (a save, a Convert, or Smart Rename's `updated_paths`): the page's
+ * selection and suggestions move to the new names, each photo's its own however the renames chain or swap (renamedBy,
+ * #3336). The records are the write's to move (cache.js recordsWritten, photosWritten: the kept scans' suggestions too).
  */
 export function photosRenamed(renames) {
-    const moved = new Map(Object.entries(renames).map(([from, to]) => [pathKey(from), to]));
-    const kept = new Map(Object.keys(state.folderSuggestions).map(key => [pathKey(key), key]));
-    for (const [from, to] of moved) {
-        const held = kept.get(from);
-        if (held !== undefined && held !== to) {
-            state.folderSuggestions[to] = state.folderSuggestions[held];
-            delete state.folderSuggestions[held];
-        }
-    }
-    for (const [oldPath, newPath] of Object.entries(renames)) renameInSelection(oldPath, newPath);
+    const now = renamedBy(renames);
+    state.folderSuggestions = rekeyed(state.folderSuggestions, now);
+    selectionRenamed(now);
 }
 
 /** After a write: redraw the panel for this photo, but only if it is still the one open; its faces follow the write's `reply`. */

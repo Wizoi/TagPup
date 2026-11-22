@@ -1,7 +1,7 @@
 // TagPup's page: a folder's scan, kept in this browser for half an hour, so opening it
 // again does not scan it again. Each library's own: two libraries can hold one folder.
 import { libraryIn } from './common/api.js';
-import { isUnder, pathKey } from './common/paths.js';
+import { isUnder, pathKey, rekeyed, renamedBy } from './common/paths.js';
 import { state } from './state.js';
 
 // Browser local storage cache configuration (30 minutes timeout)
@@ -40,9 +40,12 @@ export function saveToLocalStorageCache() {
  * the same to every record of it the page holds and this browser keeps -- the open view's (a folder's, or a library view's),
  * and every scan kept of this library whose folder holds the photo, its own folder's or one above it (a scan is recursive:
  * isUnder; #3308). A folder's records are put back in its order (inFolderOrder); a library view's keep theirs. Another
- * library's kept scans are its own (#1359). Returns how many of the open view's records took it, for the caller to draw.
+ * library's kept scans are its own (#1359). `renames`, {path sent: path now}, names photos the write renamed: a kept
+ * scan's suggestions follow them to their new names (renamedBy), as the open view's do (edits.js photosRenamed). Returns
+ * how many of the open view's records took it, for the caller to draw.
  */
-export function photosWritten(paths, take) {
+export function photosWritten(paths, take, renames = {}) {
+    const now = renamedBy(renames);
     const keys = new Set(paths.map(pathKey));
     const takeAll = (records) => records.filter(record => keys.has(pathKey(record.path))).map(take).length;
     const shown = takeAll(state.folderPhotos);
@@ -58,6 +61,7 @@ export function photosWritten(paths, take) {
             // A scan an older page kept is scanned again when opened (folder.js): nothing to change in it.
             if (!kept || kept.version !== CACHE_VERSION || !Array.isArray(kept.photos) || !takeAll(kept.photos)) continue;
             kept.photos = inFolderOrder(kept.photos);
+            if (kept.suggestions) kept.suggestions = rekeyed(kept.suggestions, now);
             localStorage.setItem(key, JSON.stringify(kept));
         } catch (e) {
             forgetKept(key, e);
@@ -71,28 +75,21 @@ export function photosWritten(paths, take) {
  * reply (its stamp and base, tags and title, Date Taken and `order`, its new path) -- and every other record of each that
  * the page holds or this browser keeps takes the same, a copy of the written record over it (photosWritten: the open
  * folder and every kept scan holding it, put back in its order, so a new Date Taken moves the photo at once). `renames`
- * {path sent: path now}, photosRenamed's shape, names a photo the write renamed: its other records hold the path sent, so
- * each is matched by that first and by the path now only when no rename names its path -- in a chain (17 -> 18, 18 -> 19)
- * an old name of one photo is the new name of another, and a record still at 18 is the photo now at 19 (#3329). The
- * records given are the write's own, already as it left them, and take nothing. Returns photosWritten's count of the open
- * view's records.
+ * {path sent: path now}, photosRenamed's shape, names photos the write renamed: another record of one holds the path sent,
+ * and takes the record written at the path that photo has now (renamedBy: in a chain an old name of one photo is the new
+ * name of another, and a record still at Regatta - 1 is the photo now at Regatta - 2; #3329). A record of a photo the reply
+ * gives no record of takes nothing. The records given are the write's own, already as it left them, and take nothing.
+ * Returns photosWritten's count of the open view's records.
  */
 export function recordsWritten(records, renames = {}) {
     const own = new Set(records);
-    const now = new Map(records.map(record => [pathKey(record.path), record]));
-    const sent = new Map();
-    for (const [from, to] of Object.entries(renames)) {
-        const record = now.get(pathKey(to));
-        if (record && pathKey(from) !== pathKey(to)) sent.set(pathKey(from), [from, record]);
-    }
-    const paths = [...records.map(record => record.path), ...[...sent.values()].map(([from]) => from)];
-    const copies = new Map(records.map(record => [record, JSON.stringify(record)]));
+    const now = renamedBy(renames);
+    const copies = new Map(records.map(record => [pathKey(record.path), JSON.stringify(record)]));
+    const paths = [...records.map(record => record.path), ...Object.keys(renames)];
     return photosWritten(paths, (record) => {
-        if (own.has(record)) return;
-        const key = pathKey(record.path);
-        const written = sent.has(key) ? sent.get(key)[1] : now.get(key);
-        Object.assign(record, JSON.parse(copies.get(written)));
-    });
+        const copy = copies.get(pathKey(now(record.path)));
+        if (!own.has(record) && copy) Object.assign(record, JSON.parse(copy));
+    }, renames);
 }
 
 /**

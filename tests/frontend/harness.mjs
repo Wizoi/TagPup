@@ -421,7 +421,9 @@ export const RENAME_REPLIES = JSON.parse(fs.readFileSync(path.join(HERE, "fixtur
  * A folder's Smart Rename's reply as the real route made it (POST /api/folder/rename-photos; fixtures/rename_replies.json,
  * written by tests/test_tag_a_photo_read_it_back_and_undo.py AFolderSmartRenameFromThePage): `chained`, three photos
  * renamed where an old name of one is the new name of another (IMG_0001.jpg -> Regatta - 1.jpg, Regatta - 1.jpg ->
- * Regatta - 2.jpg, Regatta - 2.jpg -> Regatta - 3.jpg; taken 10:00, 10:10, 10:20 on 2020:06:01), each stamp 1 and 1.
+ * Regatta - 2.jpg, Regatta - 2.jpg -> Regatta - 3.jpg; taken 10:00, 10:10, 10:20 on 2020:06:01), each stamp 1 and 1;
+ * `swapped`, then Regatta - 1 dated 10:15 and Regatta - 2 10:05, the two Smart-Renamed again and each taking the other's
+ * name (the reply's records the folder's three, each stamp 2 and 2).
  * Its folder, FOLDER, is named again `folder`, the folder the page test opened.
  */
 export function renamedAs(name, folder) {

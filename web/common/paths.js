@@ -66,3 +66,21 @@ export function isUnder(p, folder) {
     const at = pathKey(folder);
     return Boolean(at) && pathKey(p).startsWith(at + '\\');
 }
+
+/**
+ * A rename map, {path before: path after} (a folder's Smart Rename's `updated_paths`, a save or a Convert that renamed its
+ * file), as one look-up: where the photo that was at `path` is now, or `path` itself when the map does not move it. Every
+ * move is read from the map before any is taken, so a chain (IMG_0001 -> Regatta - 1, Regatta - 1 -> Regatta - 2) and a
+ * swap (Regatta - 1 <-> Regatta - 2) take each photo once to its own new name, whatever order the map lists them in
+ * (#3329, #3336). Old paths are matched by pathKey: the server may spell one otherwise than the page did (#92). The one
+ * place a rename map is read: what a page keeps by a photo's path moves through this.
+ */
+export function renamedBy(renames) {
+    const moves = new Map(Object.entries(renames || {}).map(([from, to]) => [pathKey(from), to]));
+    return (path) => (moves.has(pathKey(path)) ? moves.get(pathKey(path)) : path);
+}
+
+/** `held`, kept by photo path (a folder's suggestions), under the paths `now` (renamedBy) gives: a new object. */
+export function rekeyed(held, now) {
+    return Object.fromEntries(Object.entries(held).map(([path, value]) => [now(path), value]));
+}

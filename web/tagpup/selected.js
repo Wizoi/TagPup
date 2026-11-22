@@ -293,13 +293,9 @@ function tooScattered(selected, left) {
         + 'Select fewer, or Select all and deselect.';
 }
 
-/** A photo renamed by a save keeps its place in the selection, under its new path. */
-export function renameInSelection(oldPath, newPath) {
-    const oldKey = pathKey(oldPath);
-    if (!state.selectedKeys.has(oldKey)) return;
-    state.selectedKeys.delete(oldKey);
-    state.selectedKeys.add(pathKey(newPath));
-    const at = state.selectedThumbnails.findIndex(path => pathKey(path) === oldKey);
-    if (at !== -1) state.selectedThumbnails[at] = newPath;
-    if (state.lastSelectedPath && pathKey(state.lastSelectedPath) === oldKey) state.lastSelectedPath = newPath;
+/** Photos renamed, `now` the paths they have now (paths.js renamedBy): each selected keeps its place, under its new path. */
+export function selectionRenamed(now) {
+    state.selectedThumbnails = state.selectedThumbnails.map(path => now(path));
+    state.selectedKeys = new Set(state.selectedThumbnails.map(pathKey));
+    if (state.lastSelectedPath) state.lastSelectedPath = now(state.lastSelectedPath);
 }

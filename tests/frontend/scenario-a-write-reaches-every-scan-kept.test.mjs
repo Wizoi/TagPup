@@ -11,7 +11,9 @@
  * photo (its title, its Date Taken) reaches every kept scan holding it the same, re-keyed when its caption renamed it, and
  * its new Date Taken moves it in the open folder at once, as a shift does (owner, 2026-11-22); its reply taken after the
  * folder was left still reaches that folder's kept scan. A Smart Rename of the subfolder whose names renumber (an old
- * name of one photo the new name of another) leaves the kept parent holding each photo once, under its new name (#3329).
+ * name of one photo the new name of another) leaves the kept parent holding each photo once, under its new name (#3329),
+ * and each photo's own suggestions under its new name, in the open folder, its kept scan and the kept parent's (#3336);
+ * one that swaps two names the same.
  * A tag write's side of the same: scenario-tagging-many-photos-at-once.test.mjs.
  *
  * Contract table row 23 (pages -> the page's saved scan cache), cache.js photosWritten, recordsWritten and photosGone. The
@@ -52,24 +54,29 @@ const SCANS = { [CHILD]: [H1, H3, H2], [PARENT]: [P1, H1, H3, H2, P2, P3] };
 // The camera moved by 30 minutes, as the server gives the two photos back (in the order sent: H1, H2).
 const SHIFTED = shiftedAs("shifted", [dated("2020:06:01 10:40:00"), dated("2020:06:01 10:50:00")]);
 
-function server(shift, save, scans = SCANS) {
+// What Suggest found, by folder: the suggestions the server gives the page for a folder (a parent's hold its subfolders').
+function server(shift, save, scans = SCANS, rename = "chained", suggested = {}) {
   return new FakeServer()
     .first(SHIFT, shift)
     .first(SAVE, save)
     .on("/api/folder/scan", (url) => (url.includes(encodeURIComponent(CHILD)) ? scans[CHILD] : scans[PARENT])
       .map((record) => ({ ...record })))
-    .on("/api/folder/rename-photos", renamedAs("chained", CHILD))
+    .on("/api/folder/rename-photos", renamedAs(rename, CHILD))
     .on("/api/photo/rotate", { ...SAVE_REPLIES.rotated_picture_changed, pictures_refused: 0 })
     .on("/api/photo/delete", { success: true })
     .on("/api/taxonomy/tree", [])
     .on("/api/people", [])
     .on("/api/tags", [])
     .on("/api/photo-faces", { faces: [], total: 0, unmatched: 0 })
-    .on("/api/folder/suggest-status", { status: "idle" });
+    .on("/api/folder/suggest-status", (url) => {
+      const found = suggested[url.includes(encodeURIComponent(CHILD)) ? CHILD : PARENT];
+      return found ? { status: "completed", suggestions: structuredClone(found) } : { status: "idle" };
+    });
 }
 
-async function page(t, { library = "alpha", storage = {}, shift = SHIFTED, save = saved(), scans = SCANS } = {}) {
-  const fake = server(shift, save, scans);
+async function page(t, { library = "alpha", storage = {}, shift = SHIFTED, save = saved(), scans = SCANS, rename = "chained",
+  suggested = {} } = {}) {
+  const fake = server(shift, save, scans, rename, suggested);
   const ctx = await loadApp("tagpup", {
     t, server: fake, url: `http://localhost:8090/${library}/`,
     before: (window) => Object.entries(storage).forEach(([key, value]) => window.localStorage.setItem(key, value)),
@@ -321,16 +328,28 @@ const R1 = at(CHILD, "Regatta - 1.jpg", { taken: "2020:06:01 10:10:00" });
 const R2 = at(CHILD, "Regatta - 2.jpg", { taken: "2020:06:01 10:20:00" });
 const RENUMBERED = { [CHILD]: [R0, R1, R2], [PARENT]: [P1, R0, R1, R2, P2, P3] };
 
-test("a Smart Rename that renumbers the subfolder leaves the kept parent holding each photo once, under its new name and stamp", async (t) => {
-  const ctx = await page(t, { scans: RENUMBERED });
-  await ctx.open(PARENT);
-  await ctx.open(CHILD);
+// The open folder's photos all selected and Smart-Renamed "Regatta" from its panel.
+async function renameAll(ctx) {
   for (const box of ctx.document.querySelectorAll(".thumbnail-card .thumbnail-checkbox")) click(ctx.window, box);
   ctx.$("rename-grouping-input").value = "Regatta";
   const apply = ctx.$("btn-apply-rename");
   apply.disabled = false;   // enabled by the panel's own toggle, which is not under test
   click(ctx.window, apply);
   await flush(ctx.window, 10);
+}
+
+const offer = (tag) => ({ tags: [{ tag, score: 0.9 }], people: [], title: "" });
+// Each suggestion by the photo it is for, by its tag: the page's, or a kept scan's.
+const offered = (suggestions) => Object.fromEntries(Object.entries(suggestions).map(([path, s]) => [path, s.tags[0].tag]));
+const suggestionsOf = (ctx) => pageExports(ctx.window, "web/tagpup/state.js").state.folderSuggestions;
+const keptSuggestionsOf = (ctx, folder) => JSON.parse(ctx.storage()[`tagpup_cache_alpha/${folder.toLowerCase()}`]).suggestions;
+const named = (filename) => `${CHILD}\\${filename}`;
+
+test("a Smart Rename that renumbers the subfolder leaves the kept parent holding each photo once, under its new name and stamp", async (t) => {
+  const ctx = await page(t, { scans: RENUMBERED });
+  await ctx.open(PARENT);
+  await ctx.open(CHILD);
+  await renameAll(ctx);
   assert.deepEqual(new Set(ctx.fake.calls.find((c) => c.url.includes("rename-photos")).body.photo_paths),
     new Set([R0.path, R1.path, R2.path]), "the whole subfolder was not sent");
   const renamed = [["Regatta - 1.jpg", "2020:06:01 10:00:00", 1, 1], ["Regatta - 2.jpg", "2020:06:01 10:10:00", 1, 1],
@@ -344,4 +363,44 @@ test("a Smart Rename that renumbers the subfolder leaves the kept parent holding
   await ctx.open(PARENT);
   assert.equal(ctx.scansOf(PARENT), 1, "the parent was scanned again, not drawn from its kept scan");
   assert.deepEqual(ctx.shown(), [BEFORE(P1), ...renamed, BEFORE(P2), BEFORE(P3)]);
+});
+
+test("a Smart Rename that renumbers the subfolder moves each photo's own suggestions to its new name, in the open folder and every scan kept", async (t) => {
+  const own = { [R0.path]: offer("Trips/Start"), [R1.path]: offer("Trips/Middle"), [R2.path]: offer("Trips/Finish") };
+  const ctx = await page(t, { scans: RENUMBERED,
+    suggested: { [CHILD]: own, [PARENT]: { ...own, [P1.path]: offer("Trips/Harbour") } } });
+  await ctx.open(PARENT);
+  await ctx.open(CHILD);
+  assert.deepEqual(offered(suggestionsOf(ctx)), offered(own), "the subfolder's suggestions before the rename");
+  await renameAll(ctx);
+  const after = { [named("Regatta - 1.jpg")]: "Trips/Start", [named("Regatta - 2.jpg")]: "Trips/Middle",
+    [named("Regatta - 3.jpg")]: "Trips/Finish" };
+  assert.deepEqual(offered(suggestionsOf(ctx)), after, "a photo holds another's suggestions, or lost its own");
+  assert.deepEqual(offered(keptSuggestionsOf(ctx, CHILD)), after, "the open folder's kept scan");
+  assert.deepEqual(offered(keptSuggestionsOf(ctx, PARENT)), { [P1.path]: "Trips/Harbour", ...after }, "the kept parent's");
+});
+
+// The subfolder before a Smart Rename that swaps two names (fixtures/rename_replies.json `swapped`): Regatta - 1 was dated
+// after Regatta - 2, so each takes the other's name; Regatta - 3 keeps its own.
+const W1 = at(CHILD, "Regatta - 1.jpg", { taken: "2020:06:01 10:15:00" });
+const W2 = at(CHILD, "Regatta - 2.jpg", { taken: "2020:06:01 10:05:00" });
+const W3 = at(CHILD, "Regatta - 3.jpg", { taken: "2020:06:01 10:20:00" });
+const SWAPPING = { [CHILD]: [W2, W1, W3], [PARENT]: [P1, W2, W1, W3, P2, P3] };
+
+test("a Smart Rename that swaps two names: each photo keeps its own suggestions and records under the other's old name", async (t) => {
+  const own = { [W1.path]: offer("Trips/Late"), [W2.path]: offer("Trips/Early"), [W3.path]: offer("Trips/Finish") };
+  const ctx = await page(t, { scans: SWAPPING, rename: "swapped", suggested: { [CHILD]: own, [PARENT]: own } });
+  await ctx.open(PARENT);
+  await ctx.open(CHILD);
+  await renameAll(ctx);
+  const after = { [named("Regatta - 1.jpg")]: "Trips/Early", [named("Regatta - 2.jpg")]: "Trips/Late",
+    [named("Regatta - 3.jpg")]: "Trips/Finish" };
+  assert.deepEqual(offered(suggestionsOf(ctx)), after, "a photo holds another's suggestions, or lost its own");
+  assert.deepEqual(offered(keptSuggestionsOf(ctx, CHILD)), after, "the open folder's kept scan");
+  assert.deepEqual(offered(keptSuggestionsOf(ctx, PARENT)), after, "the kept parent's");
+  const swapped = [["Regatta - 1.jpg", "2020:06:01 10:05:00", 2, 2], ["Regatta - 2.jpg", "2020:06:01 10:15:00", 2, 2],
+    ["Regatta - 3.jpg", "2020:06:01 10:20:00", 2, 2]];
+  assert.deepEqual(ctx.shown(), swapped, "the open subfolder as the reply gave it");
+  assert.deepEqual(keptOf(ctx, PARENT).map((record) => [record.filename, record.taken, record.mtime, record.size]),
+    [BEFORE(P1), ...swapped, BEFORE(P2), BEFORE(P3)], "the kept parent holds a photo twice, or under the other's name");
 });

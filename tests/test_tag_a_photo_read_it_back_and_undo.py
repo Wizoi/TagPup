@@ -543,7 +543,7 @@ class AFolderSmartRenameFromThePage(S.Fresh):
     """A folder's Smart Rename as the page sends it (web/tagpup/rename.js: the folder, the photos selected, a grouping),
     through the real route, its reply written for the page's test."""
 
-    def test_the_chained_rename_reply_the_page_reads_is_written_for_its_test(self):
+    def test_the_chained_and_swapped_rename_replies_the_page_reads_are_written_for_its_test(self):
         # `chained`: a photo taken before two already Smart-Renamed takes the first number, and each of the two moves up
         # one, so an old name of one is the new name of another (live: 1 of 11 folder Smart Renames in photo_index). The
         # folder scanned first, as the page opened it (the route orders the photos by the Date Taken of that scan).
@@ -562,8 +562,24 @@ class AFolderSmartRenameFromThePage(S.Fresh):
                           "Regatta - 2.jpg": "Regatta - 3.jpg"}, moved, "not a chain")
         for record in body["updated_photos"]:
             record.update(mtime=1, size=1)
+        replies = {"chained": {"status": reply.status_code, "reply": body}}
+        # `swapped`: the first two dated again in the other order, each takes the other's name.
+        named = {os.path.basename(new): new for new in body["updated_paths"].values()}
+        S.write_into(named["Regatta - 1.jpg"], DateTimeOriginal="2020:06:01 10:15:00")
+        S.write_into(named["Regatta - 2.jpg"], DateTimeOriginal="2020:06:01 10:05:00")
+        # Scanned again as the page's Refresh does (force), so the route orders them by the dates written.
+        self.assertEqual(200, self.api("/folder/scan", query_string={"path": self.folder, "force": "true"}).status_code)
+        reply = self.post("/folder/rename-photos", {"folder_path": self.folder, "grouping": "Regatta",
+                                                    "photo_paths": [named["Regatta - 1.jpg"], named["Regatta - 2.jpg"]]})
+        body = reply.get_json()
+        self.assertEqual((200, True), (reply.status_code, body["success"]), body)
+        moved = {os.path.basename(old): os.path.basename(new) for old, new in body["updated_paths"].items()}
+        self.assertEqual({"Regatta - 1.jpg": "Regatta - 2.jpg", "Regatta - 2.jpg": "Regatta - 1.jpg"}, moved, "not a swap")
+        for record in body["updated_photos"]:
+            record.update(mtime=2, size=2)
+        replies["swapped"] = {"status": reply.status_code, "reply": body}
         # The folder named FOLDER, in both of its spellings (the reply's paths, ExifTool's SourceFile).
-        text = json.dumps({"chained": {"status": reply.status_code, "reply": body}}, sort_keys=True, indent=1) + "\n"
+        text = json.dumps(replies, sort_keys=True, indent=1) + "\n"
         for spelled in (self.folder, self.folder.replace(os.sep, "/")):
             text = text.replace(json.dumps(spelled)[1:-1], "FOLDER")
         self.assertNotIn(json.dumps(self.home.root)[1:-1], text, "a path of the test's home left in")
