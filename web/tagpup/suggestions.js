@@ -13,7 +13,7 @@ import {
     suggestProgressContainer, suggestProgressText
 } from './elements.js';
 import { setStatus } from './status.js';
-import { saveToLocalStorageCache } from './cache.js';
+import { recordsWritten, saveToLocalStorageCache } from './cache.js';
 import { fetchKnownTagsAndPeople, namesAPerson, resolveTagOrPerson } from './tags.js';
 import { shownTags } from './pending.js';
 import { photoChangedOnDisk, queuePhotoWrite, queueWriteOf, redrawIfShowing } from './edits.js';
@@ -544,10 +544,10 @@ export function applySuggestedTagsDirect(tagNames, isPerson, forPath = state.act
                 if (!photo.people.includes(leafOf(each))) photo.people.push(leafOf(each));
             }
         }
+        recordsWritten([photo]);
         // The suggestion has been taken, so it is no longer a suggestion.
         redrawIfShowing(photo, saved);
         setStatus('ready', 'Ready');
-        saveToLocalStorageCache();
         return true;
     });
 }
@@ -607,9 +607,9 @@ export async function applyAllSingleSuggestions() {
             const leaf = leafOf(t);
             if (!photo.people.includes(leaf)) photo.people.push(leaf);
         });
+        recordsWritten([photo]);
         redrawIfShowing(photo, saved);
         setStatus('ready', 'Ready');
-        saveToLocalStorageCache();
         return true;
     });
 }

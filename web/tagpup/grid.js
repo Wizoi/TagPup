@@ -12,7 +12,7 @@ import {
     btnSizeLarge, btnSizeMedium, btnSizeSmall, folderViewMain, gridContextMenu, inputPhotoTitle,
     folderViewTop, photoSearch, statusDot, statusText, thumbnailsGrid
 } from './elements.js';
-import { saveToLocalStorageCache } from './cache.js';
+import { recordsWritten } from './cache.js';
 import {
     formatFriendlyDateSingle, getFolderDateStats, parseExifDateToLocalDate, takenOf
 } from './format.js';
@@ -522,6 +522,7 @@ function buildThumbnailCard(photo) {
                         state.activePhotoPath = data.new_path;
                     }
                 }
+                recordsWritten([photo], { [oldPath]: photo.path });
 
                 renderFileList();
                 renderThumbnails();
@@ -533,7 +534,6 @@ function buildThumbnailCard(photo) {
                 statusDot.className = data.rename_failed ? 'status-indicator-dot error' : 'status-indicator-dot';
                 statusText.textContent = data.rename_failed
                     ? `Saved the title, but could not rename the photo: ${data.rename_failed}` : 'Ready';
-                saveToLocalStorageCache();
             })
             .catch(err => {
                 console.error(err);

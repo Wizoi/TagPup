@@ -7,17 +7,21 @@
  * which the server would refuse as changed on disk (#3308). Another library's kept scan of the same folder is its own
  * (#1359) and is not touched; a kept scan that cannot be written back (local storage full) is forgotten, so the folder is
  * scanned when opened again, never shown from the records before the write. The page reloaded, or the library switched,
- * while the shift is out never takes its reply: every kept scan holding its photos is forgotten (#3323). A tag write's
- * side of the same: scenario-tagging-many-photos-at-once.test.mjs.
+ * while the shift is out never takes its reply: every kept scan holding its photos is forgotten (#3323). A save of one
+ * photo (its title, its Date Taken) reaches every kept scan holding it the same, re-keyed when its caption renamed it, and
+ * its new Date Taken moves it in the open folder at once, as a shift does (owner, 2026-11-22); its reply taken after the
+ * folder was left still reaches that folder's kept scan. A tag write's side of the same:
+ * scenario-tagging-many-photos-at-once.test.mjs.
  *
- * Contract table row 23 (pages -> the page's saved scan cache), cache.js photosWritten and photosGone. The replies are the real entry
- * point's (fixtures/shift_replies.json, harness.mjs shiftedAs); the records carry `order` as the scan's reply does.
+ * Contract table row 23 (pages -> the page's saved scan cache), cache.js photosWritten, recordsWritten and photosGone. The
+ * replies are the real entry point's (fixtures/shift_replies.json, harness.mjs shiftedAs; fixtures/save_replies.json,
+ * saved and savedAs); the records carry `order` as the scan's reply does.
  */
 import { test, afterEach } from "node:test";
 import assert from "node:assert/strict";
 import {
   loadApp, FakeServer, closeAllApps, openFolder, click, flush, photoRecord, pageExports, SHIFT, shiftedAs, SAVE, saved,
-  lastSave,
+  lastSave, savedAs, SAVE_REPLIES,
 } from "./harness.mjs";
 
 afterEach(() => closeAllApps());
@@ -213,4 +217,71 @@ test("the page left while a single save is out forgets every kept scan holding i
   assert.equal(ctx.kept().length, 2, "both folders kept");
   ctx.window.dispatchEvent(new ctx.window.Event("pagehide"));
   assert.deepEqual(ctx.kept(), [], "a kept scan holding the photo as it was before the save is left");
+});
+
+const keptOf = (ctx, folder) => JSON.parse(ctx.storage()[`tagpup_cache_alpha/${folder.toLowerCase()}`]).photos;
+const STAMP = (record) => [record.filename, record.title, record.mtime, record.size];
+
+test("a save's reply taken after its folder was left reaches that folder's kept scan and the one open, and the next save names the new stamp", async (t) => {
+  const held = [];
+  const reply = saved();
+  const ctx = await page(t, { save: (url, body) => new Promise((resolve) => held.push(() => resolve(reply(url, body)))) });
+  await ctx.open(PARENT);
+  await ctx.open(CHILD);
+  await ctx.select(H1);
+  await ctx.saveTitle("Start line");
+  await ctx.open(PARENT);
+  assert.equal(ctx.scansOf(PARENT), 1, "the parent was scanned again, not drawn from its kept scan");
+  held.shift()();
+  await flush(ctx.window, 10);
+  const after = ["IMG_0011.jpg", "Start line", H1.mtime + 1, H1.size];
+  assert.deepEqual(STAMP(pageExports(ctx.window, "web/tagpup/state.js").state.folderPhotos.find((p) => p.path === H1.path)),
+    after, "the open parent's record of the photo kept the stamp from before the save");
+  assert.deepEqual(STAMP(keptOf(ctx, PARENT).find((p) => p.path === H1.path)), after);
+  assert.deepEqual(STAMP(keptOf(ctx, CHILD).find((p) => p.path === H1.path)), after,
+    "the folder the save was made in kept the record from before it");
+
+  await ctx.open(CHILD);
+  assert.equal(ctx.scansOf(CHILD), 1, "the subfolder was scanned again, not drawn from its kept scan");
+  await ctx.select(H1);
+  await ctx.saveTitle("Finish line");
+  assert.deepEqual(lastSave(ctx.fake).stamp, { mtime: H1.mtime + 1, size: H1.size }, "the next save names the old stamp");
+});
+
+test("a title save that renames its photo re-keys it in the kept parent: opened again, a save from it names the new name and stamp", async (t) => {
+  const renamed = `${CHILD}\\Regatta - Start line.jpg`;
+  const ctx = await page(t, { save: saved({ new_path: renamed }) });
+  await ctx.open(PARENT);
+  await ctx.open(CHILD);
+  await ctx.select(H1);
+  await ctx.saveTitle("Start line");
+  const kept = keptOf(ctx, PARENT);
+  assert.equal(kept.filter((p) => p.path === H1.path).length, 0, "the kept parent holds the photo by the name it had");
+  assert.deepEqual(STAMP(kept.find((p) => p.path === renamed)), ["Regatta - Start line.jpg", "Start line", H1.mtime + 1, H1.size]);
+
+  await ctx.open(PARENT);
+  assert.equal(ctx.scansOf(PARENT), 1, "the parent was scanned again, not drawn from its kept scan");
+  await ctx.select({ path: renamed });
+  await ctx.saveTitle("Finish line");
+  const sent = lastSave(ctx.fake);
+  assert.equal(sent.path, renamed);
+  assert.deepEqual(sent.stamp, { mtime: H1.mtime + 1, size: H1.size });
+});
+
+test("a Date Taken saved moves the photo to its new place at once, in the open folder and the kept parent, as the server orders it", async (t) => {
+  const later = "2020:06:01 10:25:00";
+  const ctx = await page(t, { save: savedAs(SAVE_REPLIES.dated, { taken: later, order: later }) });
+  await ctx.open(PARENT);
+  await ctx.open(CHILD);
+  await ctx.select(H1);
+  click(ctx.window, ctx.$("btn-edit-date-taken"));
+  ctx.$("input-date-taken").value = "2020-06-01T10:25:00";
+  click(ctx.window, ctx.$("btn-save-date-modal"));
+  await flush(ctx.window, 10);
+  const moved = ["IMG_0011.jpg", later, 1, 1];
+  assert.deepEqual(ctx.shown(), [BEFORE(H3), BEFORE(H2), moved], "the photo stayed where its old date put it");
+  assert.deepEqual([...ctx.document.querySelectorAll(".photo-item-file")].map((el) => el.dataset.path),
+    [H3.path, H2.path, H1.path], "the folder's list was not drawn in the new order");
+  assert.deepEqual(keptOf(ctx, PARENT).map(BEFORE), [BEFORE(P1), BEFORE(H3), BEFORE(H2), moved, BEFORE(P2), BEFORE(P3)],
+    "the kept parent holds the old date, in the old order");
 });

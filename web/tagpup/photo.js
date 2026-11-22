@@ -23,7 +23,7 @@ import {
 import { setStatus } from './status.js';
 import { isJustLooking, libraryName } from './looking.js';
 import { pictureCheckSaid, whereWritten } from './write-queue.js';
-import { forgetCachedPhoto, saveToLocalStorageCache } from './cache.js';
+import { forgetCachedPhoto, recordsWritten, saveToLocalStorageCache } from './cache.js';
 import { fileSizeSaid, takenOf, takenSaid } from './format.js';
 import { namesAPerson, normalizeTag } from './tags.js';
 import { deleteWaits, pendingOf, readHeld, removePhotoTags, shownTags } from './pending.js';
@@ -560,10 +560,10 @@ export function carryTagsForward() {
             label: `carry ${missing.length} tag(s) from ${from}`,
             photos: [{ path: photo.path, before: held, after: updatedTags }],
         });
+        recordsWritten([photo]);
         redrawIfShowing(photo, saved);
         renderFileList();
         upper.renderThumbnails();
-        saveToLocalStorageCache();
         setStatus('ready', `Copied ${missing.length} tag(s) from ${from}`);
         return true;
     });

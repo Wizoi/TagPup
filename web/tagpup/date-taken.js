@@ -10,7 +10,7 @@ import {
 } from './elements.js';
 import { setStatus } from './status.js';
 import { whereWritten } from './write-queue.js';
-import { saveToLocalStorageCache } from './cache.js';
+import { recordsWritten } from './cache.js';
 import { exifDateToIso, getCurrentDateTimeIso, takenOf, takenSaid } from './format.js';
 import { photoChangedOnDisk, queueWriteOf } from './edits.js';
 import { postPhotoMetadata } from './common/photo-write.js';
@@ -78,14 +78,15 @@ export function wireDateTakenModal() {
 
                 // What the server now records as when it was taken.
                 photo.taken = formattedDate;
-                // And its place in the folder, as the server keys it: a shift afterwards puts the folder in order by it.
+                // And its place in the folder, as the server keys it: it moves there at once, in the open folder and in
+                // every scan kept holding it (recordsWritten), as after a Time Shift (owner, 2026-11-22).
                 if ('order' in saved) photo.order = saved.order;
+                recordsWritten([photo]);
 
                 // Format and display in UI -- if this photo is still the one shown.
                 if (state.activePhotoPath === photo.path) detailDateTaken.textContent = takenSaid(formattedDate);
 
                 setStatus('ready', 'Saved the date taken.' + whereWritten(saved));
-                saveToLocalStorageCache();
                 renderFileList();
                 upper.renderThumbnails();
                 return true;

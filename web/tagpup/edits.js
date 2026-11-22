@@ -13,7 +13,7 @@ import {
 } from './elements.js';
 import { setStatus } from './status.js';
 import { MOVE_WAIT_SHOWN_AFTER_MS, hideMoveWaiting, showMoveWaiting } from './move-waits.js';
-import { photosGone, saveToLocalStorageCache } from './cache.js';
+import { photosGone, recordsWritten } from './cache.js';
 import {
     dismissEntry, markEntry, pendingWrites, photosOut, pictureCheckSaid, queueEntry, whereWritten
 } from './write-queue.js';
@@ -441,7 +441,8 @@ function settleFailedSaves(path, entry) {
 }
 
 export function refreshAfterDetailSave(photo, path, newTitle, added, reply) {
-    saveToLocalStorageCache();
+    // Every record of the photo the page holds or keeps takes the save, re-keyed when its caption renamed it.
+    recordsWritten([photo], { [path]: photo.path });
     // `path !== photo.path` asks whether the file's spelling changed (a rename, even of case only): exact on purpose.
     if (path !== photo.path && samePath(state.activePhotoPath, path)) {
         state.activePhotoPath = photo.path;

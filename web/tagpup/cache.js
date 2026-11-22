@@ -67,6 +67,30 @@ export function photosWritten(paths, take) {
 }
 
 /**
+ * Records a write left as the page holds them now -- a save of one photo, a turn, a Smart Rename, a Convert: each took its
+ * reply (its stamp and base, tags and title, Date Taken and `order`, its new path) -- and every other record of each that
+ * the page holds or this browser keeps takes the same, a copy of the written record over it (photosWritten: the open
+ * folder and every kept scan holding it, put back in its order, so a new Date Taken moves the photo at once). `renames`
+ * {path sent: path now}, photosRenamed's shape, names a photo the write renamed: its other records are found by the path
+ * sent, matched before any is re-keyed. Returns photosWritten's count of the open view's records.
+ */
+export function recordsWritten(records, renames = {}) {
+    const now = new Map(records.map(record => [pathKey(record.path), record]));
+    const paths = records.map(record => record.path);
+    for (const [from, to] of Object.entries(renames)) {
+        const record = now.get(pathKey(to));
+        if (!record || now.has(pathKey(from))) continue;
+        now.set(pathKey(from), record);
+        paths.push(from);
+    }
+    const copies = new Map(records.map(record => [record, JSON.stringify(record)]));
+    return photosWritten(paths, (record) => {
+        const written = now.get(pathKey(record.path));
+        if (written !== record) Object.assign(record, JSON.parse(copies.get(written)));
+    });
+}
+
+/**
  * Photos this browser can no longer vouch for: the page going with a write of them out (a reload, another library chosen,
  * the tab closed) abandons its reply, written or not. Every scan kept of this library whose folder holds one of `paths`
  * -- its own folder's, every one above it (isUnder), the open folder's too -- is forgotten, so opened again it is scanned
