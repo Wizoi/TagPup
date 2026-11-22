@@ -5,8 +5,10 @@
  * plays with a picture, its plan asked only when it is clicked. The confirm is the plan's `replaces`; the ticket is read
  * until it ends; the clip's record follows its MP4 and the sizes are said. How it fails: rapid clicks (one request), a
  * Cancel at the confirm (nothing sent), stepping to another photo while it converts (the photo shown now is not
- * touched), the Cancel of one under way (by its ticket), and a stamp the clip no longer has (409 changed_on_disk: read
- * again, said). Fictional names only.
+ * touched), the Cancel of one under way (by its ticket), a stamp the clip no longer has (409 changed_on_disk: read
+ * again, said), and the clip read again after the server ended its conversion and before the page read that end (tagged
+ * since, in another window): the end changes only the name and stamp of a record still naming the file converted (#3331).
+ * Fictional names only.
  */
 import { test, describe, afterEach } from "node:test";
 import assert from "node:assert/strict";
@@ -37,12 +39,12 @@ const callsTo = (ctx, path) => ctx.server.calls.filter((call) => call.url.split(
  * The server converts: `ctx.ends` is what /api/clip/converted answers, in turn (the last one kept), each a body or a
  * function returning one.
  */
-async function viewWithAClip(t, { plan = { action: "REENCODE", sentence: "It needs converting.", replaces: REPLACES } } = {}) {
+async function viewWithAClip(t, { plan = { action: "REENCODE", sentence: "It needs converting.", replaces: REPLACES }, path = OLD } = {}) {
   const ctx = await loadViewPage(t, {
     search: "?view=all",
     cardExtra: (id) => ({ media: id === CLIP ? "video" : "photo" }),
     onPhoto: (id) => ({
-      photo: recordOf(id, id === CLIP ? { media: "video", filename: "IMG_13.wmv", path: OLD, mtime: MTIME, size: 120 * MB, writes: CLIP_WRITES } : {}),
+      photo: recordOf(id, id === CLIP ? clipRecord({ path }) : {}),
     }),
     before: (window) => {
       window.HTMLMediaElement.prototype.pause = () => {};
@@ -90,6 +92,9 @@ const press = async (ctx, key) => {
   await ctx.settle(120);
 };
 const converted = { done: true, success: true, new_path: NEW, renamed: true, size_before: 120 * MB, size_after: 18 * MB, mtime: 1700000000.25, size: 18 * MB };
+/** The clip's record as the library gives it, at `path` (its file's name with it), `own` over the rest. */
+const clipRecord = ({ path, ...own }) => ({ media: "video", filename: path.split("\\").pop(), path, mtime: MTIME, size: 120 * MB,
+  writes: CLIP_WRITES, tags: [], ...own });
 
 describe("the clip panel's Convert and Make smaller (MP4)", () => {
   test("a clip the browser cannot play, planned REENCODE: Convert offered, confirmed by its `replaces`, read to its end, followed to its MP4", async (t) => {
@@ -231,6 +236,37 @@ describe("the clip panel's Convert and Make smaller (MP4)", () => {
     assert.deepEqual(stripSaid(ctx), ["Made smaller IMG_13.mp4: 120 MB to 4 MB"]);
     assert.ok(!/photo/.test(stripSaid(ctx)[0]));
   });
+
+  for (const [what, path, end] of [
+    ["Convert, its MP4 a name of its own", OLD, converted],
+    ["Make smaller, an MP4 keeping its name", NEW, { ...converted, new_path: NEW, renamed: false }],
+  ]) {
+    test(`${what}: the clip read again after the server ended it and tagged since keeps its tags and stamp when the page reads the end`, async (t) => {
+      const ctx = await viewWithAClip(t, path === OLD ? { path } : { path, plan: { action: "NOTHING", sentence: "", replaces: REPLACES } });
+      let finish;
+      ctx.ends = [() => new Promise((resolve) => { finish = resolve; })];
+      await open(ctx, CLIP);
+      if (path === OLD) await fails(ctx); else await plays(ctx);
+      el(ctx, path === OLD ? "btn-clip-convert" : "btn-clip-shrink").click();
+      assert.ok(await ctx.until(() => finish !== undefined), "the ticket is being read");
+      // The server has ended the conversion; the clip, read again before this page reads that end, is its MP4 as the
+      // library holds it now: tagged since (another window), its stamp the one that save left.
+      const since = clipRecord({ path: NEW, mtime: end.mtime + 60, size: end.size + 512, tags: ["Places/Harbour"] });
+      ctx.server.first("/api/library/photo", (url) => {
+        const id = Number(url.match(/id=(\d+)/)[1]);
+        return { photo: recordOf(id, id === CLIP ? since : {}) };
+      });
+      await press(ctx, "ArrowRight");
+      await press(ctx, "ArrowLeft");
+      assert.equal(ctx.state.folderPhotos.find((photo) => photo.id === CLIP).mtime, since.mtime, "the clip was not read again");
+      finish(end);
+      assert.ok(await ctx.until(() => ctx.said.some((each) => /(Converted|Made smaller) IMG_13\.mp4/.test(each))), ctx.said.join(" | "));
+      const record = ctx.state.folderPhotos.find((photo) => photo.id === CLIP);
+      assert.deepEqual([record.path, record.filename, record.tags, record.mtime, record.size],
+        [NEW, "IMG_13.mp4", ["Places/Harbour"], since.mtime, since.size],
+        "the record from the click was copied over the clip as the library holds it now");
+    });
+  }
 
   test("a stamp the clip no longer has (409 changed_on_disk): nothing converted, the clip read again and the owner told", async (t) => {
     const ctx = await viewWithAClip(t);

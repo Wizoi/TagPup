@@ -8,9 +8,10 @@
 //    plan's `replaces`; the mode sent is the button's (one that is not the clip's plan is refused by the server, said).
 //  * A ticket live for a clip disables its buttons (rapid clicks send one), shows a line saying so and a Cancel (by the
 //    ticket: /api/activity/batches/cancel, as the Activity strip's), wherever the owner goes and comes back to it.
-//  * The ticket is read every TICKET_READ_MS while this page is open, wherever it is; its end is taken by the clip's own record,
-//    held from the click: its path follows the MP4, its stamp is the MP4's. The panel is redrawn only while that clip is
-//    still the one shown: a photo stepped to meanwhile is not touched. A closed tab, or another library (another page),
+//  * The ticket is read every TICKET_READ_MS while this page is open, wherever it is; its end is taken by every record of the
+//    clip the page holds or keeps that still names the file converted (the path and stamp sent): its path follows the MP4,
+//    its stamp is the MP4's, nothing else of it changes. The panel is redrawn only while that clip is still the one shown: a
+//    photo stepped to meanwhile is not touched. A closed tab, or another library (another page),
 //    stops the reading and loses nothing: the server finishes the conversion and the clip's row follows the MP4.
 import { api } from './common/api.js';
 import { cancelByTicket } from './common/batch-cancel.js';
@@ -20,8 +21,8 @@ import { upper } from './hooks.js';
 import { state } from './state.js';
 import { btnClipConvert, btnClipConvertCancel, btnClipShrink, clipConvertNote, mainVideo } from './elements.js';
 import { setStatus } from './status.js';
-import { recordsWritten } from './cache.js';
-import { hasUnsavedEdits, photoRenamed, queueWriteOf } from './edits.js';
+import { photosWritten } from './cache.js';
+import { hasUnsavedEdits, photosRenamed, queueWriteOf } from './edits.js';
 import { stampOf, takeStamp } from './common/photo-write.js';
 import { refetchCards } from './library-source.js';
 
@@ -109,7 +110,7 @@ export async function convertShownClip() {
     }
     const name = baseName(photo.path);
     // Taken before anything is asked: a second click meanwhile finds it and sends nothing.
-    const live = { photo, from: photo.path, ticket: null, library: '', mode: offer.mode, note: `Asking what ${name} needs...`, cancelling: false };
+    const live = { photo, from: photo.path, stamp: null, ticket: null, library: '', mode: offer.mode, note: `Asking what ${name} needs...`, cancelling: false };
     state.clipConvert.live[key] = live;
     draw();
     const mode = offer.mode;
@@ -142,11 +143,14 @@ export async function convertShownClip() {
     return queueWriteOf(photo.path, async (entry) => {
         let data;
         let res;
+        // The file converted, as sent once the writes of it queued before have settled: its end is taken by the records
+        // still naming it (converted).
+        live.stamp = stampOf(photo);
         try {
             res = await api.fetch('/api/clip/convert', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ id: photo.id, mode, stamp: stampOf(photo) }),
+                body: JSON.stringify({ id: photo.id, mode, stamp: live.stamp }),
             });
             data = await res.json();
         } catch (err) {
@@ -192,26 +196,38 @@ function pollTicket(key, live) {
     }, TICKET_READ_MS);
 }
 
-/** The ticket ended: taken by the clip's own record, and the panel redrawn while it is still the clip shown. */
+/**
+ * The ticket ended: what the conversion changed, and only that -- the file's name and its stamp -- is taken by every record
+ * of the clip the page holds or keeps that still names the file converted: at the path and with the stamp sent
+ * (photosWritten). A record the server gave since the conversion ended (the clip read again, or tagged since: under its
+ * new name, or with a newer stamp) is already the file's, and keeps what it holds (#3331). The panel is redrawn while it
+ * is still the clip shown.
+ */
 function converted(key, live, said) {
     if (!said.success) {
         endWith(key, live, '');
         return sayEnd(`Could not convert ${baseName(live.from)}: ${said.error || 'the server gave no reason'}`, true);
     }
     delete state.clipConvert.live[key];
-    const photo = live.photo;
-    takeStamp(photo, said);
-    if (said.renamed) photoRenamed(photo, said.new_path);
+    const path = said.renamed ? said.new_path : live.from;
+    const converts = (record) => samePath(record.path, live.from) && record.mtime === live.stamp.mtime
+        && record.size === live.stamp.size;
     // The clip is converted: a failure redrawing the page is logged, not said as a conversion that failed.
     try {
-        recordsWritten([photo], { [live.from]: photo.path });
+        if (said.renamed) photosRenamed({ [live.from]: path });
+        photosWritten([live.from], (record) => {
+            if (!converts(record)) return;
+            record.path = path;
+            record.filename = baseName(path);
+            takeStamp(record, said);
+        });
         if (samePath(state.activePhotoPath, live.from)) {
-            state.activePhotoPath = photo.path;
-            upper.selectPhoto(photo.path);
+            state.activePhotoPath = path;
+            upper.selectPhoto(path);
         }
         upper.renderFileList();
         upper.renderThumbnails();
-        if (state.library && photo.id !== undefined) refetchCards([photo.id]);
+        if (state.library && live.photo.id !== undefined) refetchCards([live.photo.id]);
     } catch (err) {
         console.error('Converted, but redrawing the page failed:', err);
     }
@@ -221,9 +237,9 @@ function converted(key, live, said) {
     if (said.original_kept) {
         // The server's sentence is a fragment, as its other reasons are (no capital, no full stop): it is made one here.
         const kept = said.original_kept.charAt(0).toUpperCase() + said.original_kept.slice(1);
-        sayEnd(`${verb} ${baseName(photo.path)}: ${sizes}. ${kept}.`, true);
+        sayEnd(`${verb} ${baseName(path)}: ${sizes}. ${kept}.`, true);
     } else {
-        sayEnd(`${verb} ${baseName(photo.path)}: ${sizes}`, false);
+        sayEnd(`${verb} ${baseName(path)}: ${sizes}`, false);
     }
 }
 
