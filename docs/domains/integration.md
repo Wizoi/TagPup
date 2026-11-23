@@ -14,7 +14,7 @@ is replaced.
    not reach-ins: 69 (the viewer reads a clip's bytes only through `shares.read_span`), 70 (the web server alone settles
    a half-done change on a thread), 71 (the page record's `writes`), 72 (a delete for good and its token), 73 (a clip's
    frames only through `video_frames`), 74 (thumbnails and a clip's poster only through `thumbs`), 75 (what is this PC's
-   alone is one list, `security.THIS_PC_ONLY`). The contract table has 72 rows today. A new sweep for private names
+   alone is one list, `security.THIS_PC_ONLY`). The contract table has 77 rows today (2026-11-23). A new sweep for private names
    across modules was not run for this page; People's open #1471 lists uses of People's modules that have no row, and
    that row is People's.
 2. **No rule written twice.** Met for the rules that were written more than once and now have one owner, each with its
@@ -30,7 +30,7 @@ is replaced.
    `/api/folder/scan`, `/api/photos` carry the same pictures and names as the refused `/api/library/*`; and some routes
    that act on this PC, `/api/browse-folder`, `/api/photo/open`); #2769 is open and the choice of which routes join
    the list is the owner's.
-3. **No hidden coupling.** Met: no row of the contract table has the guard "none" (counted today: 0 of 72). The settle
+3. **No hidden coupling.** Met: no row of the contract table has the guard "none" (counted 2026-11-23: 0 of 77). The settle
    thread (row 70) is coupled to the web server's start by one named call, `runtime.settle_on_a_thread`, which only
    `tagpup_web.main` makes; the CLI, the MCP server and the scripts settle inline (DECISIONS 2026-11-07); its guard is
    `tests/test_a_long_change_cut_off_is_settled_in_chunks.py` (`OnAThreadInTheServer`). Row 71's coupling between the
@@ -105,3 +105,4 @@ One line each; the reasons are in docs/DECISIONS.md.
   `CACHE_VERSION` raised to 6, the settle thread (2026-11-07, "A CANCELLED SETTLE KEEPS ITS PHOTOS UNTIL THE NEXT START").
 - 2026-11-08, the this-PC gate: row 75 (#2745).
 - 2026-11-13, the kept New Person pool: row 76 (#2881).
+- 2026-11-23, the phone's Browse covers (docs/plans/phone-redesign.md, cut 2): row 80.
