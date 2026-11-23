@@ -63,7 +63,8 @@ The concrete rules adopted (all in `theme.css` as tokens, so the desktop page ca
 - **Type scale**: five steps in `rem` (so Android's font scale still applies, a standing decision): 0.75 caption, 0.875 body
   small, 1 body, 1.25 title, 1.75 display; weights 400, 600 only; the existing fonts (`--font-heading` for titles,
   `--font-body` for the rest). Inputs stay 16 px+ so no zoom.
-- **Dark theme tokens**: keep the existing slate scale; add `--surface-1/2/3` (three tonal steps above `--bg-primary`),
+- **Dark theme tokens**: keep the existing slate scale (`--bg-secondary`, `--bg-tertiary` are the first two tonal steps above
+  `--bg-primary`, used by those names); add `--surface-3` (the third),
   `--scrim` (rgba black 0.6 behind sheets), `--on-accent`, `--danger`, and a photo-canvas `#000` for the photo screen so the
   picture, not the chrome, is brightest. Contrast checked 4.5:1 for text on each surface. No light theme (the app has none;
   not reopened).

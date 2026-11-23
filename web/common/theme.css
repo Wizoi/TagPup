@@ -26,19 +26,17 @@
 
     /* The phone's page is built on what follows (docs/plans/phone-redesign.md); the desktop pages may take them up later. */
 
-    /* Surfaces by height above --bg-primary: a card is told from what is under it by its tone, not by a shadow, which
-       does not show on near-black. The first two are the slate steps above, named by height (the first is the bar's, the
-       manifest's theme colour). Text contrast: --text-primary 9.9:1 or more on all three, --text-secondary 5.7:1 or
-       more on the first two and 4.0:1 on the third, so the third carries --text-primary only. */
-    --surface-1: var(--bg-secondary);
-    --surface-2: var(--bg-tertiary);
+    /* Surfaces by height above --bg-primary: --bg-secondary (the bar's, the manifest's theme colour), --bg-tertiary,
+       then --surface-3; a card is told from what is under it by its tone, not by a shadow, which does not show on
+       near-black. Text contrast: --text-primary 9.9:1 or more on all three, --text-secondary 5.7:1 or more on the first
+       two and 4.0:1 on the third, so the third carries --text-primary only. */
     --surface-3: #334155;
     /* Behind a sheet, and under a mark drawn over a picture. */
     --scrim: rgba(0, 0, 0, 0.6);
     /* Text and icons on an accent fill. On --accent-hover it is 6.3:1, on --accent 4.47:1: a filled button with text is
        --accent-hover. */
     --on-accent: #ffffff;
-    /* Something gone wrong or about to be lost: 6.4:1 on --surface-1, 5.3:1 on --surface-2. */
+    /* Something gone wrong or about to be lost: 6.4:1 on --bg-secondary, 5.3:1 on --bg-tertiary. */
     --danger: #f87171;
     /* Under a photo shown large, so the picture and not the frame around it is the brightest thing on the screen. */
     --photo-canvas: #000000;
