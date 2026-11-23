@@ -15,6 +15,7 @@ import { after } from "node:test";
 import { fileURLToPath } from "node:url";
 import { JSDOM, VirtualConsole } from "jsdom";
 import { filtered, ratchet, unmadeReply } from "./write-replies.mjs";
+import { pathKey } from "../../web/common/paths.js";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 export const REPO_ROOT = path.resolve(HERE, "..", "..");
@@ -467,6 +468,56 @@ export function taggedAs(name, own = () => ({}), said = null) {
     const written = Object.fromEntries(sent.map((file, n) => [file, { ...reply.written.PHOTO_0, ...own(file, n) }]));
     return answer(status, { ...reply, attempted: sent.length, changed: sent.length, with_rows: sent.length, written });
   };
+}
+
+/**
+ * Files that hold what the test's `records` hold (photo records as its scan gave them; a path not among them holds no
+ * tag), answering each tag change as the real entry point does (fixtures/tags_replies.json): the route's function of
+ * FakeServer, and `reply(body, how)` for a test that holds the request and answers it when it chooses. Each photo of the
+ * request written is named in `written` with the tags its file holds after it -- its own, `remove` taken off and `add`
+ * put on after them, the order the real write leaves them in -- and holds them from then on (`holds(path)`), its stamp a
+ * second later. `how`: `fails` {path: why} (or a path's `why` true, the real one's), photos ExifTool cannot write
+ * (`partly_written`: 200, `success` false, each among `errors` with its id as sent, nothing in `error`: the page says
+ * the photo's `why`); `gone` [path], photos gone from their folder (`missing`: 200, each `skipped`); `unnamed`
+ * [{id, name}], the faces a person taken off unnamed (`unnamed`, #908); `top` over what it says of the write
+ * (`file_only`, `with_rows`: a folder the library does not hold). Otherwise every photo written (`written`).
+ */
+export function tagFiles(records = []) {
+  const held = new Map(records.map((r) => [pathKey(r.path), { tags: (r.tags || []).slice(), mtime: r.mtime ?? 1, size: r.size ?? 1 }]));
+  const reply = (body, { fails = {}, gone = [], unnamed = [], top = {} } = {}) => {
+    const failing = new Map(Object.entries(fails).map(([p, why]) => [pathKey(p), why]));
+    const missing = new Set(gone.map(pathKey));
+    const sent = Object.keys(body.changes);
+    const name = unnamed.length ? "unnamed" : failing.size ? "partly_written" : missing.size ? "missing" : "written";
+    const { status, reply: real } = TAGS_REPLIES[name];
+    const [error] = TAGS_REPLIES.partly_written.reply.errors;
+    const [skip] = TAGS_REPLIES.missing.reply.skipped;
+    const written = {};
+    const errors = [];
+    const skipped = [];
+    for (const file of sent) {
+      const key = pathKey(file);
+      if (failing.has(key)) {
+        const why = failing.get(key);
+        errors.push({ ...error, path: file, id: body.changes[file].id ?? null, why: why === true ? error.why : why });
+      } else if (missing.has(key)) {
+        skipped.push({ ...skip, path: file });
+      } else {
+        const { add = [], remove = [] } = body.changes[file];
+        const was = held.get(key) || { tags: [], mtime: 1, size: 1 };
+        const tags = was.tags.filter((tag) => !remove.includes(tag));
+        add.forEach((tag) => { if (!tags.includes(tag)) tags.push(tag); });
+        const now = { tags, mtime: was.mtime + 1, size: was.size };
+        held.set(key, now);
+        written[file] = { ...real.written.PHOTO_0, tags: tags.slice(), mtime: now.mtime, size: now.size };
+      }
+    }
+    const count = Object.keys(written).length;
+    return answer(status, { ...real, attempted: sent.length, changed: count, with_rows: count, error_count: errors.length,
+      errors, skipped, skipped_missing: skipped.length, success: !errors.length, written,
+      ...(unnamed.length ? { unnamed_faces: unnamed } : {}), ...top });
+  };
+  return Object.assign((url, body) => reply(body), { reply, holds: (file) => (held.get(pathKey(file)) || { tags: [] }).tags.slice() });
 }
 
 /**
