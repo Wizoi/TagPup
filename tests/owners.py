@@ -116,6 +116,14 @@ SCENARIOS = {
             "Library from a level of Browse opens its top, Photos the view the Grid showed last or the whole library, the "
             "Photo screen has no bar, Filter opens its sheet over the Grid (Back closes it, a second Back leaves the Grid), "
             "and a phone turned keeps the bar and the screen."),
+    "V31": ("views", "On the phone page somebody filters the library from the Filter sheet over the Grid: two people and a "
+            "keyword marked any of and a keyword tapped round to not are one search, its chips above the grid; rapid taps "
+            "on one row cycle it in one place of history and a reply for a mark left is dropped; Back closes the sheet "
+            "keeping the filter, a second Back leaves the Grid and Forward gives the marks back; a filter finding nothing "
+            "says so with Remove and Clear all, 0 photos and Show not pressable; an address naming a deleted keyword gives "
+            "a struck chip; another library is another page with no chip of the first; a section that could not be read "
+            "says so with Try again; a filter at the server's cap refuses one more with its sentence and reads nothing; no "
+            "cover is asked under the sheet; six chips at 320 px are one row scrolled sideways."),
     "I1": ("apps", "Switching library in the middle of a folder shows no card of the first."),
     "I2": ("apps", "A write through a server update is waited out and not repeated."),
     "I3": ("apps", "An update by a launch and by an install hands one server over to the next without killing its work."),
@@ -265,6 +273,7 @@ _SCENARIO_FILES = {
     "V28": "test_filtering_the_library_by_rows scenario-filtering-the-library-by-rows",
     "V29": "scenario-filtering-the-library-in-filter-mode",
     "V30": "scenario-moving-between-tabs-on-the-phone",
+    "V31": "scenario-filtering-on-the-phone",
 }
 
 #: owner -> kind -> the unit, migration and guard files, a .mjs without its ".test.mjs".
