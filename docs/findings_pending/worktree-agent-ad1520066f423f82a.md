@@ -1,0 +1,13 @@
+# Findings of a branch
+
+Provisional numbers `B-n`: `tools/add_findings.py --take` gives each row its number in
+docs/findings.md when the main session merges the branch, and removes this file.
+
+| # | Found | Finding | Status |
+|---|---|---|---|
+| B-1 | 2026-11-23 | low: web/common/theme.css `--surface-1` and `--surface-2` are aliases of `--bg-secondary` and `--bg-tertiary` (phone redesign cut 1): two names for one colour, a rule written twice; mobile.css uses the new names, the desktop pages the old. live: 15 uses in web/tagpup/mobile.css | open |
+| B-2 | 2026-11-23 | low: web/tagpup/mobile.css `.edit-input { font-size: 16px }` overrides the page's shared `input, select, textarea { font-size: max(16px, var(--text-body)) }`, so the Edit sheet's inputs do not grow with the phone's own text size while every other input does. user action: Android font size above the default, open a photo's Edit sheet (4 inputs: edit-add, edit-title, edit-date, edit-time) | open |
+| B-3 | 2026-11-23 | low: docs/plans/phone-redesign.md says sheets sit over a scrim and theme.css `--scrim` says "Behind a sheet", but the phone's Edit sheet (cut 1) has none: the photo stays visible above it; `--scrim` is used only under the marks drawn on a thumbnail. The plan and the token's comment disagree with the page. live: 1 sheet (the Edit sheet), 1 use of --scrim (mobile.css .phone-card-play/-stale/-note) | open |
+| B-4 | 2026-11-23 | low: tests/frontend/fixtures/covers_replies.json (the covers reply the phone's page tests answer from, harness.mjs COVERS_REPLIES) has no holder: no Python test makes it from the real route and holds it with page_fixtures.hold_to, as every other page fixture is, so a change to the route's reply leaves the page tests passing on a stale one (#3342's rule). live: 1 fixture | open |
+| B-5 | 2026-11-23 | low: GET /api/library/covers takes its rows as JSON in the query string, where /api/library/ids moved unions to POST for their length (#696); waitress refuses a request whose headers pass 262,144 bytes (max_request_header_size, not set by tagpup/web/app.py). live: 1 route; the bound of one ask, every person of the People section as one union (rows of one level are disjoint, so no ask of siblings names more), is 46,159 characters encoded on photo_index (421 people), 28,536 on renton_parkrun (249), 11,606 on kr-track (107); 24 of the longest folder rows 10,265 | open |
+| B-6 | 2026-11-23 | low: docs/ARCHITECTURE.md's Frontend section names neither `mobile-tabs.js` (the phone's bar of tabs, cut 1), the phone's tokens in theme.css (surfaces, radius, type, motion) nor the covers route (cut 2), so the map misses the place each lives. live: 3 places unnamed | open |
