@@ -505,8 +505,9 @@ body:has(> main > .grid-screen:not(.hidden)) > main {
     margin-top: 0.75rem;
 }
 
+/* Each as wide as its words: the order's ("Date Taken, ascending") is read whole beside Both on a 360 px phone. */
 .grid-choice {
-    flex: 1;
+    flex: 1 1 auto;
     min-width: 0;
     min-height: var(--tap);
     padding: 0 0.75rem;
@@ -524,7 +525,7 @@ body:has(> main > .grid-screen:not(.hidden)) > main {
 /* Three columns at 390 px, two at large type: the grid reads them from here. Its padding is the rows not drawn. */
 .grid-cards {
     display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(7rem, 1fr));
+    grid-template-columns: repeat(auto-fill, minmax(6.5rem, 1fr));
     gap: 0.25rem;
     margin-top: 0.75rem;
     padding-top: var(--vgrid-before, 0px);
