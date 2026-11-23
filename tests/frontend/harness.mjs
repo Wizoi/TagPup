@@ -385,6 +385,22 @@ export function changedOnDisk(why) {
   return () => answer(SAVE_REPLIES.status.changed_on_disk, { ...real, ...(why === undefined ? {} : { error: why }) });
 }
 
+export const DELETE_REPLIES = JSON.parse(fs.readFileSync(path.join(HERE, "fixtures", "delete_replies.json"), "utf8"));
+
+/**
+ * A Delete's reply as the real route made it (POST /api/photo/delete; fixtures/delete_replies.json, written by
+ * tests/test_delete_a_photo.py JustLookDelete): `binned`, a photo of a folder the library holds, to the Recycle Bin (no
+ * `message`: the page says Ready); `binned_file_only`, one of a folder it does not hold, the file only, said in `message`;
+ * `through_this_pc`, one on a share with no Bin, copied to this PC's; `not_kept`, one this PC's full Bin would not keep
+ * (400, named in `not_kept`, `bin_full` 1; 0 when its drive's own Bin would not keep it), nothing deleted; `for_good`,
+ * that one again, confirmed; `refused`, a file that is not a photo (400). `top` over what it says (its `message`,
+ * `error`, `not_kept`, `bin_full`). A delete that raised is the 500 every route makes ({success: false, error}).
+ */
+export function deletedAs(name, top = {}) {
+  const { status, reply } = DELETE_REPLIES[name];
+  return () => answer(status, { ...reply, ...top });
+}
+
 /**
  * A folder's Time Shift (web/tagpup/rename.js applyTimeShift): POST /api/photos/write, op `shift`. A route matcher of
  * FakeServer, tried before the URL routes as SAVE is.

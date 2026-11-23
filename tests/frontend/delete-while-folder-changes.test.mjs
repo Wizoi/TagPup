@@ -6,7 +6,7 @@
  */
 import { test, describe, afterEach } from "node:test";
 import assert from "node:assert/strict";
-import { loadApp, FakeServer, photoRecord, flush, click, openFolder, closeAllApps, pageExports } from "./harness.mjs";
+import { loadApp, FakeServer, photoRecord, flush, click, openFolder, closeAllApps, pageExports, deletedAs } from "./harness.mjs";
 
 const FIRST = "D:/Library/2020";
 const SECOND = "D:/Library/2021";
@@ -28,7 +28,7 @@ describe("a delete in flight while another folder is opened", () => {
       .on("/api/folder/index-status", { status: "completed", percent: 100, message: "Ready" })
       .on("/api/autocomplete-folder", [])
       .on("/api/photo-faces", { faces: [], total: 0, unmatched: 0 })
-      .on("/api/photo/delete", () => new Promise((resolve) => release.push(() => resolve({ success: true }))))
+      .on("/api/photo/delete", () => new Promise((resolve) => release.push(() => resolve(deletedAs("binned")()))))
       .on("/api/folder/scan", (url) => (url.includes("2021") ? inSecond : inFirst).map((p) => ({ ...p })));
     const ctx = await loadApp("tagpup", { t, url: "http://localhost:8090/photo_index/", server });
     ctx.window.confirm = () => true;
@@ -65,7 +65,7 @@ describe("a delete in flight while another folder is opened", () => {
       .on("/api/folder/index-status", { status: "completed", percent: 100, message: "Ready" })
       .on("/api/autocomplete-folder", [])
       .on("/api/photo-faces", { faces: [], total: 0, unmatched: 0 })
-      .on("/api/photo/delete", () => new Promise((resolve) => release.push(() => resolve({ success: true }))))
+      .on("/api/photo/delete", () => new Promise((resolve) => release.push(() => resolve(deletedAs("binned")()))))
       .on("/api/folder/scan", () => inFirst.map((p) => ({ ...p })));
     const ctx = await loadApp("tagpup", { t, url: "http://localhost:8090/photo_index/", server });
     ctx.window.confirm = () => true;

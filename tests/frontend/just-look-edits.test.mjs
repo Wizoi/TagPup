@@ -14,7 +14,7 @@
 import { test, describe, afterEach } from "node:test";
 import assert from "node:assert/strict";
 import {
-  loadApp, FakeServer, photoRecord, flush, click, openFolder, closeAllApps, PEOPLE_ROUTE, SAVE, SHIFT, saved, saveCalls, shiftedAs,
+  loadApp, FakeServer, photoRecord, flush, click, openFolder, closeAllApps, PEOPLE_ROUTE, SAVE, SHIFT, saved, saveCalls, shiftedAs, deletedAs,
 } from "./harness.mjs";
 
 afterEach(() => closeAllApps());
@@ -47,8 +47,8 @@ function server(scanned = photos) {
     .on(SHIFT, shiftedAs("shifted", [], { file_only: 2, with_rows: 0, change: null }))
     .on("/api/photos/write", { success: true, written: {}, file_only: 2, with_rows: 0 })
     .on("/api/photo/rotate", { success: true, mtime: 1700000000, file_only: 1, with_rows: 0 })
-    .on("/api/photo/delete", { success: true, file_only: 1, with_rows: 0,
-      message: "Moved to the Recycle Bin. Nothing in kr-track changed: it does not hold this folder." })
+    .on("/api/photo/delete", deletedAs("binned_file_only",
+      { message: "Moved to the Recycle Bin. Nothing in kr-track changed: it does not hold this folder." }))
     .on("/api/folder/rename-photos", { success: true, updated_paths: {}, updated_photos: photos(),
       index_rows_moved: 0, index_skipped: [], file_only: 2, with_rows: 0 })
     .on("/api/folder/scan", (url) => (url.includes(encodeURIComponent(HELD_FOLDER))

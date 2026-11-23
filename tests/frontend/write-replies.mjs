@@ -112,17 +112,17 @@ export function unmadeReply(url, method, body, status, payload) {
  */
 export const STILL_HAND_SPELLED = {
   "add-folder-dialog.test.mjs": 1, "apply-all-failure-undo.test.mjs": 1, "bulk-writes-queue.test.mjs": 4,
-  "clip-convert.test.mjs": 1, "delete-while-folder-changes.test.mjs": 1, "grid-window.test.mjs": 1,
-  "just-look-edits.test.mjs": 3, "library-photo-back.test.mjs": 1, "library-view.test.mjs": 1,
-  "organize-faces.test.mjs": 2, "person-tag-form.test.mjs": 1, "photo-position.test.mjs": 1,
-  "rotate-refreshes-thumbnails.test.mjs": 1, "scenario-a-write-reaches-every-scan-kept.test.mjs": 1,
-  "scenario-deleting-the-selected-photos-of-a-folder.test.mjs": 1, "scenario-editing-a-photo-on-the-phone.test.mjs": 1,
+  "clip-convert.test.mjs": 1, "grid-window.test.mjs": 1,
+  "just-look-edits.test.mjs": 2,
+  "organize-faces.test.mjs": 2, "person-tag-form.test.mjs": 1,
+  "rotate-refreshes-thumbnails.test.mjs": 1,
+  "scenario-editing-a-photo-on-the-phone.test.mjs": 1,
   "scenario-switching-library-mid-folder.test.mjs": 1, "scenario-tagging-keeps-the-faces-in-place.test.mjs": 3,
   "scenario-tagging-many-photos-at-once.test.mjs": 5, "scenario-write-through-a-server-update.test.mjs": 1,
   "selection-follows-the-photo.test.mjs": 1, "selection-suggestions.test.mjs": 1,
   "selection-suggests-who-the-faces-look-like.test.mjs": 1, "smart-rename-count.test.mjs": 1,
   "smart-rename-one-photo.test.mjs": 1, "stale-record.test.mjs": 1, "suggestions-follow-a-saved-photo.test.mjs": 2,
-  "tags-shown-alphabetical.test.mjs": 1, "undo-from-reply.test.mjs": 1, "video-viewer.test.mjs": 3,
+  "tags-shown-alphabetical.test.mjs": 1, "undo-from-reply.test.mjs": 1,
   "write-queue-status.test.mjs": 2,
 };
 

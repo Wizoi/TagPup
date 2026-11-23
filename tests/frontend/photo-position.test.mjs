@@ -6,7 +6,7 @@
  */
 import { test, describe, afterEach } from "node:test";
 import assert from "node:assert/strict";
-import { loadApp, FakeServer, closeAllApps, openFolder, click, PHOTO_WRITES } from "./harness.mjs";
+import { loadApp, FakeServer, closeAllApps, openFolder, click, PHOTO_WRITES, deletedAs } from "./harness.mjs";
 
 const PHOTOS = [
   { path: "D:\\p\\beach_1.jpg", filename: "beach_1.jpg", tags: [], people: [], captions: [], title: "", writes: PHOTO_WRITES },
@@ -21,7 +21,7 @@ function server() {
     .on("/api/people", [])
     .on("/api/tags", [])
     .on("/api/photo-faces", { faces: [], total: 0, unmatched: 0 })
-    .on("/api/photo/delete", { success: true })
+    .on("/api/photo/delete", deletedAs("binned"))
     .on("/api/folder/suggest-status", { status: "idle" });
 }
 
