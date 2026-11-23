@@ -360,6 +360,10 @@ same transaction (`store/derived.py`, `people.tree_edit`).
   page, plus one module per feature, and their mutable state in one `state` object.
 - `web/common/theme.css` is the one place the dark theme's tokens live (colours, fonts and the card
   shadow, as `:root` variables): TagPup's and TagTuner's `style.css` and the phone's `mobile.css` each import it, none holds a copy.
+  The phone's look is built on the tokens it adds (docs/plans/phone-redesign.md): `--surface-3` above the slate steps
+  `--bg-secondary` and `--bg-tertiary`, `--scrim`, `--on-accent`, `--danger`, `--photo-canvas`, the corners (`--radius-*`), the
+  five type steps in rem (`--text-*`, `--weight-*`), the tap target (`--tap`, `--tab-bar-height`) and the motion
+  (`--motion-*`, `--ease-out`); the desktop pages may take them up later.
 - The phone's page is `web/tagpup/mobile.html` beside TagPup's `index.html`, at `/<library>/mobile.html`
   (docs/plans/phone-viewer.md): `mobile.js` only wires it, `mobile-state.js` holds its state, `mobile-screens.js` makes
   each screen a history step (Back goes up a screen), `mobile-library.js` is its list of libraries; it imports
@@ -369,7 +373,12 @@ same transaction (`store/derived.py`, `people.tree_edit`).
   Tailscale Serve the other app's address cannot be built from the request). `mobile-browse.js` walks a section a level
   at a time, `mobile-grid.js` shows a view through library-source.js's card windows and `vgrid.js`, `mobile-photo.js`
   shows one photo large, swiped through with `web/common/swipe.js`, the swipe the desktop page uses too, and zoomed with
-  `web/common/image-zoom.js`. `mobile-edit.js` is its Edit sheet, a history step of its own over the photo: a tag added
+  `web/common/image-zoom.js`. `mobile-tabs.js` is its bar of tabs at the foot of the screen (Library, Photos, Filter,
+  Libraries): a tab is a screen of `mobile-screens.js` and a press is `openScreen`, so Back goes to the screen it was pressed
+  on. Browse rows and the People strip at its top show covers from `GET /api/library/covers`
+  (`tagpup.services.library_view.covers`: each row's first photo by the views' order and its thumbnail's URL, read from the
+  index alone, nothing stored), asked by `mobile-browse.js` for the rows near the screen, at most 24 at a time.
+  `mobile-edit.js` is its Edit sheet, a history step of its own over the photo: a tag added
   or taken off (behind an Undo) through `/api/photos/write` (op `tags`, by id), the title and Date Taken through `photo-write.js`, each
   write of the page in turn after the one before it.
 - No build step. Tests import the modules (`node --test tests/frontend/*.test.mjs`), jsdom loads a page's
