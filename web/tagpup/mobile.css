@@ -819,7 +819,7 @@ body:has(> .tabs:not(.hidden)) > .edit-toasts {
     height: 3rem;
     overflow: hidden;
     background-color: var(--bg-tertiary);
-    border-radius: 0.5rem;
+    border-radius: var(--radius-small);
 }
 
 .browse-cover-img {
@@ -847,10 +847,11 @@ body:has(> .tabs:not(.hidden)) > .edit-toasts {
 }
 
 .browse-people-title {
-    font-size: 1.125rem;
+    font-size: var(--text-title);
 }
 
 .browse-people-all {
+    min-height: var(--tap);
     padding: 0 0.5rem;
     color: var(--accent);
     background: none;
@@ -884,7 +885,7 @@ body:has(> .tabs:not(.hidden)) > .edit-toasts {
 .browse-person-cover {
     width: 4.5rem;
     height: 4.5rem;
-    border-radius: 1rem;
+    border-radius: var(--radius-card);
 }
 
 .browse-person:active .browse-person-cover {
@@ -894,13 +895,13 @@ body:has(> .tabs:not(.hidden)) > .edit-toasts {
 .browse-person-name {
     max-width: 100%;
     overflow: hidden;
-    font-size: 0.875rem;
+    font-size: var(--text-small);
     text-overflow: ellipsis;
     white-space: nowrap;
 }
 
 .browse-person-count {
-    font-size: 0.75rem;
+    font-size: var(--text-caption);
     color: var(--text-secondary);
     font-variant-numeric: tabular-nums;
 }
