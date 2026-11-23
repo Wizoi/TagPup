@@ -73,7 +73,8 @@ export function linkedView() {
     return viewOf(spec);
 }
 
-function sectionState(name) {
+/** A section as the page holds it (state.sections): made empty the first time it is named. */
+export function sectionState(name) {
     if (!state.sections[name]) {
         state.sections[name] = { asked: 0, index: null, status: 'loading', message: '', covers: new Map(), coversOut: new Set() };
     }
@@ -85,7 +86,7 @@ function readSection(name) {
     const sec = sectionState(name);
     const asked = ++sec.asked;
     if (!sec.index) sec.status = 'loading';
-    api.fetch(`/api/library/navigator?section=${name}`)
+    sec.reading = api.fetch(`/api/library/navigator?section=${name}`)
         .then((res) => res.json().catch(() => ({})).then((body) => ({ ok: res.ok, body })))
         .then(({ ok, body }) => {
             if (asked !== sec.asked) return;
@@ -103,6 +104,16 @@ function readSection(name) {
             if (state.place && state.place[0] === name) drawLevel(state.place);
             else if (state.place === null && name === 'people') drawStrip();
         });
+}
+
+/**
+ * A section read unless it is, or is being read (the People strip, the Filter sheet's tabs and chips); one that failed is
+ * asked again. Its read, settled when the reply is in (a read that fails too).
+ */
+export function needSection(name) {
+    const sec = sectionState(name);
+    if (!sec.index && (sec.asked === 0 || sec.status === 'error')) readSection(name);
+    return sec.reading || Promise.resolve();
 }
 
 /** What a row's photos are, or a level's: the rows `ids` with everything under them, as the fewest sources (a folder with its
@@ -248,8 +259,7 @@ function drawStrip() {
 
 /** The top of Browse: the strip, the people read the first time it is shown (or again after a read that failed). */
 function showTop() {
-    const sec = sectionState('people');
-    if (!sec.index && (sec.asked === 0 || sec.status === 'error')) readSection('people');
+    needSection('people');
     drawStrip();
 }
 

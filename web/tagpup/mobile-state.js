@@ -14,11 +14,15 @@ export const state = {
     // Where on that screen, as its history entry holds it: a level of Browse ([section, row ids...]), the Grid's view,
     // the Photo screen's { id, at }; null for none (the top of Browse).
     place: null,
+    // Whether the step shown has a sheet over its screen, as it is left: Back from it to the step under carries the place the
+    // sheet changed down onto that step (mobile-screens.js; the step's own record is gone by the time Back lands).
+    stepSheet: false,
     // The view an address names (?view=, web/common/library.js VIEW_PARAMS), opened as the page starts; null for none.
     linked: null,
     // The view the Grid shows: { kind, value, recursive, order, media }, the names of library-source.js.
     view: null,
-    // Browse's sections by name: { asked, index, status, message, covers, coversOut } (mobile-browse.js): `covers` each
+    // Browse's sections by name: { asked, index, status, message, reading, covers, coversOut } (mobile-browse.js), the
+    // Filter sheet's tabs too: `reading` the last read's promise (needSection); `covers` each
     // row's cover answered, by row id (its thumbnail's URL, null for a row with no photo), kept for the page's life, a row
     // scrolled away included; `coversOut` the row ids asked and not answered yet.
     sections: {},
@@ -29,6 +33,12 @@ export const state = {
     // What is held for the Grid's view: a view of library-source.js (newLibrary), its ids and the cards asked so far,
     // kept while a photo of it is open; null when Browse is shown. A reply for a view no longer held is dropped.
     photos: null,
+    // The marks of the Grid's view (mobile-filter.js): a Map of filterKey -> '+', '&' or '-' (navigator-model.js), read
+    // back from the view each time the Grid is shown, empty for a view that is no filter. A tap makes the next from it.
+    filter: new Map(),
+    // The Filter sheet (mobile-filter.js): the tab shown, the rows open under each tab (by section, a Set of row ids), the
+    // rows drawn, the sentence of a mark refused, and whether its Close is on its way back. Whether it is open is the step's.
+    filterSheet: { tab: 'people', expanded: {}, rows: [], notice: '', closing: false },
     // The card of the photo the Photo screen shows, null while it is read (mobile-photo.js).
     photo: null,
     // The Photo screen's read of the cards around the photo open, while it is out: { lib, ids (a Set), reply }; a swipe

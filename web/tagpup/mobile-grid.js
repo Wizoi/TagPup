@@ -9,8 +9,9 @@
  * longer holds is dropped. Back from a photo finds the view held and asks nothing again, the card of the photo left (swiped
  * to, mobile-photo.js) in view; Browse lets it go.
  *
- * The order and Photos/Clips are the view's own names (`order`, `media`): a change is the view's place in its history step,
- * so Back and a reload keep it, and the photos are read again from the top.
+ * The order and Photos/Clips are the view's own names (`order`, `media`), chosen in the head of the Filter sheet
+ * (mobile-filter.js): a change is the view's place in its history step, so Back and a reload keep it, and the photos are read
+ * again from the top.
  */
 import { api } from './common/api.js';
 import { buildElement } from './common/dom.js';
@@ -22,6 +23,7 @@ import { createVGrid } from './vgrid.js';
 import { state } from './mobile-state.js';
 import { openScreen, replacePlace, samePlace } from './mobile-screens.js';
 import { viewOf } from './mobile-browse.js';
+import { drawFilterStatus } from './mobile-filter.js';
 
 const byId = (id) => document.getElementById(id);
 
@@ -34,13 +36,17 @@ const HOST = {
     dropped: () => {},
 };
 
-/** The count line, and the problem with Try again when the ids or a window's cards could not be read. */
+/**
+ * The count line, and the problem with Try again when the ids or a window's cards could not be read; and what the read says
+ * to the filter (mobile-filter.js). A filter that finds none counts "0 photos", its words under it.
+ */
 function drawStatus() {
     const lib = state.photos;
     if (!lib) return;
     const failed = lib.status === 'error' || Boolean(lib.notice);
     byId('grid-count').textContent = lib.status === 'loading' ? 'Loading...' : lib.status === 'error' ? ''
-        : lib.status === 'empty' ? lib.message : viewCountSaid(lib);
+        : lib.status === 'empty' && !state.filter.size ? lib.message : viewCountSaid(lib);
+    drawFilterStatus();
     byId('grid-problem-text').textContent = lib.status === 'error' ? `Could not load photos. ${lib.message}`.trim()
         : 'Could not load photos.';
     byId('grid-problem').classList.toggle('hidden', !failed);

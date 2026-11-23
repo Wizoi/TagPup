@@ -14,6 +14,10 @@
  * is the one record of whether the sheet is open: the sheet is drawn from it after every step (its push, Back, Forward,
  * a reload), and a tap that must not act under an open sheet asks sheetShown(), never the sheet. A Close still on its
  * way back, a page kept in the back-forward cache, cannot leave the two disagreeing.
+ *
+ * A sheet may change its screen's place (the Filter sheet, mobile-filter.js, the Grid's view): Back from its step to the
+ * step under it leaves the screen where the sheet left it, the place carried down onto that step, so closing the sheet
+ * keeps what was done under it and a second Back leaves the screen.
  */
 import { state } from './mobile-state.js';
 
@@ -46,6 +50,7 @@ export function sheetShown() {
 export function openSheetStep() {
     if (sheetShown()) return;    // open already, or its Close's Back not landed yet: no second step
     window.history.pushState({ ...window.history.state, sheet: true }, '');
+    state.stepSheet = true;
     sheetIn(window.history.state);
 }
 
@@ -97,6 +102,7 @@ export function showScreen(name, place = null) {
 export function openScreen(name, place = null) {
     if (state.screen === name && samePlace(state.place, place)) return;
     window.history.pushState({ screen: name, place: place ?? null }, '');
+    state.stepSheet = false;
     showScreen(name, place);
 }
 
@@ -116,11 +122,18 @@ export function upAScreen() {
 /** Back goes up a screen: the browser's own Back and the bar's. */
 export function wireScreens() {
     window.addEventListener('popstate', (event) => {
-        const name = screenIn(event.state);
-        const place = placeIn(event.state);
+        let entry = event.state;
+        // Back from a sheet's step to the one under it, on the same screen: the place the sheet changed is carried down.
+        if (state.stepSheet && entry && !entry.sheet && screenIn(entry) === state.screen && !samePlace(placeIn(entry), state.place)) {
+            entry = { ...entry, place: state.place };
+            window.history.replaceState(entry, '');
+        }
+        state.stepSheet = Boolean(entry && entry.sheet);
+        const name = screenIn(entry);
+        const place = placeIn(entry);
         // The same screen at the same place is only ever a sheet's step and the one under it: the screen stays.
         if (name !== state.screen || !samePlace(place, state.place)) showScreen(name, place);
-        sheetIn(event.state);
+        sheetIn(entry);
     });
     document.getElementById('bar-back').addEventListener('click', upAScreen);
 }
@@ -142,6 +155,7 @@ export function startScreens() {
     }
     const kept = state.library ? screenIn(entry) : state.home;
     if (!entry || entry.screen !== kept) window.history.replaceState({ screen: kept, place: null }, '');
+    state.stepSheet = sheetShown();
     showScreen(kept, placeIn(window.history.state));
     sheetIn(window.history.state);
 }
