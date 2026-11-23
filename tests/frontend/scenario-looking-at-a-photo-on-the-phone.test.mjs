@@ -460,7 +460,7 @@ describe("the facts under a photo on the phone", () => {
     await openPhoto(ctx, 1);
     assert.equal(chipsIn(ctx, "photo-keywords").length, 40);
     assert.equal(chipsIn(ctx, "photo-keywords")[39], "Stop 40");
-    assert.ok(!el(ctx, "photo-edit").closest(".hidden"), "Edit still there under them");
+    assert.ok(!el(ctx, "photo-edit").closest(".hidden"), "Edit still there over them");
     const css = fs.readFileSync(path.join(HERE, "../../web/tagpup/mobile.css"), "utf8");
     const rule = (selector) => (css.match(new RegExp(`(^|\\n)${selector.replace(/[.():]/g, "\\$&")} \\{([^}]*)\\}`)) || [])[2] || "";
     assert.match(rule(".photo-chips"), /flex-wrap: wrap;/);
@@ -480,6 +480,29 @@ describe("the facts under a photo on the phone", () => {
     assert.equal(el(ctx, "photo-when").textContent, "Sun, March 1, 2020, 12:30 PM");
     const format = fs.readFileSync(path.join(HERE, "../../web/tagpup/format.js"), "utf8");
     assert.equal(format.split("% 12 || 12").length - 1, 1, "one clockSaid: the phone's date, the PC's and the grid's");
+  });
+
+  test("a crowded photo on a 360 x 640 phone: Edit beside the date, in reach with the sheet down however many chips", async (t) => {
+    // A stand-in for the look in a real browser, which jsdom cannot lay out: the sheet down shows 40% of 640 px (256 px),
+    // and its handle, a three-line title and two rows each of people and keywords already take more than that, so Edit
+    // stands on the date's line, the first under the handle, never under the chips the sheet cuts off.
+    const people = Array.from({ length: 6 }, (_, i) => `People/Wren O'Malley ${i + 1}`);
+    const ctx = await phone(t, {
+      count: 3,
+      record: () => ({ title: "Cousins at the coast before the storm, ".repeat(4), tags: [...people, "Trips/Coast", "Trips/Cove Walk", "Events/Relay", "Events/Harvest"] }),
+    });
+    await openPhoto(ctx, 1);
+    const head = el(ctx, "photo-when").parentElement;
+    assert.equal(el(ctx, "photo-edit").parentElement, head, "Edit on the date's line");
+    assert.ok(head.classList.contains("photo-head"));
+    assert.equal(head.previousElementSibling, el(ctx, "photo-facts-handle"), "the first line under the handle");
+    const css = fs.readFileSync(path.join(HERE, "../../web/tagpup/mobile.css"), "utf8");
+    const rule = (selector) => (css.match(new RegExp(`(^|\\n)${selector.replace(/[.():]/g, "\\$&")} \\{([^}]*)\\}`)) || [])[2] || "";
+    assert.match(rule(".photo-head"), /display: flex;/);
+    assert.match(rule(".photo-head .photo-edit"), /flex: none;/, "Edit keeps its size; the date wraps beside it");
+    click(ctx.window, el(ctx, "photo-edit"));
+    await settle(ctx);
+    assert.ok(!el(ctx, "edit-sheet").classList.contains("hidden"));
   });
 
   test("a clip's facts: its date, its kind, and Edit", async (t) => {

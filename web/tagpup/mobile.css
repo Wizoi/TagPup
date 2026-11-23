@@ -686,7 +686,21 @@ body:has(> main > [data-screen="photo"]:not(.hidden)) > .bar {
     border-radius: var(--radius-pill);
 }
 
+/* The first line under the handle: the date, and Edit beside it, so Edit is in reach with the sheet down however many
+   chips and lines of title the sheet's first part cuts off (40% of a 640 px phone is less than a crowded photo's facts). */
+.photo-head {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+}
+
+.photo-head .photo-edit {
+    flex: none;
+    margin-left: auto;
+}
+
 .photo-when {
+    min-width: 0;
     font-size: var(--text-title);
     font-weight: var(--weight-strong);
 }
@@ -755,10 +769,6 @@ body:has(> main > [data-screen="photo"]:not(.hidden)) > .bar {
 
 .photo-when.photo-none {
     font-size: var(--text-title);
-}
-
-.photo-edit {
-    margin-top: 0.75rem;
 }
 
 .photo-more {
