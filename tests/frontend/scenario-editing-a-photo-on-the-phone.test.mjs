@@ -404,7 +404,7 @@ describe("editing a photo on the phone", () => {
   test("an add that fails says why and puts the text typed back", async (t) => {
     const ctx = await phone(t);
     await openSheet(ctx);
-    ctx.server.first("/api/photos/write", { error: "The library is busy: try again." }, { status: 500 });
+    ctx.server.first("/api/photos/write", { success: false, error: "The library is busy: try again." }, { status: 500 });
     await pick(ctx, "cove", COVE);
     assert.equal(said(ctx), "Not added: The library is busy: try again.");
     assert.equal(el(ctx, "edit-add").value, "cove");

@@ -12,7 +12,7 @@ import fs from "node:fs";
 import path from "node:path";
 import {
   loadApp, FakeServer, photoRecord, flush, click, openFolder, closeAllApps, pageExports, REPO_ROOT,
-  SAVE, saved, saveCalls,
+  SAVE, saved, saveCalls, TAGS, tagFiles,
 } from "./harness.mjs";
 
 afterEach(() => closeAllApps());
@@ -49,7 +49,7 @@ async function load(t, { n = N, routes = [], onSave } = {}) {
     .on("/api/folder/suggest-status", { status: "idle" })
     .on("/api/photo-faces", { faces: [], total: 0, unmatched: 0 })
     .on(SAVE, onSave || saved())
-    .on("/api/photos/write", { success: true })
+    .on(TAGS, tagFiles(photos(n)))
     .on("/api/folder/scan", (url) => {
       const folder = decodeURIComponent((url.match(/path=([^&]+)/) || [])[1] || FOLDER).replace(/\//g, "\\");
       const count = server.counts && server.counts[folder] !== undefined ? server.counts[folder] : n;

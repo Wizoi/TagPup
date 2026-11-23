@@ -14,7 +14,7 @@
 import { test, describe, afterEach } from "node:test";
 import assert from "node:assert/strict";
 import {
-  loadApp, FakeServer, photoRecord, flush, click, openFolder, closeAllApps, pageExports, realLibrary, until, REAL,
+  loadApp, FakeServer, photoRecord, flush, click, openFolder, closeAllApps, pageExports, realLibrary, until, REAL, TAGS, tagFiles,
 } from "./harness.mjs";
 
 const PHOTOS = [
@@ -33,7 +33,7 @@ async function loadSelected(t) {
     .on("/api/folder/index-status", { status: "completed", percent: 100, message: "Ready" })
     .on("/api/folder/scan", () => PHOTOS.map((p) => ({ ...p, tags: [], people: [] })))
     .on("/api/photo-faces", { faces: [], total: 0, unmatched: 0 })
-    .on("/api/photos/write", { success: true, written: {} })
+    .on(TAGS, tagFiles(PHOTOS))
     .on("/api/folder/suggest-status", {
       status: "completed",
       suggestions: Object.fromEntries(PHOTOS.map((p) => [p.path, {
@@ -58,9 +58,9 @@ const bulkWrites = (ctx) => ctx.bulkTagsCalls;
 
 /**
  * Make `photos/write` answer, in order: 503 while the server drains, nothing while it
- * restarts, then a real reply -- exactly what fetchThroughAnUpdate retries through
- * (server-update.test.mjs) -- while every other route still answers through the page's
- * FakeServer. `ctx.bulkTagsCalls` counts every attempt, scripted or not.
+ * restarts, then the page's FakeServer's real reply (tagFiles) -- exactly what fetchThroughAnUpdate
+ * retries through (server-update.test.mjs) -- while every other route still answers through the
+ * page's FakeServer. `ctx.bulkTagsCalls` counts every attempt, scripted or not.
  */
 function throughAnUpdate(ctx) {
   const scripted = [
@@ -68,13 +68,9 @@ function throughAnUpdate(ctx) {
       ok: false,
       status: 503,
       headers: { get: (name) => ({ "X-TagPup-Updating": "1", "Retry-After": "0" }[name] ?? null) },
-      json: () => Promise.resolve({ success: false, updating: true }),
+      json: () => Promise.resolve({ success: false, updating: true, error: "TagPup is updating." }),
     }),
     () => Promise.reject(new TypeError("Failed to fetch")),
-    () => ({
-      ok: true, status: 200, headers: { get: () => null },
-      json: () => Promise.resolve({ success: true, written: {} }),
-    }),
   ];
   ctx.bulkTagsCalls = [];
   const serverFetch = ctx.window.fetch;

@@ -8,11 +8,12 @@
  * state and a failure's reason, and a failed one can be retried. Closing the tab asks
  * while a write is waiting or under way.
  *
- * The server's photos/write replies are held here until the test releases them.
+ * The server's tag changes are held here until the test releases them, each answered as the real entry point does
+ * (harness tagFiles).
  */
 import { test, describe, afterEach } from "node:test";
 import assert from "node:assert/strict";
-import { loadApp, FakeServer, photoRecord, flush, click, openFolder, closeAllApps } from "./harness.mjs";
+import { loadApp, FakeServer, photoRecord, flush, click, openFolder, closeAllApps, TAGS, tagFiles } from "./harness.mjs";
 
 const PHOTOS = [
   photoRecord({ filename: "a.jpg", tags: [], people: [] }),
@@ -25,6 +26,9 @@ const REFUSED = "ExifTool: Error: Temporary file already exists: <file>_exiftool
 
 async function loadSelected(t) {
   const held = [];
+  const files = tagFiles(PHOTOS);
+  // A file ExifTool refuses `why` for: every photo of the write among its `errors`, nothing written.
+  const refusing = (body, why) => ({ fails: Object.fromEntries(Object.keys(body.changes).map((path) => [path, why])) });
   const server = new FakeServer()
     .on("/api/tags", OFFERED)
     .on("/api/people", [])
@@ -33,7 +37,7 @@ async function loadSelected(t) {
     .on("/api/folder/index-status", { status: "completed", percent: 100, message: "Ready" })
     .on("/api/folder/scan", () => PHOTOS.map((p) => ({ ...p, tags: [], people: [] })))
     .on("/api/photo-faces", { faces: [], total: 0, unmatched: 0 })
-    .on("/api/photos/write", () => new Promise((resolve) => held.push(resolve)))
+    .on(TAGS, (url, body) => new Promise((resolve) => held.push((why) => resolve(files.reply(body, why ? refusing(body, why) : {})))))
     .on("/api/folder/suggest-status", {
       status: "completed",
       suggestions: Object.fromEntries(PHOTOS.map((p) => [p.path, {
@@ -56,9 +60,10 @@ const box = (ctx) => ctx.document.getElementById("write-queue");
 const said = (ctx) => box(ctx).querySelector(".write-queue-status").textContent;
 const rows = (ctx) => [...box(ctx).querySelectorAll(".write-queue-entry")];
 
-async function answer(ctx, reply) {
+/** Answer the write waiting longest: every photo written, or with `why` ExifTool refusing each. */
+async function answer(ctx, why = null) {
   assert.ok(ctx.held.length, "no request was waiting for an answer");
-  ctx.held.shift()(reply);
+  ctx.held.shift()(why);
   await flush(ctx.window, 8);
 }
 
@@ -85,9 +90,9 @@ describe("the status", () => {
     await flush(ctx.window, 8);
     assert.equal(box(ctx).hidden, false);
     assert.equal(said(ctx), "Saving 1 of 2...");
-    await answer(ctx, { success: true, written: {} });
+    await answer(ctx);
     assert.equal(said(ctx), "Saving 2 of 2...");
-    await answer(ctx, { success: false, error: REFUSED, written: {} });
+    await answer(ctx, REFUSED);
     assert.equal(said(ctx), "1 failed");
     assert.ok(box(ctx).classList.contains("write-queue-failed"), "a failure is not marked");
   });
@@ -96,7 +101,7 @@ describe("the status", () => {
     const ctx = await loadSelected(t);
     click(ctx.window, chip(ctx, "Cross Country"));
     await flush(ctx.window, 8);
-    await answer(ctx, { success: true, written: {} });
+    await answer(ctx);
     assert.equal(said(ctx), "All changes saved");
     assert.ok(box(ctx).classList.contains("write-queue-idle"));
   });
@@ -109,7 +114,7 @@ describe("the list", () => {
     await flush(ctx.window, 8);
     click(ctx.window, chip(ctx, OFFERED[1]));
     await flush(ctx.window, 8);
-    await answer(ctx, { success: false, error: REFUSED, written: {} });
+    await answer(ctx, REFUSED);
     assert.equal(ctx.held.length, 0, "the write queued behind the failed one went by itself");
     // The write queued at the second click had its turn, sent nothing, and says why; the failed one keeps its Retry.
     const states = rows(ctx).map((r) => [r.querySelector(".write-queue-label").textContent, r.dataset.status]);
@@ -130,11 +135,11 @@ describe("the list", () => {
     // The second click's write waits in the queue from the click; what it writes is named at its turn.
     assert.deepEqual(states(), ["waiting", "writing"]);
     assert.deepEqual(labels(), ["Write tag changes", `Add ${OFFERED[0]} to 2 photos`]);
-    await answer(ctx, { success: true, written: {} });
+    await answer(ctx);
     // Newest first.
     assert.deepEqual(states(), ["writing", "done"]);
     assert.deepEqual(labels(), [`Add ${OFFERED[1]} to 2 photos`, `Add ${OFFERED[0]} to 2 photos`]);
-    await answer(ctx, { success: false, error: REFUSED, written: {} });
+    await answer(ctx, REFUSED);
     assert.deepEqual(states(), ["failed", "done"]);
     const failed = rows(ctx)[0];
     assert.match(failed.querySelector(".write-queue-state").textContent, /Temporary file already exists/);
@@ -148,7 +153,7 @@ describe("the list", () => {
     const ctx = await loadSelected(t);
     click(ctx.window, chip(ctx, "Harbourside"));
     await flush(ctx.window, 8);
-    await answer(ctx, { success: false, error: REFUSED, written: {} });
+    await answer(ctx, REFUSED);
     const sent = () => ctx.server.calls.filter((c) => c.url.includes("photos/write"));
     assert.equal(sent().length, 1);
 
@@ -157,7 +162,7 @@ describe("the list", () => {
     assert.equal(sent().length, 2, "Retry sent nothing");
     assert.deepEqual(sent()[1].body, sent()[0].body, "Retry is the same change, under the same group");
     assert.equal(said(ctx), "Saving 1 of 1...");
-    await answer(ctx, { success: false, error: REFUSED, written: {} });
+    await answer(ctx, REFUSED);
     assert.equal(said(ctx), "1 failed", "the retried entry is listed once, not twice");
 
     click(ctx.window, rows(ctx).find((r) => r.dataset.status === "failed").querySelector(".write-queue-cancel"));
@@ -169,7 +174,7 @@ describe("the list", () => {
     await flush(ctx.window, 8);
     assert.deepEqual(Object.values(sent().at(-1).body.changes).map((c) => c.add), [["Kentridge"], ["Kentridge"]],
       "the cancelled tag went with the next write");
-    await answer(ctx, { success: true, written: {} });
+    await answer(ctx);
   });
 
   test("opens on a click, for a touch screen", async (t) => {
@@ -179,7 +184,7 @@ describe("the list", () => {
     click(ctx.window, box(ctx).querySelector(".write-queue-status"));
     assert.ok(box(ctx).classList.contains("open"));
     assert.equal(box(ctx).querySelector(".write-queue-status").getAttribute("aria-expanded"), "true");
-    await answer(ctx, { success: true, written: {} });
+    await answer(ctx);
   });
 });
 
@@ -190,7 +195,7 @@ describe("closing the tab", () => {
     click(ctx.window, chip(ctx, "Cross Country"));
     await flush(ctx.window, 8);
     assert.equal(leaving(ctx), true, "did not ask while a write was out");
-    await answer(ctx, { success: true, written: {} });
+    await answer(ctx);
     assert.equal(leaving(ctx), false, "still asked once everything was written");
   });
 
@@ -198,7 +203,7 @@ describe("closing the tab", () => {
     const ctx = await loadSelected(t);
     click(ctx.window, chip(ctx, "Cross Country"));
     await flush(ctx.window, 8);
-    await answer(ctx, { success: false, error: REFUSED, written: {} });
+    await answer(ctx, REFUSED);
     assert.equal(leaving(ctx), true, "closing would lose the changes a failure gave back, unasked");
   });
 });

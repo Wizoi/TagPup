@@ -14,7 +14,7 @@
  */
 import { test, describe, afterEach } from "node:test";
 import assert from "node:assert/strict";
-import { loadApp, FakeServer, photoRecord, flush, click, openFolder, closeAllApps, SAVE, saved } from "./harness.mjs";
+import { loadApp, FakeServer, photoRecord, flush, click, openFolder, closeAllApps, SAVE, saved, TAGS, tagFiles } from "./harness.mjs";
 
 afterEach(() => closeAllApps());
 
@@ -41,7 +41,7 @@ function server(membership, indexing = { status: "completed", percent: 100, mess
     .on("/api/folder/add", { success: true, status: "running", library: "kr-track", folder: FOLDER, added: 1,
       queued: [FOLDER], already_queued: [], invalid: [], pending: 1 })
     .on("/api/folder/suggest-start", { success: true, status: "running" })
-    .on("/api/photos/write", { success: true })
+    .on(TAGS, tagFiles(scanned))
     .on(SAVE, saved())
     .on("/api/photo-faces", { faces: [], total: 0, unmatched: 0 })
     .on("/api/folder/scan", scanned);

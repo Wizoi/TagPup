@@ -1,4 +1,38 @@
 {
+ "missing": {
+  "reply": {
+   "attempted": 2,
+   "change": 6,
+   "changed": 1,
+   "error_count": 0,
+   "errors": [],
+   "file_only": 0,
+   "skipped": [
+    {
+     "path": "PHOTO_1",
+     "why": "missing, nothing is written to it: its file is not on disk"
+    }
+   ],
+   "skipped_missing": 1,
+   "stopped": null,
+   "success": true,
+   "with_rows": 1,
+   "written": {
+    "PHOTO_0": {
+     "mtime": 1,
+     "size": 1,
+     "tags": [
+      "Beach",
+      "Holiday/Summer",
+      "Places/Quay",
+      "Places/Dock",
+      "Places/Pier"
+     ]
+    }
+   }
+  },
+  "status": 200
+ },
  "not_written": {
   "reply": {
    "attempted": 1,
@@ -27,6 +61,40 @@
   },
   "status": 400
  },
+ "partly_written": {
+  "reply": {
+   "attempted": 2,
+   "change": 5,
+   "changed": 1,
+   "error_count": 1,
+   "errors": [
+    {
+     "id": 4,
+     "path": "PHOTO_1",
+     "why": "Not a photo or a video ExifTool can read (text/plain)"
+    }
+   ],
+   "file_only": 0,
+   "skipped": [],
+   "skipped_missing": 0,
+   "stopped": null,
+   "success": false,
+   "with_rows": 1,
+   "written": {
+    "PHOTO_0": {
+     "mtime": 1,
+     "size": 1,
+     "tags": [
+      "Beach",
+      "Holiday/Summer",
+      "Places/Quay",
+      "Places/Dock"
+     ]
+    }
+   }
+  },
+  "status": 200
+ },
  "renamed_since": {
   "reply": {
    "attempted": 2,
@@ -45,6 +113,38 @@
    "written": {}
   },
   "status": 409
+ },
+ "unnamed": {
+  "reply": {
+   "attempted": 1,
+   "change": 7,
+   "changed": 1,
+   "error_count": 0,
+   "errors": [],
+   "file_only": 0,
+   "skipped": [],
+   "skipped_missing": 0,
+   "stopped": null,
+   "success": true,
+   "unnamed_faces": [
+    {
+     "id": 1,
+     "name": "Wren Halloway"
+    }
+   ],
+   "with_rows": 1,
+   "written": {
+    "PHOTO_0": {
+     "mtime": 1,
+     "size": 1,
+     "tags": [
+      "Beach",
+      "Holiday/Summer"
+     ]
+    }
+   }
+  },
+  "status": 200
  },
  "written": {
   "reply": {

@@ -20,7 +20,7 @@ tests/test_batches.py's (ASaveBetweenTwoChunks), on the fake ExifTool, as it nee
 Real ExifTool on JPEGs made here, rows as the indexer records them (photo_rows.add_read), the route through Flask's
 test client in a home of the test's own (tests/handler_harness.py). The replies of a folder's Time Shift that the page's
 tests answer from (tests/frontend/fixtures/shift_replies.json, harness.mjs shiftedAs) and of a tag change
-(tags_replies.json, harness.mjs taggedAs) are written here.
+(tags_replies.json, harness.mjs taggedAs and tagFiles) are written here.
 """
 import contextlib
 import json
@@ -32,6 +32,7 @@ import unittest
 from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import face_rows  # noqa: E402
 import page_fixtures  # noqa: E402
 import photo_rows  # noqa: E402
 from tests.handler_harness import Library  # noqa: E402
@@ -45,12 +46,13 @@ from tagpup.files.exiftool_session import ExifToolSession  # noqa: E402
 from tagpup.jobs import naming_faces  # noqa: E402
 from tagpup.services import batches, file_changes, photo_writes  # noqa: E402
 from tagpup.services import photos as photo_actions  # noqa: E402
-from tagpup.store import db, journal  # noqa: E402
+from tagpup.store import db, faces, journal, people, taxonomy  # noqa: E402
 
 ROUTE = "/api/photos/write"
 TAKEN = "2020:06:01 10:00:00"
 SHIFT_REPLIES = page_fixtures.path_of("shift_replies.json")
 TAGS_REPLIES = page_fixtures.path_of("tags_replies.json")
+PERSON = "People/Wren Halloway"
 
 
 def date(photos, taken=TAKEN):
@@ -527,9 +529,55 @@ class AWriteThroughTheOneEntryPoint(unittest.TestCase):
         reads = self.as_the_page_test_reads(reply, self.photos[2:])
         self.assertEqual((400, {}, ["PHOTO_0"]), (status, reads["written"], [error["path"] for error in reads["errors"]]))
         found["not_written"] = {"status": status, "reply": reads}
+        found.update(self.tag_replies_of_one_photo_each())
         self.assertNotIn(json.dumps(self.lib.photos)[1:-1], json.dumps(found), "a path of the test's home left in")
         text = json.dumps(found, sort_keys=True, indent=1) + "\n"
         page_fixtures.hold_to(self, TAGS_REPLIES, text, "tests.test_a_write_through_the_one_entry_point", "a tag change")
+
+    def tag_replies_of_one_photo_each(self):
+        """The tag replies whose photos the page reads one by one: `partly_written`, the second of two photos a file
+        ExifTool cannot write, that photo the request's error and the first written (200, `success` false, no `error`:
+        the page says the photo's `why`); `missing`, the second of two photos gone from its folder, skipped and the first
+        written; `unnamed`, a person taken off a photo whose face was named them, the face unnamed (#908)."""
+        found = {}
+        broken, gone = (make_photo(os.path.join(self.held, name)) for name in ("q_broken.jpg", "q_gone.jpg"))
+        broken_id, gone_id = self.add_rows([broken, gone])
+        with open(broken, "wb") as damaged:
+            damaged.write(b"not a picture")
+        os.remove(gone)
+        for name, other, other_id, tag in (("partly_written", broken, broken_id, "Places/Dock"),
+                                           ("missing", gone, gone_id, "Places/Pier")):
+            sent = [self.photos[1], other]
+            status, reply = self.lib.post(ROUTE, self.tags_op({self.photos[1]: (self.ids[1], [tag]),
+                                                              other: (other_id, [tag])}))
+            found[name] = {"status": status, "reply": self.as_the_page_test_reads(reply, sent)}
+        partly, missing = found["partly_written"]["reply"], found["missing"]["reply"]
+        self.assertEqual((200, False, ["PHOTO_0"], ["PHOTO_1"]), (found["partly_written"]["status"], partly["success"],
+                         list(partly["written"]), [each["path"] for each in partly["errors"]]), partly)
+        self.assertEqual((200, ["PHOTO_0"], ["PHOTO_1"]), (found["missing"]["status"], list(missing["written"]),
+                                                     [each["path"] for each in missing["skipped"]]), missing)
+        photo, face = self.a_face_named(PERSON)
+        status, reply = self.lib.post(ROUTE, {"op": "tags", "changes": {photo: {"id": None, "remove": [PERSON]}}})
+        self.assertEqual((200, [{"id": face, "name": PERSON.split("/")[-1]}]), (status, reply.get("unnamed_faces")), reply)
+        found["unnamed"] = {"status": status, "reply": self.as_the_page_test_reads(reply, [photo])}
+        return found
+
+    def a_face_named(self, person):
+        """(a photo holding the tag `person`, its one face, named them), the face as a detection records it and named
+        as the writers name one (face_rows.give_their_person)."""
+        photo = make_photo(os.path.join(self.held, "q_face.jpg"), tags=EXISTING + [person])
+
+        def add(conn):
+            with people.tree_edit(conn):
+                taxonomy.add_path(conn, "People", root_has_face=1)
+                taxonomy.add_path(conn, person)
+            photo_rows.add_read(conn, photo, {"XMP:Subject": EXISTING + [person]})
+            face = faces.insert(conn, photo, [2, 2, 20, 20], bytes(32), model=face_rows.FACE_MODEL)
+            conn.execute("UPDATE faces SET name = ?, name_source = 'manual' WHERE id = ?", (person.split("/")[-1], face))
+            face_rows.give_their_person(conn, face)
+            people.rebuild_photos(conn, [photo])
+            return face
+        return photo, db.write_with_connection(self.lib.db_path, add)
 
     def test_the_shift_replies_the_page_reads_are_written_for_its_test(self):
         # A folder's Time Shift as the page sends it (web/tagpup/rename.js applyTimeShift): its photos by path, no id (a

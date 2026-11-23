@@ -20,7 +20,7 @@
  */
 import { test, describe } from "node:test";
 import assert from "node:assert/strict";
-import { loadApp, FakeServer, photoRecord, flush, click, openFolder, peopleRecordsOf, PEOPLE_ROUTE } from "./harness.mjs";
+import { loadApp, FakeServer, photoRecord, flush, click, openFolder, peopleRecordsOf, PEOPLE_ROUTE, TAGS, tagFiles } from "./harness.mjs";
 
 const FOLDER = "D:/Library/2020";
 
@@ -39,7 +39,7 @@ function build(photos, suggestions) {
     .on("/api/folder/index-status", { status: "completed", percent: 100, message: "Ready" })
     .on("/api/folder/scan", photos)
     .on("/api/photo-faces", { faces: [], total: 0, unmatched: 0 })
-    .on("/api/photos/write", { success: true })
+    .on(TAGS, tagFiles(photos))
     .on("/api/folder/suggest-status", suggestions);
 }
 

@@ -10,7 +10,7 @@
  */
 import { test, describe, afterEach } from "node:test";
 import assert from "node:assert/strict";
-import { loadApp, FakeServer, photoRecord, flush, click, openFolder, closeAllApps, SAVE, saved } from "./harness.mjs";
+import { loadApp, FakeServer, photoRecord, flush, click, openFolder, closeAllApps, SAVE, saved, TAGS, tagFiles } from "./harness.mjs";
 
 afterEach(() => closeAllApps());
 
@@ -56,7 +56,7 @@ describe("the selection follows its photos", () => {
     // A bulk write now names the file as it is called.
     ctx.window.confirm = () => true;
     ctx.document.getElementById("bulk-add-tags-input").value = "Trips/Lighthouse";
-    ctx.server.on("/api/photos/write", { success: true });
+    ctx.server.on(TAGS, tagFiles(PHOTOS));
     click(ctx.window, ctx.document.getElementById("btn-bulk-add-tags"));
     await flush(ctx.window, 8);
     const sent = ctx.server.lastBody("/api/photos/write");

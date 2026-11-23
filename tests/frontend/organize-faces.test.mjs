@@ -10,7 +10,7 @@
  */
 import { test, describe, afterEach } from "node:test";
 import assert from "node:assert/strict";
-import { loadApp, FakeServer, photoRecord, flush, click, openFolder, closeAllApps, REAL, realLibrary, until, peopleRecordsOf, PEOPLE_ROUTE, SAVE, notSaved, saveCalls, saved, savedPhoto } from "./harness.mjs";
+import { loadApp, FakeServer, photoRecord, flush, click, openFolder, closeAllApps, REAL, realLibrary, until, peopleRecordsOf, PEOPLE_ROUTE, SAVE, notSaved, saveCalls, saved, savedPhoto, TAGS, tagFiles } from "./harness.mjs";
 import { boxInContainedImage } from "../../web/common/image-zoom.js";
 import { leafOf } from "../../web/common/vocabulary.js";
 
@@ -48,6 +48,7 @@ function serverFor({ photoFaces = THREE, tree = TAXONOMY, matches = MATCHES, pho
   const written = (server) => server.calls[server.calls.length - 1].body;
   // What the server holds of the photo's keywords: its own saves change it, and it says which tags go with a face (face_people).
   let keywords = [...shown.tags];
+  let mtime = shown.mtime;   // the file's stamp, as the last write left it
   // The tree as the server holds it: a tag created is a node of it, and a person in it (taxonomy/create, then the people read).
   const nodes = structuredClone(tree);
   const create = (body) => {
@@ -74,13 +75,18 @@ function serverFor({ photoFaces = THREE, tree = TAXONOMY, matches = MATCHES, pho
     }))
     .on(SAVE, (url, body) => {
       keywords = [...savedPhoto(body).tags];
-      return saved()(url, body);
+      const reply = saved()(url, body);
+      mtime = reply.written[savedPhoto(body).path].mtime ?? mtime;
+      return reply;
     })
-    // A person taken off the photo goes as its pills' removals do (pending.js), a change of the tags it names.
-    .on("/api/photos/write", () => {
-      const [[path, { add, remove }]] = Object.entries(written(server).changes);
-      keywords = [...keywords.filter((tag) => !remove.includes(tag)), ...add.filter((tag) => !keywords.includes(tag))];
-      return { success: true, written: { [path]: { tags: [...keywords] } } };
+    // A person taken off the photo goes as its pills' removals do (pending.js), a change of the tags it names,
+    // answered as the real entry point does from what the file holds (tagFiles).
+    .on(TAGS, (url, body) => {
+      const file = tagFiles([{ ...shown, tags: keywords, mtime }]);
+      const reply = file.reply(body);
+      keywords = file.holds(shown.path);
+      mtime += 1;
+      return reply;
     })
     .on("/api/face/match", () => {
       if (busy.on) return Promise.reject(new Error("the library is busy"));
@@ -659,7 +665,7 @@ describe("taking a name off, and ruling a face out", () => {
     const photo = photoRecord({ filename: "a.jpg", tags: ["People/Hazel Brookmire"], people: ["Hazel Brookmire"] });
     const ctx = await openPhoto(t, {
       photoFaces: NAMED, photo,
-      extra: (server) => server.first("/api/photos/write", { success: false, error: "locked" }),
+      extra: (server) => server.first(TAGS, (url, body) => tagFiles([photo]).reply(body, { fails: { [photo.path]: "locked" } })),
     });
     ctx.show();
     click(ctx.window, ctx.boxes()[0]);
