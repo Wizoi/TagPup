@@ -111,7 +111,7 @@ export function unmadeReply(url, method, body, status, payload) {
  * at none, so the list only shrinks.
  */
 export const STILL_HAND_SPELLED = {
-  "add-folder-dialog.test.mjs": 1, "apply-all-failure-undo.test.mjs": 1, "bulk-writes-queue.test.mjs": 4,
+  "add-folder-dialog.test.mjs": 1, "apply-all-failure-undo.test.mjs": 1,
   "clip-convert.test.mjs": 1, "delete-while-folder-changes.test.mjs": 1, "grid-window.test.mjs": 1,
   "just-look-edits.test.mjs": 3, "library-photo-back.test.mjs": 1, "library-view.test.mjs": 1,
   "organize-faces.test.mjs": 2, "person-tag-form.test.mjs": 1, "photo-position.test.mjs": 1,
