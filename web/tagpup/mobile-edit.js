@@ -28,7 +28,7 @@ import { baseName, pathKey } from './common/paths.js';
 import { leafOf, photoAlreadyHas, sortedTags } from './common/vocabulary.js';
 import { TAKEN_DIGITS } from './format.js';
 import { state } from './mobile-state.js';
-import { chipSaid, isPerson, photoShown, photoWritten, readVocabulary } from './mobile-photo.js';
+import { chipSaid, isPerson, photoShown, photoWritten, readVocabulary, recordLanded } from './mobile-photo.js';
 import { closeSheetStep, openSheetStep, whenSheet } from './mobile-screens.js';
 
 const byId = (id) => document.getElementById(id);
@@ -214,14 +214,14 @@ function drawRecord(record, keepTyped) {
     byId('edit-time').value = when.time;
 }
 
-/** Read the sheet's photo as its file is now. */
+/** Read the sheet's photo as its file is now: the record the facts under the sheet hold too (recordLanded). */
 function readRecord(keepTyped = false) {
     const edit = state.edit;
     api.fetch(`/api/library/photo?id=${edit.id}`)
         .then((res) => api.answered(res, 'Could not read this photo.'))
         .then((body) => {
             if (state.edit !== edit || !body || !body.photo) return;
-            edit.record = body.photo;
+            edit.record = recordLanded(edit.id, body.photo);
             drawRecord(edit.record, keepTyped);
             if (!keepTyped) putDraftBack(edit);
         })

@@ -14,9 +14,11 @@
  * Under the picture, its facts (docs/plans/phone-redesign.md, PHOTO): a sheet whose first part always shows the Date
  * Taken, the title (three lines, then "more"), the people and keywords as chips and Edit (mobile-edit.js); pulled up, or
  * its handle tapped, it shows the rest the page holds of the photo. The date is the card's at once; the rest is the photo's
- * record as /api/library/photo reads it, the read the Edit sheet makes, one out at a time however fast the swipes; the
- * people told from the keywords by the library's people (/api/people, read once a page for the facts and the Edit sheet).
- * A write of the Edit sheet redraws them (photoWritten). A swipe is refused while the sheet is pulled up, as under Edit.
+ * record as /api/library/photo reads it, one out at a time however fast the swipes; the Edit sheet's read of it lands in
+ * the same place (recordLanded), so the facts hold one record of the photo, whichever read lands, a failure mended by
+ * the next. The people are told from the keywords by the library's people (/api/people, read once a page for the facts
+ * and the Edit sheet; whichever asks, the facts are drawn by it). A write of the Edit sheet redraws them (photoWritten).
+ * A swipe is refused while the sheet is pulled up, as under Edit.
  */
 import { api } from './common/api.js';
 import { buildElement, replaceContent } from './common/dom.js';
@@ -162,8 +164,10 @@ export function readVocabulary() {
             state.people = new PeopleDirectory(people);
             state.tags = Array.isArray(tags) ? tags : [];
             state.vocabularyFailed = false;
+            if (state.screen === 'photo') drawFacts();
         }, (err) => {
             state.vocabularyFailed = true;
+            if (state.screen === 'photo') drawFacts();
             throw err;
         });
     state.vocabularyAsked = asked;
@@ -219,14 +223,18 @@ function drawFacts() {
     measureTitle();
 }
 
-/** The record of the photo shown, read; one read out at a time, and when it lands the photo shown then is read if not yet. */
+/**
+ * The record of the photo shown, read; one read out at a time, and when it lands the photo shown then is read if not yet.
+ * A reply the Edit sheet's read overtook (`dropped`, recordLanded) is let go: the facts hold the later one.
+ */
 function readFacts() {
     const id = photoShown();
     if (id === null || state.factsAsked !== null || (state.facts && state.facts.id === id)) return;
-    state.factsAsked = id;
+    const asked = { id, dropped: false };
+    state.factsAsked = asked;
     const landed = (facts) => {
         state.factsAsked = null;
-        state.facts = facts;
+        if (!asked.dropped) state.facts = facts;
         if (photoShown() === id) drawFacts();
         readFacts();    // swiped on while it was out: the photo shown now
     };
@@ -234,6 +242,17 @@ function readFacts() {
         .then((res) => api.answered(res, 'Could not read this photo.'))
         .then((body) => landed(body && body.photo ? { id, record: body.photo, failed: false } : { id, record: null, failed: true }),
             () => landed({ id, record: null, failed: true }));
+}
+
+/**
+ * Photo `id` read by the Edit sheet (mobile-edit.js), as `record`: the facts' record of it, the one the sheet edits too,
+ * a failed read of the facts mended and a facts read still out let go (it was sent earlier). Returns the record.
+ */
+export function recordLanded(id, record) {
+    if (state.factsAsked && state.factsAsked.id === id) state.factsAsked.dropped = true;
+    state.facts = { id, record, failed: false };
+    if (photoShown() === id) drawFacts();
+    return record;
 }
 
 /** Photo `id` was written (mobile-edit.js), its file now holding `fields`: its facts say so. */
@@ -253,13 +272,11 @@ function openFacts(open) {
     measureTitle();
 }
 
-/** The facts of the photo shown, drawn as held and read when not; the library's people read once for them. */
+/** The facts of the photo shown, drawn as held and read when not; the library's people read once for them (and draw them). */
 function showFacts() {
     drawFacts();
     readFacts();
-    readVocabulary().then(() => {}, () => {}).then(() => {
-        if (state.screen === 'photo') drawFacts();
-    });
+    readVocabulary().catch(() => {});
 }
 
 /** Show the photo of the Photo screen's place, where it is in the view, and its facts. */

@@ -30,7 +30,7 @@
 import { test, describe, afterEach } from "node:test";
 import assert from "node:assert/strict";
 import { loadApp, FakeServer, flush, click, closeAllApps, pageExports, PEOPLE_ROUTE, PHOTO_WRITES, CLIP_WRITES, SAVE, lastSave, saveCalls,
-  saved, changedOnDisk, taggedAs } from "./harness.mjs";
+  saved, changedOnDisk, taggedAs, answer } from "./harness.mjs";
 import { PHONE_PAGE, el, shown, pageState, settle, phoneCard, phoneLayout } from "./phone-page.mjs";
 
 const KEYWORDS = { keywords: [{ tag: "Events", name: "Events", parent: null, count: 20 }], untagged: 0 };
@@ -148,6 +148,17 @@ function holdNext(ctx, route) {
   });
   return hold;
 }
+
+/** The next request of `route` answered `status`, once: the PC busy for a moment, then answering again. */
+function failOnce(ctx, route, status = 503) {
+  ctx.server.first(route, () => {
+    ctx.server.routes.shift();
+    return answer(status, { error: "The library is busy." });
+  });
+}
+
+const factsProblem = (ctx) => (el(ctx, "photo-facts-problem").classList.contains("hidden") ? "" : el(ctx, "photo-facts-problem").textContent);
+const factChips = (ctx, id) => [...el(ctx, id).querySelectorAll(".photo-chip")].map((chip) => chip.textContent);
 
 afterEach(() => closeAllApps());
 
@@ -656,6 +667,43 @@ describe("editing a photo on the phone", () => {
     assert.deepEqual(ctx.held.tags, [WREN, COVE]);
     assert.deepEqual(facts("photo-keywords"), ["Cove Walk"]);
     assert.equal(calls(ctx, "/api/library/photo").length, 2, "the facts' read and the sheet's: nothing read again for a write");
+  });
+
+  test("the facts could not be read once, then Edit and Save: the sheet's read and its Save are the facts' too", async (t) => {
+    const ctx = await phone(t);
+    failOnce(ctx, "/api/library/photo?id=1");
+    await openSheet(ctx);
+    assert.equal(calls(ctx, "/api/library/photo").length, 2, "the facts' read, refused, and the sheet's");
+    assert.equal(factsProblem(ctx), "", "the sheet's read is the facts' read");
+    assert.equal(el(ctx, "photo-title").textContent, "Finish line");
+
+    type(ctx, "edit-title", "Wren's Last Lap");
+    click(ctx.window, el(ctx, "edit-save"));
+    await settle(ctx);
+    assert.equal(said(ctx), "Saved.");
+    assert.equal(el(ctx, "photo-title").textContent, "Wren's Last Lap");
+    assert.deepEqual([factChips(ctx, "photo-people"), factChips(ctx, "photo-keywords")], [["Wren O'Malley"], ["Coast"]]);
+    assert.equal(factsProblem(ctx), "");
+  });
+
+  test("the library's people could not be read once, then Edit: read again for the sheet, the facts drawn by them too", async (t) => {
+    const ctx = await phone(t);
+    failOnce(ctx, "/api/tags");
+    click(ctx.window, ctx.document.querySelector('[data-section="keywords"]'));
+    await settle(ctx);
+    click(ctx.window, [...el(ctx, "browse-rows").querySelectorAll(".browse-item")].find((r) => r.textContent.includes("Events")));
+    await settle(ctx);
+    click(ctx.window, el(ctx, "browse-show"));
+    await settle(ctx, 80);
+    click(ctx.window, [...el(ctx, "grid-cards").querySelectorAll(".phone-card[data-id]")].find((c) => c.dataset.id === "1"));
+    await settle(ctx);
+    assert.match(factsProblem(ctx), /^Could not read the library's people and keywords/);
+    assert.deepEqual(factChips(ctx, "photo-people"), []);
+
+    click(ctx.window, el(ctx, "photo-edit"));
+    await settle(ctx);
+    assert.equal(factsProblem(ctx), "", "read again by the sheet: the facts say nothing of the failure");
+    assert.deepEqual([factChips(ctx, "photo-people"), factChips(ctx, "photo-keywords")], [["Wren O'Malley"], ["Coast"]]);
   });
 
   test("a chip taken off a photo since deleted from the library: refused, read again, and said; the chip comes back", async (t) => {

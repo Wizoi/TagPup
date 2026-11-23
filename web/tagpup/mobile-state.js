@@ -46,12 +46,15 @@ export const state = {
     // onto a photo it names waits for it rather than asking again (mobile-photo.js).
     cardsAsked: null,
     // The facts sheet under the photo (mobile-photo.js): the photo's record as /api/library/photo read it, { id, record,
-    // failed }, null before a read lands; the id being read (one read out at a time: a swipe on while it is out asks the
-    // photo then shown when it lands); whether the sheet is pulled up (a swipe is refused while it is).
+    // failed }, null before a read lands, the Edit sheet's read landing there too (recordLanded); the read out, { id,
+    // dropped } (one at a time: a swipe on while it is out asks the photo then shown when it lands; `dropped`, a later
+    // read landed first and its reply is let go); whether the sheet is pulled up (a swipe is refused while it is).
     facts: null,
     factsAsked: null,
     factsOpen: false,
-    // The Edit sheet's photo (mobile-edit.js): { id, record (as /api/library/photo read it), saving, letGo }; null when
+    // The Edit sheet's photo (mobile-edit.js): { id, record (as /api/library/photo read it: the facts' record, the same
+    // object, held here too because the facts let it go first when the photo is left and a draft is kept from it), saving,
+    // letGo }; null when
     // shut. Drawn from the history step shown, the one record of whether the sheet is open (mobile-screens.js sheetShown).
     edit: null,
     // The tail of the page's writes, one at a time in the order sent; null when none is out.
