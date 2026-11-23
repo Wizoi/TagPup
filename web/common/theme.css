@@ -1,6 +1,6 @@
 /* The look the pages share: TagPup's (web/tagpup/style.css), TagTuner's and the phone's (web/tagpup/mobile.css):
    colours, fonts and the card shadow of the dark theme, each a custom property on :root. Defined here once; each
-   page's stylesheet imports this file first (docs/plans/phone-viewer.md). */
+   page's stylesheet imports this file first (docs/plans/phone-viewer.md). Dark only: there is no light theme. */
 
 :root {
     --bg-primary: #090d16;
@@ -23,4 +23,49 @@
     --card-shadow: 0 4px 20px -2px rgba(0, 0, 0, 0.4);
     --font-heading: 'Outfit', sans-serif;
     --font-body: 'Plus Jakarta Sans', sans-serif;
+
+    /* The phone's page is built on what follows (docs/plans/phone-redesign.md); the desktop pages may take them up later. */
+
+    /* Surfaces by height above --bg-primary: a card is told from what is under it by its tone, not by a shadow, which
+       does not show on near-black. The first two are the slate steps above, named by height (the first is the bar's, the
+       manifest's theme colour). Text contrast: --text-primary 9.9:1 or more on all three, --text-secondary 5.7:1 or
+       more on the first two and 4.0:1 on the third, so the third carries --text-primary only. */
+    --surface-1: var(--bg-secondary);
+    --surface-2: var(--bg-tertiary);
+    --surface-3: #334155;
+    /* Behind a sheet, and under a mark drawn over a picture. */
+    --scrim: rgba(0, 0, 0, 0.6);
+    /* Text and icons on an accent fill. On --accent-hover it is 6.3:1, on --accent 4.47:1: a filled button with text is
+       --accent-hover. */
+    --on-accent: #ffffff;
+    /* Something gone wrong or about to be lost: 6.4:1 on --surface-1, 5.3:1 on --surface-2. */
+    --danger: #f87171;
+    /* Under a photo shown large, so the picture and not the frame around it is the brightest thing on the screen. */
+    --photo-canvas: #000000;
+
+    /* Corners: chips and inputs, cards and thumbnails, sheets; a pill is round at both ends. */
+    --radius-small: 8px;
+    --radius-card: 16px;
+    --radius-sheet: 28px;
+    --radius-pill: 999px;
+
+    /* Type: five steps in rem, so the phone's own text size still scales them; two weights. */
+    --text-caption: 0.75rem;
+    --text-small: 0.875rem;
+    --text-body: 1rem;
+    --text-title: 1.25rem;
+    --text-display: 1.75rem;
+    --weight-regular: 400;
+    --weight-strong: 600;
+
+    /* The smallest a thing to tap is, either way; the phone's bar of tabs, without the screen's bottom inset. */
+    --tap: max(44px, 2.75rem);
+    --tab-bar-height: 3.5rem;
+
+    /* Motion: a sheet rising, a chip appearing, a tab changing; transform and opacity only. A page's stylesheet turns
+       it off under prefers-reduced-motion. */
+    --motion-quick: 150ms;
+    --motion-standard: 200ms;
+    --motion-sheet: 250ms;
+    --ease-out: cubic-bezier(0.2, 0, 0, 1);
 }

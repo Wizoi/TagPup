@@ -10,6 +10,8 @@ import { flush, pageExports } from "./harness.mjs";
 export const PHONE_PAGE = "http://localhost:8090/alpha/mobile.html";
 
 export const el = (ctx, id) => ctx.document.getElementById(id);
+/** A tab of the bar at the foot of the page (mobile-tabs.js), by the screen it opens: browse, grid, filter, library. */
+export const tab = (ctx, name) => ctx.document.querySelector(`#tabs [data-tab="${name}"]`);
 /** The screens shown, by their data-screen. */
 export const shown = (ctx) =>
   [...ctx.document.querySelectorAll("[data-screen]")].filter((s) => !s.classList.contains("hidden")).map((s) => s.dataset.screen);

@@ -9,7 +9,8 @@ import { wireRootsBanner } from './common/roots-banner.js';
 import { wireImageZoom } from './common/image-zoom.js';
 import { libraryOfThePage } from './common/library.js';
 import { state } from './mobile-state.js';
-import { openScreen, startScreens, whenShown, wireScreens } from './mobile-screens.js';
+import { startScreens, whenShown, wireScreens } from './mobile-screens.js';
+import { drawTabs, wireTabs } from './mobile-tabs.js';
 import { showLibraries, wireLibraries } from './mobile-library.js';
 import { linkedView, showBrowse, wireBrowse } from './mobile-browse.js';
 import { forgetGrid, showGrid, wireGrid } from './mobile-grid.js';
@@ -19,6 +20,8 @@ import { leaveEdit, wireEdit } from './mobile-edit.js';
 document.addEventListener('DOMContentLoaded', () => {
     wireRootsBanner();
     wireScreens();
+    wireTabs();
+    for (const name of ['library', 'browse', 'grid', 'photo']) whenShown(name, drawTabs);
     wireLibraries();
     whenShown('library', showLibraries);
     wireBrowse();
@@ -32,7 +35,6 @@ document.addEventListener('DOMContentLoaded', () => {
     for (const name of ['library', 'browse', 'grid']) whenShown(name, leavePhoto);
     wireEdit();
     for (const name of ['library', 'browse', 'grid', 'photo']) whenShown(name, leaveEdit);    // a swipe shows 'photo' anew
-    document.getElementById('bar-library').addEventListener('click', () => openScreen('library'));
 
     // Last: the view and the library the URL names (the library remembered as the one opened last), then the first screen.
     state.linked = linkedView();

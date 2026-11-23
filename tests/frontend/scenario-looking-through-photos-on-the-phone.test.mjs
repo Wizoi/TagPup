@@ -17,7 +17,7 @@
 import { test, describe, afterEach } from "node:test";
 import assert from "node:assert/strict";
 import { loadApp, FakeServer, click, closeAllApps } from "./harness.mjs";
-import { PHONE_PAGE, el, shown, pageState, settle, phoneLayout } from "./phone-page.mjs";
+import { PHONE_PAGE, el, shown, pageState, settle, phoneLayout, tab } from "./phone-page.mjs";
 
 const KEYWORDS = { keywords: [{ tag: "Events", name: "Events", parent: null, count: 40000 }], untagged: 0 };
 const VIEW = 40000;
@@ -184,7 +184,7 @@ describe("looking through a view's photos on the phone", () => {
     await ctx.scrollTo(3000);
     const ids = idsAsked(ctx).length;
 
-    await tap(ctx, el(ctx, "bar-library"));
+    await tap(ctx, tab(ctx, "library"));
     assert.deepEqual(shown(ctx), ["library"]);
     await back(ctx);
 
@@ -203,7 +203,7 @@ describe("looking through a view's photos on the phone", () => {
     await back(ctx);
     await ctx.scrollTo(9000);
 
-    await tap(ctx, el(ctx, "bar-library"));
+    await tap(ctx, tab(ctx, "library"));
     await back(ctx);
 
     assert.deepEqual(shown(ctx), ["grid"]);

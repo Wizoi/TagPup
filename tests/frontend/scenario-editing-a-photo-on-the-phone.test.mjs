@@ -8,8 +8,8 @@
  * - The sheet is a step of the history, its one record of being open: Back closes it, the text typed kept, and a second
  *   Back leaves the photo; Back to it from another screen opens it again; the page back from the back-forward cache, Close
  *   then Edit tapped at once, a tap on the picture above it: the sheet is always as its step says.
- * - A chip's x waits behind its own Undo; an Undo in time sends nothing; leaving the photo (a swipe, Back, the Libraries
- *   button) or the page hidden (another app, pagehide; keepalive, the sheet left open) sends what is still waiting;
+ * - A chip's x waits behind its own Undo; an Undo in time sends nothing; leaving the photo (a swipe, Back) or the page
+ *   hidden (another app, pagehide; keepalive, the sheet left open) sends what is still waiting;
  *   behind a Save still out (itself keepalive), it goes after the Save, never beside it, and names the file by the name
  *   a title gave it.
  * - Two chips of one leaf say their roots.
@@ -19,7 +19,7 @@
  *   sheet says so, reads it again and keeps the text typed.
  * - A dropped connection or a server that cannot answer says a sentence, the sheet open, the text kept; a refusal while
  *   the server is updated is waited out (web/common/api.js).
- * - Close with a title or date typed asks; Back or the Libraries button keeps it, and the photo's Edit shows it again.
+ * - Close with a title or date typed asks; Back keeps it, and the photo's Edit shows it again.
  * - A chip taken off stays off on the photo's sheet read again (Edit opened again, a Save refused and read again) while
  *   its removal waits, and the removal lands on the sheet shown: the next Save names the file as the removal left it.
  *
@@ -212,7 +212,6 @@ describe("editing a photo on the phone", () => {
       await settle(ctx);
       ctx.window.history.back();
     }],
-    ["the Libraries button", (ctx) => click(ctx.window, el(ctx, "bar-library"))],
     ["the page going", (ctx) => ctx.window.dispatchEvent(new ctx.window.Event("pagehide")), true],
     ["another app shown (Android may then discard the tab, its timers frozen)", (ctx) => {
       Object.defineProperty(ctx.document, "visibilityState", { value: "hidden", configurable: true });
@@ -556,19 +555,6 @@ describe("editing a photo on the phone", () => {
       await settle(ctx);
       ctx.window.history.back();
       await settle(ctx);
-    }],
-    ["the Libraries button", async (ctx) => {
-      click(ctx.window, el(ctx, "bar-library"));
-      await settle(ctx);
-      assert.deepEqual(shown(ctx), ["library"]);
-      ctx.window.history.back();
-      await settle(ctx);
-      assert.ok(sheetOpen(ctx), "Back to the photo's step opens its sheet again");
-      assert.equal(el(ctx, "edit-title").value, "Wren's Last Lap");
-      for (let step = 0; step < 2; step += 1) {
-        ctx.window.history.back();
-        await settle(ctx);
-      }
     }],
   ]) {
     test(`a title and date typed are kept through ${how}: the photo's Edit shows them again`, async (t) => {
