@@ -22,6 +22,7 @@
  * - Close with a title or date typed asks; Back keeps it, and the photo's Edit shows it again.
  * - A chip taken off stays off on the photo's sheet read again (Edit opened again, a Save refused and read again) while
  *   its removal waits, and the removal lands on the sheet shown: the next Save names the file as the removal left it.
+ * - What is written redraws the photo's facts under the sheet (mobile-photo.js), as the file holds it.
  *
  * Names hold spaces and apostrophes, as the live libraries' do. Every name here is made up. The Undo's five seconds are
  * shortened to UNDO here: the page's timers are what it would wait on.
@@ -291,12 +292,13 @@ describe("editing a photo on the phone", () => {
       return changedOnDisk("The file changed on disk.")();
     });
     type(ctx, "edit-title", "Wren's Last Lap");
+    const reads = calls(ctx, "/api/library/photo").length;
     click(ctx.window, el(ctx, "edit-save"));
     await settle(ctx);
 
     assert.match(said(ctx), /changed on the PC since it was read/);
     assert.equal(saveCalls(ctx.server).length, 1, "nothing sent again by itself");
-    assert.equal(calls(ctx, "/api/library/photo").length, 2, "the photo read again");
+    assert.equal(calls(ctx, "/api/library/photo").length, reads + 1, "the photo read again");
     assert.equal(el(ctx, "edit-title").value, "Wren's Last Lap", "the text typed kept");
     assert.ok(sheetOpen(ctx));
 
@@ -628,6 +630,32 @@ describe("editing a photo on the phone", () => {
     await settle(ctx);
     assert.equal(lastSave(ctx.server).path, renamed, "the next Save names the file where it is");
     assert.equal(ctx.held.title, "Wren at the Finish");
+  });
+
+  test("a title and date saved, a tag added and one taken off: the facts under the sheet say what the file holds now", async (t) => {
+    const ctx = await phone(t);
+    await openSheet(ctx);
+    const facts = (id) => [...el(ctx, id).querySelectorAll(".photo-chip")].map((chip) => chip.textContent);
+    assert.equal(el(ctx, "photo-title").textContent, "Finish line");
+    assert.deepEqual([facts("photo-people"), facts("photo-keywords")], [["Wren O'Malley"], ["Coast"]]);
+
+    type(ctx, "edit-title", "Wren's Last Lap");
+    type(ctx, "edit-date", "2023-05-20");
+    click(ctx.window, el(ctx, "edit-save"));
+    await settle(ctx);
+    assert.equal(said(ctx), "Saved.");
+    assert.equal(el(ctx, "photo-title").textContent, "Wren's Last Lap");
+    assert.equal(el(ctx, "photo-when").textContent, "Sat, May 20, 2023, 10:00 AM");
+
+    await pick(ctx, "cove", COVE);
+    assert.deepEqual(facts("photo-keywords"), ["Coast", "Cove Walk"], "added, as written");
+    click(ctx.window, chipX(ctx, COAST));
+    assert.deepEqual(facts("photo-keywords"), ["Coast", "Cove Walk"], "behind its Undo, the file still holds it");
+    ctx.window.history.back();                         // the sheet shut: the removal still goes, and the facts follow it
+    await settle(ctx, UNDO + 80);
+    assert.deepEqual(ctx.held.tags, [WREN, COVE]);
+    assert.deepEqual(facts("photo-keywords"), ["Cove Walk"]);
+    assert.equal(calls(ctx, "/api/library/photo").length, 2, "the facts' read and the sheet's: nothing read again for a write");
   });
 
   test("a chip taken off a photo since deleted from the library: refused, read again, and said; the chip comes back", async (t) => {
