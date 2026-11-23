@@ -14,7 +14,7 @@ import path from "node:path";
 import { after } from "node:test";
 import { fileURLToPath } from "node:url";
 import { JSDOM, VirtualConsole } from "jsdom";
-import { filtered, ratchet, unmadeReply } from "./write-replies.mjs";
+import { unmadeReply } from "./write-replies.mjs";
 import { pathKey } from "../../web/common/paths.js";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -555,13 +555,16 @@ export function tagFiles(records = []) {
 
 /**
  * The write replies the FakeServers of this test file gave that no route makes (write-replies.mjs unmadeReply), each once:
- * when its tests have run, the file fails unless the ratchet allows them (write-replies.mjs STILL_HAND_SPELLED), whatever
- * the page did with the reply (a page that swallows a failed request would otherwise pass on it; #3342).
+ * when its tests have run, the file fails if there is one, whatever the page did with the reply (a page that
+ * swallows a failed request would otherwise pass on it; #3342). Answer each from its route's fixture (harness.mjs
+ * saved, shiftedAs, taggedAs, tagFiles, renamedAs, deletedAs, convertedAs).
  */
 const UNMADE = new Set();
 after(() => {
-  const said = ratchet(path.basename(process.argv[1] || ""), [...UNMADE], filtered());
-  if (said) throw new Error(said);
+  if (UNMADE.size) {
+    throw new Error(`${path.basename(process.argv[1] || "")}: ${UNMADE.size} write replies no route makes:`
+      + [...UNMADE].map((each) => `\n  ${each}`).join(""));
+  }
 });
 
 /** A fetch stub that routes by URL substring and records every call. */

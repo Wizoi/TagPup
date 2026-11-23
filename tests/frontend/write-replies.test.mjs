@@ -1,9 +1,8 @@
 // A page test's fake server answers a write route only with a reply the real route makes (write-replies.mjs, #3342):
-// the replies each fixture holds pass, a reply spelled by hand fails naming its route, and the list of files still
-// answering by hand only shrinks, whatever part of a file a run chose.
+// the replies each fixture holds pass, a reply spelled by hand fails naming its route.
 import test from "node:test";
 import assert from "node:assert/strict";
-import { filtered, ratchet, unmadeReply, WRITE_ROUTES } from "./write-replies.mjs";
+import { unmadeReply, WRITE_ROUTES } from "./write-replies.mjs";
 
 const WRITE = "/library/api/photos/write";
 const TAGS = { op: "tags", changes: { "C:/Pictures/Quay/q0.jpg": { id: 3, add: ["Places/Quay"] } } };
@@ -45,18 +44,4 @@ test("a Convert's start, its end and its plan are three requests: the plan is no
   assert.ok(unmadeReply("/library/api/clip/converted?ticket=1", "GET", undefined, 200, start), "a start is no end");
   assert.equal(unmadeReply("/library/api/clip/converted?ticket=1", "GET", undefined, 200, { done: false }), null);
   assert.equal(unmadeReply("/library/api/clip/convert-plan?id=1", "GET", undefined, 200, { action: "NOTHING" }), null);
-});
-
-test("the list of files answering by hand only shrinks, and a run of some of a file's tests says nothing of it", () => {
-  const listed = { "old.test.mjs": 2 };
-  const two = ["a tag change: one", "a Delete: two"];
-  assert.match(ratchet("new.test.mjs", two.slice(0, 1), false, listed), /^new\.test\.mjs: 1 write replies no route makes \(0 allowed\)/);
-  assert.match(ratchet("old.test.mjs", [...two, "a save: three"], true, listed), /3 write replies no route makes \(2 allowed\)/);
-  assert.equal(ratchet("old.test.mjs", two, false, listed), null);
-  assert.match(ratchet("old.test.mjs", two.slice(0, 1), false, listed), /lower its count .* to 1$/);
-  assert.match(ratchet("old.test.mjs", [], false, listed), /take it off the list/);
-  assert.equal(ratchet("old.test.mjs", [], true, listed), null, "a filtered run gives fewer and says nothing");
-  assert.equal(ratchet("new.test.mjs", [], false, listed), null);
-  assert.equal(filtered(["--test-name-pattern=quay"]), true);
-  assert.equal(filtered(["--test-isolation=process", "--test-timeout=0"]), false);
 });

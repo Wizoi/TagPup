@@ -103,37 +103,3 @@ export function unmadeReply(url, method, body, status, payload) {
   }
   return null;
 }
-
-/**
- * The page test files that still answer a write route with a reply spelled by hand, each with how many distinct such
- * replies it gives (#3342). A ratchet in the style of tests/test_fixtures_make_photo_rows_like_the_indexer.py: a file
- * may not be added, nor its count grow; a file that gives fewer, run whole, must lower its count, and leave the list
- * at none, so the list only shrinks.
- */
-export const STILL_HAND_SPELLED = {
-};
-
-/** The node flags that run only some of a file's tests: such a run gives fewer replies, and says nothing of the list. */
-const FILTERS = ["--test-name-pattern", "--test-skip-pattern", "--test-only"];
-
-/** Whether this process runs only some of its file's tests (a flag of FILTERS, as node --test hands it to the file). */
-export const filtered = (flags = process.execArgv) => flags.some((flag) => FILTERS.some((name) => flag.startsWith(name)));
-
-/**
- * What the ratchet says of the test file `file` that gave the distinct replies `unmade` no route makes, or null: run
- * whole (`partial` false), a file of the list giving fewer must lower its count; a file off the list may give none, and
- * one on it no more than its count.
- */
-export function ratchet(file, unmade, partial, listed = STILL_HAND_SPELLED) {
-  const allowed = listed[file] ?? 0;
-  const said = unmade.map((each) => `\n  ${each}`).join("");
-  if (unmade.length > allowed) {
-    return `${file}: ${unmade.length} write replies no route makes (${allowed} allowed): answer each from its route's `
-      + `fixture (harness.mjs saved, shiftedAs, taggedAs, tagFiles, renamedAs, deletedAs, convertedAs):${said}`;
-  }
-  if (!partial && unmade.length < allowed) {
-    return `${file}: ${unmade.length} write replies no route makes, ${allowed} listed: lower its count in `
-      + `write-replies.mjs STILL_HAND_SPELLED to ${unmade.length}${unmade.length ? "" : " (take it off the list)"}`;
-  }
-  return null;
-}
