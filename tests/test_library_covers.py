@@ -14,14 +14,19 @@ Photos are rows as the indexer records them (tests/view_library.py, tests/photo_
 """
 import json
 import os
+import shutil
 import sys
 import unittest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import own_home  # noqa: E402
+import roots_library as rl  # noqa: E402
 import web_client  # noqa: E402
 from view_library import ViewLibrary  # noqa: E402
 
+from tagpup import config  # noqa: E402
+from tagpup.core import paths  # noqa: E402
 from tagpup.services import library_view  # noqa: E402
 
 WREN = "People/Wren Halloway"
@@ -146,6 +151,37 @@ class BrowseRowCovers(unittest.TestCase):
                      '[{"id": "x", "kind": "month", "value": "June"}]', '[{"id": "x", "kind": "keyword"}]'):
             self.refused(section="folders", rows=text)
 
+
+@unittest.skipUnless(os.name == "nt", "the spellings are Windows paths")
+class ARootedLibrarysCovers(unittest.TestCase):
+    """A library with roots: a row names its folder as the page has it, the place the owner knows; the service resolves it
+    as it resolves a view's source (the ingress does not read `rows`), and a root this machine does not place is the roots'
+    sentence, never a Browse of rows with no covers."""
+
+    def setUp(self):
+        self.home = own_home.for_test(self)
+        self.side = rl.Side(self.home, "harbour", real=2, bulk=1, outside=2)
+        self.assertIsNone(self.side.adopt().refused)
+        self.library = self.side.library
+        self.folder = os.path.join(self.side.pictures, rl.FOLDERS[0])
+
+    def cover(self, folder):
+        rows = [{"id": "f:one", "kind": "folder", "value": folder}]
+        return library_view.covers(self.library, "folders", json.dumps(rows))["covers"][0]["photo"]
+
+    def test_a_folder_row_in_the_previous_places_spelling_has_the_same_cover(self):
+        first = self.cover(self.folder)
+        self.assertEqual(library_view.ids(self.library, "folder", self.folder, False, cap=1)["ids"], [first])
+        copy = os.path.join(self.home.root, "Copy", "Pictures")
+        shutil.copytree(self.side.pictures, copy, copy_function=shutil.copy2)
+        config.set_location(rl.NAME, copy)
+        self.assertEqual(first, self.cover(self.folder))
+
+    def test_a_root_this_machine_does_not_place_is_the_roots_sentence(self):
+        os.remove(config.machine_roots_path())
+        with self.assertRaises(paths.RootsError) as caught:
+            self.cover(self.folder)
+        self.assertIn("machine_roots.json", str(caught.exception))
 
 if __name__ == "__main__":
     unittest.main()
