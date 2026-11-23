@@ -35,7 +35,10 @@ from tagpup import launcher  # noqa: E402
 from tagpup import runtime as runtimes  # noqa: E402
 from tagpup.web import lifecycle as lifecycles  # noqa: E402
 from tagpup.web import responses  # noqa: E402
+from tagpup.core import paths  # noqa: E402
 from tagpup.core.library import Library  # noqa: E402
+from tagpup.files import images  # noqa: E402
+from tagpup.jobs import watching  # noqa: E402
 from tagpup.jobs import suggestions as suggestion_jobs  # noqa: E402
 from tagpup.core.result import Result  # noqa: E402
 from tagpup.runtime import Runtime  # noqa: E402
@@ -626,6 +629,91 @@ class AnUpdateWhileAShareIsAway(Base):
         self.assertEqual((1, 1), (self.stuck.stops, self.quick.stops))
         self.assertEqual([], [thread.name for thread in threading.enumerate()
                               if thread.name.startswith(runtimes.STOPPING_THREAD)])
+
+
+class AnInstallWhileAWatchedShareStopsAnswering(Base):
+    """The task whose stop never returned in the 22-minute hang (2026-11-19; AnUpdateWhileAShareIsAway, #3345). Of the
+    server's three background tasks two only join their own thread for the time they are given (the recurring jobs'
+    runner, the idle caches' timer); the folder watcher's stop called watchdog's observer.stop(), which no timeout
+    bounds: under the observer's lock it stops each watch (its read of the folder cancelled, its handle closed) and
+    joins the watch's thread with no timeout, so a read of a share that does not answer, which its cancel does not
+    end, holds it for good. Here the real watcher on its real watchdog observer, its watches' reads held as such a
+    share holds them, and an install's hand-over (launcher.make_way, through the status and drain routes): the old server
+    drains and is ended, and the install goes on, with IDLE_PATIENCE out of reach -- the deadline is not what ends it.
+    On the code of the hang (184118b9) the hand-over had not ended 10 s later."""
+
+    OLD, NEW = "20261119-090000-aaaaaaa", "20261119-100000-bbbbbbb"
+
+    def setUp(self):
+        super().setUp()
+        self.root = os.path.join(self.home.root, "Photos")
+        os.makedirs(os.path.join(self.root, "Regatta"))
+        self.away, self.let_go, self.held = threading.Event(), threading.Event(), []
+        self.watcher = watching.Watcher(lambda: [self.library], lambda library: [self.root],
+                                        lambda library, folder: None, images.is_photo,
+                                        debounce=0.5, recheck=0.2, tick=0.05, observer=self.observer)
+        self.addCleanup(self.watcher.stop, 10)
+        self.lifecycle = Lifecycle(version=self.OLD, launcher_token=TOKEN, runtime=self.runtime,
+                                   background=runtimes.Background([(runtimes.FOLDER_WATCHER, self.watcher)]))
+        self.app = web.create_app("tagpup", startup=self.library, runtime=self.runtime, lifecycle=self.lifecycle)
+        self.app.testing = True
+        self.addCleanup(self.lifecycle.resume)
+        # Run first (last in, first out): the share answers again, and the held reads end.
+        self.addCleanup(self.let_go.set)
+        self.addCleanup(self.away.clear)
+
+    def observer(self):
+        """watchdog's own observer, its watches' reads held while the share is away: a held read returns only when the
+        share answers again (let_go), whatever its stop does."""
+        observer = watching.make_observer()
+        away, let_go, held = self.away, self.let_go, self.held
+
+        class AReadOfAShareThatDoesNotAnswer(observer._emitter_class):
+            def queue_events(self, timeout):
+                if away.is_set():
+                    held.append(self)
+                    let_go.wait()
+                    return
+                super().queue_events(timeout)
+        observer._emitter_class = AReadOfAShareThatDoesNotAnswer
+        return observer
+
+    def test_the_install_drains_and_ends_the_old_server_without_waiting_out_the_idle_patience(self):
+        self.away.set()
+        self.lifecycle.background.start()
+        self.wait_until(lambda: self.watcher.watched() == [paths.stored(self.root)] and len(self.held) == 2)
+        found = {"pid": 4242, "started": 1, "ports": {"tagpup": 5}, "version": self.OLD, "token": TOKEN}
+        said, ended, port_held, now = [], [], [True], [0.0]
+        client = self.client()
+
+        def ask(port, timeout=None):
+            return client.get("/api/server").get_json()
+
+        def drain(port, token, quiet=launcher.QUIET, seconds=None):
+            # The launcher's body, with a deadline of 1 s, not its 20.
+            return client.post("/api/server/drain", json={"seconds": 1, "quiet": quiet, "lease": launcher.LEASE},
+                               headers={launcher.HEADER: token}).get_json()
+
+        def end(theirs, port, answering, sleep=None):
+            ended.append(theirs["pid"])
+            port_held[0] = False
+            return True
+
+        def sleep(seconds):
+            now[0] += seconds
+        with mock.patch.multiple(launcher, ask=ask, drain=drain, end=end, record=lambda port: found,
+                                 IDLE_PATIENCE=float("inf")):
+            way, answer = self.in_thread(lambda: launcher.make_way(
+                5, self.NEW, say=said.append, open_page=lambda: None, answering=lambda port: port_held[0],
+                sleep=sleep, clock=lambda: now[0], page=False))
+            way.join(10)
+            self.assertFalse(way.is_alive(), "the hand-over did not end: the folder watcher's stop held the drain")
+        self.assertEqual([(launcher.SERVE, False)], answer)
+        self.assertEqual([4242], ended)
+        self.assertIn("TagPup %s finished what it was doing; ending it and starting %s." % (self.OLD, self.NEW), said)
+        self.assertEqual([], [line for line in said if "would not let go" in line])
+        # The reads (the folder's watch and its parent's) were never ended: the server was ended around them.
+        self.assertEqual([True, True], [read.is_alive() for read in self.held])
 
 
 if __name__ == "__main__":
