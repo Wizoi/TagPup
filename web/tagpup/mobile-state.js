@@ -46,7 +46,7 @@ export const state = {
     // onto a photo it names waits for it rather than asking again (mobile-photo.js).
     cardsAsked: null,
     // The facts sheet under the photo (mobile-photo.js): the photo's record as /api/library/photo read it, { id, record,
-    // failed }, null before a read lands, the Edit sheet's read landing there too (recordLanded); the read out, { id,
+    // failed, gone (answered 404: deleted on the PC) }, null before a read lands, the Edit sheet's read landing there too (recordLanded); the read out, { id,
     // dropped } (one at a time: a swipe on while it is out asks the photo then shown when it lands; `dropped`, a later
     // read or a write landed first and its reply is let go); whether the sheet is pulled up (a swipe is refused while it is).
     facts: null,

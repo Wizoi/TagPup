@@ -86,6 +86,8 @@ function readAround(lib, id, at) {
     return reply;
 }
 
+const GONE = 'This photo is no longer in the library.';
+
 /** Say why the photo is not shown, or '' for nothing to say. */
 function say(text) {
     byId('photo-problem').textContent = text;
@@ -207,6 +209,7 @@ function drawFacts() {
     const tags = record && state.people ? sortedTags(record.tags || []) : null;
     drawChips('photo-people', tags && tags.filter(isPerson), tags, 'No people');
     drawChips('photo-keywords', tags && tags.filter((tag) => !isPerson(tag)), tags, 'No keywords');
+    if (read && read.gone) say(GONE);    // deleted on the PC, its card still held: that alone, not a read that failed
     const why = read && read.failed ? 'Could not read the title and tags of this photo. Swipe on, or come back to it later.'
         : record && state.vocabularyFailed ? 'Could not read the library\'s people and keywords. Swipe on to try again.' : '';
     byId('photo-facts-problem').textContent = why;
@@ -241,9 +244,10 @@ function readFacts() {
         readFacts();    // swiped on while it was out: the photo shown now
     };
     api.fetch(`/api/library/photo?id=${id}`)
-        .then((res) => api.answered(res, 'Could not read this photo.'))
-        .then((body) => landed(body && body.photo ? { id, record: body.photo, failed: false } : { id, record: null, failed: true }),
-            () => landed({ id, record: null, failed: true }));
+        .then((res) => (res.status === 404 ? { gone: true } : api.answered(res, 'Could not read this photo.')))
+        .then((body) => landed(body && body.photo ? { id, record: body.photo, failed: false }
+            : { id, record: null, failed: !(body && body.gone), gone: Boolean(body && body.gone) }),
+        () => landed({ id, record: null, failed: true }));
 }
 
 /**
@@ -308,7 +312,7 @@ export function showPhoto() {
             if (read) {
                 draw(read);
                 drawFacts();
-            } else say('This photo is no longer in the library.');
+            } else say(GONE);
         })
         .catch(() => {
             if (current()) say('Could not load this photo. Swipe on, or come back to it later.');
@@ -353,6 +357,7 @@ export function wirePhoto() {
     picture.addEventListener('error', () => {
         if (!picture.getAttribute('src') || state.screen !== 'photo') return;
         picture.classList.add('hidden');
+        if (state.facts && state.facts.id === photoShown() && state.facts.gone) return;    // said: no longer in the library
         // Not "the PC could not read it": a server being updated fails a picture too, and api.js asks it again.
         say('Could not load this photo just now. Swipe on, or come back to it later.');
     });

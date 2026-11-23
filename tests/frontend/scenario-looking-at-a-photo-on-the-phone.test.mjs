@@ -415,6 +415,24 @@ describe("the facts under a photo on the phone", () => {
     assert.equal(factsProblem(ctx), "", "the next photo says nothing of the last");
   });
 
+  test("a photo deleted on the PC, tapped on a grid not yet told: one sentence, that it is no longer in the library", async (t) => {
+    const gone = new Set();
+    const ctx = await phone(t, { count: 3, card: (id) => (gone.has(id) ? null : phoneCard(id)) });
+    await openPhoto(ctx, 1);
+    ctx.window.history.back();
+    await settle(ctx);
+    gone.add(2);                                                     // deleted on the PC: the grid still holds its card
+    click(ctx.window, cards(ctx).find((c) => Number(c.dataset.id) === 2));
+    await settle(ctx);
+    assert.equal(said(ctx), "This photo is no longer in the library.");
+    assert.equal(factsProblem(ctx), "", "not also that its title and tags could not be read");
+    assert.deepEqual([noneIn(ctx, "photo-people"), noneIn(ctx, "photo-keywords")], ["", ""], "no chips claimed of a photo gone");
+
+    next(ctx);                                                       // the swipe goes on
+    await settle(ctx);
+    assert.deepEqual([said(ctx), factsProblem(ctx)], ["", ""]);
+  });
+
   test("a 500-character title is clamped to three lines with more, which pulls the sheet up to it whole", async (t) => {
     const long = "Cousins at the coast before the storm, ".repeat(13).slice(0, 500);
     const ctx = await phone(t, { count: 3, record: () => ({ title: long }) });
