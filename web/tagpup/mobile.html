@@ -100,11 +100,38 @@
             <div id="photo-stage" class="photo-stage">
                 <img id="photo-picture" class="photo-picture hidden" alt="The photo">
                 <video id="photo-clip" class="photo-clip hidden" controls playsinline preload="metadata"></video>
+                <p id="photo-problem" class="problem hidden" role="alert"></p>
+                <p id="photo-place" class="photo-place"></p>
             </div>
-            <p id="photo-problem" class="problem hidden" role="alert"></p>
-            <h2 id="photo-name" class="photo-name"></h2>
-            <p id="photo-at" class="screen-note"></p>
-            <button type="button" id="photo-edit" class="photo-edit">Edit</button>
+            <!-- The photo's facts (mobile-photo.js): the first part always shown, the rest pulled up by the handle. -->
+            <div id="photo-facts" class="photo-facts" role="region" aria-label="About this photo">
+                <button type="button" id="photo-facts-handle" class="photo-facts-handle" aria-expanded="false"
+                    aria-controls="photo-more" aria-label="More about this photo"></button>
+                <!-- Edit on the date's line: in reach with the sheet down, however many chips the sheet cuts off. -->
+                <div class="photo-head">
+                    <p id="photo-when" class="photo-when"></p>
+                    <button type="button" id="photo-edit" class="photo-edit">Edit</button>
+                </div>
+                <p id="photo-title" class="photo-title"></p>
+                <button type="button" id="photo-title-more" class="photo-title-more hidden">more</button>
+                <p id="photo-facts-problem" class="problem hidden" role="alert"></p>
+                <div class="photo-tagged">
+                    <h3 class="photo-tagged-head">People</h3>
+                    <div id="photo-people" class="photo-chips"></div>
+                </div>
+                <div class="photo-tagged">
+                    <h3 class="photo-tagged-head">Keywords</h3>
+                    <div id="photo-keywords" class="photo-chips"></div>
+                </div>
+                <dl id="photo-more" class="photo-more hidden">
+                    <div class="photo-fact"><dt>File</dt><dd id="photo-name"></dd></div>
+                    <div class="photo-fact"><dt>Folder</dt><dd id="photo-folder"></dd></div>
+                    <div class="photo-fact"><dt>Kind</dt><dd id="photo-kind"></dd></div>
+                    <div class="photo-fact"><dt>Size</dt><dd id="photo-size"></dd></div>
+                    <div class="photo-fact"><dt>Camera</dt><dd id="photo-camera"></dd></div>
+                    <div class="photo-fact"><dt>Lens</dt><dd id="photo-lens"></dd></div>
+                </dl>
+            </div>
             <div id="edit-sheet" class="edit-sheet hidden" role="dialog" aria-label="Edit this photo">
                 <p id="edit-problem" class="edit-problem hidden" role="alert"></p>
                 <h3 class="edit-heading">People</h3>

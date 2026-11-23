@@ -25,9 +25,10 @@ import { api } from './common/api.js';
 import { buildElement, replaceContent } from './common/dom.js';
 import { inTurn, postPhotoMetadata, readMoved, takeWritten } from './common/photo-write.js';
 import { baseName, pathKey } from './common/paths.js';
-import { PeopleDirectory, leafOf, photoAlreadyHas, rootOf, sortedTags } from './common/vocabulary.js';
+import { leafOf, photoAlreadyHas, sortedTags } from './common/vocabulary.js';
 import { TAKEN_DIGITS } from './format.js';
 import { state } from './mobile-state.js';
+import { chipSaid, isPerson, photoShown, photoWritten, readVocabulary, recordLanded } from './mobile-photo.js';
 import { closeSheetStep, openSheetStep, whenSheet } from './mobile-screens.js';
 
 const byId = (id) => document.getElementById(id);
@@ -45,7 +46,6 @@ function why(err) {
     return err instanceof TypeError ? 'no connection. Try again.' : (err && err.message) || 'try again.';
 }
 
-const isPerson = (tag) => Boolean(state.people && state.people.ofTag(tag));
 /** The record the sheet shows of photo `id`, read; null when the sheet is shut, on another photo, or still reading. */
 const shownOf = (id) => (state.edit && state.edit.id === id && state.edit.record) || null;
 
@@ -87,6 +87,7 @@ async function writeTags(job) {
     }
     const written = Object.entries(data.written || {}).find(([each]) => pathKey(each) === pathKey(job.path));
     if (!written) throw new Error('this file is not where the library last saw it.');
+    photoWritten(job.id, { tags: written[1].tags.slice() });
     const record = shownOf(job.id);    // read again since the change was asked, or not shown: the sheet's as it is now
     if (!record) return;
     record.tags = written[1].tags.slice();
@@ -149,9 +150,8 @@ function drawChips() {
     const going = new Set(state.removals.filter((each) => each.id === id).map((each) => each.tag));
     for (const job of state.queued) if (job.id === id) (job.change.remove || []).forEach((tag) => going.add(tag));
     const tags = sortedTags((record.tags || []).filter((tag) => !going.has(tag)));
-    const twice = (tag) => tags.filter((each) => leafOf(each).toLowerCase() === leafOf(tag).toLowerCase()).length > 1;
     const chip = (tag) => buildElement('span', { className: 'edit-chip', title: tag }, [
-        twice(tag) ? `${leafOf(tag)} (${rootOf(tag)})` : leafOf(tag),
+        chipSaid(tags, tag),
         buildElement('button', { className: 'edit-chip-x', text: '×', data: { tag }, attrs: { type: 'button', 'aria-label': `Take off ${tag}` } }),
     ]);
     replaceContent(byId('edit-people'), ...tags.filter(isPerson).map(chip));
@@ -214,14 +214,14 @@ function drawRecord(record, keepTyped) {
     byId('edit-time').value = when.time;
 }
 
-/** Read the sheet's photo as its file is now. */
+/** Read the sheet's photo as its file is now: the record the facts under the sheet hold too (recordLanded). */
 function readRecord(keepTyped = false) {
     const edit = state.edit;
     api.fetch(`/api/library/photo?id=${edit.id}`)
         .then((res) => api.answered(res, 'Could not read this photo.'))
         .then((body) => {
             if (state.edit !== edit || !body || !body.photo) return;
-            edit.record = body.photo;
+            edit.record = recordLanded(edit.id, body.photo);
             drawRecord(edit.record, keepTyped);
             if (!keepTyped) putDraftBack(edit);
         })
@@ -239,23 +239,6 @@ function putDraftBack(edit) {
     else state.drafts.delete(edit.id);    // the file holds them now
 }
 
-/** The library's tags and people, asked once a page; a failure is asked again at the next open. */
-function readVocabulary() {
-    if (state.tags) return;
-    Promise.all(['/api/tags', '/api/people'].map((route) => api.fetch(route).then((res) => api.answered(res, 'no tags.'))))
-        .then(([tags, people]) => {
-            state.people = new PeopleDirectory(people);
-            state.tags = Array.isArray(tags) ? tags : [];
-            if (state.edit && state.edit.record) drawRecord(state.edit.record, true);
-        }, () => {});
-}
-
-/** The id of the photo the Photo screen shows, the one its sheet edits; null on another screen. */
-function photoShown() {
-    const place = state.place;
-    return state.screen === 'photo' && place && Number.isInteger(place.id) ? place.id : null;
-}
-
 /** Edit tapped: the sheet, a step of the history, drawn by it (sheetStep). */
 function openEdit() {
     if (photoShown() !== null) openSheetStep();
@@ -271,7 +254,9 @@ function showEdit() {
     for (const id of ['edit-people', 'edit-keywords', 'edit-matches']) replaceContent(byId(id));
     for (const id of ['edit-add', 'edit-title', 'edit-date', 'edit-time']) byId(id).value = '';
     say('Reading this photo...');
-    readVocabulary();
+    readVocabulary().then(() => {
+        if (state.edit && state.edit.record) drawRecord(state.edit.record, true);
+    }, () => {});    // asked again at the next open
     readRecord();
 }
 
@@ -333,6 +318,7 @@ function save() {
             photoMoved(edit.id, data.new_path);
         }
         state.drafts.delete(edit.id);
+        photoWritten(edit.id, { title: record.title, taken: record.taken, path: record.path });
         if (state.edit === edit) {
             drawRecord(record, false);
             say('Saved.');

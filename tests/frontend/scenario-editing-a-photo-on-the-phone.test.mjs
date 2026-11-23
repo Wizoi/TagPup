@@ -22,6 +22,7 @@
  * - Close with a title or date typed asks; Back keeps it, and the photo's Edit shows it again.
  * - A chip taken off stays off on the photo's sheet read again (Edit opened again, a Save refused and read again) while
  *   its removal waits, and the removal lands on the sheet shown: the next Save names the file as the removal left it.
+ * - What is written redraws the photo's facts under the sheet (mobile-photo.js), as the file holds it.
  *
  * Names hold spaces and apostrophes, as the live libraries' do. Every name here is made up. The Undo's five seconds are
  * shortened to UNDO here: the page's timers are what it would wait on.
@@ -29,7 +30,7 @@
 import { test, describe, afterEach } from "node:test";
 import assert from "node:assert/strict";
 import { loadApp, FakeServer, flush, click, closeAllApps, pageExports, PEOPLE_ROUTE, PHOTO_WRITES, CLIP_WRITES, SAVE, lastSave, saveCalls,
-  saved, changedOnDisk, taggedAs } from "./harness.mjs";
+  saved, changedOnDisk, taggedAs, answer } from "./harness.mjs";
 import { PHONE_PAGE, el, shown, pageState, settle, phoneCard, phoneLayout } from "./phone-page.mjs";
 
 const KEYWORDS = { keywords: [{ tag: "Events", name: "Events", parent: null, count: 20 }], untagged: 0 };
@@ -147,6 +148,17 @@ function holdNext(ctx, route) {
   });
   return hold;
 }
+
+/** The next request of `route` answered `status`, once: the PC busy for a moment, then answering again. */
+function failOnce(ctx, route, status = 503) {
+  ctx.server.first(route, () => {
+    ctx.server.routes.shift();
+    return answer(status, { error: "The library is busy." });
+  });
+}
+
+const factsProblem = (ctx) => (el(ctx, "photo-facts-problem").classList.contains("hidden") ? "" : el(ctx, "photo-facts-problem").textContent);
+const factChips = (ctx, id) => [...el(ctx, id).querySelectorAll(".photo-chip")].map((chip) => chip.textContent);
 
 afterEach(() => closeAllApps());
 
@@ -291,12 +303,13 @@ describe("editing a photo on the phone", () => {
       return changedOnDisk("The file changed on disk.")();
     });
     type(ctx, "edit-title", "Wren's Last Lap");
+    const reads = calls(ctx, "/api/library/photo").length;
     click(ctx.window, el(ctx, "edit-save"));
     await settle(ctx);
 
     assert.match(said(ctx), /changed on the PC since it was read/);
     assert.equal(saveCalls(ctx.server).length, 1, "nothing sent again by itself");
-    assert.equal(calls(ctx, "/api/library/photo").length, 2, "the photo read again");
+    assert.equal(calls(ctx, "/api/library/photo").length, reads + 1, "the photo read again");
     assert.equal(el(ctx, "edit-title").value, "Wren's Last Lap", "the text typed kept");
     assert.ok(sheetOpen(ctx));
 
@@ -628,6 +641,94 @@ describe("editing a photo on the phone", () => {
     await settle(ctx);
     assert.equal(lastSave(ctx.server).path, renamed, "the next Save names the file where it is");
     assert.equal(ctx.held.title, "Wren at the Finish");
+  });
+
+  test("a title and date saved, a tag added and one taken off: the facts under the sheet say what the file holds now", async (t) => {
+    const ctx = await phone(t);
+    await openSheet(ctx);
+    const facts = (id) => [...el(ctx, id).querySelectorAll(".photo-chip")].map((chip) => chip.textContent);
+    assert.equal(el(ctx, "photo-title").textContent, "Finish line");
+    assert.deepEqual([facts("photo-people"), facts("photo-keywords")], [["Wren O'Malley"], ["Coast"]]);
+
+    type(ctx, "edit-title", "Wren's Last Lap");
+    type(ctx, "edit-date", "2023-05-20");
+    click(ctx.window, el(ctx, "edit-save"));
+    await settle(ctx);
+    assert.equal(said(ctx), "Saved.");
+    assert.equal(el(ctx, "photo-title").textContent, "Wren's Last Lap");
+    assert.equal(el(ctx, "photo-when").textContent, "Sat, May 20, 2023, 10:00 AM");
+
+    await pick(ctx, "cove", COVE);
+    assert.deepEqual(facts("photo-keywords"), ["Coast", "Cove Walk"], "added, as written");
+    click(ctx.window, chipX(ctx, COAST));
+    assert.deepEqual(facts("photo-keywords"), ["Coast", "Cove Walk"], "behind its Undo, the file still holds it");
+    ctx.window.history.back();                         // the sheet shut: the removal still goes, and the facts follow it
+    await settle(ctx, UNDO + 80);
+    assert.deepEqual(ctx.held.tags, [WREN, COVE]);
+    assert.deepEqual(facts("photo-keywords"), ["Cove Walk"]);
+    assert.equal(calls(ctx, "/api/library/photo").length, 2, "the facts' read and the sheet's: nothing read again for a write");
+  });
+
+  test("the facts could not be read once, then Edit and Save: the sheet's read and its Save are the facts' too", async (t) => {
+    const ctx = await phone(t);
+    failOnce(ctx, "/api/library/photo?id=1");
+    await openSheet(ctx);
+    assert.equal(calls(ctx, "/api/library/photo").length, 2, "the facts' read, refused, and the sheet's");
+    assert.equal(factsProblem(ctx), "", "the sheet's read is the facts' read");
+    assert.equal(el(ctx, "photo-title").textContent, "Finish line");
+
+    type(ctx, "edit-title", "Wren's Last Lap");
+    click(ctx.window, el(ctx, "edit-save"));
+    await settle(ctx);
+    assert.equal(said(ctx), "Saved.");
+    assert.equal(el(ctx, "photo-title").textContent, "Wren's Last Lap");
+    assert.deepEqual([factChips(ctx, "photo-people"), factChips(ctx, "photo-keywords")], [["Wren O'Malley"], ["Coast"]]);
+    assert.equal(factsProblem(ctx), "");
+  });
+
+  test("the library's people could not be read once, then Edit: read again for the sheet, the facts drawn by them too", async (t) => {
+    const ctx = await phone(t);
+    failOnce(ctx, "/api/tags");
+    click(ctx.window, ctx.document.querySelector('[data-section="keywords"]'));
+    await settle(ctx);
+    click(ctx.window, [...el(ctx, "browse-rows").querySelectorAll(".browse-item")].find((r) => r.textContent.includes("Events")));
+    await settle(ctx);
+    click(ctx.window, el(ctx, "browse-show"));
+    await settle(ctx, 80);
+    click(ctx.window, [...el(ctx, "grid-cards").querySelectorAll(".phone-card[data-id]")].find((c) => c.dataset.id === "1"));
+    await settle(ctx);
+    assert.match(factsProblem(ctx), /^Could not read the library's people and keywords/);
+    assert.deepEqual(factChips(ctx, "photo-people"), []);
+
+    click(ctx.window, el(ctx, "photo-edit"));
+    await settle(ctx);
+    assert.equal(factsProblem(ctx), "", "read again by the sheet: the facts say nothing of the failure");
+    assert.deepEqual([factChips(ctx, "photo-people"), factChips(ctx, "photo-keywords")], [["Wren O'Malley"], ["Coast"]]);
+  });
+
+  test("a chip taken off, the photo left and opened again: a facts read out as the removal lands is read again, not kept", async (t) => {
+    const ctx = await phone(t);
+    await openSheet(ctx);
+    const write = holdNext(ctx, "/api/photos/write");
+    click(ctx.window, chipX(ctx, COAST));
+    ctx.window.history.back();                         // the sheet shut, the removal still behind its Undo
+    await settle(ctx);
+    ctx.window.history.back();                         // the grid: the removal sent now
+    await settle(ctx);
+    assert.deepEqual(shown(ctx), ["grid"]);
+
+    const before = { photo: { id: 1, ...ctx.held, filename: "Wren's Meet 1.jpg", tags: ctx.held.tags.slice(), people: [], raw_metadata: {} } };
+    const read = holdNext(ctx, "/api/library/photo?id=1");
+    click(ctx.window, [...el(ctx, "grid-cards").querySelectorAll(".phone-card[data-id]")].find((c) => c.dataset.id === "1"));
+    await settle(ctx);
+    const route = ctx.server.routes.find((each) => each.match === "/api/photos/write");
+    write.release((url, body) => route.body(url, body));
+    await settle(ctx);
+    assert.deepEqual(ctx.held.tags, [WREN]);
+    read.release(before);                              // read before the removal landed: Coast still on it
+    await settle(ctx);
+    assert.deepEqual([factChips(ctx, "photo-people"), factChips(ctx, "photo-keywords")], [["Wren O'Malley"], []]);
+    assert.equal(calls(ctx, "/api/library/photo").length, 4, "the facts' and the sheet's reads, the one let go, and the one again");
   });
 
   test("a chip taken off a photo since deleted from the library: refused, read again, and said; the chip comes back", async (t) => {
