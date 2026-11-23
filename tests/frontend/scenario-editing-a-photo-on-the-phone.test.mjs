@@ -706,6 +706,31 @@ describe("editing a photo on the phone", () => {
     assert.deepEqual([factChips(ctx, "photo-people"), factChips(ctx, "photo-keywords")], [["Wren O'Malley"], ["Coast"]]);
   });
 
+  test("a chip taken off, the photo left and opened again: a facts read out as the removal lands is read again, not kept", async (t) => {
+    const ctx = await phone(t);
+    await openSheet(ctx);
+    const write = holdNext(ctx, "/api/photos/write");
+    click(ctx.window, chipX(ctx, COAST));
+    ctx.window.history.back();                         // the sheet shut, the removal still behind its Undo
+    await settle(ctx);
+    ctx.window.history.back();                         // the grid: the removal sent now
+    await settle(ctx);
+    assert.deepEqual(shown(ctx), ["grid"]);
+
+    const before = { photo: { id: 1, ...ctx.held, filename: "Wren's Meet 1.jpg", tags: ctx.held.tags.slice(), people: [], raw_metadata: {} } };
+    const read = holdNext(ctx, "/api/library/photo?id=1");
+    click(ctx.window, [...el(ctx, "grid-cards").querySelectorAll(".phone-card[data-id]")].find((c) => c.dataset.id === "1"));
+    await settle(ctx);
+    const route = ctx.server.routes.find((each) => each.match === "/api/photos/write");
+    write.release((url, body) => route.body(url, body));
+    await settle(ctx);
+    assert.deepEqual(ctx.held.tags, [WREN]);
+    read.release(before);                              // read before the removal landed: Coast still on it
+    await settle(ctx);
+    assert.deepEqual([factChips(ctx, "photo-people"), factChips(ctx, "photo-keywords")], [["Wren O'Malley"], []]);
+    assert.equal(calls(ctx, "/api/library/photo").length, 4, "the facts' and the sheet's reads, the one let go, and the one again");
+  });
+
   test("a chip taken off a photo since deleted from the library: refused, read again, and said; the chip comes back", async (t) => {
     const ctx = await phone(t);
     await openSheet(ctx);

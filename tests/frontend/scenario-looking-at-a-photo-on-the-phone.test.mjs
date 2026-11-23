@@ -490,6 +490,30 @@ describe("the facts under a photo on the phone", () => {
     assert.equal(el(ctx, "photo-title").textContent, "Lap 63", "the facts of the photo landed on");
   });
 
+  test("Back while the facts are read, the same card again: the reply that came after Back is let go, the photo read again", async (t) => {
+    let title = "Before the PC's edit";
+    const ctx = await phone(t, { count: 3, record: () => ({ title }) });
+    const hold = {};
+    ctx.server.first("/api/library/photo?id=1", () => {
+      ctx.server.routes.shift();
+      const reply = { photo: phoneRecord(phoneCard(1), { title }) };
+      return new Promise((resolve) => { hold.release = () => resolve(reply); });
+    });
+    await openPhoto(ctx, 1);
+    assert.equal(el(ctx, "photo-title").textContent, "", "still reading");
+    ctx.window.history.back();
+    await settle(ctx);
+    assert.deepEqual(shown(ctx), ["grid"]);
+    title = "After the PC's edit";                                   // edited on the PC meanwhile
+    hold.release();
+    await settle(ctx);
+
+    click(ctx.window, cards(ctx).find((c) => Number(c.dataset.id) === 1));
+    await settle(ctx);
+    assert.equal(el(ctx, "photo-title").textContent, "After the PC's edit", "read again, not the reply that landed on the grid");
+    assert.equal(photoReads(ctx), 2);
+  });
+
   test("a phone on its side: the facts down to their handle, pulled up beside the picture, the title measured again", async (t) => {
     const css = fs.readFileSync(path.join(HERE, "../../web/tagpup/mobile.css"), "utf8");
     const sideways = css.split("@media (orientation: landscape) and (max-height: 500px)").slice(1)

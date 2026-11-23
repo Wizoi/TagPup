@@ -225,7 +225,9 @@ function drawFacts() {
 
 /**
  * The record of the photo shown, read; one read out at a time, and when it lands the photo shown then is read if not yet.
- * A reply the Edit sheet's read overtook (`dropped`, recordLanded) is let go: the facts hold the later one.
+ * A reply is let go when its photo is no longer shown (swiped past, or Back: the same card tapped again is read again)
+ * or it is `dropped`: the Edit sheet's read overtook it (recordLanded), or the photo was written while it was out
+ * (photoWritten), and it is sent again.
  */
 function readFacts() {
     const id = photoShown();
@@ -234,7 +236,7 @@ function readFacts() {
     state.factsAsked = asked;
     const landed = (facts) => {
         state.factsAsked = null;
-        if (!asked.dropped) state.facts = facts;
+        if (!asked.dropped && photoShown() === id) state.facts = facts;
         if (photoShown() === id) drawFacts();
         readFacts();    // swiped on while it was out: the photo shown now
     };
@@ -255,8 +257,9 @@ export function recordLanded(id, record) {
     return record;
 }
 
-/** Photo `id` was written (mobile-edit.js), its file now holding `fields`: its facts say so. */
+/** Photo `id` was written (mobile-edit.js), its file now holding `fields`: its facts say so, a read of them out read again. */
 export function photoWritten(id, fields) {
+    if (state.factsAsked && state.factsAsked.id === id) state.factsAsked.dropped = true;    // it may have read the file before
     if (state.facts && state.facts.id === id && state.facts.record) Object.assign(state.facts.record, fields);
     if (photoShown() === id) drawFacts();
 }
