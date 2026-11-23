@@ -110,4 +110,23 @@ describe("the pages' shape", () => {
       assert.match(text.trimStart(), /^@import url\("common\/theme\.css"\);/, `web/${folder}/${sheet} does not import the theme first`);
     }
   });
+
+  test("every stylesheet closes each block it opens, so a rule after an @media block is not inside it", () => {
+    // Cut 2 of the phone redesign appended its covers after cut 1's prefers-reduced-motion block with that block's brace
+    // lost: the browser read every rule after it as reduced-motion only, and Browse's People strip fell apart on a phone.
+    const open = [];
+    for (const dir of ["tagpup", "tuner", "common", "activity"]) {
+      for (const name of fs.readdirSync(path.join(REPO_ROOT, "web", dir)).filter((n) => n.endsWith(".css"))) {
+        const text = fs.readFileSync(path.join(REPO_ROOT, "web", dir, name), "utf8")
+          .replace(/\/\*[\s\S]*?\*\//g, "").replace(/"(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'/g, '""');
+        let depth = 0;
+        for (const ch of text) {
+          depth += ch === "{" ? 1 : ch === "}" ? -1 : 0;
+          if (depth < 0) break;
+        }
+        if (depth !== 0) open.push(`web/${dir}/${name}: ${depth > 0 ? `${depth} block(s) left open` : "a brace closes nothing"}`);
+      }
+    }
+    assert.deepEqual(open, []);
+  });
 });

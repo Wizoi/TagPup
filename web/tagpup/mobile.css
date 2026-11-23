@@ -88,7 +88,7 @@ button:disabled {
 .edit-undo {
     padding: 0 1.25rem;
     color: var(--text-primary);
-    background-color: var(--surface-2);
+    background-color: var(--bg-tertiary);
     border: none;
     border-radius: var(--radius-pill);
 }
@@ -133,7 +133,7 @@ button:disabled {
     align-items: center;
     gap: 0.25rem;
     padding: calc(0.25rem + env(safe-area-inset-top)) 0.5rem 0.25rem;
-    background-color: var(--surface-1);
+    background-color: var(--bg-secondary);
 }
 
 .roots-banner:not(.hidden) {
@@ -176,7 +176,7 @@ button:disabled {
     flex: none;
     min-height: calc(var(--tab-bar-height) + env(safe-area-inset-bottom));
     padding-bottom: env(safe-area-inset-bottom);
-    background-color: var(--surface-1);
+    background-color: var(--bg-secondary);
 }
 
 .tab {
@@ -323,14 +323,14 @@ button:disabled {
     text-align: left;
     font-size: max(16px, var(--text-body));
     overflow-wrap: anywhere;
-    background-color: var(--surface-1);
+    background-color: var(--bg-secondary);
     border: none;
     border-radius: var(--radius-card);
 }
 
 .library-choice.current {
     font-weight: var(--weight-strong);
-    background-color: var(--surface-2);
+    background-color: var(--bg-tertiary);
     box-shadow: inset 4px 0 0 var(--accent);
 }
 
@@ -342,7 +342,7 @@ button:disabled {
     margin-top: 1rem;
     padding: 1rem;
     color: var(--text-secondary);
-    background-color: var(--surface-1);
+    background-color: var(--bg-secondary);
     border-radius: var(--radius-card);
 }
 
@@ -358,7 +358,7 @@ button:disabled {
     min-width: 0;
     min-height: var(--tap);
     padding: 0 1rem;
-    background-color: var(--surface-2);
+    background-color: var(--bg-tertiary);
     border: none;
     border-radius: var(--radius-pill);
 }
@@ -386,7 +386,7 @@ button:disabled {
     font-size: max(16px, var(--text-title));
     font-weight: var(--weight-strong);
     overflow-wrap: anywhere;
-    background-color: var(--surface-2);
+    background-color: var(--bg-tertiary);
     border: none;
     border-radius: var(--radius-card);
 }
@@ -405,7 +405,7 @@ button:disabled {
     flex-direction: column;
     margin-top: 1rem;
     overflow: hidden;
-    background-color: var(--surface-1);
+    background-color: var(--bg-secondary);
     border-radius: var(--radius-card);
 }
 
@@ -505,12 +505,13 @@ body:has(> main > .grid-screen:not(.hidden)) > main {
     margin-top: 0.75rem;
 }
 
+/* Each as wide as its words: the order's ("Date Taken, ascending") is read whole beside Both on a 360 px phone. */
 .grid-choice {
-    flex: 1;
+    flex: 1 1 auto;
     min-width: 0;
     min-height: var(--tap);
     padding: 0 0.75rem;
-    background-color: var(--surface-2);
+    background-color: var(--bg-tertiary);
     border: none;
     border-radius: var(--radius-pill);
 }
@@ -524,7 +525,7 @@ body:has(> main > .grid-screen:not(.hidden)) > main {
 /* Three columns at 390 px, two at large type: the grid reads them from here. Its padding is the rows not drawn. */
 .grid-cards {
     display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(7rem, 1fr));
+    grid-template-columns: repeat(auto-fill, minmax(6.5rem, 1fr));
     gap: 0.25rem;
     margin-top: 0.75rem;
     padding-top: var(--vgrid-before, 0px);
@@ -547,7 +548,7 @@ body:has(> main > .grid-screen:not(.hidden)) > main {
     position: relative;
     aspect-ratio: 1;
     overflow: hidden;
-    background-color: var(--surface-2);
+    background-color: var(--bg-tertiary);
     border-radius: var(--radius-small);
 }
 
@@ -648,7 +649,7 @@ body:has(> main > [data-screen="photo"]:not(.hidden)) > .bar {
 }
 
 /* The Edit sheet (mobile-edit.js): over the lower part of the photo, rising from the foot of the screen, scrolling
-   inside; inputs at 16 px so the browser does not zoom. */
+   inside; its inputs take the page's size for every input, 16 px or more, so the browser does not zoom. */
 .edit-sheet {
     position: fixed;
     inset: auto 0 0 0;
@@ -656,7 +657,7 @@ body:has(> main > [data-screen="photo"]:not(.hidden)) > .bar {
     max-height: 75vh;
     overflow-y: auto;
     padding: 0.75rem 1rem calc(1rem + env(safe-area-inset-bottom));
-    background-color: var(--surface-1);
+    background-color: var(--bg-secondary);
     border-radius: var(--radius-sheet) var(--radius-sheet) 0 0;
     animation: sheet-rise var(--motion-sheet) var(--ease-out);
 }
@@ -700,7 +701,7 @@ body:has(> main > [data-screen="photo"]:not(.hidden)) > .bar {
     padding-left: 0.875rem;
     font-size: var(--text-small);
     overflow-wrap: anywhere;
-    background-color: var(--surface-2);
+    background-color: var(--bg-tertiary);
     border-radius: var(--radius-small);
     animation: appear var(--motion-quick) var(--ease-out);
 }
@@ -727,7 +728,6 @@ body:has(> main > [data-screen="photo"]:not(.hidden)) > .bar {
     min-height: var(--tap);
     margin-top: 0.5rem;
     padding: 0 0.75rem;
-    font-size: 16px;
     color: var(--text-primary);
     background-color: var(--bg-primary);
     border: 1px solid var(--border-color);
@@ -805,6 +805,8 @@ body:has(> .tabs:not(.hidden)) > .edit-toasts {
         animation: none !important;
         transition: none !important;
     }
+}
+
 /* ---- Browse covers and the People strip (mobile-browse.js; docs/plans/phone-redesign.md, cut 2) ----
    One block, the last: a row's cover is a square of fixed size with a tonal placeholder that is there before its
    thumbnail, so nothing moves when one lands or never does; a thumbnail that fails shows the placeholder. The strip
@@ -817,7 +819,7 @@ body:has(> .tabs:not(.hidden)) > .edit-toasts {
     height: 3rem;
     overflow: hidden;
     background-color: var(--bg-tertiary);
-    border-radius: 0.5rem;
+    border-radius: var(--radius-small);
 }
 
 .browse-cover-img {
@@ -845,10 +847,11 @@ body:has(> .tabs:not(.hidden)) > .edit-toasts {
 }
 
 .browse-people-title {
-    font-size: 1.125rem;
+    font-size: var(--text-title);
 }
 
 .browse-people-all {
+    min-height: var(--tap);
     padding: 0 0.5rem;
     color: var(--accent);
     background: none;
@@ -882,7 +885,7 @@ body:has(> .tabs:not(.hidden)) > .edit-toasts {
 .browse-person-cover {
     width: 4.5rem;
     height: 4.5rem;
-    border-radius: 1rem;
+    border-radius: var(--radius-card);
 }
 
 .browse-person:active .browse-person-cover {
@@ -892,13 +895,13 @@ body:has(> .tabs:not(.hidden)) > .edit-toasts {
 .browse-person-name {
     max-width: 100%;
     overflow: hidden;
-    font-size: 0.875rem;
+    font-size: var(--text-small);
     text-overflow: ellipsis;
     white-space: nowrap;
 }
 
 .browse-person-count {
-    font-size: 0.75rem;
+    font-size: var(--text-caption);
     color: var(--text-secondary);
     font-variant-numeric: tabular-nums;
 }

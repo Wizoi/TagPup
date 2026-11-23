@@ -21,6 +21,7 @@ import unittest
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import own_home  # noqa: E402
+import page_fixtures  # noqa: E402
 import roots_library as rl  # noqa: E402
 import web_client  # noqa: E402
 from view_library import ViewLibrary  # noqa: E402
@@ -30,6 +31,7 @@ from tagpup.core import paths  # noqa: E402
 from tagpup.services import library_view  # noqa: E402
 
 WREN = "People/Wren Halloway"
+COVERS_REPLIES = page_fixtures.path_of("covers_replies.json")
 
 
 class BrowseRowCovers(unittest.TestCase):
@@ -150,6 +152,29 @@ class BrowseRowCovers(unittest.TestCase):
                      '[{"id": 7, "kind": "all"}]', '[{"id": "x", "kind": "album", "value": "a"}]',
                      '[{"id": "x", "kind": "month", "value": "June"}]', '[{"id": "x", "kind": "keyword"}]'):
             self.refused(section="folders", rows=text)
+
+
+class TheCoversThePageReads(unittest.TestCase):
+    """The covers of Browse rows as the route sends them (GET /api/library/covers), written for the phone's page tests
+    (tests/frontend/harness.mjs COVERS_REPLIES, coveredAs): a row whose source holds a photo (`found`) and one whose holds
+    none (`none`); the tests answer every cover from these two, never one spelled by hand."""
+
+    def test_the_covers_reply_the_page_reads_is_written_for_its_test(self):
+        # Two photos made as the indexer records a read of each, the second the found row's, so the fixture's id is not
+        # the first a library gives; `Empty` holds none.
+        app, home = web_client.app_for(self, "tagpup")
+        vl = ViewLibrary(self, "library", home=home)
+        vl.photo("Lake", "reeds.jpg")
+        dawn = vl.photo("Coast", "dawn.jpg", "2024:01:05 07:00:00")
+        rows = [BrowseRowCovers.folder("found", os.path.join(vl.pictures, "Coast")),
+                BrowseRowCovers.folder("none", os.path.join(vl.pictures, "Empty"))]
+        reply = app.test_client().get("/library/api/library/covers",
+                                      query_string={"section": "folders", "rows": json.dumps(rows)})
+        body = reply.get_json()
+        self.assertEqual((200, [dawn, None]), (reply.status_code, [each["photo"] for each in body["covers"]]), body)
+        text = json.dumps({"folders": {"status": reply.status_code, "reply": body}}, sort_keys=True, indent=1) + "\n"
+        self.assertNotIn(json.dumps(home.root)[1:-1], text, "a path of the test's home left in")
+        page_fixtures.hold_to(self, COVERS_REPLIES, text, "tests.test_library_covers", "the phone's Browse covers")
 
 
 @unittest.skipUnless(os.name == "nt", "the spellings are Windows paths")
