@@ -209,7 +209,7 @@ function drawFacts() {
     byId('photo-facts-problem').classList.toggle('hidden', !why);
     const path = (record && record.path) || (card && card.path) || '';
     const media = (record && record.media) || (card && card.media);
-    const more = [['photo-name', card ? card.name : (record && record.filename) || ''], ['photo-folder', folderOf(path)],
+    const more = [['photo-name', card ? card.name : ''], ['photo-folder', folderOf(path)],
         ['photo-kind', media === 'video' ? 'Clip' : ''], ['photo-size', record ? fileSizeSaid(record.size) : ''],
         ['photo-camera', record && record.camera], ['photo-lens', record && record.lens]];
     for (const [each, text] of more) {
