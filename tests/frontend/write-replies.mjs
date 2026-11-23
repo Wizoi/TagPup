@@ -117,7 +117,7 @@ export const STILL_HAND_SPELLED = {
   "organize-faces.test.mjs": 2, "person-tag-form.test.mjs": 1, "photo-position.test.mjs": 1,
   "rotate-refreshes-thumbnails.test.mjs": 1, "scenario-a-write-reaches-every-scan-kept.test.mjs": 1,
   "scenario-deleting-the-selected-photos-of-a-folder.test.mjs": 1, "scenario-editing-a-photo-on-the-phone.test.mjs": 1,
-  "scenario-switching-library-mid-folder.test.mjs": 1, "scenario-tagging-keeps-the-faces-in-place.test.mjs": 3,
+  "scenario-switching-library-mid-folder.test.mjs": 1, "scenario-tagging-keeps-the-faces-in-place.test.mjs": 1,
   "scenario-write-through-a-server-update.test.mjs": 1,
   "selection-follows-the-photo.test.mjs": 1, "selection-suggestions.test.mjs": 1,
   "selection-suggests-who-the-faces-look-like.test.mjs": 1, "smart-rename-count.test.mjs": 1,
