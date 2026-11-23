@@ -648,7 +648,7 @@ body:has(> main > [data-screen="photo"]:not(.hidden)) > .bar {
 }
 
 /* The Edit sheet (mobile-edit.js): over the lower part of the photo, rising from the foot of the screen, scrolling
-   inside; inputs at 16 px so the browser does not zoom. */
+   inside; its inputs take the page's size for every input, 16 px or more, so the browser does not zoom. */
 .edit-sheet {
     position: fixed;
     inset: auto 0 0 0;
@@ -727,7 +727,6 @@ body:has(> main > [data-screen="photo"]:not(.hidden)) > .bar {
     min-height: var(--tap);
     margin-top: 0.5rem;
     padding: 0 0.75rem;
-    font-size: 16px;
     color: var(--text-primary);
     background-color: var(--bg-primary);
     border: 1px solid var(--border-color);
