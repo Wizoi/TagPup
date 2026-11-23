@@ -19,7 +19,8 @@ is reported, to see whether it is that one (owner, 2026-11-02). Its number is ke
 A row naming a sweep, backfill, `--apply` or bulk write is not closed `fixed` unless the status says `wrote N` (the count the
 fix wrote, 0 included; owner, 2026-11-08).
 A `data` or `wrong` row naming a module that the commits of two earlier `data`/`wrong` rows closed `fixed: <commit>` changed
-is a third fix for one place, and is refused unless it says "second fix of #n: the single place is <place>" (#2924).
+is a third fix for one place, and is refused unless it says "second fix of #n: the single place is <place>; guarded by
+<test>", the test that fails on a second reader or writer (#2924, #3344). Rows of a branch's file closed `fixed` count too.
 A new `low` row says `live: N` (rows it touches, counted read-only) or `user action: ...`; `live: 0` closes it
 `decided: no live instance, not built` in the same call (retro 2026-11-14).
 Nothing is written unless every row parses and every numbered row exists.
@@ -306,7 +307,9 @@ def similar_rows(new_rows, existing):
 #: is one place fixed a third time (the clip that would not save: #2893, #2908, #2918; retro 2026-11-13, #2924).
 COMMIT = re.compile(r"\b[0-9a-f]{7,40}\b")
 CODE_FILE = re.compile(r"^(?:tagpup|web|scripts|tools|\.claude/hooks)/")
-SINGLE_PLACE = re.compile(r"second fix of #(\d+): the single place is \S", re.I)
+SINGLE_PLACE = re.compile(r"second fix of #?(\d+|B-\d+): the single place is \S", re.I)
+#: The escape also names the test that fails on a second reader or writer of that place (#3344).
+GUARDED = re.compile(r"guarded by `?[\w./:-]*test[\w./:-]*", re.I)
 
 
 def severe(row):
@@ -335,21 +338,25 @@ def names_file(text, path):
     return any(re.search(pattern, span) for span in re.findall(r"`([^`]+)`", text))
 
 
-def third_fixes(new_rows, existing, files_of):
+def third_fixes(new_rows, existing, files_of, branch_rows=()):
     """[(new row's number or name, the module's path, the earlier numbers)] for each `data`/`wrong` new row naming a module
     (`names_file`) that the commits of two or more `data`/`wrong` rows of `existing` closed `fixed` changed (two rows and
     two commits, within SIMILAR_WINDOW numbers), unless the row says "second fix of #n: the single place is ..." of one of
-    them, or a row of `existing` naming the module was closed `decided` saying where its single place is. `files_of(commit)`
+    them AND "guarded by <test>" (the test that fails on a second reader or writer), or a row of `existing` naming the
+    module was closed `decided` saying where its single place is. `branch_rows` are the rows of a branch's file
+    (`| B-n | ...`), counted as fixes before they are numbered (#3344). `files_of(commit)`
     is the paths a commit changed (none for a merge or a name that is no commit). Measured on rows #2700-#2950 as each was
     numbered: #2918 refused, and 2 more (#2841, #2843, the Recycle Bin's third and fourth fixes after #2700 and #2710)."""
     if not any(severe(row) for row in new_rows):
         return []
     newest = max(existing, default=0)
     fixes, settled = {}, []
-    for number, text in existing.items():
+    kept = list(existing.items()) + [(re.match(r"\| (B-\d+) \|", row).group(1), row) for row in branch_rows
+                                      if re.match(r"\| B-\d+ \|", row)]
+    for number, text in kept:
         if re.match(r"decided\b", row_status(text), re.I) and "single place" in text:
             settled.append(without_first_cell(text))
-        if newest - number > SIMILAR_WINDOW or not severe(text):
+        if (isinstance(number, int) and newest - number > SIMILAR_WINDOW) or not severe(text):
             continue
         for commit in fix_commits(text):
             for path in files_of(commit):
@@ -361,10 +368,12 @@ def third_fixes(new_rows, existing, files_of):
             continue
         body, escape = without_first_cell(row), SINGLE_PLACE.search(row)
         for path, made in sorted(fixes.items()):
-            numbers = sorted({number for number, _commit in made})
+            numbers = sorted({number for number, _commit in made}, key=str)
             if len(numbers) < 2 or len({commit for _number, commit in made}) < 2 or not names_file(body, path):
                 continue
-            if (escape and int(escape.group(1)) in numbers) or any(names_file(text, path) for text in settled):
+            said = escape.group(1) if escape else ""
+            if (escape and GUARDED.search(row) and (int(said) if said.isdigit() else said) in numbers) \
+                    or any(names_file(text, path) for text in settled):
                 continue
             found.append((row.split("|")[1].strip(), path, numbers))
     return found
@@ -405,17 +414,18 @@ def _write(path, text, newline="\n"):
         handle.write(text.replace("\n", newline))
 
 
-def _check_rows(parser, rows, findings, archive_dir, watching, repo):
+def _check_rows(parser, rows, findings, archive_dir, watching, repo, branch_rows=()):
     """Refuse a third fix for one place (`third_fixes`), before anything is written; then the notice of a row that looks
     like an earlier one."""
     existing = existing_rows(findings.replace("\r\n", "\n"), watching.replace("\r\n", "\n"),
                              *load_archives(archive_dir).values())
-    refused = third_fixes(rows, existing, git_files(repo))
+    refused = third_fixes(rows, existing, git_files(repo), branch_rows)
     if refused:
         parser.error("\n".join(
             "row %s names %s, which the fixes of %s changed: a third fix for one place. Ask which single place should own "
-            "it, and write 'second fix of #n: the single place is <place>' in the row" % (name, path,
-                                                                                         ", ".join("#%d" % n for n in numbers))
+            "it, and write 'second fix of #n: the single place is <place>; guarded by <the test that fails on a second reader "
+            "or writer>' in the row" % (name, path, ", ".join(str(n) if str(n).startswith("B-") else "#%d" % n
+                                                               for n in numbers))
             for name, path, numbers in refused))
     for name, number in similar_rows(rows, existing):
         print("notice: row %s looks like #%d (shares %d or more identifiers); cite it as #%d or fold the row into it"
@@ -462,7 +472,8 @@ def main(argv=None):
         text = _read(args.branch_file).replace("\r\n", "\n") if os.path.exists(args.branch_file) else ""
         given = []
         if rows:
-            _check_rows(parser, rows, _read(args.findings), args.archive_dir, _watching_text(args.watching_file), args.repo)
+            _check_rows(parser, rows, _read(args.findings), args.archive_dir, _watching_text(args.watching_file), args.repo,
+                        text.splitlines())
             text, given = add_branch(text, rows)
         for key, status in args.status:
             if unproven_commit(text, key, status):
