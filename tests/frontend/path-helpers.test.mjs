@@ -271,3 +271,19 @@ describe("a folder's suggestions follow a rename map", () => {
     assert.deepEqual(rekeyed(held, now), { "D:/Trip/R2.jpg": ["first"], "D:/Trip/R3.jpg": ["second"] });
   });
 });
+
+describe("a rename reply's map has one resolver (#3329, #3336, #3338, #3339)", () => {
+  test("the page hands `updated_paths` whole to photosRenamed or recordsWritten, and reads it nowhere else", () => {
+    const readers = [];
+    for (const module of pageModules(path.join(REPO_ROOT, APPS.tagpup.dir))) {
+      fs.readFileSync(module.file, "utf8").split(/\r?\n/).forEach((line, i) => {
+        const trimmed = line.trimStart();
+        if (trimmed.startsWith("//") || trimmed.startsWith("*") || !line.includes("updated_paths")) return;
+        const handed = /\b(photosRenamed|recordsWritten)\(.*updated_paths \|\| \{\}\)/.test(line);
+        const counted = /Object\.entries\(data\.updated_paths \|\| \{\}\)/.test(line);
+        if (!handed && !counted) readers.push(`${path.relative(REPO_ROOT, module.file)}:${i + 1}: ${line.trim()}`);
+      });
+    }
+    assert.deepEqual(readers, [], "a rename map is read by renamedBy and rekeyed (web/common/paths.js) alone");
+  });
+});
