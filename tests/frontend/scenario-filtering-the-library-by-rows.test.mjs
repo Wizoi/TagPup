@@ -2,7 +2,8 @@
  * V28: somebody turns on the navigator's Filter mode and marks rows of any tab -- `+` any of, `&` must, `-` not -- and the marks
  * are one search (docs/plans/advanced-filtering.md, cut 1a: navigator-model.js specFromRowStates, rowStatesFromSpec). The
  * search goes into the address, and the address read back (Back, a bookmark) gives the same marks; a search made elsewhere --
- * words typed, an Any-of list, the search page's Within -- marks nothing. tests/fixtures/filter_searches.json holds the values
+ * words typed, an Any-of list, the search page's Within -- marks nothing; a view of a row's source, or of a union of one tab's
+ * rows (a people group's), is those rows marked `+`, the same photos. tests/fixtures/filter_searches.json holds the values
  * the page sends for the owner's examples, and tests/test_filtering_the_library_by_rows.py the photos the server finds for them.
  * Every name is fictional.
  */
@@ -150,13 +151,36 @@ describe("a search made elsewhere marks no row", () => {
     }
   });
 
-  test("a view that is no search, or nothing at all, marks nothing and throws nothing", async (t) => {
+  test("the whole library, a source no row is, a union of two tabs, or nothing at all, marks nothing and throws nothing", async (t) => {
     const m = await model(t);
     for (const spec of [undefined, null, {}, { kind: "search" }, { kind: "search", value: null }, search({}),
-      { kind: "any_of", value: [ROWAN, ADA], recursive: false }, TRIPS, { kind: "all", value: null, recursive: false }]) {
+      { kind: "folder", value: TRIPS.value, recursive: false }, { kind: "keyword_only", value: BEACH.value, recursive: false },
+      { kind: "any_of", value: [ROWAN, TRIPS], recursive: false }, { kind: "any_of", value: [ROWAN, ROWAN], recursive: false },
+      { kind: "any_of", value: [], recursive: false }, { kind: "all", value: null, recursive: false }]) {
       assert.equal(m.rowStatesFromSpec(spec), null, JSON.stringify(spec));
     }
     assert.equal(m.specFromRowStates(undefined), null);
     assert.equal(m.specFromRowStates(new Map()), null);
+  });
+
+  test("a view of a row's source, or a union of one tab's rows (a people group's), is those rows marked any of", async (t) => {
+    const m = await model(t);
+    const views = {
+      "a person": [ROWAN, [[ROWAN, "+"]]],
+      "a folder with its subfolders": [TRIPS, [[TRIPS, "+"]]],
+      "a keyword": [BEACH, [[BEACH, "+"]]],
+      "No tag": [UNTAGGED, [[UNTAGGED, "+"]]],
+      "a group's people": [{ kind: "any_of", value: [ROWAN, ADA], recursive: false }, [[ROWAN, "+"], [ADA, "+"]]],
+    };
+    for (const [name, [view, rows]] of Object.entries(views)) {
+      const states = m.rowStatesFromSpec(view);
+      assert.equal(marks(states), marks(statesOf(m, rows)), name);
+      assert.equal(m.rowStatesFromSpec(throughTheAddress(m, view)) && marks(m.rowStatesFromSpec(throughTheAddress(m, view))),
+        marks(states), `${name}, through the address`);
+      // The same photos as a filter: the tab's union of those rows, and read back the same marks.
+      const spec = m.specFromRowStates(states);
+      assert.deepEqual(JSON.parse(JSON.stringify(spec.value.all_of)).map((each) => each.kind), ["any_of"], name);
+      assert.equal(marks(m.rowStatesFromSpec(spec)), marks(states), `${name}, as a search`);
+    }
   });
 });

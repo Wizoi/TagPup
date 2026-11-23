@@ -14,6 +14,7 @@ import { drawTabs, wireTabs } from './mobile-tabs.js';
 import { showLibraries, wireLibraries } from './mobile-library.js';
 import { linkedView, showBrowse, wireBrowse } from './mobile-browse.js';
 import { forgetGrid, showGrid, wireGrid } from './mobile-grid.js';
+import { filterFollows, wireFilter } from './mobile-filter.js';
 import { leavePhoto, showPhoto, wirePhoto } from './mobile-photo.js';
 import { leaveEdit, wireEdit } from './mobile-edit.js';
 
@@ -28,6 +29,8 @@ document.addEventListener('DOMContentLoaded', () => {
     whenShown('browse', forgetGrid);
     whenShown('browse', showBrowse);
     wireGrid();
+    wireFilter();
+    whenShown('grid', filterFollows);
     whenShown('grid', showGrid);
     wireImageZoom();
     wirePhoto();

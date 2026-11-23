@@ -53,16 +53,47 @@
 
         <section class="screen grid-screen hidden" data-screen="grid" data-title="Photos">
             <h2 id="grid-heading" class="grid-heading"></h2>
-            <div class="grid-choices">
-                <select id="grid-order" class="grid-choice" aria-label="Order"></select>
-                <select id="grid-media" class="grid-choice" aria-label="Show"></select>
-            </div>
             <p id="grid-count" class="grid-count"></p>
+            <!-- The filter's chips (mobile-filter.js): Filter opens the sheet, a chip's tap takes its mark off. Sticky, and
+                 scrolled sideways on its own. -->
+            <div id="grid-chips" class="grid-chips" aria-label="Filter"></div>
             <div id="grid-problem" class="problem hidden" role="alert">
                 <p id="grid-problem-text"></p>
                 <button type="button" id="grid-retry" class="problem-retry">Try again</button>
             </div>
+            <div id="grid-none" class="grid-none hidden" role="status">
+                <p id="grid-none-text" class="grid-none-text"></p>
+                <p id="grid-none-chips" class="grid-none-chips"></p>
+                <div class="grid-none-actions">
+                    <button type="button" id="grid-none-remove" class="grid-none-remove"></button>
+                    <button type="button" id="grid-none-clear">Clear all</button>
+                    <button type="button" id="grid-none-media" class="grid-none-remove"></button>
+                </div>
+            </div>
             <div id="grid-cards" class="grid-cards"></div>
+
+            <!-- The Filter sheet (mobile-filter.js): a step of history over the Grid, as the Edit sheet is over a photo. -->
+            <div id="filter-scrim" class="filter-scrim hidden"></div>
+            <div id="filter-sheet" class="filter-sheet hidden" role="dialog" aria-label="Filter">
+                <div class="filter-head">
+                    <select id="grid-order" class="filter-choice" aria-label="Order"></select>
+                    <select id="grid-media" class="filter-choice" aria-label="Show"></select>
+                    <button type="button" id="filter-clear" class="filter-clear">Clear</button>
+                </div>
+                <div id="filter-tabs" class="filter-tabs" role="tablist">
+                    <button type="button" class="filter-tab" role="tab" data-filter-tab="people">People</button>
+                    <button type="button" class="filter-tab" role="tab" data-filter-tab="keywords">Keywords</button>
+                    <button type="button" class="filter-tab" role="tab" data-filter-tab="folders">Folders</button>
+                    <button type="button" class="filter-tab" role="tab" data-filter-tab="dates">Dates</button>
+                </div>
+                <p class="filter-whole">Counts of all photos</p>
+                <div class="filter-status">
+                    <p id="filter-said" class="filter-said" role="status"></p>
+                    <button type="button" id="filter-retry" class="problem-retry hidden">Try again</button>
+                </div>
+                <div id="filter-rows" class="filter-rows"></div>
+                <button type="button" id="filter-show" class="filter-show">Show photos</button>
+            </div>
         </section>
 
         <section class="screen hidden" data-screen="photo" data-title="Photo">
@@ -104,12 +135,12 @@
         </section>
     </main>
 
-    <!-- The bar of tabs (mobile-tabs.js): each opens its screen as a step of history. Filter is cut 3's filter sheet
-         (docs/plans/phone-redesign.md): drawn, not yet something to press. -->
+    <!-- The bar of tabs (mobile-tabs.js): each opens its screen as a step of history; Filter the Filter sheet over the
+         Grid (mobile-filter.js). -->
     <nav id="tabs" class="tabs hidden" aria-label="Screens">
         <button type="button" class="tab" data-tab="browse"><span class="tab-icon" aria-hidden="true"></span><span class="tab-label">Library</span></button>
         <button type="button" class="tab" data-tab="grid"><span class="tab-icon" aria-hidden="true"></span><span class="tab-label">Photos</span></button>
-        <button type="button" class="tab" data-tab="filter" disabled><span class="tab-icon" aria-hidden="true"></span><span class="tab-label">Filter</span></button>
+        <button type="button" class="tab" data-tab="filter"><span class="tab-icon" aria-hidden="true"></span><span class="tab-label">Filter</span></button>
         <button type="button" class="tab" data-tab="library"><span class="tab-icon" aria-hidden="true"></span><span class="tab-label">Libraries</span></button>
     </nav>
     <div id="edit-toasts" class="edit-toasts" aria-live="polite"></div>

@@ -55,7 +55,7 @@ function patchRow(el, row, selected, current, tree, mark) {
  * went; the DOM in the rows' order, moving only what is out of place (a moved element loses its focus).
  * `selected` is the Set of rows the open view is made of (or `selectedId`, one); `currentId` the one the arrow keys
  * are on (the tab stop), or else the first selected one drawn, else the first. `tree`: the container is a tree
- * (levels), else a listbox. `marks`: Filter mode's, a Map of row id -> { sign, part, said } (filter-bar.js markOf).
+ * (levels), else a listbox. `marks`: Filter mode's, a Map of row id -> { sign, part, said } (navigator-model.js markOf).
  */
 export function paintRows(container, rows, { selectedId = null, selected = null, currentId = null, tree = true, marks = null } = {}) {
     let held = drawn.get(container);

@@ -14,27 +14,20 @@ import { buildElement, replaceContent } from './common/dom.js';
 import { state } from './state.js';
 import { btnFilterBarClear, filterBar, filterBarChips } from './elements.js';
 import { leaveSearch, openLibraryView } from './library-view.js';
-import { MAX_MEMBERS, addressTooLong, listOverCap, memberLabel, viewLabel } from './library-source.js';
-import { FILTER_PARTS, filterKey, filterMember, rowStatesFromSpec, specFromRowStates } from './navigator-model.js';
-import { chipKnown, chipLabel } from './search-model.js';
+import { addressTooLong } from './library-source.js';
+import { NEXT_MARK, filterKey, filterOverCap, rowStatesFromSpec, specFromRowStates } from './navigator-model.js';
+import { filterChip } from './search-model.js';
 
 /** Where this browser keeps whether Filter mode is on ('on' or 'off'). */
 export const FILTER_MODE_KEY = 'tagpup.filterMode';
 
-/** What a click does to a row's mark: off, any of, must, not, off again. */
-const NEXT_MARK = { '': '+', '+': '&', '&': '-', '-': '' };
-/** A mark in words, for a row's and a chip's name, by its part (navigator-model.js FILTER_PARTS). */
-const PART_SAID = { any: 'any of', must: 'must', not: 'not' };
-
-/** A mark as the rows and the chips show it: { sign, part, said }. */
-export function markOf(sign) {
-    return { sign, part: FILTER_PARTS[sign], said: PART_SAID[FILTER_PARTS[sign]] };
-}
-
-/** The rows' marks of the view open, when it is a filter (a Map of filterKey -> sign); null for any other view, or none. */
+/**
+ * The rows' marks of the view open, when it is a filter (a Map of filterKey -> sign); null for any other view, or none. A filter
+ * here is a search: a row's own view (a person, a group's union) is left as it is, never taken for a filter to leave or replace.
+ */
 function openFilter() {
     const lib = state.library;
-    return lib && !lib.invalid ? rowStatesFromSpec(lib) : null;
+    return lib && !lib.invalid && lib.kind === 'search' ? rowStatesFromSpec(lib) : null;
 }
 
 /** The marks the navigator and the strip show: the open filter's while Filter mode is on, else none. */
@@ -55,10 +48,9 @@ function showMarks(marks, replace) {
         leaveSearch();
         return;
     }
-    const over = listOverCap(spec.value);
+    const over = filterOverCap(spec);
     if (over) {
-        const rows = over === 'none_of' ? 'marked - not' : 'marked & must, or + any of in one tab';
-        filter.notice = `A filter holds at most ${MAX_MEMBERS.toLocaleString()} rows ${rows}: take one off before marking another.`;
+        filter.notice = over;
         return;
     }
     if (addressTooLong({ ...spec, order: state.nav.order })) {
@@ -103,23 +95,14 @@ export function setFilterMode(on) {
 
 /** A chip: the mark and the row's name, struck through when the library no longer has the tag or the person. */
 function chipOf(key, sign) {
-    const member = filterMember(key);
-    const keywords = state.nav.sections.keywords.index;
-    const people = state.nav.sections.people.index;
-    const named = member.kind === 'person' || member.kind === 'keyword' || member.kind === 'untagged';
-    const { text, title } = named ? chipLabel(member, people) : { text: memberLabel(member), title: viewLabel(member) };
-    const known = chipKnown(member, keywords, people);
-    const why = known === false
-        ? (member.kind === 'person' ? ' -- no photo names them now' : ' -- the library has no such tag now')
-        : '';
-    const mark = markOf(sign);
+    const chip = filterChip(key, sign, state.nav.sections.keywords.index, state.nav.sections.people.index);
     return buildElement('button', {
-        className: `library-search-chip filter-chip filter-chip-${mark.part}${known === false ? ' library-search-chip-unknown' : ''}`,
-        attrs: { type: 'button', role: 'listitem', 'aria-label': `Take ${text} (${mark.said}) off the filter` },
-        title: `${mark.said}: ${title}${why}. Click to take it off the filter`, data: { key },
+        className: `library-search-chip filter-chip filter-chip-${chip.part}${chip.known === false ? ' library-search-chip-unknown' : ''}`,
+        attrs: { type: 'button', role: 'listitem', 'aria-label': `Take ${chip.text} (${chip.said}) off the filter` },
+        title: `${chip.said}: ${chip.title}${chip.why}. Click to take it off the filter`, data: { key },
     }, [
         buildElement('span', { className: 'filter-chip-mark', text: sign, attrs: { 'aria-hidden': 'true' } }),
-        buildElement('span', { className: 'library-search-chip-text', text }),
+        buildElement('span', { className: 'library-search-chip-text', text: chip.text }),
         buildElement('span', { className: 'library-search-chip-remove', text: '×', attrs: { 'aria-hidden': 'true' } }),
     ]);
 }
