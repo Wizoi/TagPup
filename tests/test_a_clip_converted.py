@@ -35,6 +35,7 @@ from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import page_fixtures  # noqa: E402
 import photo_rows  # noqa: E402
 import test_a_clip_patched_in_place as patched  # noqa: E402
 import test_xmp_packet_edits_what_it_owns as shapes  # noqa: E402
@@ -69,6 +70,9 @@ WMV_TAKEN = "2011:08:20 14:05:00"
 ZERO = "0000:00:00 00:00:00"
 #: The top-level ASF object holding a .wmv's XMP, where Adobe's XMP specification (part 3) puts it.
 ASF_XMP = uuid.UUID("BE7ACFCB-97A9-42E8-9C71-999491E3AFAC").bytes_le
+#: The replies of the clip panel's Convert its page tests answer from (harness.mjs convertedAs): written by
+#: ThePanelButtons.test_the_convert_replies_the_page_reads_are_written_for_its_test.
+CONVERT_REPLIES = page_fixtures.path_of("convert_replies.json")
 
 
 def make_clip(path, title=None, created=None, taken=None):
@@ -972,6 +976,44 @@ class ThePanelButtons(AnOldClipInTheLibrary):
                 self.assertEqual(taken, self.taken(photo_id), "an undated old clip stays undated")
                 self.assertEqual({field: [taken or ZERO] for field in fields.CLIP_HEADER_DATES},
                                  in_place.headers_held(clip_convert.target_of(source)), "its headers")
+
+    def test_the_convert_replies_the_page_reads_are_written_for_its_test(self):
+        # The panel's button as the page sends it (web/tagpup/media.js): {"id", "mode", "stamp"} (POST /api/clip/convert),
+        # then the ticket asked until it ended (GET /api/clip/converted?ticket=). `start`: `started` (its ticket),
+        # `stale` (a stamp the clip no longer has: 409, `changed_on_disk`). `end`: `under_way`, `converted` (a .wmv to its
+        # MP4, renamed), `not_smaller` (a .mov whose MP4 is no smaller, left as it is), `not_its_plan` (Make smaller asked
+        # of a clip that does not play). The test's home is HOME; each stamp 1 and 1, the ticket 1, each size before 2
+        # and after 1 (after 2 when it was no smaller).
+        found = {"start": {}, "end": {}}
+        both = lambda reply: {"status": reply.status_code, "reply": reply.get_json()}  # noqa: E731
+        source, photo_id = self.clip("quay.wmv")
+        found["start"]["stale"] = both(self.ask(photo_id, "convert", source, size=1))
+        held, go, entered = self.held_up()
+        with held:
+            started = self.ask(photo_id, "convert", source)
+            self.assertTrue(entered.wait(60), "ffmpeg reached")
+            asked = self.client.get("/library/api/clip/converted?ticket=%d" % started.get_json()["ticket"])
+            go.set()
+            found["end"]["converted"] = {"status": 200, "reply": self.ended(started)}
+        found["start"]["started"], found["end"]["under_way"] = both(started), both(asked)
+        mov, mov_id = self.mov("harbour.mov", 51)
+        found["end"]["not_smaller"] = {"status": 200, "reply": self.ended(self.ask(mov_id, "shrink", mov))}
+        old, old_id = self.clip("slipway.wmv")
+        found["end"]["not_its_plan"] = {"status": 200, "reply": self.ended(self.ask(old_id, "shrink", old))}
+        self.assertEqual(({"stale": 409, "started": 200}, [True, False, False], {"done": False}),
+                         ({name: each["status"] for name, each in found["start"].items()},
+                          [found["end"][name]["reply"]["success"] for name in ("converted", "not_smaller", "not_its_plan")],
+                          found["end"]["under_way"]["reply"]))
+        for name, each in found["end"].items():
+            reply = each["reply"]
+            reply.update({key: 1 for key in ("mtime", "size") if key in reply})
+            if "size_before" in reply:
+                reply.update(size_before=2, size_after=2 if name == "not_smaller" else 1)
+        found["start"]["started"]["reply"]["ticket"] = 1
+        text = json.dumps(found).replace(json.dumps(self.home.root)[1:-1], "HOME")
+        self.assertNotIn(json.dumps(os.path.basename(self.home.root))[1:-1], text, "a path of the test's home left in")
+        text = json.dumps(json.loads(text), sort_keys=True, indent=1) + "\n"
+        page_fixtures.hold_to(self, CONVERT_REPLIES, text, "tests.test_a_clip_converted", "the clip panel's Convert")
 
     def test_a_mov_whose_mp4_is_no_smaller_is_left_as_it_is(self):
         source, photo_id = self.mov("harbour.mov", 51)

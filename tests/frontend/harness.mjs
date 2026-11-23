@@ -11,8 +11,10 @@
  */
 import fs from "node:fs";
 import path from "node:path";
+import { after } from "node:test";
 import { fileURLToPath } from "node:url";
 import { JSDOM, VirtualConsole } from "jsdom";
+import { filtered, ratchet, unmadeReply } from "./write-replies.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 export const REPO_ROOT = path.resolve(HERE, "..", "..");
@@ -467,6 +469,17 @@ export function taggedAs(name, own = () => ({}), said = null) {
   };
 }
 
+/**
+ * The write replies the FakeServers of this test file gave that no route makes (write-replies.mjs unmadeReply), each once:
+ * when its tests have run, the file fails unless the ratchet allows them (write-replies.mjs STILL_HAND_SPELLED), whatever
+ * the page did with the reply (a page that swallows a failed request would otherwise pass on it; #3342).
+ */
+const UNMADE = new Set();
+after(() => {
+  const said = ratchet(path.basename(process.argv[1] || ""), [...UNMADE], filtered());
+  if (said) throw new Error(said);
+});
+
 /** A fetch stub that routes by URL substring and records every call. */
 export class FakeServer {
   constructor() {
@@ -522,7 +535,8 @@ export class FakeServer {
           body = init.body;
         }
       }
-      self.calls.push({ url, method: (init && init.method) || "GET", body });
+      const method = (init && init.method) || "GET";
+      self.calls.push({ url, method, body });
 
       // Match on the path regardless of a leading slash: the apps issue both
       // absolute ("/api/x") and relative ("api/x") URLs, and a relative one would
@@ -536,6 +550,8 @@ export class FakeServer {
       const headers = (route && route.headers) || {};
       const reply = (sent) => {
         const { status, body: payload } = sent && sent[ANSWER] ? sent[ANSWER] : { status: route ? route.status : 200, body: sent };
+        const unmade = route && unmadeReply(url, method, body, status, payload);
+        if (unmade) UNMADE.add(unmade);
         return {
           ok: status >= 200 && status < 300,
           status,

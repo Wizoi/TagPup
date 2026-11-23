@@ -1,0 +1,59 @@
+{
+ "end": {
+  "converted": {
+   "reply": {
+    "done": true,
+    "mtime": 1,
+    "new_path": "HOME\\library\\Pictures\\Harbour\\quay.mp4",
+    "renamed": true,
+    "size": 1,
+    "size_after": 1,
+    "size_before": 2,
+    "success": true
+   },
+   "status": 200
+  },
+  "not_its_plan": {
+   "reply": {
+    "done": true,
+    "error": "it does not play as it is: it is converted (Convert), not made smaller; nothing was converted",
+    "success": false
+   },
+   "status": 200
+  },
+  "not_smaller": {
+   "reply": {
+    "done": true,
+    "error": "its MP4 came out no smaller than it is: left as it is",
+    "size_after": 2,
+    "size_before": 2,
+    "success": false
+   },
+   "status": 200
+  },
+  "under_way": {
+   "reply": {
+    "done": false
+   },
+   "status": 200
+  }
+ },
+ "start": {
+  "stale": {
+   "reply": {
+    "changed_on_disk": true,
+    "error": "This photo changed on disk since you opened it: reload it first.",
+    "success": false
+   },
+   "status": 409
+  },
+  "started": {
+   "reply": {
+    "library": "library",
+    "success": true,
+    "ticket": 1
+   },
+   "status": 200
+  }
+ }
+}
