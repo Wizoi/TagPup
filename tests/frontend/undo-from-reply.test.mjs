@@ -5,7 +5,7 @@
  */
 import { test, describe, afterEach } from "node:test";
 import assert from "node:assert/strict";
-import { loadApp, FakeServer, photoRecord, flush, click, openFolder, closeAllApps, pageExports } from "./harness.mjs";
+import { loadApp, FakeServer, photoRecord, flush, click, openFolder, closeAllApps, pageExports, TAGS, tagFiles } from "./harness.mjs";
 
 const FOLDER = "D:/Library/2020";
 
@@ -35,7 +35,7 @@ function build() {
     .on("/api/folder/index-status", { status: "completed", percent: 100, message: "Ready" })
     .on("/api/folder/scan", () => PHOTOS.map((p) => ({ ...p, tags: [...(files[p.path] || p.tags)], people: [...p.people] })))
     .on("/api/photo-faces", { faces: [], total: 0, unmatched: 0 })
-    .on("/api/photos/write", hold)
+    .on(TAGS, (url, body) => new Promise((resolve) => held.push((reply) => resolve(reply(body)))))
     .on("/api/folder/auto-apply", hold)
     .on("/api/folder/suggest-status", SUGGESTIONS);
   server.files = files;
@@ -60,10 +60,11 @@ async function loadSelected(t) {
 const applyAll = (ctx) => ctx.document.getElementById("btn-folder-auto-apply");
 const bulk = (ctx) => ctx.server.calls.filter((c) => c.url.includes("/api/photos/write"));
 
+/** Answer the request waiting longest: an Apply All with `reply`, its list of tags for each file it wrote; a tag change
+ * with `reply` a function of its body (harness tagFiles reply). */
 async function answer(ctx, reply) {
   assert.ok(ctx.held.length, "no request was waiting for an answer");
-  // A photos/write reply names what each file holds ({tags, mtime, size}); an Apply All's, the list of its tags.
-  for (const [path, held] of Object.entries(reply.written || {})) ctx.server.files[path] = Array.isArray(held) ? held : held.tags;
+  for (const [path, held] of Object.entries(reply.written || {})) ctx.server.files[path] = held;
   ctx.held.shift()(reply);
   await flush(ctx.window, 10);
 }
@@ -96,11 +97,13 @@ describe("undo", () => {
     await answer(ctx, { success: true, written: Object.fromEntries(PHOTOS.map((p) => [p.path, ["Harbourside"]])) });
     ctrlZ(ctx);
     await flush(ctx.window, 10);
-    // The server resolved the removal to a different spelling than the page asked for:
-    // the file holds what the reply says.
-    await answer(ctx, {
-      success: true,
-      written: Object.fromEntries(PHOTOS.map((p) => [p.path, { tags: ["Places/Coast"] }])),
+    // Another program put Places/Coast in each file since: taking Harbourside off leaves it there, which the page
+    // would not have by hand (kept + removed). The file holds what the reply says.
+    const onDisk = tagFiles(PHOTOS.map((p) => ({ ...p, tags: ["Harbourside", "Places/Coast"] })));
+    await answer(ctx, (body) => {
+      const reply = onDisk.reply(body);
+      for (const p of PHOTOS) ctx.server.files[p.path] = onDisk.holds(p.path);
+      return reply;
     });
     const { state } = pageExports(ctx.window, "web/tagpup/state.js");
     for (const photo of state.folderPhotos) {

@@ -10,7 +10,7 @@
 import { test, describe, afterEach } from "node:test";
 import assert from "node:assert/strict";
 import { loadApp, FakeServer, photoRecord, flush, click, openFolder, closeAllApps, pageExports, SAVE, saveCalls, lastSave, saved,
-  changedOnDisk } from "./harness.mjs";
+  changedOnDisk, TAGS, tagFiles } from "./harness.mjs";
 
 afterEach(() => closeAllApps());
 
@@ -96,10 +96,9 @@ describe("a save names what the page read, and an undo keeps the record current 
   });
 
   test("carry forward, then undo, then a tag: the undo's stamp and tags are the next save's, no refusal", async (t) => {
-    const server = folderServer({
-      "/api/photos/write": { success: true,
-        written: { [`${FOLDER}\\b.jpg`]: { tags: ["Activity/Sailing"], mtime: 1700000900.5, size: 4200 } } },
-    }, saved({ mtime: 1700000500.5, size: 2100, base: { tags: ["Activity/Sailing", "Trips/Coast"], title: "" } }));
+    const server = folderServer({}, saved({ mtime: 1700000500.5, size: 2100, base: { tags: ["Activity/Sailing", "Trips/Coast"], title: "" } }));
+    // b.jpg as the carry forward left it; the undo takes Trips/Coast off and the file's stamp is a second later.
+    server.on(TAGS, tagFiles([{ path: `${FOLDER}\\b.jpg`, tags: ["Activity/Sailing", "Trips/Coast"], mtime: 1700000500.5, size: 2100 }]));
     const ctx = await folderPage(t, server);
     await openPhoto(ctx, "b.jpg");
     click(ctx.window, ctx.document.getElementById("btn-carry-forward"));
@@ -111,7 +110,7 @@ describe("a save names what the page read, and an undo keeps the record current 
     click(ctx.window, ctx.document.getElementById("btn-add-tag"));
     await flush(ctx.window, 10);
     const sent = lastSave(server);
-    assert.deepEqual(sent.stamp, { mtime: 1700000900.5, size: 4200 });
+    assert.deepEqual(sent.stamp, { mtime: 1700000501.5, size: 2100 });
     assert.deepEqual(sent.base.tags, ["Activity/Sailing"]);
   });
 
@@ -194,7 +193,7 @@ describe("in a view of the library", () => {
 describe("a bulk write from a selection names itself", () => {
   async function selectionOf(t, count) {
     const records = Array.from({ length: count }, (_, i) => photoRecord({ filename: `IMG_${i}.jpg`, path: `${FOLDER}\\IMG_${i}.jpg` }));
-    const server = folderServer({ "/api/photos/write": { success: true, written: {} } });
+    const server = folderServer().on(TAGS, tagFiles(records));
     server.scanned = records;
     const ctx = await folderPage(t, server);
     ctx.document.getElementById("btn-select-all-thumbnails").click();
@@ -238,7 +237,7 @@ describe("a bulk write refused or cancelled makes no tree node (#554)", () => {
   const taxonomyWrites = (ctx) => ctx.server.calls.filter((c) => c.method === "POST" && c.url.includes("/api/taxonomy/"));
   async function many(t, count) {
     const records = Array.from({ length: count }, (_, i) => photoRecord({ filename: `IMG_${i}.jpg`, path: `${FOLDER}\\IMG_${i}.jpg` }));
-    const server = folderServer({ "/api/photos/write": { success: true, written: {} } });
+    const server = folderServer().on(TAGS, tagFiles(records));
     server.scanned = records;
     const ctx = await folderPage(t, server);
     ctx.document.getElementById("btn-select-all-thumbnails").click();

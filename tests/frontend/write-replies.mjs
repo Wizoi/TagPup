@@ -111,17 +111,17 @@ export function unmadeReply(url, method, body, status, payload) {
  * at none, so the list only shrinks.
  */
 export const STILL_HAND_SPELLED = {
-  "apply-all-failure-undo.test.mjs": 1, "bulk-writes-queue.test.mjs": 4,
+  "bulk-writes-queue.test.mjs": 4,
   "clip-convert.test.mjs": 1, "delete-while-folder-changes.test.mjs": 1,
   "just-look-edits.test.mjs": 3, "library-photo-back.test.mjs": 1, "library-view.test.mjs": 1,
   "organize-faces.test.mjs": 2, "photo-position.test.mjs": 1,
   "rotate-refreshes-thumbnails.test.mjs": 1, "scenario-a-write-reaches-every-scan-kept.test.mjs": 1,
   "scenario-deleting-the-selected-photos-of-a-folder.test.mjs": 1, "scenario-editing-a-photo-on-the-phone.test.mjs": 1,
-  "scenario-switching-library-mid-folder.test.mjs": 1, "scenario-tagging-keeps-the-faces-in-place.test.mjs": 3,
-  "scenario-tagging-many-photos-at-once.test.mjs": 5, "scenario-write-through-a-server-update.test.mjs": 1,
+  "scenario-tagging-keeps-the-faces-in-place.test.mjs": 3,
+  "scenario-tagging-many-photos-at-once.test.mjs": 5,
   "smart-rename-count.test.mjs": 1,
-  "smart-rename-one-photo.test.mjs": 1, "stale-record.test.mjs": 1, "suggestions-follow-a-saved-photo.test.mjs": 2,
-  "undo-from-reply.test.mjs": 1, "video-viewer.test.mjs": 3,
+  "smart-rename-one-photo.test.mjs": 1, "suggestions-follow-a-saved-photo.test.mjs": 2,
+  "video-viewer.test.mjs": 3,
   "write-queue-status.test.mjs": 2,
 };
 

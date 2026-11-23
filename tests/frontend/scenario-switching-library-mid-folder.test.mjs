@@ -17,7 +17,7 @@
  */
 import { test, describe, afterEach } from "node:test";
 import assert from "node:assert/strict";
-import { loadApp, FakeServer, photoRecord, flush, click, openFolder, closeAllApps, pageExports } from "./harness.mjs";
+import { loadApp, FakeServer, photoRecord, flush, click, openFolder, closeAllApps, pageExports, TAGS, tagFiles } from "./harness.mjs";
 
 const FOLDER = "D:/Library/2020";
 
@@ -30,7 +30,9 @@ const OFFERED = ["Cross Country"];
 
 function build() {
   const held = [];
-  const hold = () => new Promise((resolve) => held.push(resolve));
+  const files = tagFiles(PHOTOS);
+  // A tag change waits until the test answers it (held.shift()()), as the real entry point would.
+  const hold = (url, body) => new Promise((resolve) => held.push(() => resolve(files.reply(body))));
   const server = new FakeServer()
     .on("/api/tags", OFFERED)
     .on("/api/people", [])
@@ -39,7 +41,7 @@ function build() {
     .on("/api/folder/index-status", { status: "completed", percent: 100, message: "Ready" })
     .on("/api/folder/scan", () => PHOTOS.map((p) => ({ ...p, tags: [...p.tags], people: [...p.people] })))
     .on("/api/photo-faces", { faces: [], total: 0, unmatched: 0 })
-    .on("/api/photos/write", hold)
+    .on(TAGS, hold)
     .on("/api/folder/suggest-status", {
       status: "completed",
       suggestions: Object.fromEntries(PHOTOS.map((p) => [p.path, {
@@ -100,7 +102,7 @@ describe("choosing another library while a bulk write is queued", () => {
 
     // Answered late, it still lands on the page it was queued from -- the only
     // library it was ever addressed to.
-    ctx.held.shift()({ success: true, written: {} });
+    ctx.held.shift()();
     await flush(ctx.window, 8);
     assert.equal(said(ctx), "All changes saved");
     assert.equal(ctx.server.urlsStartingWith("/beta/").length, 0, "the write ended up reaching beta");
