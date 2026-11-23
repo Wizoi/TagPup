@@ -243,13 +243,13 @@ twice (the filter model, vocabulary and the write chain are imported; the tokens
 concept that could collapse, no branch without an instance (every failure mode above is a user action on a phone), scenario
 tests owned and mapped, no open `data` or `wrong` finding. Each finding goes into docs/findings.md first.
 
-## Questions for the owner
+## Questions for the owner (answered 2026-11-23)
 
-1. Do the three mock-ups look right (tab bar of four, chips row above the grid, pull-up facts sheet on the photo)?
-2. Tab names and whether "Library" (browse) or "Photos" (the grid) is the first tab the page opens on (today: browse).
-3. A person's picture: a photograph of them (cheap, built here) or a cropped face (a later cut, the People owner)?
-4. Filter-sheet counts are whole-library until the desktop's narrowed counts exist; acceptable for now?
-5. Light theme: stays out (dark only)?
+1. Do the three mock-ups look right (tab bar of four, chips row above the grid, pull-up facts sheet on the photo)? **Yes.**
+2. Tab names and whether "Library" (browse) or "Photos" (the grid) is the first tab the page opens on. **Library.**
+3. A person's picture: a photograph of them or a cropped face? **A photograph** (no face-crop route).
+4. Filter-sheet counts are whole-library until the desktop's narrowed counts exist? **Acceptable.**
+5. Light theme? **Stays out: dark only.**
 
 Sources for the research: Material 3 chip and navigation-bar guidance and Google Photos' navigation changes (9to5google,
 Android Authority, PhoneArena, 2021-2025); Immich release notes v1.118, v2.4, v2.6 (linuxiac.com, immich.app); Apple Photos
