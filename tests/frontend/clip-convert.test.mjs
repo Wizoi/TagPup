@@ -15,7 +15,7 @@
  */
 import { test, describe, afterEach } from "node:test";
 import assert from "node:assert/strict";
-import { closeAllApps, CLIP_WRITES, pageExports } from "./harness.mjs";
+import { closeAllApps, CLIP_WRITES, pageExports, scanned } from "./harness.mjs";
 import { loadViewPage, pageErrors, recordOf, speedUp } from "./view-page.mjs";
 
 afterEach(() => {
@@ -281,7 +281,7 @@ describe("the clip panel's Convert and Make smaller (MP4)", () => {
       // the panel converts from, its suggestions under the name it had.
       const { folderCacheKey, CACHE_VERSION } = pageExports(ctx.window, "web/tagpup/cache.js");
       const key = folderCacheKey("D:\\Library\\2020\\Event 01");
-      const older = clipRecord({ path, mtime: MTIME - 600, size: 120 * MB - 512, order: "2020:01:01 10:00:00" });
+      const older = scanned(clipRecord({ path, mtime: MTIME - 600, size: 120 * MB - 512, taken: "2020:01:01 10:00:00" }));
       const offer = { tags: [{ tag: "Places/Harbour", score: 0.9 }], people: [], title: "" };
       ctx.window.localStorage.setItem(key, JSON.stringify({ version: CACHE_VERSION, timestamp: Date.now(), photos: [older],
         suggestions: { [path]: offer }, inMemory: false }));

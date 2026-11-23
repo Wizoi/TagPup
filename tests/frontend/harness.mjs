@@ -851,6 +851,48 @@ export function photoRecord(overrides = {}) {
 }
 
 /**
+ * A folder's scan as the real route sends it (GET /api/folder/scan, its records in the route's order; fixtures/
+ * scan_replies.json, written by tests/test_folder_scan_follows_the_library.py AFolderScanFromThePage): `folder`, two
+ * photos dated (IMG_0002.jpg 10:00, IMG_0001.jpg 10:20, on 2020:06:01) and IMG_0003.jpg holding no Date Taken, its file
+ * time 1600000000, after them; each size 1, its folder FOLDER.
+ */
+export const SCAN_REPLIES = JSON.parse(fs.readFileSync(path.join(HERE, "fixtures", "scan_replies.json"), "utf8"));
+
+/**
+ * The `order` of `example`, a record of SCAN_REPLIES, with `real`, what the server made it of, put back as `wanted`.
+ * Throws when the order no longer holds what it was made of: the server's key is then not one a test can make from a
+ * date or a file time, and the tests say so rather than sort by a key the server never sends.
+ */
+function respelled(example, real, wanted) {
+  if (!example.order.includes(real)) {
+    throw new Error(`scan_replies.json: ${example.filename}'s order ${JSON.stringify(example.order)} does not hold ${real}`);
+  }
+  return example.order.replace(real, wanted);
+}
+
+/**
+ * The `order` the server gives a photo taken at `taken` (as the server spells a Date Taken; null for none) whose file
+ * time is `mtime` (tagpup.core.dates taken_sort_key: what a scan's record carries, and a write's reply of a photo it
+ * dated), spelled as the real scan spelled its dated record and its undated one (SCAN_REPLIES.folder). An undated photo's
+ * file time is a whole second, as the scan's is.
+ */
+export function orderOf(taken, mtime) {
+  const records = SCAN_REPLIES.folder.reply;
+  if (taken !== null && taken !== undefined) {
+    const dated = records.find((record) => record.taken !== null);
+    return respelled(dated, dated.taken, taken);
+  }
+  if (!Number.isInteger(mtime)) throw new Error(`orderOf: an undated photo's file time a whole second, as the scan's, not ${mtime}`);
+  const undated = records.find((record) => record.taken === null);
+  return respelled(undated, String(undated.mtime), String(mtime));
+}
+
+/** `record` (photoRecord's, a clip's) as a scan's reply gives it: with the `order` the server gives it (orderOf). */
+export function scanned(record) {
+  return { ...record, order: orderOf(record.taken ?? null, record.mtime) };
+}
+
+/**
  * Open a folder the way a user does: type the path and commit it.
  *
  * There is no Scan Folder button any more -- choosing a folder opens it -- so tests
