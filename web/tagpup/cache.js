@@ -106,6 +106,21 @@ export function photosGone(paths) {
 }
 
 /**
+ * A photo deleted (the open photo's Delete): every scan kept holding it is forgotten (photosGone), and the open folder's
+ * records lose it -- found by its path now, not where it was when the delete was asked: a folder opened meanwhile holds
+ * no record of it (#532) -- the open folder kept again without it. Returns where it was in the open folder's records, or
+ * -1 when they hold none of it.
+ */
+export function photoDeleted(path) {
+    photosGone([path]);
+    const at = state.folderPhotos.findIndex(record => pathKey(record.path) === pathKey(path));
+    if (at === -1) return -1;
+    state.folderPhotos.splice(at, 1);
+    saveToLocalStorageCache();
+    return at;
+}
+
+/**
  * A folder's records in its order: by each one's `order`, the key the server gives every record of a scan and every photo
  * a write gave a Date Taken (tagpup.core.dates.taken_sort_key); the page holds no rule of its own (#3304). Stable: records
  * of one key keep their places, as the server's sort keeps them.

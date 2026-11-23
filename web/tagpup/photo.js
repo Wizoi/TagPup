@@ -23,7 +23,7 @@ import {
 import { setStatus } from './status.js';
 import { isJustLooking, libraryName } from './looking.js';
 import { pictureCheckSaid, whereWritten } from './write-queue.js';
-import { photosGone, recordsWritten, saveToLocalStorageCache } from './cache.js';
+import { photoDeleted, photosGone, recordsWritten } from './cache.js';
 import { fileSizeSaid, takenOf, takenSaid } from './format.js';
 import { namesAPerson, normalizeTag } from './tags.js';
 import { deleteWaits, pendingOf, readHeld, removePhotoTags, shownTags } from './pending.js';
@@ -899,9 +899,9 @@ export function deleteActivePhoto() {
             stayed = true;
             return;
         }
-        // Deleted: every scan this browser keeps holding it is forgotten, and scanned when opened again (cache.js photosGone);
-        // the open folder's is kept again below, without it.
-        if (data.success) photosGone([path]);
+        // Deleted: every scan this browser keeps holding it is forgotten, and scanned when opened again; the open folder's
+        // records lose it, and its scan is kept again without it (cache.js photoDeleted).
+        const at = data.success ? photoDeleted(path) : -1;
         if (data.success && askedInView && state.library !== askedInView) {
             // Another view (or a folder) was opened while the delete was out: nothing of it is this photo's.
             statusDot.className = 'status-indicator-dot';
@@ -923,8 +923,7 @@ export function deleteActivePhoto() {
             statusDot.className = 'status-indicator-dot';
             statusText.textContent = data.message || 'Ready';
         } else if (data.success) {
-            // Found again now, by its path: a folder opened meanwhile has no such card, and none of it goes.
-            const at = state.folderPhotos.findIndex(p => samePath(p.path, path));
+            // Found again by its path (photoDeleted): a folder opened meanwhile has no such card, and none of it goes.
             if (at === -1) {
                 removeFromSelection([path]);
                 statusDot.className = 'status-indicator-dot';
@@ -932,13 +931,9 @@ export function deleteActivePhoto() {
                 return;
             }
             const wasOpen = samePath(state.activePhotoPath, path);
-            state.folderPhotos.splice(at, 1);
 
             // Remove from selection array if selected
             removeFromSelection([path]);
-
-            // The open folder kept again, without it.
-            saveToLocalStorageCache();
 
             // Update UI statistics
             updateListStats();
