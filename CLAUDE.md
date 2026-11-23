@@ -105,10 +105,8 @@ shape.
 before touching either. Adjusting a threshold to make two lists agree hides the fact
 that they were different lists.
 
-**The second fix for one symptom is not a fix.** It is a question: what single place
-should own this? That question produced `db.py`, the tag vocabulary, and
-`write_keyword_fields` — each ended a whole class of bug. Reaching for it after the
-second round beats reaching for it after the fourth.
+**The second fix for one symptom is not a fix**: ask which single place should own it, and name the test that fails on a
+second reader or writer (`add_findings` refuses a third fix without it). **A decision on where a value is written lists its readers first.**
 
 **Watch an OS-level symptom before fixing it** (a window, a port held, a file that will not delete): run
 `tools/watch_processes.ps1` while it happens and read which process did it.
