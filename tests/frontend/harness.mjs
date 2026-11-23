@@ -859,6 +859,37 @@ export async function loadApp(appName, { url, server = new FakeServer(), t, befo
     window.Element.prototype.scrollIntoView = function () {};
   }
 
+  // jsdom has no IntersectionObserver, and the phone's Browse watches its rows' covers with one. Nothing is reported
+  // near the screen until a test says so (`intersect`), as jsdom lays nothing out.
+  if (typeof window.IntersectionObserver !== "function") {
+    const observers = new Set();
+    OBSERVERS.set(window, observers);
+    window.IntersectionObserver = class {
+      constructor(callback, options = {}) {
+        this.callback = callback;
+        this.rootMargin = options.rootMargin || "0px";
+        this.targets = new Set();
+        observers.add(this);
+      }
+
+      observe(target) {
+        this.targets.add(target);
+      }
+
+      unobserve(target) {
+        this.targets.delete(target);
+      }
+
+      disconnect() {
+        this.targets.clear();
+      }
+
+      takeRecords() {
+        return [];
+      }
+    };
+  }
+
   openWindows.set(window, server);
   if (t && typeof t.after === "function") {
     t.after(() => {
@@ -898,6 +929,28 @@ export async function loadApp(appName, { url, server = new FakeServer(), t, befo
   await flush(window);
 
   return { dom, window, document: window.document, server, consoleErrors };
+}
+
+/** The fake IntersectionObservers of each window (loadApp), for `intersect` and `observed`. */
+const OBSERVERS = new WeakMap();
+
+/** The elements the page's IntersectionObservers watch now. */
+export function observed(window) {
+  return [...(OBSERVERS.get(window) || [])].flatMap((observer) => [...observer.targets]);
+}
+
+/**
+ * `elements` came near the screen (`near`), or left it: each of the page's IntersectionObservers watching one of them is
+ * told, in one call as a browser batches a frame's, and what it started settles. An element no observer watches is not
+ * reported, as a browser reports none.
+ */
+export async function intersect(window, elements, near = true) {
+  for (const observer of OBSERVERS.get(window) || []) {
+    const entries = [...elements].filter((target) => observer.targets.has(target))
+      .map((target) => ({ target, isIntersecting: near, intersectionRatio: near ? 1 : 0 }));
+    if (entries.length) observer.callback(entries, observer);
+  }
+  await flush(window);
 }
 
 /** Let pending promise callbacks and timers settle. */
@@ -993,6 +1046,37 @@ export function orderOf(taken, mtime) {
 /** `record` (photoRecord's, a clip's) as a scan's reply gives it: with the `order` the server gives it (orderOf). */
 export function scanned(record) {
   return { ...record, order: orderOf(record.taken ?? null, record.mtime) };
+}
+
+/**
+ * The covers of browse rows as the real route sends them (GET /api/library/covers; fixtures/covers_replies.json, written
+ * by tests/test_library_covers.py): `folders`, a row whose source holds a photo (`found`) and one whose holds none
+ * (`none`). The tests answer from these two, never a cover spelled by hand.
+ */
+export const COVERS_REPLIES = JSON.parse(fs.readFileSync(path.join(HERE, "fixtures", "covers_replies.json"), "utf8"));
+
+/** The rows a covers request names (its `rows`, as the page sent them). */
+export function coverRowsOf(url) {
+  return JSON.parse(new URL(url, "http://page/").searchParams.get("rows"));
+}
+
+/**
+ * The route's reply to the covers request `url`: each row asked, in the order asked, with the cover `photoOf(row)` names
+ * (a photo id, as the route's `found` row, its thumbnail's address respelled for it), or none (null, as `none`).
+ */
+export function coveredAs(url, photoOf = () => null) {
+  const { reply } = COVERS_REPLIES.folders;
+  const [found, none] = reply.covers;
+  if (!found.thumb.includes(`id=${found.photo}&`)) throw new Error(`covers_replies.json: ${found.thumb} does not name id=${found.photo}`);
+  return {
+    ...reply,
+    section: new URL(url, "http://page/").searchParams.get("section"),
+    covers: coverRowsOf(url).map((row) => {
+      const photo = photoOf(row);
+      if (photo === null) return { ...none, id: row.id };
+      return { ...found, id: row.id, photo, thumb: found.thumb.replace(`id=${found.photo}&`, `id=${photo}&`) };
+    }),
+  };
 }
 
 /**
