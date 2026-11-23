@@ -9,7 +9,8 @@
  * - Rapid taps on one row cycle it from the last mark, in one place of history; a reply for a mark left is dropped.
  * - Back closes the sheet, the filter staying on the Grid; a second Back leaves the Grid; Forward gives the marks back.
  * - A filter finding nothing says so with its chips, Remove the last and Clear all; the count says 0 photos and Show
- *   "No photos", not pressable, while the marks can still be changed.
+ *   "No photos", not pressable, while the marks can still be changed. Clips chosen over marks that find only photos says
+ *   that the kind finds none, not the marks, and one tap shows both.
  * - An address naming a keyword deleted since gives a struck chip.
  * - Another library is another page: no chip of the first, every request to the other.
  * - A tab whose section could not be read says so with Try again, and Try again draws its rows.
@@ -73,8 +74,9 @@ function foundBy(value) {
 }
 
 /**
- * A library: its four sections, its ids (a search's by foundBy, the whole library's six) and cards. `hold` keeps each
- * search's reply until `release(order)`; `people` answers the People section (a function for one that fails).
+ * A library: its four sections, its ids (a search's by foundBy, the whole library's six; every one a photo, so Clips finds
+ * none of them) and cards. `hold` keeps each search's reply until `release(order)`; `people` answers the People section (a
+ * function for one that fails).
  */
 function library({ hold = false, people = PEOPLE } = {}) {
   const held = [];
@@ -85,8 +87,9 @@ function library({ hold = false, people = PEOPLE } = {}) {
     .on("/api/library/navigator?section=folders", FOLDERS)
     .on("/api/library/navigator?section=dates", DATES)
     .on("/api/library/ids", (url, body) => {
-      const ids = body && body.kind === "search" ? foundBy(body.value) : [1, 2, 3, 4, 5, 6];
-      const reply = { ids, total: ids.length, of: ids.length, videos: [] };
+      const found = body && body.kind === "search" ? foundBy(body.value) : [1, 2, 3, 4, 5, 6];
+      const ids = body && body.media === "video" ? [] : found;
+      const reply = { ids, total: ids.length, of: found.length, videos: [] };
       return hold && body ? new Promise((resolve) => held.push(() => resolve(reply))) : reply;
     })
     .on("/api/library/cards", (url) => {
@@ -271,6 +274,41 @@ describe("filtering the library on the phone", () => {
     assert.ok(el(ctx, "grid-none").classList.contains("hidden"));
     assert.equal(el(ctx, "grid-count").textContent, "6 photos");
     assert.equal(filterChip(ctx).getAttribute("aria-label"), "Filter");
+  });
+
+  test("Clips chosen over a mark that finds only photos: the words blame the kind, not the mark, and one tap shows both", async (t) => {
+    const ctx = await phone(t);
+    await openFilter(ctx);
+    await tapRow(ctx, "Wren Alder");
+    el(ctx, "grid-media").value = "video";
+    el(ctx, "grid-media").dispatchEvent(new ctx.window.Event("change"));
+    await settle(ctx);
+    await tap(ctx, el(ctx, "filter-scrim"));
+
+    assert.equal(el(ctx, "grid-count").textContent, "0 videos (of 5)");
+    assert.ok(!el(ctx, "grid-none").classList.contains("hidden"), "never an empty grid with no words");
+    assert.equal(el(ctx, "grid-none-text").textContent, "No videos here: the 5 in this view are all photos. Choose Both to see them.");
+    assert.equal(el(ctx, "grid-none-chips").textContent, "", "the marks are not what finds none");
+    assert.ok(el(ctx, "grid-none-remove").classList.contains("hidden"), "no Remove Wren Alder");
+    assert.ok(el(ctx, "grid-none-clear").classList.contains("hidden"));
+    assert.equal(el(ctx, "grid-none-media").textContent, "Both");
+
+    await tap(ctx, el(ctx, "grid-none-media"));
+    assert.equal(pageState(ctx).place.media, "both");
+    assert.deepEqual(chips(ctx), ["+ Wren Alder"], "the mark stays");
+    assert.equal(el(ctx, "grid-count").textContent, "5 photos");
+    assert.ok(el(ctx, "grid-none").classList.contains("hidden"));
+
+    await tap(ctx, filterChip(ctx));
+    await tapRow(ctx, "Wren Alder");       // & Wren Alder and & Sam Birch find nothing of any kind: the marks are the cause
+    await tapRow(ctx, "Sam Birch", 2);
+    el(ctx, "grid-media").value = "video";
+    el(ctx, "grid-media").dispatchEvent(new ctx.window.Event("change"));
+    await settle(ctx);
+    assert.equal(el(ctx, "grid-none-text").textContent, "No photo has all of these.");
+    assert.equal(el(ctx, "grid-none-chips").textContent, "& Sam Birch, & Wren Alder");
+    assert.ok(!el(ctx, "grid-none-remove").classList.contains("hidden"));
+    assert.ok(el(ctx, "grid-none-media").classList.contains("hidden"));
   });
 
   test("an address naming a keyword deleted since gives a struck chip", async (t) => {

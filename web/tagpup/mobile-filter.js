@@ -17,10 +17,12 @@
  * Browse opened) that row marked any of; else over the whole library. Its rows are Browse's, the section read once
  * (mobile-browse.js), their counts the whole library's ("of all photos": counts narrowed by the other marks are
  * advanced-filtering.md's cut 2, not built). Its Show button says how many photos the marks find: the Grid's own count of the
- * view read under it. The Grid's order and Photos/Clips are chosen in its head (wired by mobile-grid.js).
+ * view read under it. The Grid's order and Photos/Clips are chosen in its head (wired by mobile-grid.js). A filter that finds
+ * photos, none of the kind chosen, is not blamed on its marks: the grid says what the desktop says of such a view
+ * (library-source.js emptySentence) and offers Both.
  */
 import { buildElement, replaceContent } from './common/dom.js';
-import { viewCountSaid } from './library-source.js';
+import { DEFAULT_MEDIA, mediaLabel, viewCountSaid } from './library-source.js';
 import {
     NEXT_MARK, filterKey, filterMember, filterOverCap, markOf, membersOf, rowStatesFromSpec, sectionOf, sectionRows,
     specFromRowStates
@@ -134,8 +136,9 @@ function drawChips() {
 
 /**
  * What the read of the view says to the filter (mobile-grid.js, each time the Grid's count line is drawn): the sheet's Show
- * with the count, "No photos" and not pressable when there is none; and under a filter that finds none, the grid's words,
- * its chips named, Remove the last and Clear all.
+ * with the count, "No photos" and not pressable when there is none; and under a filter that finds none, the grid's words:
+ * when the marks find photos but none of the kind chosen (`of`, what they find of every kind), that, and Both; else its
+ * chips named, Remove the last and Clear all.
  */
 export function drawFilterStatus() {
     const lib = state.photos;
@@ -143,9 +146,15 @@ export function drawFilterStatus() {
     const none = read && lib.status === 'empty' && state.filter.size > 0;
     byId('grid-none').classList.toggle('hidden', !none);
     if (none) {
+        const kind = lib.media !== DEFAULT_MEDIA && lib.of > 0;
         const chips = chipsOf();
-        byId('grid-none-chips').textContent = chips.map((chip) => `${chip.sign} ${chip.text}`).join(', ');
+        byId('grid-none-text').textContent = kind ? lib.message : 'No photo has all of these.';
+        byId('grid-none-chips').textContent = kind ? '' : chips.map((chip) => `${chip.sign} ${chip.text}`).join(', ');
         byId('grid-none-remove').textContent = `Remove ${chips.at(-1).text}`;
+        byId('grid-none-remove').classList.toggle('hidden', kind);
+        byId('grid-none-clear').classList.toggle('hidden', kind);
+        byId('grid-none-media').textContent = mediaLabel(DEFAULT_MEDIA);
+        byId('grid-none-media').classList.toggle('hidden', !kind);
     }
     const show = byId('filter-show');
     show.textContent = !read ? 'Show photos' : lib.status === 'empty' ? 'No photos' : `Show ${viewCountSaid(lib)}`;
@@ -297,4 +306,7 @@ export function wireFilter() {
     });
     byId('grid-none-remove').addEventListener('click', () => takeOff([...state.filter.keys()].at(-1)));
     byId('grid-none-clear').addEventListener('click', clearAll);
+    byId('grid-none-media').addEventListener('click', () => {
+        if (state.screen === 'grid' && state.place) replacePlace(viewOf({ ...state.place, media: DEFAULT_MEDIA }));
+    });
 }
