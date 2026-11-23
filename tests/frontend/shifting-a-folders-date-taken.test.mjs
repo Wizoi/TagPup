@@ -13,7 +13,7 @@ import { test, afterEach } from "node:test";
 import assert from "node:assert/strict";
 import {
   loadApp, FakeServer, closeAllApps, openFolder, click, flush, photoRecord, pageExports, SHIFT, shiftedAs,
-  SHIFT_REPLIES, SAVE, SAVE_REPLIES, savedAs,
+  SHIFT_REPLIES, SAVE, SAVE_REPLIES, savedAs, scanned, orderOf,
 } from "./harness.mjs";
 
 afterEach(() => closeAllApps());
@@ -21,14 +21,11 @@ afterEach(() => closeAllApps());
 const FOLDER = "D:\\Pictures\\Regatta";
 const OTHER = "D:\\Pictures\\Harbour";
 const CAMERA = "Tidewater TX R6m2";
-// A record as a scan's reply gives it: `order`, the server's key of its place in the folder (tagpup.core.dates
-// taken_sort_key: its Date Taken, the undated after by file time).
-const at = (folder, filename, own) => {
-  const record = photoRecord({ path: `${folder}\\${filename}`, filename, camera: CAMERA, ...own });
-  return { order: record.taken ?? `mtime_${record.mtime}`, ...record };
-};
-// A photo's new Date Taken as a shift's reply gives it (`written[path]`): its `order` is the date.
-const dated = (taken) => ({ taken, order: taken });
+// A record as a scan's reply gives it, with `order`, the server's key of its place in the folder (harness.mjs scanned:
+// its Date Taken, the undated after by file time, as the real scan spells them).
+const at = (folder, filename, own) => scanned(photoRecord({ path: `${folder}\\${filename}`, filename, camera: CAMERA, ...own }));
+// A photo's new Date Taken as a shift's reply gives it (`written[path]`), with the `order` the server gives it.
+const dated = (taken) => ({ taken, order: orderOf(taken) });
 
 // As the server orders a folder: by Date Taken, the undated after.
 const CLIP = at(FOLDER, "MVI_0004.mp4", { media: "video", taken: "2020:06:01 09:00:00" });

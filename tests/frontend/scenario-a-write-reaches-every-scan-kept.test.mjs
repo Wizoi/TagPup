@@ -18,13 +18,14 @@
  *
  * Contract table row 23 (pages -> the page's saved scan cache), cache.js photosWritten, recordsWritten and photosGone. The
  * replies are the real entry point's (fixtures/shift_replies.json, harness.mjs shiftedAs; fixtures/save_replies.json,
- * saved and savedAs; fixtures/rename_replies.json, renamedAs); the records carry `order` as the scan's reply does.
+ * saved and savedAs; fixtures/rename_replies.json, renamedAs); the records carry `order` as the scan's reply does
+ * (fixtures/scan_replies.json, harness.mjs scanned and orderOf).
  */
 import { test, afterEach } from "node:test";
 import assert from "node:assert/strict";
 import {
   loadApp, FakeServer, closeAllApps, openFolder, click, flush, photoRecord, pageExports, SHIFT, shiftedAs, SAVE, saved,
-  lastSave, savedAs, SAVE_REPLIES, renamedAs,
+  lastSave, savedAs, SAVE_REPLIES, renamedAs, scanned, orderOf,
 } from "./harness.mjs";
 
 afterEach(() => closeAllApps());
@@ -34,12 +35,10 @@ const CHILD = "D:\\Pictures\\Regatta\\Heats";
 const CAMERA = "Tidewater TX R6m2";
 const OTHER_CAMERA = "Lanternfly Pixel 8 Pro";
 
-// A record as a scan's reply gives it: `order`, the server's key of its place (tagpup.core.dates taken_sort_key).
-const at = (folder, filename, own) => {
-  const record = photoRecord({ path: `${folder}\\${filename}`, filename, camera: OTHER_CAMERA, ...own });
-  return { order: record.taken ?? `mtime_${record.mtime}`, ...record };
-};
-const dated = (taken) => ({ taken, order: taken });
+// A record as a scan's reply gives it, with `order`, the server's key of its place (harness.mjs scanned).
+const at = (folder, filename, own) => scanned(photoRecord({ path: `${folder}\\${filename}`, filename, camera: OTHER_CAMERA, ...own }));
+// A photo's new Date Taken as a write's reply gives it (`written[path]`), with the `order` the server gives it.
+const dated = (taken) => ({ taken, order: orderOf(taken) });
 
 // The subfolder: two photos of the camera shifted, one of another between them.
 const H1 = at(CHILD, "IMG_0011.jpg", { camera: CAMERA, taken: "2020:06:01 10:10:00" });
@@ -305,7 +304,7 @@ test("a title save that renames its photo re-keys it in the kept parent: opened 
 
 test("a Date Taken saved moves the photo to its new place at once, in the open folder and the kept parent, as the server orders it", async (t) => {
   const later = "2020:06:01 10:25:00";
-  const ctx = await page(t, { save: savedAs(SAVE_REPLIES.dated, { taken: later, order: later }) });
+  const ctx = await page(t, { save: savedAs(SAVE_REPLIES.dated, dated(later)) });
   await ctx.open(PARENT);
   await ctx.open(CHILD);
   await ctx.select(H1);
