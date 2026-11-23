@@ -47,20 +47,20 @@ One-offs: none. No backfill: `queued_actions` starts empty, and no existing row 
 - What the owner sees: rapid clicks on one photo, switching library mid-folder, an update while working, a closed tab.
   Wrong words are a defect: History still lists the change, and Delete's row has no Undo.
 
-## Cuts (each leaves the trunk whole, each about 1,200 lines or fewer; one domain per worker)
-1. **Files, ~300:** Delete journaled as an INTERNAL crash record, under `file_changes.exclusively`; settle finishes the
-   row step. Tests first, run against the old code: kill between the Bin copy and the row; kill after the copy and
-   before `os.remove`; a save and a Delete of one file. Also the time-shift sentence (decision 7).
-2. **Integration, ~400:** `POST /api/photos/write` (ops, group token, `base` per photo for typed tags); the five old
-   routes call it, then their bodies are deleted. A chunk of one stays as fast as a save today (timed in a sandbox browser).
-3. **Views, ~800:** `queuePhotoWrite` and `pending.js` become one client. Names the debt: `shownTags`/`pendingOf` stay on
-   the page. Then install cuts 1-3 and let the owner use them.
-4. **Data + Files, ~500, only after cuts 1-3 are installed:** Migration(40) `queued_actions`, resume at start, the
-   never-resume-Delete-after-unclean-stop rule, the path arm for file-only photos. Owner approves the migration run.
-5. **Views + Integration, chosen (was optional):** the server serves per photo the pending ops, a settled/failed signal
-   per group token and a change feed (`GET /api/library/actions`); the page reads it and drops `write-queue.js` state,
-   `photoWrites`, the pending map, `shownTags` and `pendingOf` as its own rules. Needs its own brief and, as the
-   largest piece, may be cut in two merges.
+## Cuts
 
-Each cut removes at least as many concepts as it adds (the five routes, the two page queues). Each worker cites
+Cuts 1-3 of the first draft of this plan were ALREADY BUILT and installed under docs/plans/one-write-path.md (decided
+by the owner 2026-11-20; Delete's crash record and settle 79266423/15b222f8/0e95c35a, `POST /api/photos/write`,
+the page's one client; installed at d330b713). The first draft was written from a review dated 2026-11-19 and not checked
+against the trunk; the cut 1 worker found it stale (2026-11-23). Only the owner's two additions remain:
+
+4. **Data + Files, ~500:** Migration(40) `queued_actions`, resume at start (`settle_once` starts queued actions after
+   finishing `planned` changes), the never-resume-Delete-after-unclean-stop rule (already true of a planned Delete,
+   #3256; extend it to a queued one), the path arm for a photo with no row. Installed already: cuts 1-3, so migration
+   40 is the only one in flight; the owner approves its run on the three libraries.
+5. **Views + Integration, ~800, may be two merges:** the server serves per photo the pending ops, a settled/failed
+   signal per group token and a change feed (`GET /api/library/actions`); the page reads it and drops `write-queue.js`
+   state, `photoWrites`, the pending map, `shownTags` and `pendingOf` as its own rules.
+
+Each cut removes at least as many concepts as it adds. Each worker cites
 `Plan: docs/plans/one-write-path-and-durable-queue.md`.
