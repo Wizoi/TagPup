@@ -495,7 +495,8 @@ class ASaveFromThePage(S.Fresh):
         # Each reply as the route made it, and its status (`status`, by name): a save that wrote (`no_rename`), whose
         # rename failed, whose picture changed and was written again; one that saved a Date Taken (`dated`: its `taken`
         # and its `order`, the place the page moves it to); a turn; a save from a base the file no longer holds
-        # (`changed_on_disk`, refused 409); a save of a read-only file ExifTool could not write (`not_written`).
+        # (`changed_on_disk`, refused 409); a save of a read-only file ExifTool could not write (`not_written`); a save
+        # that puts a person on a photo whose one face is unnamed, which names it (`named_a_face`: its `named_faces`).
         path, record = self.smart_renamed()
         refused = names.RenameFailed("The file is open in another program (held by Viewer)", [])
         replies = {}
@@ -517,6 +518,17 @@ class ASaveFromThePage(S.Fresh):
         self.addCleanup(os.chmod, locked, stat.S_IREAD | stat.S_IWRITE)
         replies["not_written"] = self.sent(held, title="A caption")
         replies["dated"] = self.sent(self.record(plain_id), date_taken="2019-03-02T09:15")
+        faced, faced_id = self.make("IMG_0006.jpg", 11, ["Trips/Coast"])
+        conn = db.connect(self.library.path)
+        try:
+            face_rows.person_of(conn, "Marlo Pennick")      # a person at the top of the tree: their tag is the name
+            face_id = face_rows.add_face(conn, faced)
+            conn.commit()
+        finally:
+            conn.close()
+        replies["named_a_face"] = self.sent(self.record(faced_id), tags=["Trips/Coast", "Marlo Pennick"])
+        self.assertEqual([{"id": face_id, "name": "Marlo Pennick"}], replies["named_a_face"].get_json().get("named_faces"),
+                         replies["named_a_face"].data)
         found = {name: reply.get_json() for name, reply in replies.items()}
         for each in found.values():
             # The photo a save wrote is named in the page's test by the path it sends (harness.mjs savedAs).

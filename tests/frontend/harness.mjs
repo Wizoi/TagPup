@@ -330,7 +330,8 @@ export function lastSave(server) {
  * tests/test_tag_a_photo_read_it_back_and_undo.py ASaveFromThePage), each by name, its status in `status`, its one photo
  * named "PHOTO": `no_rename` (a save that wrote), `rename_failed`, `picture_changed`, `changed_on_disk` (refused 409: the
  * file is no longer what the page read), `not_written` (a file ExifTool could not write: a 200 with the photo among its
- * `errors`). Every fake reply of a save below is one of them, so that its fields are the server's, not a list kept here.
+ * `errors`), `named_a_face` (a person put on a photo whose one face was unnamed: the face named, in `named_faces`). Every
+ * fake reply of a save below is one of them, so that its fields are the server's, not a list kept here.
  */
 export const SAVE_REPLIES = JSON.parse(fs.readFileSync(path.join(HERE, "fixtures", "save_replies.json"), "utf8"));
 

@@ -47,6 +47,45 @@
    }
   }
  },
+ "named_a_face": {
+  "attempted": 1,
+  "change": 9,
+  "changed": 1,
+  "error_count": 0,
+  "errors": [],
+  "file_only": 0,
+  "named_faces": [
+   {
+    "id": 1,
+    "name": "Marlo Pennick"
+   }
+  ],
+  "skipped": [],
+  "skipped_missing": 0,
+  "stopped": null,
+  "success": true,
+  "with_rows": 1,
+  "written": {
+   "PHOTO": {
+    "base": {
+     "tags": [
+      "Trips/Coast",
+      "Marlo Pennick"
+     ],
+     "title": ""
+    },
+    "mtime": 1,
+    "new_path": "IMG_0006.jpg",
+    "rename_failed": null,
+    "size": 1,
+    "tags": [
+     "Trips/Coast",
+     "Marlo Pennick"
+    ],
+    "taken": null
+   }
+  }
+ },
  "no_rename": {
   "attempted": 1,
   "change": 4,
@@ -172,6 +211,7 @@
  "status": {
   "changed_on_disk": 409,
   "dated": 200,
+  "named_a_face": 200,
   "no_rename": 200,
   "not_written": 200,
   "picture_changed": 200,
