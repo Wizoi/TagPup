@@ -181,7 +181,8 @@ class ThePhonesPage(unittest.TestCase):
     lets the phone keep it on its home screen, each under the library's URL as the desktop page is."""
 
     FILES = {"mobile.html": "text/html", "mobile.css": "text/css", "manifest.webmanifest": "application/manifest+json",
-             "mobile-icon-192.png": "image/png", "mobile-icon-512.png": "image/png"}
+             "mobile-icon-192.png": "image/png", "mobile-icon-512.png": "image/png",
+             "mobile-icon-maskable-512.png": "image/png"}
 
     def setUp(self):
         self.app, _home = web_client.app_for(self, "tagpup")

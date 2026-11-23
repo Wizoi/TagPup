@@ -62,6 +62,7 @@ PHONE_FILES = {
     "manifest.webmanifest": "application/manifest+json",
     "mobile-icon-192.png": "image/png",
     "mobile-icon-512.png": "image/png",
+    "mobile-icon-maskable-512.png": "image/png",
 }
 
 #: What a module's name may be: a page's modules and the shared ones are all named so,

@@ -32,7 +32,7 @@ A_LIBRARYS_PAGES = ("one library's own pages and what they ask, answered to whoe
 OPEN = {
     "the page's own code and style, the same for every library: no photo, path or name":
         "/ /index.html /style.css /<name>.js /common/<name>.css /common/<name>.js "
-        "/mobile.html /mobile.css /manifest.webmanifest /mobile-icon-192.png /mobile-icon-512.png",
+        "/mobile.html /mobile.css /manifest.webmanifest /mobile-icon-192.png /mobile-icon-512.png /mobile-icon-maskable-512.png",
     "where each app listens, its ports: no data of a library": "/api/apps",
     "the version answering and whether it takes work, which a launcher asks before it drains": "/api/server",
     "acts on this PC's own desktop (a folder dialog, the photo viewer, Explorer): answered as the library's pages are":

@@ -11,7 +11,9 @@ the two sizes Chrome on Android asks a home-screen page for, beside the phone's 
 The tag is one plate, a rounded rectangle with a darker rim, hung from a ball chain
 whose two strands rise from its hole and leave the top of the square. Up to 32 pixels
 the chain would be grey speckle, so those sizes are the plate alone, filling the square. The manifest gives no `purpose`, so Android
-shows the icons whole ("any") and crops none.
+shows the icons whole ("any") and crops none, on a white circle with the tag small inside it; so the manifest also
+names a "maskable" icon (mobile-icon-maskable-512.png): the app's dark colour to the edges and the tag larger, which the
+phone crops to its own shape with no white behind it. (A launcher never shows a clear background for a home-screen page.)
 """
 
 import os
@@ -25,6 +27,8 @@ SIZES = [(16, 16), (24, 24), (32, 32), (48, 48), (64, 64), (128, 128), (256, 256
 SCALE = 4   # drawn large and scaled down, for smooth edges
 PHONE = os.path.join(ROOT, "web", "tagpup")
 PHONE_SIZES = (192, 512)
+MASKABLE = (15, 23, 42, 255)  # the manifest's theme_color, #0f172a
+MASKABLE_GROWTH = 1.0  # the plate fills the icon as the plain one does, with no white circle shrinking it; its corners stay inside a circle
 SMALL = 32  # this size and under: the plate alone
 CHAIN = (138, 146, 158, 255)  # steel grey, seen on a dark page and a light one
 WHITE = (255, 255, 255, 255)
@@ -85,6 +89,17 @@ def draw(colour, size):
     return image.resize((size, size), Image.LANCZOS)
 
 
+def draw_maskable(colour, size):
+    """The tag on the app's dark colour to every edge, larger than the plain icon, for the phone to crop."""
+    whole = size * 2
+    side = int(whole * MASKABLE_GROWTH)
+    grown = draw(colour, whole).resize((side, side), Image.LANCZOS)
+    off = (side - whole) // 2
+    image = Image.new("RGBA", (whole, whole), MASKABLE)
+    image.alpha_composite(grown.crop((off, off, off + whole, off + whole)))
+    return image.resize((size, size), Image.LANCZOS)
+
+
 def main():
     os.makedirs(FOLDER, exist_ok=True)
     for name, colour in COLOURS.items():
@@ -96,6 +111,9 @@ def main():
         path = os.path.join(PHONE, "mobile-icon-%d.png" % size)
         draw(COLOURS["tagpup"] + (255,), size).save(path, optimize=True)
         print(path)
+    path = os.path.join(PHONE, "mobile-icon-maskable-512.png")
+    draw_maskable(COLOURS["tagpup"] + (255,), 512).save(path, optimize=True)
+    print(path)
 
 
 if __name__ == "__main__":
