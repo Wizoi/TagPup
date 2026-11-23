@@ -61,8 +61,8 @@ The concrete rules adopted (all in `theme.css` as tokens, so the desktop page ca
 - **Radius and elevation**: three radius tokens (8 px chips and inputs, 16 px cards and thumbnails, 28 px sheets); cards are
   distinguished by tone (`--bg-tertiary` over `--bg-secondary`), not by heavy shadow, which is invisible on near-black.
 - **Type scale**: five steps in `rem` (so Android's font scale still applies, a standing decision): 0.75 caption, 0.875 body
-  small, 1 body, 1.25 title, 1.75 display; weights 400, 600 only; the existing fonts (`--font-heading` for titles,
-  `--font-body` for the rest). Inputs stay 16 px+ so no zoom.
+  small, 1 body, 1.25 title, 1.75 display; weights 400, 600 only; the phone uses the SYSTEM font (owner, 2026-11-23: no web font, nothing from Google; `--font-heading`/`--font-body` stay the desktop pages' own; the tokens carry the system stack on the phone),
+  Inputs stay 16 px+ so no zoom.
 - **Dark theme tokens**: keep the existing slate scale (`--bg-secondary`, `--bg-tertiary` are the first two tonal steps above
   `--bg-primary`, used by those names); add `--surface-3` (the third),
   `--scrim` (rgba black 0.6 under a mark drawn over a thumbnail; the Edit sheet has no scrim, so the photo stays
