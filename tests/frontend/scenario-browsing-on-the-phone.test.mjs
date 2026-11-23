@@ -8,13 +8,17 @@
  *   the Grid says how many photos it holds (web/tagpup/mobile-grid.js; its thumbnails are cut 2b).
  * - A section that could not be read says so with Try again; a slow reply never draws over a newer one; two quick taps
  *   open one level; an address naming a view opens its photos (web/tagpup/mobile-browse.js).
+ * - Each row shows a cover in a placeholder of fixed size, asked only for the rows near the screen (docs/plans/
+ *   phone-redesign.md, cut 2): a slow one, a failed one, one scrolled away, a level of 1,000 rows, a library switched; the
+ *   top of Browse shows the people with the most photos. Each covers reply is one the real route made (harness.mjs coveredAs).
  *
  * Folder and person names hold spaces, apostrophes and a leading dot, as the live libraries' do (counted read-only
  * 2026-11-17: 197 folder names with an apostrophe in photo_index, 2,573 with a space). Every name here is made up.
  */
 import { test, describe, afterEach } from "node:test";
 import assert from "node:assert/strict";
-import { loadApp, FakeServer, flush, click, closeAllApps, pageExports } from "./harness.mjs";
+import { loadApp, FakeServer, flush, click, closeAllApps, pageExports, answer, intersect, observed, coveredAs, coverRowsOf }
+  from "./harness.mjs";
 
 const PAGE = "http://localhost:8090/alpha/mobile.html";
 const ROOT = "D:\\Pictures";
@@ -400,5 +404,200 @@ describe("browsing a library on the phone", () => {
     assert.equal(el(gone, "browse-note").textContent, "This is no longer in the library.");
     assert.ok(!el(gone, "browse-note").classList.contains("hidden"));
     assert.ok(el(gone, "browse-show").classList.contains("hidden"), "no photos offered of a level that is not there");
+  });
+});
+
+/** The cover boxes of the level shown, in its rows' order. */
+const boxes = (ctx) => rows(ctx).map((r) => r.querySelector(".browse-cover"));
+
+/** The thumbnails drawn in `list` (boxes), each its address or null for a placeholder alone. */
+const drawn = (list) => list.map((box) => box.querySelector("img")?.getAttribute("src") ?? null);
+
+/** The covers asks made, each the rows it named (coverRowsOf). */
+const coverAsks = (ctx) => ctx.server.urls().filter((u) => u.includes("/api/library/covers")).map(coverRowsOf);
+
+/**
+ * A library whose covers route holds each ask until the test lets it go (`release(n, photoOf)`, the reply the real route
+ * makes, coveredAs; `fail(n)`, a 503 as a busy library answers).
+ */
+function heldCovers(server = library()) {
+  const held = [];
+  server.first("/api/library/covers", (url) => new Promise((resolve) => held.push({ url, resolve })));
+  return {
+    server,
+    held,
+    release: (n, photoOf = () => 1) => held[n].resolve(coveredAs(held[n].url, photoOf)),
+    fail: (n) => held[n].resolve(answer(503, { error: "The library is busy." })),
+  };
+}
+
+describe("covers on Browse's rows", () => {
+  test("a folder of 1,000 subfolders: every row drawn with its placeholder and count, covers asked only near the screen, 24 an ask, two out at once", async (t) => {
+    const days = Array.from({ length: 1000 }, (_, n) => `Day ${String(n + 1).padStart(4, "0")}`);
+    const server = library().first("/api/library/navigator?section=folders", {
+      folders: [
+        { path: ROOT, name: "Pictures", parent: null, direct: 0, recursive: 1000 },
+        ...days.map((name) => ({ path: `${ROOT}\\${name}`, name, parent: ROOT, direct: 1, recursive: 1 })),
+      ],
+    });
+    const covers = heldCovers(server);
+    const ctx = await loadApp("phone", { t, server, url: PAGE });
+    await tap(ctx, section(ctx, "folders"));
+    await tap(ctx, row(ctx, "Pictures"));
+
+    assert.equal(rows(ctx).length, 1000);
+    assert.ok(boxes(ctx).every((box) => box && !box.querySelector("img")), "each row its placeholder, before anything is asked");
+    assert.equal(counts(ctx)[0], "1", "and its count");
+    assert.equal(observed(ctx.window).length, 1000, "the rows of the level shown are watched, the level above's no more");
+    assert.equal(coverAsks(ctx).length, 0, "nothing is near the screen until the browser says so");
+
+    await intersect(ctx.window, boxes(ctx).slice(0, 100));
+    assert.deepEqual(coverAsks(ctx).map((asked) => asked.length), [24, 24], "two asks out at once, 24 rows each");
+    const [first] = coverAsks(ctx);
+    assert.deepEqual(first[0], { id: first[0].id, kind: "folder", value: `${ROOT}\\Day 0001`, recursive: true },
+      "a row's source as a tap opens it: the folder with its subfolders");
+
+    // A fling: the first hundred leave before the rest of them were asked, the last hundred come near.
+    await intersect(ctx.window, boxes(ctx).slice(0, 100), false);
+    await intersect(ctx.window, boxes(ctx).slice(900));
+    covers.release(0);
+    await flush(ctx.window);
+    assert.equal(coverAsks(ctx).length, 3);
+    assert.equal(coverAsks(ctx)[2][0].value, `${ROOT}\\Day 0901`, "the rows that left unasked are not asked; the ones near are");
+    assert.equal(drawn(boxes(ctx).slice(0, 24)).filter(Boolean).length, 24, "the answer for rows scrolled away is kept and drawn");
+    assert.ok(coverAsks(ctx).every((asked) => asked.length <= 24));
+  });
+
+  test("a slow cover: the placeholder holds, the row opens, and the cover lands on the level drawn again without a second ask", async (t) => {
+    const covers = heldCovers();
+    const ctx = await loadApp("phone", { t, server: covers.server, url: PAGE });
+    await tap(ctx, section(ctx, "folders"));
+    await tap(ctx, row(ctx, "Pictures"));
+    await intersect(ctx.window, boxes(ctx));
+    assert.deepEqual(coverAsks(ctx).map((asked) => asked.map((each) => each.value)), [[YEAR, `${ROOT}\\2020`]]);
+    assert.ok(ctx.server.urls().find((u) => u.includes("/api/library/covers")).startsWith("/alpha/api/library/covers?section=folders&"));
+    assert.deepEqual(drawn(boxes(ctx)), [null, null]);
+
+    await tap(ctx, row(ctx, "2019"));
+    assert.deepEqual(labels(ctx), ["Rowan's Meet", "Spring Day"], "the row is a button while its cover is out");
+    await back(ctx);
+    covers.release(0, (asked) => (asked.value === YEAR ? 7 : null));
+    await flush(ctx.window);
+
+    const [thumb, none] = drawn(boxes(ctx));
+    assert.match(thumb, /^\/alpha\/api\/photo-thumb\?id=7&v=/, "the reply's thumbnail, asked of the page's library");
+    assert.equal(none, null, "a folder with no photo keeps its placeholder");
+    const img = boxes(ctx)[0].querySelector("img");
+    assert.deepEqual([img.getAttribute("loading"), img.getAttribute("decoding")], ["lazy", "async"]);
+    await intersect(ctx.window, boxes(ctx));
+    assert.equal(coverAsks(ctx).length, 1, "answered, a row is not asked again");
+  });
+
+  test("a cover read that fails leaves the placeholder and the row tappable; near the screen again, it is asked again", async (t) => {
+    const covers = heldCovers();
+    const ctx = await loadApp("phone", { t, server: covers.server, url: PAGE });
+    await tap(ctx, section(ctx, "folders"));
+    await tap(ctx, row(ctx, "Pictures"));
+    await intersect(ctx.window, boxes(ctx));
+    covers.fail(0);
+    await flush(ctx.window);
+
+    assert.deepEqual(drawn(boxes(ctx)), [null, null]);
+    assert.ok(el(ctx, "browse-problem").classList.contains("hidden"), "a cover never says Browse failed");
+    await intersect(ctx.window, boxes(ctx), false);
+    await intersect(ctx.window, boxes(ctx));
+    assert.equal(coverAsks(ctx).length, 2);
+    covers.release(1, () => 3);
+    await flush(ctx.window);
+    assert.equal(drawn(boxes(ctx)).filter(Boolean).length, 2);
+    await tap(ctx, row(ctx, "2020"));
+    assert.deepEqual(shown(ctx), ["grid"]);
+  });
+
+  test("no cover is asked while a row's photos are open; back on Browse the answers kept are drawn", async (t) => {
+    const covers = heldCovers();
+    const ctx = await loadApp("phone", { t, server: covers.server, url: PAGE });
+    await tap(ctx, section(ctx, "keywords"));
+    await intersect(ctx.window, boxes(ctx));
+    assert.equal(coverAsks(ctx).length, 1);
+    assert.deepEqual(coverAsks(ctx)[0].map((each) => each.kind), ["keyword", "untagged"], "No tag's cover too");
+
+    await tap(ctx, row(ctx, "No tag"));
+    assert.deepEqual(shown(ctx), ["grid"]);
+    const left = boxes(ctx);
+    covers.release(0, () => 5);
+    await flush(ctx.window);
+    await intersect(ctx.window, left);
+    assert.equal(coverAsks(ctx).length, 1, "the grid is shown: nothing more is asked");
+
+    await back(ctx);
+    assert.deepEqual(drawn(boxes(ctx)).map((src) => src && src.includes("id=5&")), [true, true], "the answers kept, drawn at once");
+    assert.equal(coverAsks(ctx).length, 1);
+  });
+
+  test("the library switched mid-scroll: the covers out land in this page alone, and nothing more is asked", async (t) => {
+    const covers = heldCovers();
+    const ctx = await loadApp("phone", { t, server: covers.server, url: PAGE });
+    const { openScreen } = pageExports(ctx.window, "web/tagpup/mobile-screens.js");
+    await tap(ctx, section(ctx, "folders"));
+    await tap(ctx, row(ctx, "Pictures"));
+    await intersect(ctx.window, boxes(ctx));
+
+    openScreen("library");
+    await flush(ctx.window);
+    const beta = [...el(ctx, "library-list").querySelectorAll(".library-choice")].find((b) => b.textContent === "beta");
+    await tap(ctx, beta);
+    assert.ok(navigated(ctx), "another library is another page");
+    covers.release(0, () => 9);
+    await flush(ctx.window);
+
+    assert.equal(coverAsks(ctx).length, 1);
+    assert.ok(ctx.server.urls().filter((u) => u.includes("/api/library/covers")).every((u) => u.startsWith("/alpha/")));
+  });
+
+  test("the top of Browse: the people with the most photos, each with a cover; a tap opens their photos; See all opens People", async (t) => {
+    const people = {
+      groups: [{ tag: "People/Family", name: "Family", parent: null, count: 9 }],
+      people: [
+        { name: "Ada Lindqvist", count: 2, group: "People/Family", person_id: 21, person: { tag: "People/Family/Ada Lindqvist" } },
+        { name: "Rowan Thackeray", count: 40, group: "People/Family", person_id: 22, person: { tag: "People/Family/Rowan Thackeray" } },
+        { name: "Mina Okafor", count: 1, group: null, person_id: 23, person: { tag: "People/Mina Okafor" } },
+      ],
+      unfiled: 1,
+    };
+    const covers = heldCovers(library().on("/api/library/navigator?section=people", people));
+    const ctx = await loadApp("phone", { t, server: covers.server, url: PAGE });
+    const strip = ctx.document.querySelector(".browse-people");
+    const tiles = () => [...strip.querySelectorAll(".browse-person")];
+
+    assert.ok(!strip.classList.contains("hidden"));
+    assert.equal(strip.previousElementSibling, el(ctx, "browse-search"), "under the search box");
+    assert.deepEqual(tiles().map((b) => b.querySelector(".browse-person-name").textContent),
+      ["Rowan Thackeray", "Ada Lindqvist", "Mina Okafor"], "most photos first, whatever branch files them");
+    assert.deepEqual(tiles().map((b) => b.querySelector(".browse-person-count").textContent), ["40", "2", "1"]);
+
+    await intersect(ctx.window, tiles().map((b) => b.querySelector(".browse-cover")));
+    assert.ok(ctx.server.urls().find((u) => u.includes("/api/library/covers")).includes("section=people&"));
+    assert.deepEqual(coverAsks(ctx)[0].map(({ kind, value }) => [kind, value]), [
+      ["person", "People/Family/Rowan Thackeray"], ["person", "People/Family/Ada Lindqvist"], ["person", "People/Mina Okafor"],
+    ], "each by tag path");
+    covers.release(0, (asked) => (asked.value.endsWith("Rowan Thackeray") ? 12 : null));
+    await flush(ctx.window);
+    assert.deepEqual(drawn(tiles().map((b) => b.querySelector(".browse-cover"))).map(Boolean), [true, false, false]);
+
+    await tap(ctx, tiles()[0]);
+    assert.deepEqual(JSON.parse(JSON.stringify(pageState(ctx).view)),
+      { kind: "person", value: "People/Family/Rowan Thackeray", recursive: false, order: "taken", media: "both" });
+    await back(ctx);
+    await tap(ctx, strip.querySelector(".browse-people-all"));
+    assert.deepEqual([...pageState(ctx).place], ["people"]);
+    assert.deepEqual(labels(ctx), ["Family", "Not filed in the tag tree"]);
+    assert.ok(drawn(boxes(ctx)).every((src) => src === null), "a branch's cover is its own ask");
+  });
+
+  test("a library naming no one shows no People strip", async (t) => {
+    const ctx = await loadApp("phone", { t, server: library().on("/api/library/navigator?section=people", { groups: [], people: [], unfiled: 0 }), url: PAGE });
+    assert.ok(ctx.document.querySelector(".browse-people").classList.contains("hidden"));
+    assert.equal(coverAsks(ctx).length, 0);
   });
 });

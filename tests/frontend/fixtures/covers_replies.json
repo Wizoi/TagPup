@@ -1,0 +1,20 @@
+{
+ "folders": {
+  "reply": {
+   "covers": [
+    {
+     "id": "found",
+     "photo": 2,
+     "thumb": "/api/photo-thumb?id=2&v=0.0"
+    },
+    {
+     "id": "none",
+     "photo": null,
+     "thumb": null
+    }
+   ],
+   "section": "folders"
+  },
+  "status": 200
+ }
+}

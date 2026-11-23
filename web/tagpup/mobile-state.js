@@ -18,8 +18,14 @@ export const state = {
     linked: null,
     // The view the Grid shows: { kind, value, recursive, order, media }, the names of library-source.js.
     view: null,
-    // Browse's sections by name: { asked, index, status, message } (mobile-browse.js).
+    // Browse's sections by name: { asked, index, status, message, covers, coversOut } (mobile-browse.js): `covers` each
+    // row's cover answered, by row id (its thumbnail's URL, null for a row with no photo), kept for the page's life, a row
+    // scrolled away included; `coversOut` the row ids asked and not answered yet.
     sections: {},
+    // Browse's covers (mobile-browse.js): the one IntersectionObserver over the cover boxes drawn, made as the page is
+    // wired; what each box is the cover of ({ name, id, tree }); the rows near the screen not asked yet, in the order they
+    // came near; how many asks are out.
+    covers: { observer: null, wanted: new WeakMap(), queue: [], out: 0 },
     // What is held for the Grid's view: a view of library-source.js (newLibrary), its ids and the cards asked so far,
     // kept while a photo of it is open; null when Browse is shown. A reply for a view no longer held is dropped.
     photos: null,
