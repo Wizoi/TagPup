@@ -27,6 +27,17 @@ TAKEN_OF = "taken_of"
 
 # ---- A folder, as the page sees it --------------------------------------------------------
 
+_DERIVE = object()
+
+
+def date_fields(raw_meta, path, media, year=_DERIVE):
+    """(year as shown, Date Taken) of a photo by the one rule a page record and a record patched after a save share;
+    `year` is the one an index row already holds, derived from the metadata when not given."""
+    if year is _DERIVE:
+        year = dates.photo_year(raw_meta, path, media)
+    return dates.shown_year(None if year is None else str(year)), dates.date_taken(raw_meta, path, media)
+
+
 def page_record(path, meta, mtime=0.0, size=0):
     """One photo as the TagPup page reads it, from what was read of it: `meta` is a
     record from the file reader or an index row (tags, people, captions, raw_metadata).
@@ -40,7 +51,7 @@ def page_record(path, meta, mtime=0.0, size=0):
     raw_meta = meta.get("raw_metadata", {})
     # 'photo' or 'video', as the index gives a row its kind (images.kind_of, photos.kind): what it is dated by as well.
     media = images.kind_of(path)
-    year = meta["year"] if "year" in meta else dates.photo_year(raw_meta, path, media)
+    year, taken = date_fields(raw_meta, path, media, meta["year"] if "year" in meta else _DERIVE)
     gear = photo_meta.gear(raw_meta)
     record = {
         "path": path,
@@ -53,8 +64,8 @@ def page_record(path, meta, mtime=0.0, size=0):
         "title": fields.title_of(raw_meta),
         "mtime": mtime,
         "size": size,
-        "year": dates.shown_year(None if year is None else str(year)),
-        "taken": dates.date_taken(raw_meta, path, media),
+        "year": year,
+        "taken": taken,
         "raw_metadata": raw_meta,
         # The camera and lens it was taken with, named as a search finds them (photo_meta.gear): "" for what the
         # metadata does not say, which the panel shows as nothing.
@@ -261,10 +272,7 @@ def record_written(library, record, path, tags, flat, hierarchical, dates_writte
 def rederive_dates(record, path):
     """The date-derived fields of a page record (its `year` and `taken`) by page_record's own rule from its raw metadata
     as patched: the one place a record kept after a save takes the dates the file holds now (#3320, #3321)."""
-    media = images.kind_of(paths.stored(path))
-    year = dates.photo_year(record["raw_metadata"], path, media)
-    record["year"] = dates.shown_year(None if year is None else str(year))
-    record["taken"] = dates.date_taken(record["raw_metadata"], path, media)
+    record["year"], record["taken"] = date_fields(record["raw_metadata"], path, images.kind_of(paths.stored(path)))
 
 
 def page_copy(photo_path, max_size=None, upright=True):
