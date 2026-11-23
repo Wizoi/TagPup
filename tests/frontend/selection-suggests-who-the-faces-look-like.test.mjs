@@ -6,7 +6,7 @@
  */
 import { test, describe } from "node:test";
 import assert from "node:assert/strict";
-import { loadApp, FakeServer, photoRecord, flush, click, openFolder, peopleRecordsOf, PEOPLE_ROUTE, until } from "./harness.mjs";
+import { loadApp, FakeServer, photoRecord, flush, click, openFolder, peopleRecordsOf, PEOPLE_ROUTE, until, TAGS, tagFiles } from "./harness.mjs";
 
 const FOLDER = "D:/Library/2020";
 const TAXONOMY = [
@@ -28,7 +28,7 @@ function build(photos, faces, suggest = { status: "idle" }) {
     .on("/api/databases", { databases: ["photo_index"], selected: "photo_index" })
     .on("/api/folder/index-status", { status: "completed", percent: 100, message: "Ready" })
     .on("/api/folder/scan", () => structuredClone(photos))   // the page's records are its own: a write changes them, not these
-    .on("/api/photos/write", { success: true })
+    .on(TAGS, tagFiles(photos))
     .on("/api/folder/suggest-status", suggest);
   server.first(ROUTE, () => (typeof faces === "function" ? faces(server.lastBody(ROUTE)) : { suggestions: faces }));
   return server;
