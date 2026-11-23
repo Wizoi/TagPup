@@ -240,7 +240,8 @@ class ThePhonesPage(unittest.TestCase):
         for other in ("/library/mobile.html", "/another/mobile.html"):
             self.assertTrue(other.startswith(urljoin(url, manifest["scope"])), other)
         self.assertEqual(200, self.client.get(urljoin(url, manifest["start_url"])).status_code)
-        self.assertEqual(["192x192", "512x512"], [icon["sizes"] for icon in manifest["icons"]])
+        self.assertEqual(["192x192", "512x512", "512x512"], [icon["sizes"] for icon in manifest["icons"]])
+        self.assertEqual(["any", "any", "maskable"], [icon.get("purpose", "any") for icon in manifest["icons"]])
         for icon in manifest["icons"]:
             reply = self.client.get(urljoin(url, icon["src"]))
             self.assertEqual((200, "image/png"), (reply.status_code, reply.mimetype), icon["src"])
