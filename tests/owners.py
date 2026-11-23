@@ -97,7 +97,7 @@ SCENARIOS = {
     "V25": ("views", "On the phone page somebody taps a thumbnail and looks at the photo large, swiping left and right through the view: rapid swipes go as many photos on in one step of history, the first and last go no further, a photo whose card is still being read waits for it and a reply for one swiped past is dropped, a tap zooms the file whole, and Back after the swipes is the grid with the card swiped to in view; a missing file, a picture or card that could not be read and a clip that will not play each say so and the swipe goes on."),
     "V26": ("views", "On the phone page somebody opens a photo's Edit sheet and adds and takes off people and keywords, "
             "each one path's change with no stamp; rapid x taps each have their own Undo and an Undo in time sends "
-            "nothing; a swipe, Back, the Libraries button or the page going sends a removal still waiting, even one "
+            "nothing; a swipe, Back or the page going sends a removal still waiting, even one "
             "behind a Save still out; the title and Date Taken save with the stamp read, a file changed on the PC is "
             "never written over and the text typed is kept, a dropped connection says so, a title or date left by "
             "Back is put back when the sheet opens again, and Close with text typed asks."),
@@ -110,6 +110,11 @@ SCENARIOS = {
             "bookmark give the marks and chips, a tag deleted since struck through; a filter finding nothing keeps its chips; "
             "Clear all, the search box's Clear or the toggle clicked twice before Back arrives goes back once; a list past "
             "the server's cap is refused with a sentence; unsaved edits in the open photo ask before any mark."),
+    "V30": ("views", "On the phone page somebody moves between its screens by the bar of tabs at the foot: a page on a "
+            "library opens on Library, one on none shows the list with no bar; each tab is one step of history however "
+            "fast it is pressed and none for the tab shown, Back walks back through the tabs to the page's first step, "
+            "Library from a level of Browse opens its top, Photos the view the Grid showed last or the whole library, the "
+            "Photo screen has no bar, Filter is drawn and opens nothing yet, and a phone turned keeps the bar and the screen."),
     "I1": ("apps", "Switching library in the middle of a folder shows no card of the first."),
     "I2": ("apps", "A write through a server update is waited out and not repeated."),
     "I3": ("apps", "An update by a launch and by an install hands one server over to the next without killing its work."),
@@ -258,6 +263,7 @@ _SCENARIO_FILES = {
     "V27": "scenario-moving-on-while-a-photo-saves",
     "V28": "test_filtering_the_library_by_rows scenario-filtering-the-library-by-rows",
     "V29": "scenario-filtering-the-library-in-filter-mode",
+    "V30": "scenario-moving-between-tabs-on-the-phone",
 }
 
 #: owner -> kind -> the unit, migration and guard files, a .mjs without its ".test.mjs".

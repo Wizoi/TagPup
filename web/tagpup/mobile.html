@@ -21,7 +21,6 @@
     <header class="bar">
         <button type="button" id="bar-back" class="bar-back hidden" aria-label="Back">&#8592;</button>
         <h1 id="bar-title" class="bar-title">TagPup</h1>
-        <button type="button" id="bar-library" class="bar-library">Libraries</button>
     </header>
 
     <main>
@@ -104,6 +103,15 @@
             </div>
         </section>
     </main>
+
+    <!-- The bar of tabs (mobile-tabs.js): each opens its screen as a step of history. Filter is cut 3's filter sheet
+         (docs/plans/phone-redesign.md): drawn, not yet something to press. -->
+    <nav id="tabs" class="tabs hidden" aria-label="Screens">
+        <button type="button" class="tab" data-tab="browse"><span class="tab-icon" aria-hidden="true"></span><span class="tab-label">Library</span></button>
+        <button type="button" class="tab" data-tab="grid"><span class="tab-icon" aria-hidden="true"></span><span class="tab-label">Photos</span></button>
+        <button type="button" class="tab" data-tab="filter" disabled><span class="tab-icon" aria-hidden="true"></span><span class="tab-label">Filter</span></button>
+        <button type="button" class="tab" data-tab="library"><span class="tab-icon" aria-hidden="true"></span><span class="tab-label">Libraries</span></button>
+    </nav>
     <div id="edit-toasts" class="edit-toasts" aria-live="polite"></div>
 
     <script type="module" src="mobile.js"></script>

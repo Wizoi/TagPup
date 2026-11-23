@@ -16,6 +16,7 @@
 import { test, describe, afterEach } from "node:test";
 import assert from "node:assert/strict";
 import { loadApp, FakeServer, flush, click, closeAllApps, pageExports } from "./harness.mjs";
+import { tab } from "./phone-page.mjs";
 
 const LIBRARIES = ["alpha", "beta"];
 
@@ -70,7 +71,7 @@ describe("opening the phone page", () => {
     assert.deepEqual(shown(ctx), ["browse"]);
     assert.ok(el(ctx, "bar-back").classList.contains("hidden"), "no Back on the first screen");
 
-    click(ctx.window, el(ctx, "bar-library"));
+    click(ctx.window, tab(ctx, "library"));
     await flush(ctx.window);
     assert.deepEqual(shown(ctx), ["library"]);
     assert.equal(ctx.window.history.length, first + 1, "the screen is a step in history");
@@ -82,13 +83,13 @@ describe("opening the phone page", () => {
     assert.equal(el(ctx, "bar-title").textContent, "alpha");
     assert.ok(!navigated(ctx.consoleErrors));
 
-    click(ctx.window, el(ctx, "bar-library"));
+    click(ctx.window, tab(ctx, "library"));
     await flush(ctx.window);
     click(ctx.window, el(ctx, "bar-back"));
     await flush(ctx.window);
     assert.deepEqual(shown(ctx), ["browse"], "the bar's Back too");
 
-    click(ctx.window, el(ctx, "bar-library"));
+    click(ctx.window, tab(ctx, "library"));
     await flush(ctx.window);
     const current = el(ctx, "library-list").querySelector(".library-choice.current");
     assert.equal(current.textContent, "alpha");
@@ -102,7 +103,7 @@ describe("opening the phone page", () => {
     const server = new FakeServer().on("/api/databases", { databases: LIBRARIES });
     const ctx = await loadApp("phone", { t, server, url: "http://localhost:8090/alpha/mobile.html" });
 
-    click(ctx.window, el(ctx, "bar-library"));
+    click(ctx.window, tab(ctx, "library"));
     await flush(ctx.window);
     const other = [...el(ctx, "library-list").querySelectorAll(".library-choice")].find((b) => b.textContent === "beta");
     assert.ok(other && !other.classList.contains("current"));
@@ -120,14 +121,14 @@ describe("opening the phone page", () => {
       .on("/api/databases", { databases: LIBRARIES }, { headers: { "X-TagPup-Version": "1.0.0" } });
     const ctx = await loadApp("phone", { t, server, url: "http://localhost:8090/alpha/mobile.html" });
 
-    click(ctx.window, el(ctx, "bar-library"));
+    click(ctx.window, tab(ctx, "library"));
     await flush(ctx.window);
     assert.deepEqual(choices(ctx), LIBRARIES);
     assert.ok(el(ctx, "roots-banner").classList.contains("hidden"), "the first version seen is no update");
 
     await back(ctx);
     server.first("/api/databases", { databases: LIBRARIES }, { headers: { "X-TagPup-Version": "1.1.0" } });
-    click(ctx.window, el(ctx, "bar-library"));
+    click(ctx.window, tab(ctx, "library"));
     await flush(ctx.window);
 
     assert.equal(server.urls().filter((u) => u.includes("/api/databases")).length, 2, "the list is asked each time it is shown");
@@ -167,11 +168,11 @@ describe("opening the phone page", () => {
     });
     const ctx = await loadApp("phone", { t, server, url: "http://localhost:8090/alpha/mobile.html" });
 
-    click(ctx.window, el(ctx, "bar-library"));
+    click(ctx.window, tab(ctx, "library"));
     await flush(ctx.window);
     assert.equal(held.length, 1, "the first ask is still out");
     await back(ctx);
-    click(ctx.window, el(ctx, "bar-library"));
+    click(ctx.window, tab(ctx, "library"));
     await flush(ctx.window);
     assert.deepEqual(choices(ctx), [...LIBRARIES, "gamma"]);
 
