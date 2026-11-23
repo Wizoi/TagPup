@@ -20,7 +20,8 @@
 // FILTER MODE (docs/plans/advanced-filtering.md): each row is off or one of three states -- `+` any of (OR with the other `+`
 // rows of its tab), `&` must, `-` not -- and the states are one search (`specFromRowStates`): a union per tab of its `+` rows,
 // ANDed with every `&` row, none of the `-` rows. `rowStatesFromSpec` reads the states back from a search, so the address holds
-// the filter as it holds a selection; a search made elsewhere (words, an Any-of list, Within) is no filter.
+// the filter as it holds a selection; a search made elsewhere (words, an Any-of list, Within) is no filter. A view of one row's
+// source, or a union of rows of one tab (a people group's), is those rows marked `+`: the same photos.
 import { baseName, pathKey } from './common/paths.js';
 import { compareTagNames, leafOf } from './common/vocabulary.js';
 import { listOverCap, MAX_MEMBERS, searchValue, searchWords, UNTAGGED } from './library-source.js';
@@ -617,12 +618,16 @@ export function specFromRowStates(states) {
 }
 
 /**
- * The rows' states a search is, as a Map of filterKey -> '+', '&' or '-' (specFromRowStates' inverse), or null when the search
- * is no filter: it has words or an any_of list; a union in all_of holds rows of two tabs (Within's union) or is a tab's second;
- * a source is not one a row opens (a folder without its subfolders, a keyword alone); or a source is named twice.
+ * The rows' states a view is, as a Map of filterKey -> '+', '&' or '-' (specFromRowStates' inverse), or null when it is no
+ * filter. A search is none when it has words or an any_of list; a union in all_of holds rows of two tabs (Within's union) or is
+ * a tab's second; a source is not one a row opens (a folder without its subfolders, a keyword alone); or a source is named
+ * twice. A view of a row's source, or a union of rows of one tab (a people group's Show these photos), is those rows marked
+ * `+` (specFromRowStates' union of a tab: the same photos); the whole library, and any other, is none.
  */
 export function rowStatesFromSpec(spec) {
-    if (!spec || spec.kind !== 'search' || !spec.value) return null;
+    if (!spec) return null;
+    if (spec.kind !== 'search') return rowStatesOfRows(membersOf(spec));
+    if (!spec.value) return null;
     const { all_of: allOf = [], any_of: anyOf = [], none_of: noneOf = [], words = '' } = spec.value;
     if (searchWords(words) || anyOf.length) return null;
     const states = new Map();
@@ -644,6 +649,17 @@ export function rowStatesFromSpec(spec) {
     }
     if (!noneOf.every(member => mark(member, '-'))) return null;
     return states.size ? states : null;
+}
+
+/** Rows' sources of one tab, each a row opens and named once, as those rows marked `+`; null for any other, or none. */
+function rowStatesOfRows(members) {
+    if (!members.length || !members.every(member => sectionOf(member) === sectionOf(members[0]))) return null;
+    const states = new Map();
+    for (const member of members) {
+        if (!isFilterMember(member) || states.has(filterKey(member))) return null;
+        states.set(filterKey(member), '+');
+    }
+    return states;
 }
 
 /**

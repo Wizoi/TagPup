@@ -23,7 +23,7 @@ import { createVGrid } from './vgrid.js';
 import { state } from './mobile-state.js';
 import { openScreen, replacePlace, samePlace } from './mobile-screens.js';
 import { viewOf } from './mobile-browse.js';
-import { drawFilterStatus } from './mobile-filter.js';
+import { drawFilterStatus, marksFindNone } from './mobile-filter.js';
 
 const byId = (id) => document.getElementById(id);
 
@@ -38,14 +38,15 @@ const HOST = {
 
 /**
  * The count line, and the problem with Try again when the ids or a window's cards could not be read; and what the read says
- * to the filter (mobile-filter.js). A filter that finds none counts "0 photos", its words under it.
+ * to the filter (mobile-filter.js). Marks that find none count "0 photos", the filter's words under it; any other view that
+ * holds none says why.
  */
 function drawStatus() {
     const lib = state.photos;
     if (!lib) return;
     const failed = lib.status === 'error' || Boolean(lib.notice);
     byId('grid-count').textContent = lib.status === 'loading' ? 'Loading...' : lib.status === 'error' ? ''
-        : lib.status === 'empty' && !state.filter.size ? lib.message : viewCountSaid(lib);
+        : lib.status === 'empty' && !marksFindNone(lib) ? lib.message : viewCountSaid(lib);
     drawFilterStatus();
     byId('grid-problem-text').textContent = lib.status === 'error' ? `Could not load photos. ${lib.message}`.trim()
         : 'Could not load photos.';

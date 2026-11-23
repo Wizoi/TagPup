@@ -21,10 +21,13 @@ import { filterChip } from './search-model.js';
 /** Where this browser keeps whether Filter mode is on ('on' or 'off'). */
 export const FILTER_MODE_KEY = 'tagpup.filterMode';
 
-/** The rows' marks of the view open, when it is a filter (a Map of filterKey -> sign); null for any other view, or none. */
+/**
+ * The rows' marks of the view open, when it is a filter (a Map of filterKey -> sign); null for any other view, or none. A filter
+ * here is a search: a row's own view (a person, a group's union) is left as it is, never taken for a filter to leave or replace.
+ */
 function openFilter() {
     const lib = state.library;
-    return lib && !lib.invalid ? rowStatesFromSpec(lib) : null;
+    return lib && !lib.invalid && lib.kind === 'search' ? rowStatesFromSpec(lib) : null;
 }
 
 /** The marks the navigator and the strip show: the open filter's while Filter mode is on, else none. */

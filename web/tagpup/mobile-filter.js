@@ -13,8 +13,9 @@
  *
  * The sheet is a step of history over the Grid, as the Edit sheet is over a photo (mobile-screens.js openSheetStep): Back,
  * the scrim or Show closes it, the filter made under it staying on the Grid's step (mobile-screens.js carries it down), so a
- * second Back leaves the Grid. The Filter tab opens it over the Grid's filter; over a view of one row's source (a person
- * Browse opened) that row marked any of; else over the whole library. Its rows are Browse's, the section read once
+ * second Back leaves the Grid. The Filter tab opens it over the Grid's view when that is a filter (a search of marks, or a view
+ * of rows Browse opened, a person's or a group's, those rows marked any of: the same view, nothing read again, made a search
+ * by the first mark), else over the whole library. Its rows are Browse's, the section read once
  * (mobile-browse.js), their counts the whole library's ("of all photos": counts narrowed by the other marks are
  * advanced-filtering.md's cut 2, not built). Its Show button says how many photos the marks find: the Grid's own count of the
  * view read under it. The Grid's order and Photos/Clips are chosen in its head (wired by mobile-grid.js). A filter that finds
@@ -24,8 +25,7 @@
 import { buildElement, replaceContent } from './common/dom.js';
 import { DEFAULT_MEDIA, mediaLabel, viewCountSaid } from './library-source.js';
 import {
-    NEXT_MARK, filterKey, filterMember, filterOverCap, markOf, membersOf, rowStatesFromSpec, sectionOf, sectionRows,
-    specFromRowStates
+    NEXT_MARK, filterKey, filterMember, filterOverCap, markOf, rowStatesFromSpec, sectionOf, sectionRows, specFromRowStates
 } from './navigator-model.js';
 import { filterChip } from './search-model.js';
 import { state } from './mobile-state.js';
@@ -47,16 +47,9 @@ function viewOfMarks(marks, view) {
     return viewOf({ ...(specFromRowStates(marks) || { kind: 'all' }), order: view && view.order, media: view && view.media });
 }
 
-/**
- * The view the sheet opens over: the Grid's when it is a filter; a view of one row's source (a person Browse opened) as that
- * row marked any of, the same photos; any other, the whole library with no mark.
- */
+/** The view the sheet opens over: the Grid's when its marks are a filter (navigator-model.js), else the whole library. */
 function filterOf(view) {
-    if (view && rowStatesFromSpec(view)) return view;
-    const members = membersOf(view);
-    const one = members.length === 1 ? new Map([[filterKey(members[0]), '+']]) : null;
-    const spec = one && specFromRowStates(one);
-    return viewOfMarks(spec && rowStatesFromSpec(spec) ? one : new Map(), view);
+    return marksOf(view).size ? view : viewOfMarks(new Map(), view);
 }
 
 /** The Filter tab and the chip that opens the sheet: the Grid on the filter (a step of its own when it shows another view), the sheet over it. */
@@ -101,11 +94,11 @@ function clearAll() {
     if (state.screen === 'grid' && state.filter.size) showMarks(new Map());
 }
 
-/** The chips of the marks shown, in the filter's order, their words from the sections read so far. */
-function chipsOf() {
+/** The chips of these marks (the marks shown), in the filter's order, their words from the sections read so far. */
+function chipsOf(marks = state.filter) {
     const keywords = sectionState('keywords').index;
     const people = sectionState('people').index;
-    return [...state.filter].map(([key, sign]) => filterChip(key, sign, keywords, people));
+    return [...marks].map(([key, sign]) => filterChip(key, sign, keywords, people));
 }
 
 /** A chip of the row above the grid: its mark, its name (struck when the library has it no more) and its x. */
@@ -135,19 +128,27 @@ function drawChips() {
 }
 
 /**
+ * Does this read of the Grid's view find none under marks made in the sheet (a search of them): the grid's words for none are
+ * then the filter's, its count "0 photos". A row's own view (a person's photos) that finds none says why in the view's sentence.
+ */
+export function marksFindNone(lib) {
+    return Boolean(lib) && lib.status === 'empty' && lib.kind === 'search' && marksOf(lib).size > 0;
+}
+
+/**
  * What the read of the view says to the filter (mobile-grid.js, each time the Grid's count line is drawn): the sheet's Show
- * with the count, "No photos" and not pressable when there is none; and under a filter that finds none, the grid's words:
- * when the marks find photos but none of the kind chosen (`of`, what they find of every kind), that, and Both; else its
- * chips named, Remove the last and Clear all.
+ * with the count, "No photos" and not pressable when there is none; and under marks that find none, the grid's words:
+ * when they find photos but none of the kind chosen (`of`, what they find of every kind), that, and Both; else its chips
+ * named, Remove the last and Clear all.
  */
 export function drawFilterStatus() {
     const lib = state.photos;
     const read = Boolean(lib) && (lib.status === 'ready' || lib.status === 'empty');
-    const none = read && lib.status === 'empty' && state.filter.size > 0;
+    const none = marksFindNone(lib);
     byId('grid-none').classList.toggle('hidden', !none);
     if (none) {
         const kind = lib.media !== DEFAULT_MEDIA && lib.of > 0;
-        const chips = chipsOf();
+        const chips = chipsOf(marksOf(lib));     // the marks of the view read, whichever was drawn first
         byId('grid-none-text').textContent = kind ? lib.message : 'No photo has all of these.';
         byId('grid-none-chips').textContent = kind ? '' : chips.map((chip) => `${chip.sign} ${chip.text}`).join(', ');
         byId('grid-none-remove').textContent = `Remove ${chips.at(-1).text}`;

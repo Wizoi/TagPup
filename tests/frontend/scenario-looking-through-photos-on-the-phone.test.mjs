@@ -6,9 +6,8 @@
  *   as it is scrolled to: the desktop page's own card windows (library-source.js), through the phone's host
  *   (web/tagpup/mobile-grid.js). The real photo_index holds 59,967 photos at the top (counted read-only 2026-11-18).
  * - The order and Photos/Clips are two choices in the head of the Filter sheet over the grid (mobile-filter.js; the
- *   sheet over a keyword's photos is over the same photos as a filter, that keyword marked any of, a search asked in a
- *   POST): a change reads the view again from the top, a reply for the order left is dropped, and the step in history
- *   keeps the choice.
+ *   sheet over a keyword's photos is over that view, the keyword marked any of, nothing read to open it): a change reads
+ *   the view again from the top, a reply for the order left is dropped, and the step in history keeps the choice.
  * - A tap opens the photo (the Photo screen, web/tagpup/mobile-photo.js): one step for
  *   two quick taps, and Back is the grid where it was left, its ids not asked again.
  * - The ids or a window's cards that could not be read say "Could not load photos" with a Try again that works; an empty
@@ -134,15 +133,14 @@ describe("looking through a view's photos on the phone", () => {
     await openEvents(ctx);
     assert.equal(ctx.asked.length, 1, "the first window's cards are under way");
 
-    await openSheet(ctx);
     const before = idsAsked(ctx).length;
+    await openSheet(ctx);
+    assert.equal(idsAsked(ctx).length, before, "the sheet opens over the keyword's photos as they are held");
     await choose(ctx, "grid-order", "name-desc");
     assert.equal(idsAsked(ctx).length, before + 1);
-    assert.equal(lastIds(ctx).body.order, "name-desc");
+    assert.match(lastIds(ctx).url, /order=name-desc/);
     const place = pageState(ctx).place;
-    assert.deepEqual([place.kind, place.order, place.media], ["search", "name-desc", "both"]);
-    assert.deepEqual(JSON.parse(JSON.stringify(place.value.all_of)),
-      [{ kind: "any_of", value: [{ kind: "keyword", value: "Events", recursive: false }], recursive: false }], "Events marked any of");
+    assert.deepEqual([place.kind, place.value, place.order, place.media], ["keyword", "Events", "name-desc", "both"]);
     assert.equal(ctx.window.history.state.place.order, "name-desc", "the step in history keeps the order");
     assert.equal(ctx.here.scrollTop, 0, "from the top");
     await ctx.release();     // every window's replies, the order left's first
@@ -162,7 +160,7 @@ describe("looking through a view's photos on the phone", () => {
     await openEvents(ctx);
     await choose(ctx, "grid-media", "video");
 
-    assert.equal(lastIds(ctx).body.media, "video");
+    assert.match(lastIds(ctx).url, /media=video/);
     assert.equal(el(ctx, "grid-count").textContent, "2 videos (of 5)");
     assert.deepEqual(names(ctx), ["Clip 3.mp4", "Clip 5.mp4"]);
     assert.ok(cards(ctx)[0].querySelector(".phone-card-play"), "a clip says it is one");

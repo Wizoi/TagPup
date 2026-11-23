@@ -7,6 +7,8 @@
  * - Two people and a keyword marked any of, then a keyword tapped round to not: one search the server reads as said, the
  *   chips in the filter's order, Show counting what it finds.
  * - Rapid taps on one row cycle it from the last mark, in one place of history; a reply for a mark left is dropped.
+ * - Filter over a group's, a keyword's or a person's photos opens the sheet over the same view, its rows marked any of: no
+ *   new Grid step, nothing read again; the first mark makes it a search in the same place.
  * - Back closes the sheet, the filter staying on the Grid; a second Back leaves the Grid; Forward gives the marks back.
  *   A chip taken off after the sheet closed stays off through Forward onto the sheet's step and Back. A reload on the
  *   sheet's step, then Back, keeps the marks; a row tapped as Show closes the sheet keeps its mark.
@@ -60,6 +62,20 @@ const FOLDERS = {
     { path: `${ROOT}\\2019`, name: "2019", parent: ROOT, direct: 3, recursive: 3 },
     { path: `${ROOT}\\Rowan's Meet`, name: "Rowan's Meet", parent: ROOT, direct: 3, recursive: 3 },
   ],
+};
+
+/** People filed in groups: Family's Show these photos is a union of Wren Alder and Sam Birch. */
+const FILED = {
+  groups: [
+    { tag: "People/Family", name: "Family", parent: null, count: 9 },
+    { tag: "People/Friends", name: "Friends", parent: null, count: 2 },
+  ],
+  people: [
+    { name: "Wren Alder", count: 4, group: "People/Family", person_id: 11, person: { tag: "People/Family/Wren Alder" } },
+    { name: "Sam Birch", count: 5, group: "People/Family", person_id: 12, person: { tag: "People/Family/Sam Birch" } },
+    { name: "Ada Quill", count: 2, group: "People/Friends", person_id: 13, person: { tag: "People/Friends/Ada Quill" } },
+  ],
+  unfiled: 0,
 };
 
 const DATES = { years: [{ year: 2024, count: 6, months: [{ month: "2024-06", count: 6 }], other: 0 }], undated: 0 };
@@ -154,6 +170,14 @@ async function openFilter(ctx) {
   assert.ok(sheetOpen(ctx));
 }
 
+/** Browse: a section, then a row of the level shown (a level, or a person's photos). */
+async function browseTo(ctx, name, ...labels) {
+  await tap(ctx, ctx.document.querySelector(`[data-section="${name}"]`));
+  for (const label of labels) {
+    await tap(ctx, [...el(ctx, "browse-rows").querySelectorAll(".browse-item")].find((r) => r.textContent.includes(label)));
+  }
+}
+
 afterEach(() => closeAllApps());
 
 describe("filtering the library on the phone", () => {
@@ -210,6 +234,52 @@ describe("filtering the library on the phone", () => {
     await settle(ctx);
     assert.equal(el(ctx, "grid-count").textContent, "5 photos", "the count of &, not of +");
     assert.deepEqual(chips(ctx), ["& Wren Alder"]);
+  });
+
+  test("Filter over a group's, a keyword's and a person's photos: the sheet over the same view, its rows marked any of, nothing read again", async (t) => {
+    let ctx = await phone(t, { server: library({ people: FILED }) });
+    const marked = () => [...pageState(ctx).filter].map(([key, sign]) => `${sign} ${JSON.parse(key).value}`);
+    /** Filter pressed over the Grid's view: one step (the sheet's), no read, the view kept. */
+    async function filterOver(kind) {
+      assert.deepEqual(shown(ctx), ["grid"]);
+      assert.equal(pageState(ctx).place.kind, kind);
+      const steps = ctx.window.history.length;
+      const reads = idsAsked(ctx);
+      await tap(ctx, tab(ctx, "filter"));
+      assert.ok(sheetOpen(ctx));
+      assert.equal(ctx.window.history.length, steps + 1, `${kind}: the sheet's step, no new Grid step`);
+      assert.equal(idsAsked(ctx), reads, `${kind}: the photos are not read again`);
+      assert.equal(pageState(ctx).place.kind, kind, `${kind}: the same view`);
+    }
+
+    await browseTo(ctx, "people", "Family");
+    await tap(ctx, el(ctx, "browse-show"));
+    await filterOver("any_of");
+    assert.deepEqual(marked(), ["+ People/Family/Sam Birch", "+ People/Family/Wren Alder"], "every person of the group, any of");
+    assert.deepEqual(chips(ctx), ["+ Sam Birch", "+ Wren Alder"]);
+    const steps = ctx.window.history.length;
+    await tap(ctx, row(ctx, "Friends").querySelector(".filter-row-open"));
+    await tapRow(ctx, "Ada Quill");
+    assert.equal(pageState(ctx).place.kind, "search", "the first mark makes it a search");
+    assert.deepEqual(searches(ctx).at(-1).all_of[0].value.map((each) => each.value),
+      ["People/Family/Sam Birch", "People/Family/Wren Alder", "People/Friends/Ada Quill"]);
+    assert.equal(ctx.window.history.length, steps, "in the same place");
+
+    ctx = await phone(t, { server: library({ people: FILED }) });
+    await browseTo(ctx, "keywords", "Events");
+    await tap(ctx, el(ctx, "browse-show"));
+    await filterOver("keyword");
+    assert.deepEqual(chips(ctx), ["+ Events"]);
+    await tabTo(ctx, "keywords");
+    assert.equal(markOn(ctx, "Events"), "+");
+
+    ctx = await phone(t, { server: library({ people: FILED }) });
+    await browseTo(ctx, "people", "Friends", "Ada Quill");
+    await filterOver("person");
+    assert.deepEqual(chips(ctx), ["+ Ada Quill"]);
+    await back(ctx);
+    assert.ok(!sheetOpen(ctx));
+    assert.equal(pageState(ctx).place.kind, "person", "closed with no mark changed, the person's photos as they were");
   });
 
   test("Back closes the sheet keeping the filter, a second Back leaves the Grid, Forward gives the marks back", async (t) => {
