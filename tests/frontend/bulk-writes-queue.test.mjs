@@ -9,11 +9,13 @@
  * and go as one write, after any write queued before them; a failed one is reported and its
  * tags wait for Retry.
  *
- * The server's photos/write replies are held here until the test releases them.
+ * The server's photos/write replies are held here until the test releases them, each tag change answered as the
+ * real entry point answers it (harness.mjs tagFiles).
  */
 import { test, describe, afterEach } from "node:test";
 import assert from "node:assert/strict";
-import { loadApp, FakeServer, photoRecord, flush, click, openFolder, closeAllApps, pageExports, SAVE, saved, saveCalls } from "./harness.mjs";
+import { loadApp, FakeServer, photoRecord, flush, click, openFolder, closeAllApps, pageExports, SAVE, saved, saveCalls,
+  tagFiles } from "./harness.mjs";
 
 const FOLDER = "D:/Library/2020";
 
@@ -34,8 +36,8 @@ const SUGGESTIONS = {
 /** A server whose photos/write and auto-apply replies wait until released, oldest first. */
 function build() {
   const held = [];
-  const hold = () => new Promise((resolve) => held.push(resolve));
-  const files = {};   // what each file holds, as the replies said they wrote it: a rescan reads the files
+  const hold = (url, body) => new Promise((resolve) => held.push({ resolve, url, body }));
+  const files = tagFiles(PHOTOS);   // what each file holds, as the writes left it: a rescan reads the files
   const server = new FakeServer()
     .on("/api/tags", OFFERED)
     .on("/api/people", [])
@@ -43,7 +45,7 @@ function build() {
     .on("/api/databases", { databases: ["photo_index"], selected: "photo_index" })
     .on("/api/folder/index-status", { status: "completed", percent: 100, message: "Ready" })
     // Copies: the page adds what it wrote to the records it was given.
-    .on("/api/folder/scan", () => PHOTOS.map((p) => ({ ...p, tags: [...(files[p.path] || p.tags)], people: [...p.people] })))
+    .on("/api/folder/scan", () => PHOTOS.map((p) => ({ ...p, tags: files.holds(p.path), people: [...p.people] })))
     .on("/api/photo-faces", { faces: [], total: 0, unmatched: 0 })
     .on("/api/photos/write", hold)
     .on("/api/folder/auto-apply", hold)
@@ -77,12 +79,22 @@ const chips = (ctx) =>
 
 const chip = (ctx, name) => chips(ctx).find((c) => c.textContent.includes(name));
 
-/** Answer the oldest request waiting, with `reply`. */
-async function answer(ctx, reply) {
+/** Answer the oldest request waiting, a tag change, as the files make it (`how`: harness.mjs tagFiles). */
+async function answer(ctx, how = {}) {
   assert.ok(ctx.held.length, "no request was waiting for an answer");
-  // A photos/write reply names what each file holds ({tags, mtime, size}); an Apply All's, the list of its tags.
-  for (const [path, held] of Object.entries(reply.written || {})) ctx.server.files[path] = Array.isArray(held) ? held : held.tags;
-  ctx.held.shift()(reply);
+  const { resolve, url, body } = ctx.held.shift();
+  assert.ok(!url.includes("auto-apply"), "the request waiting is an Apply All, not a tag change");
+  resolve(ctx.server.files.reply(body, how));
+  await flush(ctx.window, 8);
+}
+
+/** Answer the oldest request waiting, an Apply All, that wrote each photo of `written` the list of tags it names. */
+async function applied(ctx, written = {}) {
+  assert.ok(ctx.held.length, "no request was waiting for an answer");
+  const { resolve, url } = ctx.held.shift();
+  assert.ok(url.includes("auto-apply"), "the request waiting is a tag change, not an Apply All");
+  ctx.server.files.reply({ changes: Object.fromEntries(Object.entries(written).map(([path, tags]) => [path, { add: tags }])) });
+  resolve({ success: true, written });
   await flush(ctx.window, 8);
 }
 
@@ -102,7 +114,7 @@ describe("tags clicked quickly on a selection", () => {
     const { changes } = writes(ctx)[0].body;
     assert.deepEqual(Object.keys(changes), PHOTOS.map((p) => p.path));
     for (const change of Object.values(changes)) assert.deepEqual(change, { id: null, add: OFFERED, remove: [] });
-    await answer(ctx, { success: true });
+    await answer(ctx);
     assert.equal(writes(ctx).length, 1, "the three were written twice");
 
     // The selection's tags show each of the three on both photos.
@@ -125,7 +137,7 @@ describe("tags clicked quickly on a selection", () => {
     assert.equal(writes(ctx).length, 1, "the click sent nothing");
     assert.equal(typeof writes(ctx)[0].body.group, "string");
     assert.ok(writes(ctx)[0].body.group.length >= 16, "the group token is too short to be one action's own");
-    await answer(ctx, { success: true });
+    await answer(ctx);
     assert.deepEqual(ctx.alerts, []);
   });
 
@@ -135,7 +147,8 @@ describe("tags clicked quickly on a selection", () => {
     click(ctx.window, chip(ctx, OFFERED[1]));
     await flush(ctx.window, 8);
 
-    await answer(ctx, { success: false, error: "ExifTool: Error: Temporary file already exists: <file>_exiftool_tmp" });
+    const why = "ExifTool: Error: Temporary file already exists: <file>_exiftool_tmp";
+    await answer(ctx, { fails: Object.fromEntries(PHOTOS.map((p) => [p.path, why])) });
     assert.equal(ctx.alerts.length, 1, "the failure was not reported");
     assert.match(ctx.alerts[0], /Temporary file already exists/);
     // A tag clicked now waits with the others: the drain does not go on by itself.
@@ -149,7 +162,7 @@ describe("tags clicked quickly on a selection", () => {
     for (const change of Object.values(writes(ctx)[1].body.changes)) {
       assert.deepEqual(change.add.slice().sort(), OFFERED.slice().sort());
     }
-    await answer(ctx, { success: true });
+    await answer(ctx);
     assert.equal(ctx.held.length, 0);
   });
 });
@@ -161,9 +174,7 @@ describe("a bulk write that stops part-way", () => {
     click(ctx.window, chip(ctx, "Cross Country"));
     await flush(ctx.window, 8);
     await answer(ctx, {
-      success: false,
-      errors: [{ path: PHOTOS[1].path, id: null, why: "ExifTool: Error: Temporary file already exists: <file>_exiftool_tmp (exit status 1)" }],
-      written: { [PHOTOS[0].path]: { tags: ["Cross Country"] } },
+      fails: { [PHOTOS[1].path]: "ExifTool: Error: Temporary file already exists: <file>_exiftool_tmp (exit status 1)" },
     });
     assert.equal(ctx.alerts.length, 1, "the failure was not reported");
     const held = () => [...ctx.document.querySelectorAll("#selection-tags-list .selection-summary-chip")]
@@ -184,10 +195,10 @@ describe("Ctrl+Z while a later write is out", () => {
     click(ctx.window, chip(ctx, "Cross Country"));
     ctx.document.getElementById("btn-folder-auto-apply").click();
     await flush(ctx.window, 8);
-    await answer(ctx, { success: true, written: {} });
+    await answer(ctx);
     // Apply All added Harbourside to both.
     const both = ["Cross Country", "Harbourside"];
-    await answer(ctx, { success: true, written: Object.fromEntries(PHOTOS.map((p) => [p.path, both])) });
+    await applied(ctx, Object.fromEntries(PHOTOS.map((p) => [p.path, both])));
     for (let i = 0; i < 50 && !chip(ctx, "Kentridge"); i++) await flush(ctx.window, 2);
 
     click(ctx.window, chip(ctx, "Kentridge"));
@@ -200,13 +211,13 @@ describe("Ctrl+Z while a later write is out", () => {
       "undo posted whole tag lists");
     assert.equal(writes(ctx).length, 3, "undo was sent while the later write was still out");
 
-    await answer(ctx, { success: true, written: {} });
+    await answer(ctx);
     assert.equal(writes(ctx).length, 4);
     const undo = writes(ctx).at(-1).body;
     for (const change of Object.values(undo.changes)) {
       assert.deepEqual(change, { id: null, add: [], remove: ["Harbourside"] }, "undo took off more than Apply All added");
     }
-    await answer(ctx, { success: true, written: {} });
+    await answer(ctx);
   });
 });
 
@@ -237,7 +248,7 @@ describe("moving on while a bulk write is out", () => {
     const saves = () => saveCalls(ctx.server);
     assert.equal(saves().length, 0, "the save went beside the bulk write");
 
-    await answer(ctx, { success: true, written: {} });
+    await answer(ctx);
     for (let i = 0; i < 20 && !saves().length; i++) await flush(ctx.window, 2);
     assert.equal(saves().length, 1);
     assert.deepEqual(saves()[0].body.tags, ["Cross Country", "Places/Beach"]);
@@ -253,8 +264,8 @@ describe("Apply All after a tag clicked", () => {
 
     assert.deepEqual(writes(ctx).map((c) => c.url.includes("auto-apply")), [false],
       "Apply All was sent while the tag's write was still out");
-    await answer(ctx, { success: true });
+    await answer(ctx);
     assert.deepEqual(writes(ctx).map((c) => c.url.includes("auto-apply")), [false, true]);
-    await answer(ctx, { success: true });
+    await applied(ctx);
   });
 });

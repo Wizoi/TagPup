@@ -17,14 +17,15 @@
  * photos missing on disk are said once, when the click's change is done.
  *
  * The server's photos/write replies to a tag write (op `tags`) are held here until the test answers them, oldest first,
- * with the real entry point's reply where the test reads what it wrote (harness.mjs taggedAs); a save of one photo (op
+ * as the real entry point answers it: from files that hold the folder's photos' tags (harness.mjs tagFiles), or with
+ * one of its replies by name where the test reads the stamps it wrote (harness.mjs taggedAs); a save of one photo (op
  * `set`) is answered at once.
  */
 import { test, describe, afterEach } from "node:test";
 import assert from "node:assert/strict";
 import {
   loadApp, FakeServer, photoRecord, flush, click, openFolder, closeAllApps, pageExports, SAVE, saved, saveCalls, taggedAs,
-  TAGS_REPLIES,
+  TAGS_REPLIES, tagFiles,
 } from "./harness.mjs";
 import { loadViewPage, recordOf } from "./view-page.mjs";
 
@@ -41,9 +42,15 @@ const scanOf = (n, tags) => (url) => (url.includes(encodeURIComponent(OTHER))
   ? Array.from({ length: 30 }, (_, i) => photoRecord({ filename: `IMG_9${String(i).padStart(3, "0")}.JPG`, path: `${OTHER}\\IMG_9${String(i).padStart(3, "0")}.JPG` }))
   : records(n, tags));
 
-/** The page's own answers and questions on `ctx`: replies held for `answer`, alerts kept, confirm says OK unless `stay`. */
-function heldPage(ctx, held) {
-  const page = Object.assign(ctx, { held, alerts: [], confirms: [], stay: false });
+/** A route's function that holds each tag write ({resolve, body}) in `held` for `answer`. */
+const holding = (held) => (url, body) => new Promise((resolve) => held.push({ resolve, body }));
+
+/**
+ * The page's own answers and questions on `ctx`: replies held for `answer` from the `files` they write, alerts kept,
+ * confirm says OK unless `stay`.
+ */
+function heldPage(ctx, held, files) {
+  const page = Object.assign(ctx, { held, files, alerts: [], confirms: [], stay: false });
   page.window.alert = (text) => page.alerts.push(String(text));
   page.window.confirm = (text) => { page.confirms.push(String(text)); return !page.stay; };
   return page;
@@ -53,16 +60,20 @@ function heldPage(ctx, held) {
 async function viewableFolder(t, options = {}) {
   const held = [];
   const ctx = await loadViewPage(t, options);
-  ctx.server.first("/api/folder/scan", scanOf(50, [])).first("/api/photos/write", () => new Promise((resolve) => held.push(resolve)));
+  ctx.server.first("/api/folder/scan", scanOf(50, [])).first("/api/photos/write", holding(held));
   await openFolder(ctx, FOLDER);
   await ctx.settle(60);
   ctx.document.getElementById("btn-select-all-thumbnails").click();
   await flush(ctx.window, 4);
-  return heldPage(ctx, held);
+  return heldPage(ctx, held, tagFiles(records(50, [])));
 }
 
-/** A folder of `n` photos holding `tags`, all selected; its photos/write replies wait for `answer`. */
-async function folderOf(t, n, { tags = [], bulk, scan = scanOf(n, tags) } = {}) {
+/**
+ * A folder of `n` photos holding `tags`, all selected; its photos/write replies wait for `answer`, or are `bulk(files)`,
+ * a route's function of the files the folder's photos are (harness.mjs tagFiles; `files`, files holding what the scan
+ * does not say).
+ */
+async function folderOf(t, n, { tags = [], bulk, scan = scanOf(n, tags), files = tagFiles(records(n, tags)) } = {}) {
   const held = [];
   const server = new FakeServer()
     .on("/api/tags", [])
@@ -72,7 +83,7 @@ async function folderOf(t, n, { tags = [], bulk, scan = scanOf(n, tags) } = {}) 
     .on("/api/folder/index-status", { status: "completed", percent: 100, message: "Ready" })
     .on("/api/folder/scan", scan)
     .on("/api/photo-faces", { faces: [], total: 0, unmatched: 0 })
-    .on("/api/photos/write", bulk || (() => new Promise((resolve) => held.push(resolve))))
+    .on("/api/photos/write", bulk ? bulk(files) : holding(held))
     .on(SAVE, saved())
     .on("/api/taxonomy/create", { success: true })
     .on("/api/folder/suggest-status", { status: "completed", suggestions: {} });
@@ -80,7 +91,7 @@ async function folderOf(t, n, { tags = [], bulk, scan = scanOf(n, tags) } = {}) 
   await openFolder(ctx, FOLDER);
   ctx.document.getElementById("btn-select-all-thumbnails").click();
   await flush(ctx.window, 4);
-  return heldPage({ ...ctx }, held);
+  return heldPage({ ...ctx }, held, files);
 }
 
 const isTagWrite = (c) => c.url.includes("/api/photos/write") && !SAVE(c.url, c.body);
@@ -106,14 +117,19 @@ async function choose(ctx, choice) {
   await flush(ctx.window, 8);
 }
 
-/** The real entry point's reply `name` to the last tag write sent (harness.mjs taggedAs), `own(path, n)` over each photo's. */
-const replyTo = (ctx, name, own) => taggedAs(name, own)("", writes(ctx).at(-1));
-
-async function answer(ctx, reply = { success: true }) {
+/**
+ * Answer the oldest tag write waiting as its files make it (`how`: harness.mjs tagFiles), or by `how`, a route's function
+ * of the request (harness.mjs taggedAs).
+ */
+async function answer(ctx, how = {}) {
   assert.ok(ctx.held.length, "no write was waiting for an answer");
-  ctx.held.shift()(reply);
+  const { resolve, body } = ctx.held.shift();
+  resolve(typeof how === "function" ? how("", body) : ctx.files.reply(body, how));
   await flush(ctx.window, 8);
 }
+
+/** Photos `from` up to `to` of the folder, each failing with `why` (harness.mjs tagFiles `fails`). */
+const failing = (from, to, why) => Object.fromEntries(Array.from({ length: to - from }, (_, i) => [pathOf(from + i), why]));
 
 async function addTags(ctx, text) {
   ctx.document.getElementById("bulk-add-tags-input").value = text;
@@ -185,7 +201,7 @@ describe("clicks that take each other back", () => {
 
 describe("a record older than its file", () => {
   test("an add the record says the file holds is still sent, and so is a removal of a tag the record lacks", async (t) => {
-    const ctx = await folderOf(t, 3, { tags: ["Places/Coast"], bulk: () => ({ success: true }) });
+    const ctx = await folderOf(t, 3, { tags: ["Places/Coast"], bulk: (files) => files });
     await addTags(ctx, "Places/Coast");
     assert.deepEqual(Object.values(writes(ctx)[0].changes)[0], { id: null, add: ["Places/Coast"], remove: [] });
     const { removeTagFromAllSelected } = pageExports(ctx.window, "web/tagpup/selection.js");
@@ -200,8 +216,7 @@ describe("a write that fails part-way", () => {
   test("its unwritten files' changes go back first, nothing more is sent, and Retry goes on from them", async (t) => {
     const ctx = await folderOf(t, 50);
     await addTags(ctx, "Trips/Coast");
-    const written = Object.fromEntries(Array.from({ length: 10 }, (_, i) => [pathOf(i), ["Trips/Coast"]]));
-    await answer(ctx, { success: false, error: "ExifTool: could not write IMG_0010.JPG", written });
+    await answer(ctx, { fails: failing(10, 25, "ExifTool: could not write IMG_0010.JPG") });
     assert.equal(ctx.alerts.length, 1);
     assert.match(ctx.alerts[0], /15 photos: ExifTool: could not write/);
     for (let i = 0; i < 4; i++) await flush(ctx.window, 4);
@@ -224,8 +239,7 @@ describe("a write that fails part-way", () => {
     const ctx = await folderOf(t, 50);
     await addTags(ctx, "Trips/Coast");
     pageExports(ctx.window, "web/tagpup/hooks.js").upper.renderThumbnails = () => { throw new Error("drawing failed"); };
-    const written = Object.fromEntries(Array.from({ length: 10 }, (_, i) => [pathOf(i), ["Trips/Coast"]]));
-    await answer(ctx, { success: false, error: "ExifTool: could not write IMG_0010.JPG", written });
+    await answer(ctx, { fails: failing(10, 25, "ExifTool: could not write IMG_0010.JPG") });
     assert.equal(pendingOf(ctx).files.size, 40, "the 15 files the write never reached lost their changes");
     assert.equal(pendingOf(ctx).stopped, true, "the drain did not stop");
   });
@@ -233,7 +247,7 @@ describe("a write that fails part-way", () => {
   test("a network that is gone keeps every change, says so, and Retry sends them", async (t) => {
     let refuse = true;
     const ctx = await folderOf(t, 3, {
-      bulk: () => (refuse ? Promise.reject(new TypeError("Failed to fetch")) : { success: true }),
+      bulk: (files) => (url, body) => (refuse ? Promise.reject(new TypeError("Failed to fetch")) : files(url, body)),
     });
     await addTags(ctx, "Trips/Coast");
     assert.equal(ctx.alerts.length, 1, "the failure was not said");
@@ -329,7 +343,7 @@ describe("the open photo while its tag changes wait", () => {
     await addTags(ctx, "Trips/Coast");
     await openPhoto(ctx, 0);
     assert.equal(panel(ctx).editable, false, "the file in the write out is editable");
-    await answer(ctx, { success: false, error: "The share did not answer" });
+    await answer(ctx, taggedAs("not_written", undefined, "The share did not answer"));
     assert.deepEqual(panel(ctx), { editable: false, deletes: true, said: WAITING_ONE }, "the failed write's changes, given back, no longer hold the panel");
     click(ctx.window, ctx.document.querySelector(".write-queue-entry[data-status='failed'] .write-queue-cancel"));
     await flush(ctx.window, 4);
@@ -343,7 +357,7 @@ describe("a select-all of 1,000", () => {
     let first = true;
     const held = [];
     const ctx = await folderOf(t, 1000, {
-      bulk: () => (first ? (first = false, new Promise((resolve) => held.push(resolve))) : { success: true }),
+      bulk: (files) => (url, body) => (first ? (first = false, holding(held)(url, body)) : files(url, body)),
     });
     await addTags(ctx, "Trips/Coast");
     assert.ok(ctx.confirms.some((m) => m === "Add Trips/Coast to 1,000 photos?"), ctx.confirms.join("|"));
@@ -351,7 +365,8 @@ describe("a select-all of 1,000", () => {
     // The later click queued the next chunk at the click (one queue, in the order clicked); the row out says what it writes.
     const label = ctx.document.querySelector(".write-queue-entry[data-status='writing'] .write-queue-label").textContent;
     assert.equal(label, "Add Trips/Coast to 25 photos, 975 more pending");
-    held.shift()({ success: true });
+    const out = held.shift();
+    out.resolve(ctx.files.reply(out.body));
     for (let i = 0; i < 100 && writes(ctx).length < 41; i++) await flush(ctx.window, 2);
 
     const sent = writes(ctx);
@@ -385,7 +400,7 @@ describe("Cancel while a change is being written", () => {
     await addTags(ctx, "Trips/Coast");
     click(ctx.window, ctx.document.querySelector(".write-queue-entry[data-status='writing'] .write-queue-cancel"));
     await flush(ctx.window, 2);
-    await answer(ctx, { success: false, error: "ExifTool: could not write IMG_0001.JPG" });
+    await answer(ctx, { fails: failing(0, 25, "ExifTool: could not write IMG_0001.JPG") });
     assert.equal(pendingOf(ctx).files.size, 0, "a cancelled drain took the failed write's files back");
     assert.equal(pendingOf(ctx).stopped, false);
     assert.equal(ctx.document.querySelector(".write-queue-retry"), null, "a cancelled drain offers Retry");
@@ -400,7 +415,7 @@ describe("photos missing on disk", () => {
   test("are said once, when the click's change is done, not by each write", async (t) => {
     const ctx = await folderOf(t, 50);
     await addTags(ctx, "Trips/Coast");
-    await answer(ctx, { success: true, skipped_missing: 1, skipped: [{ path: pathOf(3), why: "missing, file gone" }] });
+    await answer(ctx, { gone: [pathOf(3)] });
     assert.doesNotMatch(status(ctx), /missing/, "said before the change was done");
     await answer(ctx);
     assert.match(status(ctx), /^1 photo is missing on disk and was left out\./);
@@ -409,10 +424,12 @@ describe("photos missing on disk", () => {
 
 describe("the record's own spelling of its path", () => {
   test("is the key the change is sent under, and a reply in another spelling still reaches the record", async (t) => {
-    const ctx = await folderOf(t, 1);
+    // Its file holds a tag the scan did not say; the server names it by its own spelling of the path.
+    const ctx = await folderOf(t, 1, { files: tagFiles(records(1, ["Places/Held"])) });
     await addTags(ctx, "Trips/Coast");
     assert.deepEqual(Object.keys(writes(ctx)[0].changes), [pathOf(0)]);
-    await answer(ctx, { success: true, written: { [pathOf(0).toLowerCase()]: { tags: ["Places/Held", "Trips/Coast"] } } });
+    const spelled = (body) => Object.fromEntries(Object.entries(body.changes).map(([file, change]) => [file.toLowerCase(), change]));
+    await answer(ctx, (url, body) => ctx.files.reply({ ...body, changes: spelled(body) }));
     const { state } = pageExports(ctx.window, "web/tagpup/state.js");
     assert.deepEqual(state.folderPhotos[0].tags, ["Places/Held", "Trips/Coast"]);
   });
@@ -487,7 +504,7 @@ describe("leaving with changes waiting and a photo's edits typed", () => {
   test("a failed write's row left behind cannot Cancel the next folder's changes", async (t) => {
     const ctx = await folderOf(t, 50);
     await addTags(ctx, "Trips/Coast");
-    await answer(ctx, { success: false, error: "ExifTool: could not write IMG_0001.JPG" });
+    await answer(ctx, { fails: failing(0, 25, "ExifTool: could not write IMG_0001.JPG") });
     await openFolder(ctx, OTHER);
     ctx.document.getElementById("btn-select-all-thumbnails").click();
     await flush(ctx.window, 4);
@@ -551,7 +568,7 @@ describe("a library view between a folder and its changes", () => {
     ctx.cardById(11).querySelector(".btn-thumbnail-detail").click();
     await ctx.settle(80);
     assert.equal(ctx.state.folderPhotos[0].path, pathOf(0), "the view does not show the folder's photo");
-    await answer(ctx, replyTo(ctx, "written", () => ({ tags: ["Trips/Coast"], mtime: 1700000000, size: 2048 })));
+    await answer(ctx, taggedAs("written", () => ({ tags: ["Trips/Coast"], mtime: 1700000000, size: 2048 })));
     const record = kept(ctx, FOLDER).photos[0];
     assert.equal(record.mtime, 1700000000, "the kept record names the file's old stamp: a save from it is refused");
     assert.deepEqual(record.tags, ["Trips/Coast"]);
@@ -587,7 +604,7 @@ describe("a write's reply and the scans this browser keeps of folders holding it
       await addTags(ctx, "Trips/Coast");
       assert.deepEqual(Object.keys(writes(ctx)[0].changes), WRITTEN);
       if (left) await openFolder(ctx, OTHER);
-      await answer(ctx, replyTo(ctx, "written", (path, n) => ({ mtime: 1700000000 + n })));
+      await answer(ctx, taggedAs("written", (path, n) => ({ mtime: 1700000000 + n })));
       for (const folder of [LIBRARY, FOLDER, SUB]) {
         const records = kept(ctx, folder).photos.filter((p) => WRITTEN.includes(p.path));
         assert.ok(records.length, `${folder} kept none of the photos`);
@@ -608,7 +625,7 @@ describe("a write's reply and the scans this browser keeps of folders holding it
     const ctx = await nestedFolder(t);
     const before = [LIBRARY, SUB].map((folder) => kept(ctx, folder));
     await addTags(ctx, "Trips/Coast");
-    await answer(ctx, replyTo(ctx, "not_written"));
+    await answer(ctx, taggedAs("not_written"));
     assert.deepEqual([LIBRARY, SUB].map((folder) => kept(ctx, folder)), before);
   });
 
@@ -633,7 +650,7 @@ describe("an Undo pressed in another folder", () => {
     const { pendChanges } = pageExports(ctx.window, "web/tagpup/pending.js");
     pendChanges([{ path: pathOf(1), remove: ["Trips/Coast"] }]);
     await flush(ctx.window, 8);
-    await answer(ctx, replyTo(ctx, "written", () => ({ tags: [], mtime: 1700000500, size: 4096 })));
+    await answer(ctx, taggedAs("written", () => ({ tags: [], mtime: 1700000500, size: 4096 })));
     const record = kept(ctx, FOLDER).photos[1];
     assert.equal(record.mtime, 1700000500, "the kept record names the stamp the file had before the Undo: a save from it is refused");
     assert.deepEqual(record.tags, [], "the kept record still holds the tag the Undo took off");
@@ -649,7 +666,7 @@ describe("opening another folder while changes wait", () => {
     assert.ok(ctx.confirms.includes("Tag changes for 25 photos are not written yet. Leave without writing them?"), ctx.confirms.join("|"));
     const { state } = pageExports(ctx.window, "web/tagpup/state.js");
     assert.equal(state.scannedFolder, OTHER);
-    await answer(ctx, replyTo(ctx, "written", () => ({ tags: ["Trips/Coast"], mtime: 1700000000, size: 2048 })));
+    await answer(ctx, taggedAs("written", () => ({ tags: ["Trips/Coast"], mtime: 1700000000, size: 2048 })));
     assert.equal(writes(ctx).length, 1, "the files not sent were written after the owner left them");
 
     await openFolder(ctx, FOLDER);

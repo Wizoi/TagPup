@@ -15,7 +15,7 @@ import assert from "node:assert/strict";
 import {
   loadApp, FakeServer, photoRecord, flush, openFolder, closeAllApps, PEOPLE_ROUTE, peopleRecordsOf,
   SAVE, lastSave,
-  saved,
+  saved, tagFiles,
 } from "./harness.mjs";
 
 const A = photoRecord({ filename: "a.jpg" });
@@ -44,9 +44,10 @@ const nameless = (id) => ({ id, box: [120, 0, 50, 50], area: 2500, name: null, e
 const reply = (faces) => ({ faces, total: faces.length, unmatched: faces.filter((f) => !f.name).length });
 // Jane named, a face that looks like Alex, and one nobody is like (no card): two faces still to be named.
 const THREE = () => reply([named(1), proposed(2), nameless(3)]);
-// The save's reply when the one-face rule named face 3 (Sam), and when a person taken off unnamed `id`.
+// The save's reply when the one-face rule named face 3 (Sam); a tag change's when a person taken off unnamed `id` (#908;
+// harness.mjs tagFiles `unnamed`).
 const NAMED_3 = { success: true, named_faces: [{ id: 3, name: SAM.name }] };
-const unnamed = (id, who) => ({ success: true, unnamed_faces: [{ id, name: who.name }] });
+const unnamed = (id, who) => ({ unnamed: [{ id, name: who.name }] });
 
 /** A reply the test lets go of when it chooses: [promise, release(body)]. */
 function held() {
@@ -58,12 +59,14 @@ function held() {
 /**
  * The page on a folder of A and B, A open. `faces(url)` answers each read of the faces unless the test queued an answer
  * of its own (ctx.next): the reads in the order they are asked. A save answers what the test queued (ctx.nextSave), else
- * `{success: true}`, a reply that lists no face; an undo's bulk write likewise (ctx.nextBulk).
+ * `{success: true}`, a reply that lists no face; a tag change (a pill taken off, an undo) is answered by files holding the
+ * photos' tags (harness.mjs tagFiles), as the test queued it (ctx.nextBulk: tagFiles `how`), else listing no face.
  */
 async function open(t, { faces = THREE, tags = [], status = 200 } = {}) {
   const queued = [];
   const saves = [];
   const bulks = [];
+  const files = tagFiles([{ ...A, tags: tags.slice() }, { ...B, tags: [] }]);
   const server = new FakeServer()
     .on("/api/tags", [])
     .first(PEOPLE_ROUTE, peopleRecordsOf(TAXONOMY))
@@ -74,7 +77,7 @@ async function open(t, { faces = THREE, tags = [], status = 200 } = {}) {
     .on("/api/folder/index-status", { status: "completed", percent: 100, message: "Ready" })
     .on("/api/folder/scan", [{ ...A, tags: tags.slice() }, { ...B, tags: [] }])
     .on(SAVE, (url, body) => saved({}, saves.length ? saves.shift() : {})(url, body))
-    .on("/api/photos/write", () => (bulks.length ? bulks.shift() : { success: true }))
+    .on("/api/photos/write", (url, body) => files.reply(body, bulks.length ? bulks.shift() : {}))
     .on("/api/face/match", { success: true })
     .on("/api/photo-faces", (url) => (queued.length ? queued.shift()(url) : faces(url)), { status });
   const ctx = await loadApp("tagpup", { t, url: "http://localhost:8090/photo_index/", server });
@@ -84,7 +87,7 @@ async function open(t, { faces = THREE, tags = [], status = 200 } = {}) {
   const $ = (id) => ctx.document.getElementById(id);
   ctx.next = (answer) => queued.push(answer);
   ctx.nextSave = (body) => saves.push(body);
-  ctx.nextBulk = (body) => bulks.push(body);
+  ctx.nextBulk = (how) => bulks.push(how);
   ctx.select = async (photo) => {
     ctx.document.querySelector(`li[data-path="${photo.path.replace(/\\/g, "\\\\")}"]`).click();
     await flush(ctx.window, 8);
@@ -253,20 +256,24 @@ describe("V19: tagging the open photo keeps its faces in place", () => {
     assert.deepEqual(lastSave(ctx.server).tags, ["Events/Birthday"]);
     await ctx.select(A);
     const before = ctx.reads();
-    ctx.nextBulk({ success: true, unnamed_faces: [{ id: 9, name: JANE.name }] });
+    ctx.nextBulk(unnamed(9, JANE));
     await ctx.click("btn-undo");
     assert.deepEqual(Object.keys(ctx.server.lastBody("/api/photos/write").changes), [B.path], "the undo did not write B");
     assert.equal(ctx.reads(), before, "B's face in the undo's reply read A's faces again");
   });
 
   test("an undo of the open photo whose reply lists its face reads the faces again", async (t) => {
-    const ctx = await open(t, { faces: (url) => (url.includes("b.jpg") ? reply([named(9)]) : THREE()), tags: ["Events/Birthday"] });
+    const ctx = await open(t, { faces: (url) => (url.includes("b.jpg") ? reply([named(9)]) : THREE()), tags: [JANE.tag] });
     await ctx.select(B);
     await ctx.click("btn-carry-forward");
+    assert.deepEqual(lastSave(ctx.server).tags, [JANE.tag]);
     const before = ctx.reads();
-    ctx.nextBulk({ success: true, renamed_faces: [{ id: 9, name: JANE.name }] });
+    // The undo takes Jane off B again, and the server unnames her face there (#908).
+    ctx.nextBulk(unnamed(9, JANE));
     await ctx.click("btn-undo");
-    assert.equal(ctx.reads(), before + 1, "the undo that named B's face again did not read B's faces");
+    assert.deepEqual(Object.values(ctx.server.lastBody("/api/photos/write").changes), [{ id: null, add: [], remove: [JANE.tag] }],
+      "the undo did not take the person off B");
+    assert.equal(ctx.reads(), before + 1, "the undo that unnamed B's face did not read B's faces");
   });
 
   test("a read again that fails keeps the cards and says they could not be refreshed", async (t) => {

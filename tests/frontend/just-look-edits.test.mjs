@@ -15,6 +15,7 @@ import { test, describe, afterEach } from "node:test";
 import assert from "node:assert/strict";
 import {
   loadApp, FakeServer, photoRecord, flush, click, openFolder, closeAllApps, PEOPLE_ROUTE, SAVE, SHIFT, saved, saveCalls, shiftedAs,
+  tagFiles,
 } from "./harness.mjs";
 
 afterEach(() => closeAllApps());
@@ -32,6 +33,14 @@ const B = `${FOLDER}\\IMG_0002.jpg`;
 const photos = () => [photoRecord({ path: A, filename: "IMG_0001.jpg", tags: ["Beach"] }),
   photoRecord({ path: B, filename: "IMG_0002.jpg" })];
 
+/**
+ * A tag change's reply from files holding the folder's photos' tags (harness.mjs tagFiles), `held` of the photos written
+ * also written to their rows (a folder partly held), the rest to their files only: as a library that holds none of the
+ * folder answers it, unless `held`.
+ */
+const tagsWritten = (files = tagFiles(photos()), held = 0) => (url, body) => files.reply(body,
+  { top: { file_only: Object.keys(body.changes).length - held, with_rows: held } });
+
 function server(scanned = photos) {
   return new FakeServer()
     .on("/api/tags", [])
@@ -45,7 +54,7 @@ function server(scanned = photos) {
     .on("/api/photo-faces", { faces: [], total: 0, unmatched: 0 })
     .on(SAVE, saved({ new_path: A, taken: "2018:03:04 09:08:07" }, { file_only: 1, with_rows: 0 }))
     .on(SHIFT, shiftedAs("shifted", [], { file_only: 2, with_rows: 0, change: null }))
-    .on("/api/photos/write", { success: true, written: {}, file_only: 2, with_rows: 0 })
+    .on("/api/photos/write", tagsWritten())
     .on("/api/photo/rotate", { success: true, mtime: 1700000000, file_only: 1, with_rows: 0 })
     .on("/api/photo/delete", { success: true, file_only: 1, with_rows: 0,
       message: "Moved to the Recycle Bin. Nothing in kr-track changed: it does not hold this folder." })
@@ -143,9 +152,7 @@ describe("a caption and tags on one photo", () => {
 
 describe("tags on many photos", () => {
   test("added with the bulk field, and the answer says where", async (t) => {
-    const s = server().first("/api/photos/write", { success: true, file_only: 2, with_rows: 0,
-      written: { [A]: { tags: ["Beach", "Trips/Lighthouse"] }, [B]: { tags: ["Trips/Lighthouse"] } } });
-    const ctx = await looking(t, s);
+    const ctx = await looking(t);
     ctx.select(0, 1);
     ctx.$("bulk-add-tags-input").value = "Trips/Lighthouse";
     click(ctx.window, ctx.$("btn-bulk-add-tags"));
@@ -160,8 +167,7 @@ describe("tags on many photos", () => {
   });
 
   test("a partly held folder says how many went where", async (t) => {
-    const s = server().first("/api/photos/write", { success: true, file_only: 1, with_rows: 1,
-      written: { [A]: { tags: ["Beach", "Trips/Lighthouse"] }, [B]: { tags: ["Trips/Lighthouse"] } } });
+    const s = server().first("/api/photos/write", tagsWritten(undefined, 1));
     const ctx = await looking(t, s);
     ctx.select(0, 1);
     ctx.$("bulk-add-tags-input").value = "Trips/Lighthouse";
@@ -173,8 +179,10 @@ describe("tags on many photos", () => {
 
   test("a folder opened while the write is out is not touched by its answer", async (t) => {
     let release;
-    const answer = new Promise((resolve) => { release = resolve; });
-    const s = server().first("/api/photos/write", () => answer);
+    const written = tagsWritten();
+    const s = server().first("/api/photos/write", (url, body) => new Promise((resolve) => {
+      release = () => resolve(written(url, body));
+    }));
     const ctx = await looking(t, s);
     ctx.select(0, 1);
     ctx.$("bulk-add-tags-input").value = "Trips/Lighthouse";
@@ -182,8 +190,7 @@ describe("tags on many photos", () => {
     await flush(ctx.window, 4);
     await openFolder(ctx, HELD_FOLDER);
     assert.ok(!ctx.document.body.classList.contains("just-looking"), "the new folder is held");
-    release({ success: true, file_only: 2, with_rows: 0, written: { [A]: { tags: ["Beach", "Trips/Lighthouse"] },
-      [B]: { tags: ["Trips/Lighthouse"] } } });
+    release();
     await flush(ctx.window, 10);
     const names = [...ctx.document.querySelectorAll(".photo-item-file")].map((e) => e.getAttribute("data-path"));
     assert.deepEqual(names, ["D:\\Library\\2020\\held.jpg"], "the list is not the new folder's");
