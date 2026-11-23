@@ -8,6 +8,8 @@
  *   chips in the filter's order, Show counting what it finds.
  * - Rapid taps on one row cycle it from the last mark, in one place of history; a reply for a mark left is dropped.
  * - Back closes the sheet, the filter staying on the Grid; a second Back leaves the Grid; Forward gives the marks back.
+ *   A chip taken off after the sheet closed stays off through Forward onto the sheet's step and Back. A reload on the
+ *   sheet's step, then Back, keeps the marks; a row tapped as Show closes the sheet keeps its mark.
  * - A filter finding nothing says so with its chips, Remove the last and Clear all; the count says 0 photos and Show
  *   "No photos", not pressable, while the marks can still be changed. Clips chosen over marks that find only photos says
  *   that the kind finds none, not the marks, and one tap shows both.
@@ -236,6 +238,64 @@ describe("filtering the library on the phone", () => {
     await tabTo(ctx, "people");
     assert.equal(markOn(ctx, "Wren Alder"), "+");
     assert.equal(markOn(ctx, "Sam Birch"), "");
+  });
+
+  test("a chip taken off after the sheet closed stays off through Forward onto the sheet's step and Back", async (t) => {
+    const ctx = await phone(t);
+    await openFilter(ctx);
+    await tapRow(ctx, "Wren Alder");
+    await back(ctx);
+    assert.deepEqual(chips(ctx), ["+ Wren Alder"]);
+    await tap(ctx, el(ctx, "grid-chips").querySelector(".grid-chip:not(.grid-chip-filter)"));
+    assert.deepEqual(chips(ctx), []);
+
+    await forward(ctx);
+    assert.ok(sheetOpen(ctx), "Forward is the sheet's step, as it was left");
+    await back(ctx);
+    assert.ok(!sheetOpen(ctx));
+    assert.deepEqual(chips(ctx), [], "the chip taken off is not given back");
+    assert.equal(pageState(ctx).place.kind, "all");
+    await back(ctx);
+    assert.deepEqual(shown(ctx), ["browse"]);
+  });
+
+  test("a reload on the sheet's step keeps the marks made on it, and Back closes the sheet keeping them", async (t) => {
+    const first = await phone(t);
+    await openFilter(first);
+    await back(first);
+    const under = JSON.parse(JSON.stringify(first.window.history.state));
+    await forward(first);
+    await tapRow(first, "Wren Alder");
+    const onSheet = JSON.parse(JSON.stringify(first.window.history.state));
+
+    const ctx = await loadApp("phone", {
+      t, server: library(), url: PHONE_PAGE,
+      before: (window) => {
+        window.history.replaceState(under, "");
+        window.history.pushState(onSheet, "");
+      },
+    });
+    phoneLayout(ctx);
+    await settle(ctx);
+    assert.deepEqual(shown(ctx), ["grid"]);
+    assert.ok(sheetOpen(ctx), "the reload opens the sheet its step has");
+    assert.equal(markOn(ctx, "Wren Alder"), "+");
+    await back(ctx);
+    assert.ok(!sheetOpen(ctx));
+    assert.deepEqual(chips(ctx), ["+ Wren Alder"], "the marks made before the reload stay on the Grid");
+  });
+
+  test("a row tapped as Show closes the sheet keeps its mark on the Grid, and the next Back leaves it", async (t) => {
+    const ctx = await phone(t);
+    await openFilter(ctx);
+    click(ctx.window, el(ctx, "filter-show"));
+    click(ctx.window, row(ctx, "Wren Alder").querySelector(".filter-row-mark"));      // before the Back has landed
+    await settle(ctx);
+    assert.ok(!sheetOpen(ctx));
+    assert.deepEqual(shown(ctx), ["grid"]);
+    assert.deepEqual(chips(ctx), ["+ Wren Alder"], "the mark made under the closing sheet is kept");
+    await back(ctx);
+    assert.deepEqual(shown(ctx), ["browse"], "the sheet's step is gone: Back leaves the Grid");
   });
 
   test("a filter finding nothing says so with its chips: Remove the last, then Clear all; 0 photos, Show not pressable", async (t) => {

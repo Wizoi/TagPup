@@ -14,9 +14,10 @@ export const state = {
     // Where on that screen, as its history entry holds it: a level of Browse ([section, row ids...]), the Grid's view,
     // the Photo screen's { id, at }; null for none (the top of Browse).
     place: null,
-    // Whether the step shown has a sheet over its screen, as it is left: Back from it to the step under carries the place the
-    // sheet changed down onto that step (mobile-screens.js; the step's own record is gone by the time Back lands).
-    stepSheet: false,
+    // Whether the step shown is a sheet's whose place was changed on this visit to it (its entry's `moved`, kept through a
+    // reload): Back from it to the step under carries that place down onto that step (mobile-screens.js; the step's own record
+    // is gone by the time Back lands).
+    sheetMoved: false,
     // The view an address names (?view=, web/common/library.js VIEW_PARAMS), opened as the page starts; null for none.
     linked: null,
     // The view the Grid shows: { kind, value, recursive, order, media }, the names of library-source.js.

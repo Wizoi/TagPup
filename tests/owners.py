@@ -119,8 +119,11 @@ SCENARIOS = {
     "V31": ("views", "On the phone page somebody filters the library from the Filter sheet over the Grid: two people and a "
             "keyword marked any of and a keyword tapped round to not are one search, its chips above the grid; rapid taps "
             "on one row cycle it in one place of history and a reply for a mark left is dropped; Back closes the sheet "
-            "keeping the filter, a second Back leaves the Grid and Forward gives the marks back; a filter finding nothing "
-            "says so with Remove and Clear all, 0 photos and Show not pressable; an address naming a deleted keyword gives "
+            "keeping the filter, a second Back leaves the Grid and Forward gives the marks back; a chip taken off after "
+            "the sheet closed stays off through Forward and Back; a reload on the sheet's step and Back keeps its marks; a "
+            "row tapped as Show closes the sheet keeps its mark; a filter finding nothing "
+            "says so with Remove and Clear all, 0 photos and Show not pressable, and Videos over marks that find only photos "
+            "says the kind finds none and offers Both; an address naming a deleted keyword gives "
             "a struck chip; another library is another page with no chip of the first; a section that could not be read "
             "says so with Try again; a filter at the server's cap refuses one more with its sentence and reads nothing; no "
             "cover is asked under the sheet; six chips at 320 px are one row scrolled sideways."),

@@ -17,7 +17,9 @@
  *
  * A sheet may change its screen's place (the Filter sheet, mobile-filter.js, the Grid's view): Back from its step to the
  * step under it leaves the screen where the sheet left it, the place carried down onto that step, so closing the sheet
- * keeps what was done under it and a second Back leaves the screen.
+ * keeps what was done under it and a second Back leaves the screen. Only a place changed on this visit to the sheet's step
+ * (its entry's `moved`, kept through a reload, let go when Back or Forward lands on it): a step under changed since, Forward
+ * onto the sheet's step and Back again keeps the step under as it is.
  */
 import { state } from './mobile-state.js';
 
@@ -50,7 +52,7 @@ export function sheetShown() {
 export function openSheetStep() {
     if (sheetShown()) return;    // open already, or its Close's Back not landed yet: no second step
     window.history.pushState({ ...window.history.state, sheet: true }, '');
-    state.stepSheet = true;
+    state.sheetMoved = false;
     sheetIn(window.history.state);
 }
 
@@ -102,14 +104,19 @@ export function showScreen(name, place = null) {
 export function openScreen(name, place = null) {
     if (state.screen === name && samePlace(state.place, place)) return;
     window.history.pushState({ screen: name, place: place ?? null }, '');
-    state.stepSheet = false;
+    state.sheetMoved = false;
     showScreen(name, place);
 }
 
-/** Show the screen shown at another place, in its own step: a choice made on it (the Grid's order), not a step to go Back from. */
+/**
+ * Show the screen shown at another place, in its own step: a choice made on it (the Grid's order), not a step to go Back from.
+ * On a sheet's step, the step is marked `moved`: Back carries the place down.
+ */
 export function replacePlace(place) {
     if (samePlace(state.place, place)) return;
-    window.history.replaceState({ ...window.history.state, place: place ?? null }, '');
+    const moved = sheetShown();
+    window.history.replaceState({ ...window.history.state, place: place ?? null, ...(moved ? { moved } : {}) }, '');
+    state.sheetMoved = moved;
     showScreen(state.screen, place);
 }
 
@@ -123,12 +130,18 @@ export function upAScreen() {
 export function wireScreens() {
     window.addEventListener('popstate', (event) => {
         let entry = event.state;
-        // Back from a sheet's step to the one under it, on the same screen: the place the sheet changed is carried down.
-        if (state.stepSheet && entry && !entry.sheet && screenIn(entry) === state.screen && !samePlace(placeIn(entry), state.place)) {
+        // Back from a sheet's step to the one under it, on the same screen: the place the sheet changed on this visit is carried down.
+        if (state.sheetMoved && entry && !entry.sheet && screenIn(entry) === state.screen && !samePlace(placeIn(entry), state.place)) {
             entry = { ...entry, place: state.place };
             window.history.replaceState(entry, '');
         }
-        state.stepSheet = Boolean(entry && entry.sheet);
+        // A sheet's step landed on (Forward, or Back from above it) is a new visit: nothing changed on it yet.
+        if (entry && entry.moved) {
+            entry = { ...entry };
+            delete entry.moved;
+            window.history.replaceState(entry, '');
+        }
+        state.sheetMoved = false;
         const name = screenIn(entry);
         const place = placeIn(entry);
         // The same screen at the same place is only ever a sheet's step and the one under it: the screen stays.
@@ -155,7 +168,7 @@ export function startScreens() {
     }
     const kept = state.library ? screenIn(entry) : state.home;
     if (!entry || entry.screen !== kept) window.history.replaceState({ screen: kept, place: null }, '');
-    state.stepSheet = sheetShown();
+    state.sheetMoved = Boolean(sheetShown() && window.history.state.moved);
     showScreen(kept, placeIn(window.history.state));
     sheetIn(window.history.state);
 }
