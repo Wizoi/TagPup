@@ -1,13 +1,15 @@
 /**
  * Owner scenario: on the phone page (web/tagpup/mobile.html, docs/plans/phone-redesign.md cut 1) the owner moves
  * between its screens by the bar of tabs at the foot of the screen: Library (Browse), Photos (the Grid), Filter (cut 3's
- * sheet, drawn and not yet pressable) and Libraries (web/tagpup/mobile-tabs.js).
+ * sheet over the Grid, web/tagpup/mobile-filter.js) and Libraries (web/tagpup/mobile-tabs.js).
  *
  * - A page on a library opens on Library, its tab lit; a page on no library shows the list of libraries and no bar.
  * - A press is a step of history (mobile-screens.js openScreen): Back goes to the screen the tab was pressed on, the lit
  *   tab following, down to the page's first step, as before the bar. Rapid presses add a step for each change of tab and
  *   none for the tab already shown.
  * - Photos opens the Grid on the view it showed last, or on the whole library before any.
+ * - Filter from Browse opens the Grid on the whole library with the Filter sheet over it, two steps: Back closes the sheet,
+ *   a second Back leaves the Grid. What the sheet does is the filtering scenario's (scenario-filtering-on-the-phone).
  * - The Photo screen has no bar (the picture on its own canvas); Back to the Grid shows it again.
  * - A phone turned on its side keeps the bar and the screen: nothing is opened or read again.
  *
@@ -59,21 +61,32 @@ async function phone(t, url = PHONE_PAGE) {
 afterEach(() => closeAllApps());
 
 describe("moving between the tabs of the phone page", () => {
-  test("a page on a library opens on Library: the bar of four, Library lit, Filter drawn and not pressable", async (t) => {
+  test("a page on a library opens on Library: the bar of four, Library lit; Filter opens its sheet over the Grid", async (t) => {
     const ctx = await phone(t);
+    const sheetOpen = () => !el(ctx, "filter-sheet").classList.contains("hidden");
 
     assert.deepEqual(shown(ctx), ["browse"]);
     assert.ok(barShown(ctx));
     assert.deepEqual([...ctx.document.querySelectorAll("#tabs [data-tab]")].map((b) => b.textContent),
       ["Library", "Photos", "Filter", "Libraries"]);
     assert.deepEqual(lit(ctx), ["browse"]);
-    assert.ok(tab(ctx, "filter").disabled, "the filter sheet is not built yet");
+    assert.ok(!tab(ctx, "filter").disabled);
     assert.equal(el(ctx, "bar-library"), null, "the list of libraries is a tab, not a button in the top bar");
+    assert.ok(!sheetOpen());
 
     const steps = ctx.window.history.length;
+    click(ctx.window, tab(ctx, "filter"));
     await press(ctx, tab(ctx, "filter"));
-    assert.deepEqual(shown(ctx), ["browse"]);
-    assert.equal(ctx.window.history.length, steps, "Filter opens nothing");
+    assert.deepEqual(shown(ctx), ["grid"]);
+    assert.ok(sheetOpen(), "the sheet over the Grid");
+    assert.equal(el(ctx, "grid-heading").textContent, "The whole library");
+    assert.equal(ctx.window.history.length, steps + 2, "the Grid and the sheet over it, two steps however fast the presses");
+
+    await back(ctx);
+    assert.deepEqual(shown(ctx), ["grid"]);
+    assert.ok(!sheetOpen(), "Back closes the sheet first");
+    await back(ctx);
+    assert.deepEqual([shown(ctx), lit(ctx)], [["browse"], ["browse"]], "a second Back leaves the Grid");
   });
 
   test("a page on no library shows the list of libraries and no bar", async (t) => {

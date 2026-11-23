@@ -114,7 +114,8 @@ SCENARIOS = {
             "library opens on Library, one on none shows the list with no bar; each tab is one step of history however "
             "fast it is pressed and none for the tab shown, Back walks back through the tabs to the page's first step, "
             "Library from a level of Browse opens its top, Photos the view the Grid showed last or the whole library, the "
-            "Photo screen has no bar, Filter is drawn and opens nothing yet, and a phone turned keeps the bar and the screen."),
+            "Photo screen has no bar, Filter opens its sheet over the Grid (Back closes it, a second Back leaves the Grid), "
+            "and a phone turned keeps the bar and the screen."),
     "I1": ("apps", "Switching library in the middle of a folder shows no card of the first."),
     "I2": ("apps", "A write through a server update is waited out and not repeated."),
     "I3": ("apps", "An update by a launch and by an install hands one server over to the next without killing its work."),

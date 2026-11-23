@@ -5,8 +5,10 @@
  * - Only the cards of the window in view are asked (GET /api/library/cards, at most 200 ids a request), the next window
  *   as it is scrolled to: the desktop page's own card windows (library-source.js), through the phone's host
  *   (web/tagpup/mobile-grid.js). The real photo_index holds 59,967 photos at the top (counted read-only 2026-11-18).
- * - The order and Photos/Clips are two choices above the grid: a change reads the view again from the top, a reply for
- *   the order left is dropped, and the step in history keeps the choice.
+ * - The order and Photos/Clips are two choices in the head of the Filter sheet over the grid (mobile-filter.js; the
+ *   sheet over a keyword's photos is over the same photos as a filter, that keyword marked any of, a search asked in a
+ *   POST): a change reads the view again from the top, a reply for the order left is dropped, and the step in history
+ *   keeps the choice.
  * - A tap opens the photo (the Photo screen, web/tagpup/mobile-photo.js): one step for
  *   two quick taps, and Back is the grid where it was left, its ids not asked again.
  * - The ids or a window's cards that could not be read say "Could not load photos" with a Try again that works; an empty
@@ -36,11 +38,11 @@ async function back(ctx) {
   await settle(ctx);
 }
 
-/** A view's ids, by the order and the media the request names. */
-function idsOf(url, { count = VIEW, videos = [] } = {}) {
-  const descending = /order=name-desc/.test(url);
+/** A view's ids, by the order and the media the request names (in its address, or a search's in its body). */
+function idsOf(url, body, { count = VIEW, videos = [] } = {}) {
+  const descending = /order=name-desc/.test(url) || (body && body.order) === "name-desc";
   const ids = Array.from({ length: count }, (_, i) => (descending ? 100000 + i : i + 1));
-  if (/media=video/.test(url)) return { ids: videos, total: videos.length, of: count, videos };
+  if (/media=video/.test(url) || (body && body.media) === "video") return { ids: videos, total: videos.length, of: count, videos };
   return { ids, total: ids.length, of: count, videos };
 }
 
@@ -54,7 +56,7 @@ async function phone(t, { count = VIEW, videos = [], cardsReply, hold = false } 
   const server = new FakeServer()
     .on("/api/databases", { databases: ["alpha", "beta"] })
     .on("/api/library/navigator?section=keywords", KEYWORDS)
-    .on("/api/library/ids", (url) => idsOf(url, { count, videos }))
+    .on("/api/library/ids", (url, body) => idsOf(url, body, { count, videos }))
     .on("/api/library/cards", (url) => {
       const ids = decodeURIComponent((url.match(/ids=([^&]+)/) || [])[1] || "").split(",").map(Number);
       asked.push(ids);
@@ -87,7 +89,19 @@ async function openEvents(ctx) {
   await settle(ctx, 100);
 }
 
+/** The Filter sheet opened over the Grid by the Filter chip above it: the order and Photos/Clips are in its head. */
+async function openSheet(ctx) {
+  await tap(ctx, el(ctx, "grid-chips").querySelector(".grid-chip-filter"));
+  await settle(ctx, 100);
+  assert.ok(!el(ctx, "filter-sheet").classList.contains("hidden"), "the choices are in the sheet's head");
+}
+
+/** The last ids request, as the server reads it: a search's in its body. */
+const lastIds = (ctx) => ctx.server.calls.filter((c) => c.url.includes("/api/library/ids")).at(-1);
+
+/** A choice of the Filter sheet's head made (the sheet opened first when it is not). */
 async function choose(ctx, id, value) {
+  if (el(ctx, "filter-sheet").classList.contains("hidden")) await openSheet(ctx);
   el(ctx, id).value = value;
   el(ctx, id).dispatchEvent(new ctx.window.Event("change"));
   await settle(ctx, 100);
@@ -120,14 +134,18 @@ describe("looking through a view's photos on the phone", () => {
     await openEvents(ctx);
     assert.equal(ctx.asked.length, 1, "the first window's cards are under way");
 
+    await openSheet(ctx);
+    const before = idsAsked(ctx).length;
     await choose(ctx, "grid-order", "name-desc");
-    const asked = idsAsked(ctx);
-    assert.equal(asked.length, 2);
-    assert.match(asked[1], /order=name-desc/);
-    assert.deepEqual({ ...pageState(ctx).place }, { kind: "keyword", value: "Events", recursive: false, order: "name-desc", media: "both" });
+    assert.equal(idsAsked(ctx).length, before + 1);
+    assert.equal(lastIds(ctx).body.order, "name-desc");
+    const place = pageState(ctx).place;
+    assert.deepEqual([place.kind, place.order, place.media], ["search", "name-desc", "both"]);
+    assert.deepEqual(JSON.parse(JSON.stringify(place.value.all_of)),
+      [{ kind: "any_of", value: [{ kind: "keyword", value: "Events", recursive: false }], recursive: false }], "Events marked any of");
     assert.equal(ctx.window.history.state.place.order, "name-desc", "the step in history keeps the order");
     assert.equal(ctx.here.scrollTop, 0, "from the top");
-    await ctx.release();     // both windows' replies, the order left's first
+    await ctx.release();     // every window's replies, the order left's first
 
     assert.equal(names(ctx)[0], "Rowan's Meet 100000.jpg");
     assert.ok(!pageState(ctx).photos.cards.has(1), "no card of the order left is held");
@@ -144,7 +162,7 @@ describe("looking through a view's photos on the phone", () => {
     await openEvents(ctx);
     await choose(ctx, "grid-media", "video");
 
-    assert.match(idsAsked(ctx).at(-1), /media=video/);
+    assert.equal(lastIds(ctx).body.media, "video");
     assert.equal(el(ctx, "grid-count").textContent, "2 videos (of 5)");
     assert.deepEqual(names(ctx), ["Clip 3.mp4", "Clip 5.mp4"]);
     assert.ok(cards(ctx)[0].querySelector(".phone-card-play"), "a clip says it is one");
