@@ -18,7 +18,7 @@
  */
 import { test, describe, afterEach } from "node:test";
 import assert from "node:assert/strict";
-import { closeAllApps, click, CLIP_WRITES } from "./harness.mjs";
+import { closeAllApps, click, CLIP_WRITES, answer as replied, deletedAs } from "./harness.mjs";
 import { loadViewPage, pageErrors, recordOf } from "./view-page.mjs";
 
 afterEach(() => {
@@ -234,7 +234,7 @@ describe("a video's title, keywords, name and date are edited, and its turn is n
     assert.equal(answer.length, 1, "the delete was sent");
     assertStopped(ctx, "while the delete is out");
     const FAILED = "A copy is in this PC's Recycle Bin, but the original could not be deleted";
-    answer[0]({ success: false, error: FAILED });
+    answer[0](replied(500, { success: false, error: FAILED }));
     await ctx.settle(80);
     assert.equal(alerts.length, 1, "the failure is said");
     assert.deepEqual(ctx.consoleErrors.map(String), ["Error: " + FAILED], "and logged, as a photo's failed delete is");
@@ -257,7 +257,7 @@ describe("a video's title, keywords, name and date are edited, and its turn is n
     click(ctx.window, el(ctx, "btn-delete-photo"));
     await ctx.settle(40);
     assert.equal(deletes(ctx).length, 1, "one delete, one copy into its .partial");
-    answer[0]({ success: false, error: "The file is in use" });
+    answer[0](replied(500, { success: false, error: "The file is in use" }));
     await ctx.settle(80);
     ctx.consoleErrors.length = 0;
     assert.ok(!el(ctx, "btn-delete-photo").hasAttribute("inert"), "answered: offered again");
@@ -267,13 +267,13 @@ describe("a video's title, keywords, name and date are edited, and its turn is n
   const REFUSED = "The Recycle Bin of its drive would not keep this file: it is deleted for good only once you confirm it.";
 
   /**
-   * The delete's replies in turn, as the server sends them: the first a 400 naming the file its drive's Bin would not keep
-   * (tagpup_routes.photo_delete, `not_kept: [name]`), the second the confirmed delete's. Each route answers once and goes.
+   * The delete's replies in turn, as the server sends them (harness.mjs deletedAs): the first a 400 naming the file its
+   * drive's Bin would not keep (`not_kept: [name]`), the second the confirmed delete's. Each route answers once and goes.
    */
   function answersInTurn(ctx, replies) {
-    for (const [body, status] of [...replies].reverse()) {
-      const route = { match: "/api/photo/delete", status, headers: {} };
-      route.body = () => { ctx.server.routes.splice(ctx.server.routes.indexOf(route), 1); return body; };
+    for (const reply of [...replies].reverse()) {
+      const route = { match: "/api/photo/delete", status: 200, headers: {} };
+      route.body = (url, body) => { ctx.server.routes.splice(ctx.server.routes.indexOf(route), 1); return reply(url, body); };
       ctx.server.routes.unshift(route);
     }
   }
@@ -287,9 +287,8 @@ describe("a video's title, keywords, name and date are edited, and its turn is n
   test("a clip its drive's Bin would not keep: the warning names it, and OK alone sends the delete for good", async (t) => {
     const ctx = await viewWithAVideo(t);
     answersInTurn(ctx, [
-      [{ success: false, error: REFUSED, not_kept: [NOT_KEPT] }, 400],
-      [{ success: true, for_good: true, through_this_pc: false,
-        message: "Deleted for good, as you confirmed: the Recycle Bin of its drive would not keep it." }, 200],
+      deletedAs("not_kept", { error: REFUSED, not_kept: [NOT_KEPT], bin_full: 0 }),
+      deletedAs("for_good", { message: "Deleted for good, as you confirmed: the Recycle Bin of its drive would not keep it." }),
     ]);
     const questions = asked(ctx, [true, true]);
     ctx.window.alert = (said) => assert.fail(`nothing failed, yet the page said: ${said}`);
@@ -316,9 +315,8 @@ describe("a video's title, keywords, name and date are edited, and its turn is n
     const FULL = "Beach_Day_Long_Take.mp4 would be deleted for good, not moved to the Recycle Bin: this PC's Recycle Bin is full.";
     const ctx = await viewWithAVideo(t);
     answersInTurn(ctx, [
-      [{ success: false, error: FULL, not_kept: [NOT_KEPT], bin_full: 1 }, 400],
-      [{ success: true, for_good: true, through_this_pc: false,
-        message: "Deleted for good, as you confirmed: this PC's Recycle Bin is full." }, 200],
+      deletedAs("not_kept", { error: FULL, not_kept: [NOT_KEPT] }),
+      deletedAs("for_good", { message: "Deleted for good, as you confirmed: this PC's Recycle Bin is full." }),
     ]);
     const questions = asked(ctx, [true, true]);
     ctx.window.alert = (said) => assert.fail(`nothing failed, yet the page said: ${said}`);
@@ -335,7 +333,7 @@ describe("a video's title, keywords, name and date are edited, and its turn is n
     assert.deepEqual([sent.length, sent[0].for_good, sent[1].for_good], [2, undefined, true]);
 
     const kept = await viewWithAVideo(t);
-    answersInTurn(kept, [[{ success: false, error: FULL, not_kept: [NOT_KEPT], bin_full: 1 }, 400]]);
+    answersInTurn(kept, [deletedAs("not_kept", { error: FULL, not_kept: [NOT_KEPT] })]);
     const again = asked(kept, [true, false]);
     kept.window.alert = (said) => assert.fail(`a Cancel is not a failure, yet the page said: ${said}`);
     await open(kept, VIDEO);
@@ -370,7 +368,7 @@ describe("a video's title, keywords, name and date are edited, and its turn is n
     await ctx.settle(40);
     assert.equal(status(ctx), "This video is being deleted.", "the server's sentence, never 'not there' or the format");
     const asked = ctx.played.src;
-    answer[0]({ success: false, error: "The file is in use" });
+    answer[0](replied(500, { success: false, error: "The file is in use" }));
     await ctx.settle(80);
     ctx.consoleErrors.length = 0;
     assertPlaying(ctx, VIDEO, "the delete failed");
@@ -379,7 +377,7 @@ describe("a video's title, keywords, name and date are edited, and its turn is n
 
   test("Cancel at the warning deletes nothing: one delete sent, nothing said deleted, the clip plays again", async (t) => {
     const ctx = await viewWithAVideo(t);
-    answersInTurn(ctx, [[{ success: false, error: REFUSED, not_kept: [NOT_KEPT] }, 400]]);
+    answersInTurn(ctx, [deletedAs("not_kept", { error: REFUSED, not_kept: [NOT_KEPT], bin_full: 0 })]);
     const questions = asked(ctx, [true, false]);
     ctx.window.alert = (said) => assert.fail(`a Cancel is not a failure, yet the page said: ${said}`);
     await open(ctx, VIDEO);

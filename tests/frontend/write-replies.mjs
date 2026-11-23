@@ -111,15 +111,11 @@ export function unmadeReply(url, method, body, status, payload) {
  * at none, so the list only shrinks.
  */
 export const STILL_HAND_SPELLED = {
-  "clip-convert.test.mjs": 1, "delete-while-folder-changes.test.mjs": 1,
-  "just-look-edits.test.mjs": 2, "library-photo-back.test.mjs": 1, "library-view.test.mjs": 1,
-  "photo-position.test.mjs": 1,
-  "rotate-refreshes-thumbnails.test.mjs": 1, "scenario-a-write-reaches-every-scan-kept.test.mjs": 1,
-  "scenario-deleting-the-selected-photos-of-a-folder.test.mjs": 1,
+  "clip-convert.test.mjs": 1, "just-look-edits.test.mjs": 1,
+  "rotate-refreshes-thumbnails.test.mjs": 1,
   "scenario-tagging-keeps-the-faces-in-place.test.mjs": 1,
   "smart-rename-count.test.mjs": 1,
   "smart-rename-one-photo.test.mjs": 1, "suggestions-follow-a-saved-photo.test.mjs": 2,
-  "video-viewer.test.mjs": 3,
 };
 
 /** The node flags that run only some of a file's tests: such a run gives fewer replies, and says nothing of the list. */

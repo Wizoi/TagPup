@@ -17,7 +17,7 @@
 import { test, describe, afterEach } from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
-import { closeAllApps, click, openFolder, photoRecord, SAVE, saved, saveCalls } from "./harness.mjs";
+import { closeAllApps, click, openFolder, photoRecord, SAVE, saved, saveCalls, deletedAs } from "./harness.mjs";
 import { loadViewPage, pageErrors, speedUp } from "./view-page.mjs";
 
 afterEach(() => {
@@ -312,7 +312,7 @@ describe("I13: deleting the selected photos of a folder", () => {
     await ctx.settle(60);
 
     let answerPanel;
-    ctx.server.first("/api/photo/delete", () => new Promise((resolve) => { answerPanel = () => resolve({ success: true }); }));
+    ctx.server.first("/api/photo/delete", () => new Promise((resolve) => { answerPanel = () => resolve(deletedAs("binned")()); }));
     pick(ctx, "IMG_0002.jpg");
     click(ctx.window, el(ctx, "btn-delete-photo"));
     await ctx.until(() => typeof answerPanel === "function");
@@ -334,7 +334,7 @@ describe("I13: deleting the selected photos of a folder", () => {
     let answerCheck;
     ctx.server.first("/api/library/selection/delete-check", () => new Promise((resolve) => { answerCheck = () => resolve(ctx.where); }));
     let answerPanel;
-    ctx.server.first("/api/photo/delete", () => new Promise((resolve) => { answerPanel = () => resolve({ success: true }); }));
+    ctx.server.first("/api/photo/delete", () => new Promise((resolve) => { answerPanel = () => resolve(deletedAs("binned")()); }));
     click(ctx.window, button(ctx));
     await ctx.until(() => typeof answerCheck === "function");
     click(ctx.window, el(ctx, "btn-delete-photo"));

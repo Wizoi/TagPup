@@ -7,7 +7,7 @@
  */
 import { test, describe, afterEach } from "node:test";
 import assert from "node:assert/strict";
-import { closeAllApps, click } from "./harness.mjs";
+import { closeAllApps, click, deletedAs } from "./harness.mjs";
 import { loadViewPage, pageErrors, recordOf, STRIDE } from "./view-page.mjs";
 
 afterEach(() => {
@@ -246,7 +246,7 @@ describe("what is asked, and what fails", () => {
     async function deleteThen(t, then) {
       const ctx = await leftView(t);
       const held = [];
-      ctx.server.first("/api/photo/delete", () => new Promise((resolve) => held.push(() => resolve({ success: true }))));
+      ctx.server.first("/api/photo/delete", () => new Promise((resolve) => held.push(() => resolve(deletedAs("binned")()))));
       await open(ctx, ctx.left.photo);
       el(ctx, "btn-delete-photo").click();
       await ctx.settle(60);

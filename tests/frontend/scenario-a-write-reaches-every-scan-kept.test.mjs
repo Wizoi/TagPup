@@ -25,7 +25,7 @@ import { test, afterEach } from "node:test";
 import assert from "node:assert/strict";
 import {
   loadApp, FakeServer, closeAllApps, openFolder, click, flush, photoRecord, pageExports, SHIFT, shiftedAs, SAVE, saved,
-  lastSave, savedAs, SAVE_REPLIES, renamedAs, scanned, orderOf,
+  lastSave, savedAs, SAVE_REPLIES, renamedAs, scanned, orderOf, deletedAs,
 } from "./harness.mjs";
 
 afterEach(() => closeAllApps());
@@ -62,7 +62,7 @@ function server(shift, save, scans = SCANS, rename = "chained", suggested = {}) 
       .map((record) => ({ ...record })))
     .on("/api/folder/rename-photos", renamedAs(rename, CHILD))
     .on("/api/photo/rotate", { ...SAVE_REPLIES.rotated_picture_changed, pictures_refused: 0 })
-    .on("/api/photo/delete", { success: true })
+    .on("/api/photo/delete", deletedAs("binned"))
     .on("/api/taxonomy/tree", [])
     .on("/api/people", [])
     .on("/api/tags", [])
