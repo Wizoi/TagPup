@@ -468,6 +468,20 @@ describe("the facts under a photo on the phone", () => {
     assert.match(rule(".photo-facts:not(.open) .photo-chips"), /overflow: hidden;/);
   });
 
+  test("a photo at midnight and one at noon: 12:05 AM and 12:30 PM, the clock spelled once for the phone and the PC", async (t) => {
+    const ctx = await phone(t, {
+      count: 3,
+      card: (id) => phoneCard(id, { taken: id === 1 ? "2020:02:29 00:05:00" : "2020:03:01 12:30:00" }),
+    });
+    await openPhoto(ctx, 1);
+    assert.equal(el(ctx, "photo-when").textContent, "Sat, February 29, 2020, 12:05 AM");
+    next(ctx);
+    await settle(ctx);
+    assert.equal(el(ctx, "photo-when").textContent, "Sun, March 1, 2020, 12:30 PM");
+    const format = fs.readFileSync(path.join(HERE, "../../web/tagpup/format.js"), "utf8");
+    assert.equal(format.split("% 12 || 12").length - 1, 1, "one clockSaid: the phone's date, the PC's and the grid's");
+  });
+
   test("a clip's facts: its date, its kind, and Edit", async (t) => {
     const ctx = await phone(t, {
       count: 3,

@@ -12,6 +12,15 @@ export function takenOf(photo) {
 export const TAKEN_DIGITS = /^(\d{4})[: -](\d{2})[: -](\d{2})\s+(\d{2}):(\d{2}):(\d{2})/;
 
 /**
+ * A time of day on a 12-hour clock: hours 0-23, minutes (and seconds, when given) as two digits: "12:05 AM", "3:42:07 PM".
+ * The one spelling of the clock for the PC's details, the phone's facts and the grid.
+ */
+export function clockSaid(hours, minutes, seconds) {
+    const hour = Number(hours);
+    return `${hour % 12 || 12}:${minutes}${seconds === undefined ? '' : `:${seconds}`} ${hour >= 12 ? 'PM' : 'AM'}`;
+}
+
+/**
  * When the open photo was taken, whole, for the person checking it is right: "3/27/21 12:00 AM", or "Unknown" for a photo
  * with none (owner, 2026-11-19). Read from the digits of the stored Date Taken as they are, a wall-clock time: never
  * through a Date, which would move a time in the hour a clock skips (2:30 AM on the day it goes forward) and could be
@@ -22,8 +31,7 @@ export function takenSaid(taken) {
     const match = TAKEN_DIGITS.exec(String(taken || '').trim());
     if (!match) return 'Unknown';
     const [, year, month, day, hours, minutes] = match;
-    const hour = Number(hours);
-    return `${Number(month)}/${Number(day)}/${year.slice(-2)} ${hour % 12 || 12}:${minutes} ${hour >= 12 ? 'PM' : 'AM'}`;
+    return `${Number(month)}/${Number(day)}/${year.slice(-2)} ${clockSaid(hours, minutes)}`;
 }
 
 const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October',
@@ -40,8 +48,7 @@ export function whenSaid(taken) {
     if (!match) return '';
     const [, year, month, day, hours, minutes] = match;
     const weekday = WEEKDAYS[new Date(Date.UTC(Number(year), Number(month) - 1, Number(day))).getUTCDay()];
-    const hour = Number(hours);
-    return `${weekday}, ${MONTHS[Number(month) - 1]} ${Number(day)}, ${year}, ${hour % 12 || 12}:${minutes} ${hour >= 12 ? 'PM' : 'AM'}`;
+    return `${weekday}, ${MONTHS[Number(month) - 1]} ${Number(day)}, ${year}, ${clockSaid(hours, minutes)}`;
 }
 
 /** A file's size as a person reads it: "820 KB", "3.4 MB", "1.2 GB" (of 1,024); "" for a size not read. */
@@ -119,12 +126,7 @@ export function getFriendlyDatePart(d, stats) {
 }
 
 export function format12HourTime(d) {
-    const hours24 = d.getHours();
-    const mins = String(d.getMinutes()).padStart(2, '0');
-    const secs = String(d.getSeconds()).padStart(2, '0');
-    const ampm = hours24 >= 12 ? 'PM' : 'AM';
-    const hours12 = hours24 % 12 || 12;
-    return `${hours12}:${mins}:${secs} ${ampm}`;
+    return clockSaid(d.getHours(), String(d.getMinutes()).padStart(2, '0'), String(d.getSeconds()).padStart(2, '0'));
 }
 
 export function formatFriendlyDateSingle(d, stats) {
