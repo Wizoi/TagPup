@@ -31,6 +31,20 @@
    },
    "status": 200
   },
+  "original_kept": {
+   "reply": {
+    "done": true,
+    "mtime": 1,
+    "new_path": "HOME\\library\\Pictures\\Harbour\\breakwater.mp4",
+    "original_kept": "it was converted, but its original changed meanwhile (another program wrote it), so it is not deleted: it and its verified copy are both kept, and the next sync finds it as a clip of its own",
+    "renamed": true,
+    "size": 1,
+    "size_after": 1,
+    "size_before": 2,
+    "success": true
+   },
+   "status": 200
+  },
   "under_way": {
    "reply": {
     "done": false

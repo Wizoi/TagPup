@@ -112,7 +112,7 @@ export function unmadeReply(url, method, body, status, payload) {
  */
 export const STILL_HAND_SPELLED = {
   "add-folder-dialog.test.mjs": 1, "apply-all-failure-undo.test.mjs": 1, "bulk-writes-queue.test.mjs": 4,
-  "clip-convert.test.mjs": 1, "grid-window.test.mjs": 1,
+  "grid-window.test.mjs": 1,
   "just-look-edits.test.mjs": 1,
   "organize-faces.test.mjs": 2, "person-tag-form.test.mjs": 1,
   "scenario-editing-a-photo-on-the-phone.test.mjs": 1,

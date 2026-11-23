@@ -434,6 +434,19 @@ export function shiftedAs(name, own = [], top = {}) {
   };
 }
 
+export const CONVERT_REPLIES = JSON.parse(fs.readFileSync(path.join(HERE, "fixtures", "convert_replies.json"), "utf8"));
+
+/**
+ * A Convert's reply as the real routes made it (fixtures/convert_replies.json, written by tests/test_a_clip_converted.py
+ * ThePanelButtons): `part` "start" (POST /api/clip/convert: `started`, `stale`) or "end" (GET /api/clip/converted:
+ * `under_way`, `converted`, `not_smaller`, `not_its_plan`, `original_kept`), by `name`; `top` over what it says (the
+ * test's own `new_path`, sizes and stamp).
+ */
+export function convertedAs(part, name, top = {}) {
+  const { status, reply } = CONVERT_REPLIES[part][name];
+  return () => answer(status, { ...reply, ...top });
+}
+
 export const RENAME_REPLIES = JSON.parse(fs.readFileSync(path.join(HERE, "fixtures", "rename_replies.json"), "utf8"));
 
 /**

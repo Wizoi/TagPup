@@ -15,7 +15,7 @@
  */
 import { test, describe, afterEach } from "node:test";
 import assert from "node:assert/strict";
-import { closeAllApps, CLIP_WRITES, pageExports, scanned } from "./harness.mjs";
+import { closeAllApps, CLIP_WRITES, pageExports, scanned, convertedAs } from "./harness.mjs";
 import { loadViewPage, pageErrors, recordOf, speedUp } from "./view-page.mjs";
 
 afterEach(() => {
@@ -143,9 +143,10 @@ describe("the clip panel's Convert and Make smaller (MP4)", () => {
     const ctx = await viewWithAClip(t);
     await open(ctx, CLIP);
     await fails(ctx);
-    ctx.ends = [{ ...converted, original_kept: "it was converted, but its original changed meanwhile (another program wrote it), so it is not deleted" }];
+    ctx.ends = [convertedAs("end", "original_kept", converted)];
     el(ctx, "btn-clip-convert").click();
-    const expected = "Converted IMG_13.mp4: 120 MB to 18 MB. It was converted, but its original changed meanwhile (another program wrote it), so it is not deleted.";
+    const expected = "Converted IMG_13.mp4: 120 MB to 18 MB. It was converted, but its original changed meanwhile (another program "
+      + "wrote it), so it is not deleted: it and its verified copy are both kept, and the next sync finds it as a clip of its own.";
     assert.ok(await ctx.until(() => stripSaid(ctx).length > 0), "the end is said");
     assert.deepEqual(stripSaid(ctx), [expected]);
   });
