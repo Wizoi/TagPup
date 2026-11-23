@@ -154,10 +154,39 @@ class AThirdFixForOnePlace(unittest.TestCase):
         self.assertIn("a third fix for one place", said)
         self.assertFalse(os.path.exists(branch))
 
-        code, said = self.add(third.replace("| open |", "second fix of #45: the single place is `clip_patch.packet_of`, "
-                                                       "the one reader of an item's packet. | open |"))
+        said_place = "second fix of #45: the single place is `clip_patch.packet_of`, the one reader of an item's packet."
+        code, said = self.add(third.replace("| open |", said_place + " | open |"))
+        self.assertNotEqual(0, code, "the single place without a guard is still a third fix")
+        self.assertIn("guarded by", said)
+        self.assertEqual(before, self.read(self.findings))
+
+        code, said = self.add(third.replace("| open |", said_place + " Guarded by `tests/test_clip_patch.py` "
+                                                                    "(fails on a second reader). | open |"))
         self.assertEqual((0, ""), (code, said))
         self.assertIn("| 46 | 2026-11-13 | wrong: Files: a save into the clip is still refused", self.read(self.findings))
+
+    def test_fixes_closed_on_a_branch_before_the_merge_count_toward_the_chain(self):
+        """Two rows of one branch, each closed `fixed` before any is numbered, then a third about the same module."""
+        branch = os.path.join(self.folder, "pending.md")
+        one = self.commit("tagpup/files/field_values.py", "A = 2\n")
+        two = self.commit("tagpup/files/field_values.py", "A = 3\n")
+        for text in ("wrong: `field_values.parse` reads a date as a title.", "wrong: `field_values.parse` drops a year."):
+            code, said = self.add("| ? | 2026-11-23 | %s | open |" % text, "--branch-file", branch)
+            self.assertEqual((0, ""), (code, said))
+        for name, commit in (("B-1", one), ("B-2", two)):
+            code, said = run(["--branch-file", branch, "--status", name, "fixed: " + commit, *self.base[:2]])
+            self.assertEqual(0, code)
+        before = self.read(branch)
+        third = "| ? | 2026-11-23 | wrong: `field_values.parse` reads an empty date. | open |"
+        code, said = self.add(third, "--branch-file", branch)
+        self.assertNotEqual(0, code)
+        self.assertIn("tagpup/files/field_values.py, which the fixes of #40, B-1, B-2 changed: a third fix for one place", said)
+        self.assertEqual(before, self.read(branch))
+        code, said = self.add(third.replace("| open |", "second fix of B-2: the single place is `field_values.parse`; "
+                                                       "guarded by `tests/test_field_values.py`. | open |"),
+                              "--branch-file", branch)
+        self.assertEqual((0, ""), (code, said))
+        self.assertIn("| B-3 |", self.read(branch))
 
     def test_a_low_row_or_a_place_fixed_once_is_added(self):
         code, said = self.add("| ? | 2026-11-13 | low: `clip_patch.packet_of` has no docstring (live: 1). | open |")
