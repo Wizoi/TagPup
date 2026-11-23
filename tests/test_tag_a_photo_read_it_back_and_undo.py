@@ -35,7 +35,8 @@ check, the save route dropping `rename_failed`.
 
 A folder's Smart Rename whose names renumber (a photo taken first, the two Smart-Renamed before it moved up one) answers a
 chain, 17 -> 18 and 18 -> 19; the page's fixture of that reply, tests/frontend/fixtures/rename_replies.json, is written
-here (AFolderSmartRenameFromThePage; #3330).
+here (AFolderSmartRenameFromThePage; #3330), with a swap and a rename stopped part-way (a held photo renamed, the other
+part not: 500 with the names that did change; #3342).
 """
 import json
 import os
@@ -494,7 +495,8 @@ class ASaveFromThePage(S.Fresh):
         # Each reply as the route made it, and its status (`status`, by name): a save that wrote (`no_rename`), whose
         # rename failed, whose picture changed and was written again; one that saved a Date Taken (`dated`: its `taken`
         # and its `order`, the place the page moves it to); a turn; a save from a base the file no longer holds
-        # (`changed_on_disk`, refused 409); a save of a read-only file ExifTool could not write (`not_written`).
+        # (`changed_on_disk`, refused 409); a save of a read-only file ExifTool could not write (`not_written`); a save
+        # that puts a person on a photo whose one face is unnamed, which names it (`named_a_face`: its `named_faces`).
         path, record = self.smart_renamed()
         refused = names.RenameFailed("The file is open in another program (held by Viewer)", [])
         replies = {}
@@ -516,6 +518,17 @@ class ASaveFromThePage(S.Fresh):
         self.addCleanup(os.chmod, locked, stat.S_IREAD | stat.S_IWRITE)
         replies["not_written"] = self.sent(held, title="A caption")
         replies["dated"] = self.sent(self.record(plain_id), date_taken="2019-03-02T09:15")
+        faced, faced_id = self.make("IMG_0006.jpg", 11, ["Trips/Coast"])
+        conn = db.connect(self.library.path)
+        try:
+            face_rows.person_of(conn, "Marlo Pennick")      # a person at the top of the tree: their tag is the name
+            face_id = face_rows.add_face(conn, faced)
+            conn.commit()
+        finally:
+            conn.close()
+        replies["named_a_face"] = self.sent(self.record(faced_id), tags=["Trips/Coast", "Marlo Pennick"])
+        self.assertEqual([{"id": face_id, "name": "Marlo Pennick"}], replies["named_a_face"].get_json().get("named_faces"),
+                         replies["named_a_face"].data)
         found = {name: reply.get_json() for name, reply in replies.items()}
         for each in found.values():
             # The photo a save wrote is named in the page's test by the path it sends (harness.mjs savedAs).
@@ -543,7 +556,7 @@ class AFolderSmartRenameFromThePage(S.Fresh):
     """A folder's Smart Rename as the page sends it (web/tagpup/rename.js: the folder, the photos selected, a grouping),
     through the real route, its reply written for the page's test."""
 
-    def test_the_chained_and_swapped_rename_replies_the_page_reads_are_written_for_its_test(self):
+    def test_the_chained_swapped_and_part_way_rename_replies_the_page_reads_are_written_for_its_test(self):
         # `chained`: a photo taken before two already Smart-Renamed takes the first number, and each of the two moves up
         # one, so an old name of one is the new name of another (live: 1 of 11 folder Smart Renames in photo_index). The
         # folder scanned first, as the page opened it (the route orders the photos by the Date Taken of that scan).
@@ -578,6 +591,29 @@ class AFolderSmartRenameFromThePage(S.Fresh):
         for record in body["updated_photos"]:
             record.update(mtime=2, size=2)
         replies["swapped"] = {"status": reply.status_code, "reply": body}
+        # `part_way`: a held photo and one of Scans, a subfolder the library does not hold (no row), renamed as
+        # "Harbour"; the held part is renamed, the other part stops (names.rename_all's second call raises), and the
+        # route answers 500 with the names that did change (a share that stops answering after the held part).
+        scan, _none = self.make("scan_01.jpg", 4, row=None, folder=os.path.join(self.folder, "Scans"))
+        S.write_into(scan, DateTimeOriginal="2020:06:01 10:30:00")    # its order the date's, not its file's stamp
+        real, calls = names.rename_all, []
+
+        def second_part_fails(renames, aside=None):
+            calls.append(renames)
+            if len(calls) == 2:
+                raise names.RenameFailed(OSError("the share went away"), [])
+            return real(renames, aside=aside)
+
+        with mock.patch.object(names, "rename_all", second_part_fails):
+            reply = self.post("/folder/rename-photos", {"folder_path": self.folder, "grouping": "Harbour",
+                                                        "photo_paths": [named["Regatta - 3.jpg"], scan]})
+        body = reply.get_json()
+        self.assertEqual((500, False), (reply.status_code, body["success"]), body)
+        self.assertEqual(1, len(body["updated_paths"]), "not the held part alone")
+        self.assertIn("were renamed, and stay so", body["error"])
+        for record in body["updated_photos"]:
+            record.update(mtime=3, size=3)
+        replies["part_way"] = {"status": reply.status_code, "reply": body}
         # The folder named FOLDER, in both of its spellings (the reply's paths, ExifTool's SourceFile).
         text = json.dumps(replies, sort_keys=True, indent=1) + "\n"
         for spelled in (self.folder, self.folder.replace(os.sep, "/")):

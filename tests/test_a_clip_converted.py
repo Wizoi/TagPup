@@ -982,8 +982,9 @@ class ThePanelButtons(AnOldClipInTheLibrary):
         # then the ticket asked until it ended (GET /api/clip/converted?ticket=). `start`: `started` (its ticket),
         # `stale` (a stamp the clip no longer has: 409, `changed_on_disk`). `end`: `under_way`, `converted` (a .wmv to its
         # MP4, renamed), `not_smaller` (a .mov whose MP4 is no smaller, left as it is), `not_its_plan` (Make smaller asked
-        # of a clip that does not play). The test's home is HOME; each stamp 1 and 1, the ticket 1, each size before 2
-        # and after 1 (after 2 when it was no smaller).
+        # of a clip that does not play), `original_kept` (converted, its original written by another program after its
+        # copy was carried: both kept, the sentence in `original_kept`). The test's home is HOME; each stamp 1 and 1, the
+        # ticket 1, each size before 2 and after 1 (after 2 when it was no smaller).
         found = {"start": {}, "end": {}}
         both = lambda reply: {"status": reply.status_code, "reply": reply.get_json()}  # noqa: E731
         source, photo_id = self.clip("quay.wmv")
@@ -1000,6 +1001,15 @@ class ThePanelButtons(AnOldClipInTheLibrary):
         found["end"]["not_smaller"] = {"status": 200, "reply": self.ended(self.ask(mov_id, "shrink", mov))}
         old, old_id = self.clip("slipway.wmv")
         found["end"]["not_its_plan"] = {"status": 200, "reply": self.ended(self.ask(old_id, "shrink", old))}
+        kept, kept_id = self.clip("breakwater.wmv")
+
+        def rewritten(step):
+            if step == "carried":
+                with open(kept, "ab") as handle:
+                    handle.write(b"another program's bytes")
+        with mock.patch.object(convert, "_reached", side_effect=rewritten):
+            found["end"]["original_kept"] = {"status": 200, "reply": self.ended(self.ask(kept_id, "convert", kept))}
+        self.assertEqual(convert.ORIGINAL_CHANGED, found["end"]["original_kept"]["reply"].get("original_kept"))
         self.assertEqual(({"stale": 409, "started": 200}, [True, False, False], {"done": False}),
                          ({name: each["status"] for name, each in found["start"].items()},
                           [found["end"][name]["reply"]["success"] for name in ("converted", "not_smaller", "not_its_plan")],

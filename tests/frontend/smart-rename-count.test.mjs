@@ -7,7 +7,7 @@
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { loadApp, FakeServer, photoRecord, flush, click, openFolder } from "./harness.mjs";
+import { loadApp, FakeServer, photoRecord, flush, click, openFolder, renamedAs } from "./harness.mjs";
 
 test("a grouping holding ' - ' is refused beside the field, and nothing is sent", async (t) => {
   // Editing a caption later splits the name on " - " to find the photo's number.
@@ -51,13 +51,12 @@ test("Smart Rename reports the photos it renamed, not zero", async (t) => {
     .on("/api/folder/suggest-status", { status: "idle" })
     .on("/api/folder/index-status", { status: "completed", percent: 100, message: "Ready" })
     .on("/api/folder/scan", records)
-    .on("/api/folder/rename-photos", {
-      success: true,
+    .on("/api/folder/rename-photos", renamedAs("chained", "D:\\Library\\2020", {
       // b already had the name it would have been given.
       updated_paths: { [a]: renamedA, [b]: b },
       updated_photos: [{ ...records[0], path: renamedA, filename: "Harbour Day 001.jpg" },
         records[1], records[2]],
-    });
+    }));
 
   const ctx = await loadApp("tagpup", { t, url: "http://localhost:8090/photo_index/", server });
   ctx.window.confirm = () => true;

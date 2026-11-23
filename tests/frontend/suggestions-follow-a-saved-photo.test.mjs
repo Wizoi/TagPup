@@ -6,7 +6,7 @@
  */
 import { test, describe, afterEach } from "node:test";
 import assert from "node:assert/strict";
-import { loadApp, FakeServer, flush, click, openFolder, closeAllApps, PHOTO_WRITES, SAVE, saved, notSaved } from "./harness.mjs";
+import { loadApp, FakeServer, flush, click, openFolder, closeAllApps, PHOTO_WRITES, SAVE, saved, notSaved, renamedAs } from "./harness.mjs";
 
 afterEach(() => closeAllApps());
 
@@ -79,8 +79,8 @@ describe("a saved photo keeps its suggestions", () => {
       const updated = [{ ...record(RENAMED) }, record(B)];
       // The server spells the old path as it likes: matched by key, not by exact text.
       const updated_paths = { [A.toLowerCase()]: RENAMED, [B]: B };
-      if (stopped) ctx.server.on("/api/folder/rename-photos", { success: false, error: "stopped", updated_paths, updated_photos: updated }, { status: 500 });
-      else ctx.server.on("/api/folder/rename-photos", { success: true, updated_paths, updated_photos: updated });
+      ctx.server.on("/api/folder/rename-photos", renamedAs(stopped ? "part_way" : "chained", FOLDER,
+        { updated_paths, updated_photos: updated }));
       ctx.window.confirm = () => true;
       click(ctx.window, ctx.card("a.jpg").querySelector(".thumbnail-checkbox"));
       ctx.document.getElementById("rename-grouping-input").value = "Harbour";

@@ -331,7 +331,8 @@ export function lastSave(server) {
  * tests/test_tag_a_photo_read_it_back_and_undo.py ASaveFromThePage), each by name, its status in `status`, its one photo
  * named "PHOTO": `no_rename` (a save that wrote), `rename_failed`, `picture_changed`, `changed_on_disk` (refused 409: the
  * file is no longer what the page read), `not_written` (a file ExifTool could not write: a 200 with the photo among its
- * `errors`). Every fake reply of a save below is one of them, so that its fields are the server's, not a list kept here.
+ * `errors`), `named_a_face` (a person put on a photo whose one face was unnamed: the face named, in `named_faces`). Every
+ * fake reply of a save below is one of them, so that its fields are the server's, not a list kept here.
  */
 export const SAVE_REPLIES = JSON.parse(fs.readFileSync(path.join(HERE, "fixtures", "save_replies.json"), "utf8"));
 
@@ -434,6 +435,19 @@ export function shiftedAs(name, own = [], top = {}) {
   };
 }
 
+export const CONVERT_REPLIES = JSON.parse(fs.readFileSync(path.join(HERE, "fixtures", "convert_replies.json"), "utf8"));
+
+/**
+ * A Convert's reply as the real routes made it (fixtures/convert_replies.json, written by tests/test_a_clip_converted.py
+ * ThePanelButtons): `part` "start" (POST /api/clip/convert: `started`, `stale`) or "end" (GET /api/clip/converted:
+ * `under_way`, `converted`, `not_smaller`, `not_its_plan`, `original_kept`), by `name`; `top` over what it says (the
+ * test's own `new_path`, sizes and stamp).
+ */
+export function convertedAs(part, name, top = {}) {
+  const { status, reply } = CONVERT_REPLIES[part][name];
+  return () => answer(status, { ...reply, ...top });
+}
+
 export const RENAME_REPLIES = JSON.parse(fs.readFileSync(path.join(HERE, "fixtures", "rename_replies.json"), "utf8"));
 
 /**
@@ -442,13 +456,16 @@ export const RENAME_REPLIES = JSON.parse(fs.readFileSync(path.join(HERE, "fixtur
  * renamed where an old name of one is the new name of another (IMG_0001.jpg -> Regatta - 1.jpg, Regatta - 1.jpg ->
  * Regatta - 2.jpg, Regatta - 2.jpg -> Regatta - 3.jpg; taken 10:00, 10:10, 10:20 on 2020:06:01), each stamp 1 and 1;
  * `swapped`, then Regatta - 1 dated 10:15 and Regatta - 2 10:05, the two Smart-Renamed again and each taking the other's
- * name (the reply's records the folder's three, each stamp 2 and 2).
- * Its folder, FOLDER, is named again `folder`, the folder the page test opened.
+ * name (the reply's records the folder's three, each stamp 2 and 2); `part_way`, Regatta - 3 (held) and Scans\scan_01.jpg
+ * (a subfolder the library does not hold) renamed as "Harbour", the second part stopped: 500, the held one's new name in
+ * `updated_paths`, the folder's records in `updated_photos` (each stamp 3 and 3), what changed and how to recover in `error`.
+ * Its folder, FOLDER, is named again `folder`, the folder the page test opened; `top` over what it says (the test's own
+ * `updated_paths`, `updated_photos`, `error`).
  */
-export function renamedAs(name, folder) {
+export function renamedAs(name, folder, top = {}) {
   const { status, reply } = RENAME_REPLIES[name];
   const text = JSON.stringify(reply).replaceAll("FOLDER", JSON.stringify(folder).slice(1, -1));
-  return () => answer(status, JSON.parse(text));
+  return () => answer(status, { ...JSON.parse(text), ...top });
 }
 
 /** A route matcher of FakeServer for a page's tag change (web/common/photo-write.js): POST /api/photos/write, op `tags`. */
