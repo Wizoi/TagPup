@@ -35,3 +35,5 @@ Findings fixed before 2026-09-23 are in the git log (`git log --grep="^fix"`). T
 
 | # | Found | Finding | Status |
 |---|---|---|---|
+| 3341 | 2026-11-22 | wrong: the merge-budget hook (.claude/hooks/merge-budget.mjs) was registered for the Bash tool only, so a `git merge` run through the PowerShell tool skipped it: f88904a2 (phone cut 3b) merged at 1,258 added lines with no `Over budget:` line, and the hook refuses that same merge when run through Bash (checked at its parent). Retro 2026-11-22 action 3. | open |
+| 3342 | 2026-11-22 | low: a page test takes a write route's reply from a fixture the real route wrote (as `scan_replies.json` and `rename_replies.json` already do for scans and Smart Rename), not a reply spelled by hand; the other write replies (save, tag write, Delete, Convert, time shift) are still hand-spelled in the page tests and every `wrong` of the photos-written cuts agreed with them (#3326, #3330). live: 2 rows name hand-spelled test data (#3326, #3330); a guard in the style of test_fixtures_make_photo_rows_like_the_indexer fails on a reply no route makes. Retro 2026-11-22 action 2. | open |
