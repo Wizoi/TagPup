@@ -804,6 +804,8 @@ body:has(> .tabs:not(.hidden)) > .edit-toasts {
         animation: none !important;
         transition: none !important;
     }
+}
+
 /* ---- Browse covers and the People strip (mobile-browse.js; docs/plans/phone-redesign.md, cut 2) ----
    One block, the last: a row's cover is a square of fixed size with a tonal placeholder that is there before its
    thumbnail, so nothing moves when one lands or never does; a thumbnail that fails shows the placeholder. The strip
