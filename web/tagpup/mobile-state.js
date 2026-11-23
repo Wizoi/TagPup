@@ -45,6 +45,12 @@ export const state = {
     // The Photo screen's read of the cards around the photo open, while it is out: { lib, ids (a Set), reply }; a swipe
     // onto a photo it names waits for it rather than asking again (mobile-photo.js).
     cardsAsked: null,
+    // The facts sheet under the photo (mobile-photo.js): the photo's record as /api/library/photo read it, { id, record,
+    // failed }, null before a read lands; the id being read (one read out at a time: a swipe on while it is out asks the
+    // photo then shown when it lands); whether the sheet is pulled up (a swipe is refused while it is).
+    facts: null,
+    factsAsked: null,
+    factsOpen: false,
     // The Edit sheet's photo (mobile-edit.js): { id, record (as /api/library/photo read it), saving, letGo }; null when
     // shut. Drawn from the history step shown, the one record of whether the sheet is open (mobile-screens.js sheetShown).
     edit: null,
@@ -58,9 +64,12 @@ export const state = {
     // The title and Date Taken typed on a photo's sheet, neither saved nor let go by Close, by the photo's id: left by
     // Back or another screen, they are put back when its sheet opens again (mobile-edit.js). Gone with the page.
     drafts: new Map(),
-    // The library's tags (/api/tags) and its people (a PeopleDirectory of /api/people), read once; null until then.
+    // The library's tags (/api/tags) and its people (a PeopleDirectory of /api/people), read once; null until then. The
+    // read out, its promise (mobile-photo.js readVocabulary); whether the last one failed (the facts say so).
     tags: null,
     people: null,
+    vocabularyAsked: null,
+    vocabularyFailed: false,
     // The Grid's windowed grid (vgrid.js), made once as the page is wired.
     grid: null,
     // How many times the library list was asked for: a reply to an older ask is dropped.

@@ -492,8 +492,7 @@ body:has(> main > .grid-screen:not(.hidden)) > main {
     overflow-y: auto;
 }
 
-.grid-heading,
-.photo-name {
+.grid-heading {
     font-size: max(16px, var(--text-title));
     font-weight: var(--weight-strong);
     overflow-wrap: anywhere;
@@ -596,24 +595,29 @@ body:has(> main > .grid-screen:not(.hidden)) > main {
     white-space: nowrap;
 }
 
-/* The Photo screen: the picture on the photo canvas, as large as the screen allows, fitted (not measured), so a phone
-   turned fits it again; a sideways swipe is the page's (web/common/swipe.js), a pinch the browser's. It has no bar of
-   tabs, so it pads the bottom inset itself. */
+/* The Photo screen: the picture on the photo canvas, as wide as the screen and as tall as the space above its facts
+   allows, fitted (not measured), so a phone turned fits it again; a sideways swipe is the page's (web/common/swipe.js), a
+   pinch the browser's. It has no bar of tabs; its facts sheet pads the bottom inset. `--facts-peek` is how much of the
+   screen the facts sheet's first part may take; the picture keeps the rest. */
 body:has(> main > [data-screen="photo"]:not(.hidden)),
 body:has(> main > [data-screen="photo"]:not(.hidden)) > .bar {
     background-color: var(--photo-canvas);
 }
 
 [data-screen="photo"] {
-    padding-bottom: calc(1rem + env(safe-area-inset-bottom));
+    --facts-peek: 40vh;
+    --facts-peek: 40dvh;
+    padding: 0;
 }
 
 .photo-stage {
+    position: relative;
     display: flex;
+    flex-direction: column;
     align-items: center;
     justify-content: center;
-    min-height: 50vh;
-    margin: -1rem -1rem 0.75rem;
+    min-height: calc(100vh - var(--tap) - 0.5rem - var(--facts-peek));
+    min-height: calc(100dvh - var(--tap) - 0.5rem - var(--facts-peek));
     touch-action: pan-y pinch-zoom;
     user-select: none;
 }
@@ -621,14 +625,187 @@ body:has(> main > [data-screen="photo"]:not(.hidden)) > .bar {
 .photo-picture,
 .photo-clip {
     display: block;
-    max-width: 100%;
-    max-height: calc(100vh - 10rem);
-    max-height: calc(100dvh - 10rem);
+    width: 100%;
+    max-height: calc(100vh - var(--tap) - 0.5rem - var(--facts-peek));
+    max-height: calc(100dvh - var(--tap) - 0.5rem - var(--facts-peek));
     object-fit: contain;
+}
+
+/* Where the photo is in the view: "12 of 212", over the picture's top corner. */
+.photo-place {
+    position: absolute;
+    top: 0.5rem;
+    right: calc(0.5rem + env(safe-area-inset-right));
+    padding: 0.125rem 0.625rem;
+    font-size: var(--text-caption);
+    color: var(--text-primary);
+    background-color: var(--scrim);
+    border-radius: var(--radius-pill);
+    pointer-events: none;
+}
+
+.photo-place:empty {
+    display: none;
+}
+
+/* The facts sheet: at the foot of the screen, its first part always shown; pulled up, the rest, scrolling inside. */
+.photo-facts {
+    position: fixed;
+    inset: auto 0 0 0;
+    z-index: 15;
+    max-height: var(--facts-peek);
+    overflow: hidden;
+    padding: 0 calc(1rem + env(safe-area-inset-right)) calc(1rem + env(safe-area-inset-bottom)) calc(1rem + env(safe-area-inset-left));
+    background-color: var(--bg-secondary);
+    border-radius: var(--radius-sheet) var(--radius-sheet) 0 0;
+    transition: max-height var(--motion-sheet) var(--ease-out);
+}
+
+.photo-facts.open {
+    max-height: 85vh;
+    max-height: 85dvh;
+    overflow-y: auto;
+}
+
+/* The handle: the whole width, 44 px to tap or pull, its mark in the middle. */
+.photo-facts-handle {
+    display: block;
+    width: 100%;
+    background: transparent;
+    border: none;
+    touch-action: none;
+}
+
+.photo-facts-handle::before {
+    content: "";
+    display: block;
+    width: 2.5rem;
+    height: 4px;
+    margin: 0 auto;
+    background-color: var(--surface-3);
+    border-radius: var(--radius-pill);
+}
+
+.photo-when {
+    font-size: var(--text-title);
+    font-weight: var(--weight-strong);
+}
+
+.photo-title {
+    margin-top: 0.25rem;
+    overflow-wrap: anywhere;
+}
+
+.photo-facts:not(.open) .photo-title {
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 3;
+    line-clamp: 3;
+    overflow: hidden;
+}
+
+.photo-title-more {
+    padding: 0;
+    color: var(--accent);
+    background: transparent;
+    border: none;
+}
+
+.photo-tagged {
+    display: flex;
+    align-items: baseline;
+    gap: 0.75rem;
+    margin-top: 0.75rem;
+}
+
+.photo-tagged-head {
+    flex: none;
+    width: 5rem;
+    font-size: var(--text-small);
+    font-weight: var(--weight-strong);
+    color: var(--text-secondary);
+}
+
+/* The chips wrap; with the sheet down, two rows of them, the rest pulled up. */
+.photo-chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.375rem;
+    min-width: 0;
+}
+
+.photo-facts:not(.open) .photo-chips {
+    max-height: 4.25rem;
+    overflow: hidden;
+}
+
+.photo-chip {
+    max-width: 100%;
+    padding: 0.25rem 0.75rem;
+    font-size: var(--text-small);
+    overflow-wrap: anywhere;
+    background-color: var(--bg-tertiary);
+    border-radius: var(--radius-pill);
+}
+
+.photo-none {
+    font-size: var(--text-small);
+    color: var(--text-muted);
+}
+
+.photo-when.photo-none {
+    font-size: var(--text-title);
 }
 
 .photo-edit {
     margin-top: 0.75rem;
+}
+
+.photo-more {
+    margin-top: 1rem;
+}
+
+.photo-fact {
+    display: flex;
+    gap: 0.75rem;
+    padding: 0.5rem 0;
+    border-top: 1px solid var(--border-color);
+}
+
+.photo-fact dt {
+    flex: none;
+    width: 5rem;
+    font-size: var(--text-small);
+    color: var(--text-secondary);
+}
+
+.photo-fact dd {
+    min-width: 0;
+    margin: 0;
+    overflow-wrap: anywhere;
+}
+
+/* A phone on its side: the photo has the height, about 230 px; the facts go down to their handle, and pulled up stand
+   beside the picture, which keeps the rest of the width. */
+@media (orientation: landscape) and (max-height: 500px) {
+    [data-screen="photo"] {
+        --facts-peek: var(--tap);
+    }
+
+    .photo-facts:not(.open) > :not(.photo-facts-handle) {
+        display: none;
+    }
+
+    .photo-facts.open {
+        inset: calc(var(--tap) + 0.5rem + env(safe-area-inset-top)) 0 0 auto;
+        width: min(24rem, 45vw);
+        max-height: none;
+        border-radius: var(--radius-sheet) 0 0 var(--radius-sheet);
+    }
+
+    [data-screen="photo"]:has(.photo-facts.open) .photo-stage {
+        margin-right: min(24rem, 45vw);
+    }
 }
 
 /* The Edit sheet (mobile-edit.js): over the lower part of the photo, rising from the foot of the screen, scrolling

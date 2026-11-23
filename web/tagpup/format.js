@@ -26,6 +26,24 @@ export function takenSaid(taken) {
     return `${Number(month)}/${Number(day)}/${year.slice(-2)} ${hour % 12 || 12}:${minutes} ${hour >= 12 ? 'PM' : 'AM'}`;
 }
 
+const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October',
+    'November', 'December'];
+const WEEKDAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+
+/**
+ * When a photo was taken, read at a glance on the phone's Photo screen: "Sat, June 14, 2019, 3:42 PM"; '' for a photo with
+ * none. The digits of the stored Date Taken as they are, a wall-clock time, as takenSaid reads them; the weekday is the
+ * date's own (Date.UTC of the day alone: no zone, no clock that skips an hour).
+ */
+export function whenSaid(taken) {
+    const match = TAKEN_DIGITS.exec(String(taken || '').trim());
+    if (!match) return '';
+    const [, year, month, day, hours, minutes] = match;
+    const weekday = WEEKDAYS[new Date(Date.UTC(Number(year), Number(month) - 1, Number(day))).getUTCDay()];
+    const hour = Number(hours);
+    return `${weekday}, ${MONTHS[Number(month) - 1]} ${Number(day)}, ${year}, ${hour % 12 || 12}:${minutes} ${hour >= 12 ? 'PM' : 'AM'}`;
+}
+
 /** A file's size as a person reads it: "820 KB", "3.4 MB", "1.2 GB" (of 1,024); "" for a size not read. */
 export function fileSizeSaid(bytes) {
     if (!Number.isFinite(bytes) || bytes < 0) return '';
