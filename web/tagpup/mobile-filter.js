@@ -30,10 +30,7 @@ import {
 import { filterChip } from './search-model.js';
 import { state } from './mobile-state.js';
 import { closeSheetStep, openScreen, openSheetStep, replacePlace, samePlace, sheetShown, whenSheet } from './mobile-screens.js';
-import { needSection, sectionState, viewOf } from './mobile-browse.js';
-
-/** The sheet's tabs in Browse's order, each a section of the navigator: what it is called. */
-const TABS = { people: 'People', keywords: 'Keywords', folders: 'Folders', dates: 'Dates' };
+import { needSection, sectionState, SECTIONS, viewOf } from './mobile-browse.js';
 
 const byId = (id) => document.getElementById(id);
 
@@ -207,10 +204,10 @@ function drawSheet() {
     const { rows, hidden } = sec.index ? sectionRows(name, sec.index, expandedOf(name), '') : { rows: [], hidden: 0 };
     sheet.rows = rows;
     let said = '';
-    if (failed) said = `Could not load ${TABS[name].toLowerCase()}. ${sec.message}`.trim();
+    if (failed) said = `Could not load ${SECTIONS[name].label.toLowerCase()}. ${sec.message}`.trim();
     else if (!sec.index) said = 'Loading...';
     else if (sheet.notice) said = sheet.notice;
-    else if (!rows.length) said = `This library has no ${TABS[name].toLowerCase()} to filter by yet.`;
+    else if (!rows.length) said = `This library has no ${SECTIONS[name].label.toLowerCase()} to filter by yet.`;
     else if (hidden) said = `${hidden.toLocaleString()} more are not shown: close a row to see them.`;
     byId('filter-said').textContent = said;
     byId('filter-said').classList.toggle('problem-text', failed || Boolean(sheet.notice));
@@ -275,7 +272,7 @@ export function wireFilter() {
     whenSheet(sheetStep);
     byId('filter-tabs').addEventListener('click', (event) => {
         const tab = event.target.closest('[data-filter-tab]');
-        if (!tab || !TABS[tab.dataset.filterTab]) return;
+        if (!tab || !SECTIONS[tab.dataset.filterTab]) return;
         state.filterSheet.tab = tab.dataset.filterTab;
         state.filterSheet.notice = '';
         askTab();

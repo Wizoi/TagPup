@@ -30,7 +30,7 @@ document.addEventListener('DOMContentLoaded', () => {
     whenShown('browse', showBrowse);
     wireGrid();
     wireFilter();
-    whenShown('grid', filterFollows);    // the marks of the view first: the Grid's count line reads them
+    whenShown('grid', filterFollows);
     whenShown('grid', showGrid);
     wireImageZoom();
     wirePhoto();

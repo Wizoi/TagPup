@@ -27,7 +27,7 @@ import { state } from './mobile-state.js';
 import { openScreen, samePlace, sheetShown, upAScreen } from './mobile-screens.js';
 
 /** The four sections: what each is called, and what an empty one says. */
-const SECTIONS = {
+export const SECTIONS = {
     folders: { label: 'Folders', empty: 'This library holds no photos in any folder yet.' },
     keywords: { label: 'Keywords', empty: 'This library has no keywords yet.' },
     people: { label: 'People', empty: 'No photo in this library names a person yet.' },
