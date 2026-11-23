@@ -85,6 +85,21 @@ describe("Filter mode off is Browse, and the toggle is remembered", () => {
     assert.ok(bar(ctx).classList.contains("hidden"));
   });
 
+  test("a person's view opened with Filter mode off is not a filter when the mode is turned on: no marks, and the next click starts a filter of its own", async (t) => {
+    const ctx = await page(t);
+    click(ctx.window, ctx.rowByLabel("people", "Rowan Thackeray"));
+    await ctx.settle();
+    assert.equal(ctx.state.library.kind, "person");
+    const history = watchHistory(ctx);
+    click(ctx.window, toggle(ctx));
+    assert.deepEqual(rowMarks(ctx, "people"), [], "the person's own view is no filter");
+    assert.ok(bar(ctx).classList.contains("hidden"));
+    click(ctx.window, ctx.rowByLabel("people", "Rowan Thackeray"));
+    await ctx.settle();
+    assert.equal(ctx.state.library.kind, "search");
+    assert.equal(history.pushes, 1, "a new place, not a replaced one");
+  });
+
   test("turned on, this browser remembers it; a page started with it on marks a row instead of opening it", async (t) => {
     const ctx = await page(t);
     click(ctx.window, toggle(ctx));

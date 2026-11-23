@@ -392,7 +392,7 @@ describe("the facts under a photo on the phone", () => {
     });
     ctx.server.first("/api/library/photo?id=3", { error: "The library is busy." }, { status: 500 });
     await openPhoto(ctx, 1);
-    assert.equal(el(ctx, "photo-when").textContent, "No Date Taken");
+    assert.equal(el(ctx, "photo-when").textContent, "Unknown");
     assert.ok(el(ctx, "photo-when").classList.contains("photo-none"));
     assert.deepEqual(chipsIn(ctx, "photo-people"), ["Oda Fairweather"]);
     assert.equal(noneIn(ctx, "photo-keywords"), "No keywords");

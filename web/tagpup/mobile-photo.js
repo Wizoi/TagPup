@@ -203,7 +203,7 @@ function drawFacts() {
     const read = state.facts && state.facts.id === id ? state.facts : null;
     const record = read && read.record;
     const when = whenSaid(record ? record.taken : card && card.taken);
-    byId('photo-when').textContent = when || (record || card ? 'No Date Taken' : '');
+    byId('photo-when').textContent = when || (record || card ? 'Unknown' : '');
     byId('photo-when').classList.toggle('photo-none', !when);
     byId('photo-title').textContent = (record && record.title) || '';
     const tags = record && state.people ? sortedTags(record.tags || []) : null;
