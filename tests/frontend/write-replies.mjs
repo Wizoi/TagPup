@@ -41,8 +41,8 @@ const CONVERT = read("convert_replies.json");
 /**
  * The page's write routes: what a request to each is, and the replies the real route made. A route listed here is
  * answered by a test only from its fixture (harness.mjs saved, savedAs, notSaved, changedOnDisk, shiftedAs, taggedAs,
- * renamedAs, deletedAs, convertedAs). Rotate (POST /api/photo/rotate) and one photo's Smart Rename are not yet here: no
- * fixture holds their plain replies.
+ * tagFiles, renamedAs, deletedAs, convertedAs). Rotate (POST /api/photo/rotate) and one photo's Smart Rename are not
+ * yet here: no fixture holds their plain replies.
  */
 export const WRITE_ROUTES = [
   { route: "a save (POST /api/photos/write, op set)", is: write("set"), replies: saves() },
@@ -122,7 +122,6 @@ export const STILL_HAND_SPELLED = {
   "smart-rename-count.test.mjs": 1,
   "smart-rename-one-photo.test.mjs": 1, "suggestions-follow-a-saved-photo.test.mjs": 2,
   "video-viewer.test.mjs": 3,
-  "write-queue-status.test.mjs": 2,
 };
 
 /** The node flags that run only some of a file's tests: such a run gives fewer replies, and says nothing of the list. */
@@ -141,7 +140,7 @@ export function ratchet(file, unmade, partial, listed = STILL_HAND_SPELLED) {
   const said = unmade.map((each) => `\n  ${each}`).join("");
   if (unmade.length > allowed) {
     return `${file}: ${unmade.length} write replies no route makes (${allowed} allowed): answer each from its route's `
-      + `fixture (harness.mjs saved, shiftedAs, taggedAs, renamedAs, deletedAs, convertedAs):${said}`;
+      + `fixture (harness.mjs saved, shiftedAs, taggedAs, tagFiles, renamedAs, deletedAs, convertedAs):${said}`;
   }
   if (!partial && unmade.length < allowed) {
     return `${file}: ${unmade.length} write replies no route makes, ${allowed} listed: lower its count in `
