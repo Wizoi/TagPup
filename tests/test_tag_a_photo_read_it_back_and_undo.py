@@ -35,7 +35,8 @@ check, the save route dropping `rename_failed`.
 
 A folder's Smart Rename whose names renumber (a photo taken first, the two Smart-Renamed before it moved up one) answers a
 chain, 17 -> 18 and 18 -> 19; the page's fixture of that reply, tests/frontend/fixtures/rename_replies.json, is written
-here (AFolderSmartRenameFromThePage; #3330).
+here (AFolderSmartRenameFromThePage; #3330), with a swap and a rename stopped part-way (a held photo renamed, the other
+part not: 500 with the names that did change; #3342).
 """
 import json
 import os
@@ -543,7 +544,7 @@ class AFolderSmartRenameFromThePage(S.Fresh):
     """A folder's Smart Rename as the page sends it (web/tagpup/rename.js: the folder, the photos selected, a grouping),
     through the real route, its reply written for the page's test."""
 
-    def test_the_chained_and_swapped_rename_replies_the_page_reads_are_written_for_its_test(self):
+    def test_the_chained_swapped_and_part_way_rename_replies_the_page_reads_are_written_for_its_test(self):
         # `chained`: a photo taken before two already Smart-Renamed takes the first number, and each of the two moves up
         # one, so an old name of one is the new name of another (live: 1 of 11 folder Smart Renames in photo_index). The
         # folder scanned first, as the page opened it (the route orders the photos by the Date Taken of that scan).
@@ -578,6 +579,29 @@ class AFolderSmartRenameFromThePage(S.Fresh):
         for record in body["updated_photos"]:
             record.update(mtime=2, size=2)
         replies["swapped"] = {"status": reply.status_code, "reply": body}
+        # `part_way`: a held photo and one of Scans, a subfolder the library does not hold (no row), renamed as
+        # "Harbour"; the held part is renamed, the other part stops (names.rename_all's second call raises), and the
+        # route answers 500 with the names that did change (a share that stops answering after the held part).
+        scan, _none = self.make("scan_01.jpg", 4, row=None, folder=os.path.join(self.folder, "Scans"))
+        S.write_into(scan, DateTimeOriginal="2020:06:01 10:30:00")    # its order the date's, not its file's stamp
+        real, calls = names.rename_all, []
+
+        def second_part_fails(renames, aside=None):
+            calls.append(renames)
+            if len(calls) == 2:
+                raise names.RenameFailed(OSError("the share went away"), [])
+            return real(renames, aside=aside)
+
+        with mock.patch.object(names, "rename_all", second_part_fails):
+            reply = self.post("/folder/rename-photos", {"folder_path": self.folder, "grouping": "Harbour",
+                                                        "photo_paths": [named["Regatta - 3.jpg"], scan]})
+        body = reply.get_json()
+        self.assertEqual((500, False), (reply.status_code, body["success"]), body)
+        self.assertEqual(1, len(body["updated_paths"]), "not the held part alone")
+        self.assertIn("were renamed, and stay so", body["error"])
+        for record in body["updated_photos"]:
+            record.update(mtime=3, size=3)
+        replies["part_way"] = {"status": reply.status_code, "reply": body}
         # The folder named FOLDER, in both of its spellings (the reply's paths, ExifTool's SourceFile).
         text = json.dumps(replies, sort_keys=True, indent=1) + "\n"
         for spelled in (self.folder, self.folder.replace(os.sep, "/")):

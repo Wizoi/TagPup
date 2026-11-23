@@ -441,13 +441,16 @@ export const RENAME_REPLIES = JSON.parse(fs.readFileSync(path.join(HERE, "fixtur
  * renamed where an old name of one is the new name of another (IMG_0001.jpg -> Regatta - 1.jpg, Regatta - 1.jpg ->
  * Regatta - 2.jpg, Regatta - 2.jpg -> Regatta - 3.jpg; taken 10:00, 10:10, 10:20 on 2020:06:01), each stamp 1 and 1;
  * `swapped`, then Regatta - 1 dated 10:15 and Regatta - 2 10:05, the two Smart-Renamed again and each taking the other's
- * name (the reply's records the folder's three, each stamp 2 and 2).
- * Its folder, FOLDER, is named again `folder`, the folder the page test opened.
+ * name (the reply's records the folder's three, each stamp 2 and 2); `part_way`, Regatta - 3 (held) and Scans\scan_01.jpg
+ * (a subfolder the library does not hold) renamed as "Harbour", the second part stopped: 500, the held one's new name in
+ * `updated_paths`, the folder's records in `updated_photos` (each stamp 3 and 3), what changed and how to recover in `error`.
+ * Its folder, FOLDER, is named again `folder`, the folder the page test opened; `top` over what it says (the test's own
+ * `updated_paths`, `updated_photos`, `error`).
  */
-export function renamedAs(name, folder) {
+export function renamedAs(name, folder, top = {}) {
   const { status, reply } = RENAME_REPLIES[name];
   const text = JSON.stringify(reply).replaceAll("FOLDER", JSON.stringify(folder).slice(1, -1));
-  return () => answer(status, JSON.parse(text));
+  return () => answer(status, { ...JSON.parse(text), ...top });
 }
 
 /** A route matcher of FakeServer for a page's tag change (web/common/photo-write.js): POST /api/photos/write, op `tags`. */

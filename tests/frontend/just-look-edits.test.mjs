@@ -14,7 +14,7 @@
 import { test, describe, afterEach } from "node:test";
 import assert from "node:assert/strict";
 import {
-  loadApp, FakeServer, photoRecord, flush, click, openFolder, closeAllApps, PEOPLE_ROUTE, SAVE, SHIFT, saved, saveCalls, shiftedAs, deletedAs,
+  loadApp, FakeServer, photoRecord, flush, click, openFolder, closeAllApps, PEOPLE_ROUTE, SAVE, SHIFT, saved, saveCalls, shiftedAs, deletedAs, renamedAs,
 } from "./harness.mjs";
 
 afterEach(() => closeAllApps());
@@ -266,10 +266,8 @@ describe("the other file edits", () => {
 
   test("a Smart Rename that stopped part-way shows the names that did change, and says how to recover", async (t) => {
     const renamed = { ...photos()[0], path: `${FOLDER}\\Lighthouse - 1.jpg`, filename: "Lighthouse - 1.jpg" };
-    const s = server().first("/api/folder/rename-photos", { success: false, updated_paths: { [A]: renamed.path },
-      updated_photos: [renamed, photos()[1]],
-      error: "Could not rename: gone. If it stops part-way, run Smart Rename on the folder again: it regenerates the same names." },
-    { status: 500 });
+    const s = server().first("/api/folder/rename-photos", renamedAs("part_way", FOLDER, {
+      updated_paths: { [A]: renamed.path }, updated_photos: [renamed, photos()[1]] }));
     const ctx = await looking(t, s);
     ctx.select(0, 1);
     ctx.$("rename-grouping-input").value = "Lighthouse";
