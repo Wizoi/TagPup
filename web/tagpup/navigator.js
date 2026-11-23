@@ -37,10 +37,10 @@ import {
 import { openLibraryView } from './library-view.js';
 import { DEFAULT_ORDER, MAX_MEMBERS, addressTooLong } from './library-source.js';
 import {
-    compress, filterKey, filterMember, indexSection, membersOf, peopleGroupIds, rowTree, sectionOf, sectionRows, selectedRows,
+    compress, filterKey, filterMember, indexSection, markOf, membersOf, peopleGroupIds, rowTree, sectionOf, sectionRows, selectedRows,
     specOfMembers, withRowsUnder
 } from './navigator-model.js';
-import { filterFollows, markOf, markRow, setFilterMode, shownMarks } from './filter-bar.js';
+import { filterFollows, markRow, setFilterMode, shownMarks } from './filter-bar.js';
 import { paintRows, rowElement, tabKeyTarget, treeKeyAction } from './navigator-tree.js';
 
 const NAV_ORDER = ['folders', 'keywords', 'people', 'dates'];

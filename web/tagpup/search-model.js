@@ -16,7 +16,7 @@
 // as a tag: they are offered by name.
 import { compareTagNames } from './common/vocabulary.js';
 import { memberLabel, UNTAGGED, viewLabel } from './library-source.js';
-import { personSource } from './navigator-model.js';
+import { filterMember, markOf, personSource } from './navigator-model.js';
 
 /** The most names the picker shows at once; more are counted ("12 more: keep typing"). */
 export const PICKER_MAX = 30;
@@ -129,4 +129,20 @@ export function chipKnown(member, keywords, people) {
         return keywords ? keywords.byTag.has(member.value) || keywords.byLower.has(String(member.value).toLowerCase()) : null;
     }
     return null;
+}
+
+/**
+ * What a filter's chip says, on the desktop's strip (filter-bar.js) and the phone's row (mobile-filter.js): its row's mark, its
+ * name, and whether the library still has its tag or person (chipKnown, `why` the words when not):
+ * { key, member, sign, part, said, text, title, known, why }.
+ */
+export function filterChip(key, sign, keywords, people) {
+    const member = filterMember(key);
+    const named = member.kind === 'person' || member.kind === 'keyword' || member.kind === 'untagged';
+    const { text, title } = named ? chipLabel(member, people) : { text: memberLabel(member), title: viewLabel(member) };
+    const known = chipKnown(member, keywords, people);
+    const why = known === false
+        ? (member.kind === 'person' ? ' -- no photo names them now' : ' -- the library has no such tag now')
+        : '';
+    return { key, member, ...markOf(sign), text, title, known, why };
 }

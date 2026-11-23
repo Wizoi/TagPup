@@ -23,7 +23,7 @@
 // the filter as it holds a selection; a search made elsewhere (words, an Any-of list, Within) is no filter.
 import { baseName, pathKey } from './common/paths.js';
 import { compareTagNames, leafOf } from './common/vocabulary.js';
-import { searchValue, searchWords, UNTAGGED } from './library-source.js';
+import { listOverCap, MAX_MEMBERS, searchValue, searchWords, UNTAGGED } from './library-source.js';
 
 /** The most rows one section draws; the rest are said in a line and reached by the filter. */
 export const NAV_MAX_ROWS = 1500;
@@ -552,6 +552,26 @@ export function specOfMembers(members) {
 const FILTER_FACETS = ['folders', 'keywords', 'people', 'dates'];
 /** A row's states, as its marker shows them, and where each goes: `+` any of (its tab's union), `&` must (all_of), `-` not (none_of). */
 export const FILTER_PARTS = { '+': 'any', '&': 'must', '-': 'not' };
+/** What a click or a tap does to a row's mark: off, any of, must, not, off again. */
+export const NEXT_MARK = { '': '+', '+': '&', '&': '-', '-': '' };
+/** A mark in words, for a row's and a chip's name, by its part. */
+const PART_SAID = { any: 'any of', must: 'must', not: 'not' };
+
+/** A mark as the rows and the chips show it, on the desktop's page and the phone's: { sign, part, said }. */
+export function markOf(sign) {
+    return { sign, part: FILTER_PARTS[sign], said: PART_SAID[FILTER_PARTS[sign]] };
+}
+
+/**
+ * Why the server would not take a filter's search, as the sentence its page shows on the tab's status line; '' when it
+ * takes it. A list of the search, or a tab's union, holds at most MAX_MEMBERS rows (library-source.js listOverCap).
+ */
+export function filterOverCap(spec) {
+    const over = listOverCap(spec.value);
+    if (!over) return '';
+    const rows = over === 'none_of' ? 'marked - not' : 'marked & must, or + any of in one tab';
+    return `A filter holds at most ${MAX_MEMBERS.toLocaleString()} rows ${rows}: take one off before marking another.`;
+}
 
 /**
  * Is this source one a row of a tab opens, so that a filter can hold it: a folder with its subfolders, a keyword with the tags
