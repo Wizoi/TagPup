@@ -611,6 +611,20 @@ def library_cards():
         return responses.error(500, str(e))
 
 
+@routes.get("/api/library/covers")
+def library_covers():
+    """The cover of each browse row the page names (`rows`, at most 24): the first photo of the row's source and its
+    thumbnail's URL, for the phone's Browse (tagpup.services.library_view.covers)."""
+    library = state.require()
+    try:
+        return jsonify(library_view.covers(library, request.args.get("section"), request.args.get("rows")))
+    except responses.ANSWERED as why:
+        return responses.of(why)
+    except Exception as e:
+        logger.error("Error reading the covers of browse rows: %s", e, exc_info=True)
+        return responses.error(500, str(e))
+
+
 @routes.get("/api/library/photo")
 def library_photo():
     """One photo of the library, by id, as a folder's scan describes it -- tags, people, title, raw metadata -- from the

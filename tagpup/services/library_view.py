@@ -25,6 +25,8 @@ TOTAL; `cards` turns any list of ids into cards.
 * **The navigator**: `navigator(library, section)` for `folders`, `keywords`, `people` or `dates`, each one query
   (or one read of a derived table) and a pass in memory -- the keywords' with the count of the photos with no keyword
   beside them, in the same snapshot; native paths, tag paths and names out, never ids.
+* **A browse row's cover**: `covers(library, section, rows)`, the first photo of each row's own source, as `ids` orders it,
+  and its thumbnail's URL: a handful of rows near the phone's screen at a time, ids alone in one transaction.
 * **What fails, and how it says so**: a root this machine does not place raises paths.RootsError, whose
   sentence the web layer's gate answers first; a request that cannot mean anything is `Refused`, with why. Reads
   only, on a read-only connection: nothing here migrates or writes a library.
@@ -65,6 +67,10 @@ MAX_CARDS = 200
 #: The most sources a union holds: the navigator's rows a person selected, compressed (a folder with every folder under it
 #: is one). A union of more is refused with a sentence; its address would be longer than the server reads.
 MAX_MEMBERS = 1000
+
+#: The most browse rows one ask for covers names: the phone's Browse asks for the rows near its screen, 24 at a time
+#: (docs/plans/phone-redesign.md).
+MAX_COVERS = 24
 
 ORDERS = store.ORDERS
 
@@ -410,6 +416,66 @@ def cards(library, photo_ids, check_disk=False):
         return _cards(conn, list(photo_ids), check_disk)
     finally:
         conn.close()
+
+
+# ---- A browse row's cover ---------------------------------------------------------------------------
+
+#: What a cover request's rows are, said when they are not.
+ROWS_SAID = ("rows are a list of {\"id\": the row's id, \"kind\": ..., \"value\": ..., \"recursive\": ...}: each row "
+             "and the source a tap on it opens.")
+
+
+def covers(library, section, rows):
+    """{"section", "covers": [{"id", "photo", "thumb"}]}: for each browse row of `section` (SECTIONS) the page names,
+    the first photo of the row's own source -- the photos a tap on the row opens -- in the views' order (by Date Taken,
+    as `ids` answers a view opened with no order) and the URL of its thumbnail (thumbnails.url: a clip's is its poster),
+    in the order asked. `photo` and `thumb` are None for a row whose source holds no photo now: a folder emptied, a tag
+    no photo carries any more, a row the library no longer has.
+
+    `rows` is a list -- or that list as JSON text, a request's -- of at most MAX_COVERS {"id", "kind", "value",
+    "recursive"}: the row's id as the page's model names it (navigator-model.js), which the reply gives back, and its
+    source as the page would open it (`specOfMembers`: one source, or a union of the rows under it); a row named twice is
+    once. Refused for anything else, with why. Every row's first photo is read in ONE transaction, ids alone
+    (store.all_ids, the read `ids` makes, capped at one), and their stamps in one more read of it (store.card_rows): no
+    BLOB, no card, no disk looked at. The rows of the phone's Browse are counted per level (the widest of the live
+    libraries, 2026-11-23: 257 keywords, 203 folders), so the page asks for those near its screen, never a level whole."""
+    if section not in SECTIONS:
+        raise Refused("section must be one of %s." % ", ".join(SECTIONS))
+    canonical = _Canonical(library)
+    asked = [(row_id, _source_of(each.get("kind"), each.get("value"), each.get("recursive"), canonical, member=False))
+             for row_id, each in _rows_of(rows)]
+    conn = _open(library)
+    try:
+        db.begin(conn)
+        first = {row_id: store.all_ids(conn, source, 1)[0] for row_id, source in asked}
+        stamps = store.card_rows(conn, [found[0] for found in first.values() if found])
+    finally:
+        conn.close()
+    said = []
+    for row_id, _ in asked:
+        photo_id = first[row_id][0] if first[row_id] else None
+        said.append({"id": row_id, "photo": photo_id,
+                     "thumb": None if photo_id is None else thumbnails.url(photo_id, stamps[photo_id][1])})
+    return {"section": section, "covers": said}
+
+
+def _rows_of(rows):
+    """[(row id, {"kind", "value", "recursive"})] of a cover request's `rows`, each row once, or Refused."""
+    if isinstance(rows, str):
+        try:
+            rows = json.loads(rows)
+        except ValueError:
+            raise Refused(ROWS_SAID) from None
+    if not isinstance(rows, list) or not rows:
+        raise Refused(ROWS_SAID)
+    if len(rows) > MAX_COVERS:
+        raise Refused("Ask for the covers of at most %d rows at a time." % MAX_COVERS)
+    named = {}
+    for each in rows:
+        if not isinstance(each, dict) or not isinstance(each.get("id"), str) or not each["id"]:
+            raise Refused(ROWS_SAID)
+        named.setdefault(each["id"], each)
+    return list(named.items())
 
 
 # ---- The navigator ----------------------------------------------------------------------------------

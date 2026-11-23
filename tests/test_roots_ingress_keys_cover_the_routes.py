@@ -46,6 +46,7 @@ RESOLVED_ELSEWHERE = {
     # The library view's sources: the service canonicalises every folder of a source or a union
     # (tagpup.services.library_view._source_of; the selection's source is read by the same function).
     "value": "services/library_view._source_of canonicalises a folder source and each member of a union",
+    "rows": "services/library_view.covers -> _source_of canonicalises each browse row's folder source and union",
     "selection": "services/selection.read -> library_view sources; its `paths` are resolved by roots_ingress._selected_paths",
     "params": "bulk edit's parameters: tags and people, by id; the photos are the selection's",
     # The roots routes: a place being chosen, or seen (LEFT_ALONE).
