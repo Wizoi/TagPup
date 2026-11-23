@@ -55,21 +55,45 @@ function codeLines(text) {
   return text.split(/\r?\n/).map((line, at) => [at + 1, line.replace(/\/\/.*$/, "").replace(/^\s*\*.*$/, "").replace(/\/\*.*?\*\//g, "")]);
 }
 
-/** The top-level functions of a module: [name, first line, their lines' text], a function's body ending at a `}` in column 0. */
-function topFunctions(text) {
-  const lines = codeLines(text);
+/**
+ * Every function of a module (declared, arrow, or a class's method): [name, first line, its own text], its own text being
+ * its body less the bodies of the functions inside it, so a stamp set in a handler is judged by that handler alone.
+ */
+function ownFunctions(text) {
+  const code = codeLines(text).map(([, line]) => line).join("\n");
   const found = [];
-  let open = null;
-  for (const [number, line] of lines) {
-    const head = /^(?:export\s+)?(?:async\s+)?function\s*\*?\s*(\w+)/.exec(line);
-    if (head && !open) open = { name: head[1], first: number, body: [] };
-    if (open) open.body.push(line);
-    if (open && /^}/.test(line)) {
-      found.push([open.name, open.first, open.body.join("\n")]);
-      open = null;
+  const stack = [];
+  for (let at = 0; at < code.length; at++) {
+    if (code[at] === "{") {
+      const before = code.slice(0, at);
+      let name = null;
+      if (/=>\s*$/.test(before)) {
+        name = /(\w+)\s*=\s*(?:async\s*)?(?:\([^()]*\)|\w+)\s*=>\s*$/.exec(before)?.[1] || "an arrow function";
+      } else if (/\)\s*$/.test(before)) {
+        let depth = 0;
+        let open = before.length - 1;
+        for (; open >= 0; open--) {
+          if (before[open] === ")") depth++;
+          else if (before[open] === "(" && --depth === 0) break;
+        }
+        const head = /(?:\bfunction\s*\*?\s*(\w*)|(?:^|[\n;{}])\s*(?:async\s+|static\s+)*(\w+))\s*$/.exec(before.slice(0, open));
+        const word = head && (head[1] || head[2]);
+        if (head && !/^(if|for|while|switch|catch|with)$/.test(word || "")) name = word || "an anonymous function";
+      }
+      stack.push({ name, start: at, first: code.slice(0, at).split("\n").length, inner: [], parent: stack.findLast((each) => each.name) });
+    } else if (code[at] === "}" && stack.length) {
+      const top = stack.pop();
+      if (!top.name) continue;
+      let own = code.slice(top.start, at + 1);
+      for (const [from, to] of top.inner.reverse()) own = own.slice(0, from - top.start) + own.slice(to - top.start);
+      top.own = own;
+      found.push(top);
+      if (top.parent) top.parent.inner.push([top.start, at + 1]);
     }
   }
-  return found;
+  // A callback handed to photosWritten, or a helper of a function that hands on, is covered by that function's own call.
+  const coveredAbove = (each) => { for (let up = each.parent; up; up = up.parent) if (HANDS_IT_ON.test(up.own || "")) return true; return false; };
+  return found.map((each) => [each.name, each.first, each.own, coveredAbove(each)]);
 }
 
 const KEY_ARGUMENT = /localStorage\s*\.\s*(setItem|removeItem)\s*\(\s*([^,)]*)/g;
@@ -80,7 +104,9 @@ const PATCHES_THE_LIST = [
   /state\s*\.\s*folderPhotos\s*\.\s*length\s*=(?!=)/,
   /state\s*\.\s*folderPhotos\s*=(?!=)[^;]*folderPhotos/,
 ];
-const SETS_A_STAMP = /\b\w+\s*\.\s*(mtime|base|taken)\s*=(?!=)/;
+// A stamp is set by assigning a field, by Object.assign of one, or by web/common/photo-write.js takeStamp / takeWritten.
+const SETS_A_STAMP = new RegExp("\\b\\w+\\s*\\.\\s*(mtime|base|taken)\\s*=(?!=)|\\b(takeStamp|takeWritten)\\s*\\("
+  + "|Object\\s*\\.\\s*assign\\s*\\([^;]*\\b(mtime|base|taken)\\s*:");
 const HANDS_IT_ON = /\b(recordsWritten|photosWritten|photosGone|photoDeleted)\s*\(/;
 
 /** What breaks the rules above in `sources` ({module: text}): one sentence each, naming the module and line. */
@@ -108,9 +134,10 @@ function copiesWrittenOutsideCache(sources) {
       found.push(`${module} keeps the open folder's scan whole ${saves} time(s), not ${SAVES_THE_OPEN_SCAN[module] || 0}: `
         + "after a write, cache.js does (photosWritten); a list read whole is listed in SAVES_THE_OPEN_SCAN");
     }
-    if (/^tagpup\/(?!mobile)/.test(module)) {
-      for (const [name, first, body] of topFunctions(text)) {
-        if (SETS_A_STAMP.test(body) && !HANDS_IT_ON.test(body) && !(DRAWN_FROM_THE_RECORDS[module] || []).includes(name)) {
+    // The phone's modules keep no copies; web/common/photo-write.js is where takeStamp sets the stamp (it is not a page's copy).
+    if (/^tagpup\/(?!mobile)/.test(module) && !module.endsWith("photo-write.js")) {
+      for (const [name, first, body, covered] of ownFunctions(text)) {
+        if (SETS_A_STAMP.test(body) && !HANDS_IT_ON.test(body) && !covered &&!(DRAWN_FROM_THE_RECORDS[module] || []).includes(name)) {
           found.push(`${module}:${first} ${name} sets a record's stamp or Date Taken and hands it to no cache.js call `
             + "(recordsWritten, photosWritten): the other copies of the photo keep the old one");
         }
@@ -130,7 +157,7 @@ test("the guard finds a module that patches a kept scan, the open list or a reco
     "tagpup/a-writer.js": [
       "import { folderCacheKey, saveToLocalStorageCache } from './cache.js';",
       "export function tookReply(photo, data, folder) {",
-      "    photo.mtime = data.mtime;",
+      "    takeStamp(photo, data);",
       "    const key = folderCacheKey(folder);",
       "    const kept = JSON.parse(localStorage.getItem(key));",
       "    localStorage.setItem(key, JSON.stringify(kept));",
@@ -146,4 +173,26 @@ test("the guard finds a module that patches a kept scan, the open list or a reco
     assert.ok(found.some((each) => each.includes(said)), `the guard misses: ${said}\n${found.join("\n")}`);
   }
   assert.equal(found.filter((each) => each.includes("patches state.folderPhotos")).length, 2);
+});
+
+test("the guard judges a stamp set in a handler or an Object.assign by the function it is in", () => {
+  const sources = {
+    "tagpup/a-setup.js": [
+      "export const setup = (button) => {",
+      "    button.onclick = (event) => {",
+      "        Object.assign(event.record, { taken: 1, order: 2 });",
+      "    };",
+      "    button.ondblclick = () => { photosWritten([], () => {}); };",
+      "};",
+    ].join("\n"),
+    "tagpup/a-kept.js": [
+      "export function setup(list) {",
+      "    list.forEach((record) => { takeWritten(record, null, []); });",
+      "    photosWritten([], () => {});",
+      "}",
+    ].join("\n"),
+  };
+  const found = copiesWrittenOutsideCache(sources);
+  assert.equal(found.length, 1, found.join("\n"));
+  assert.ok(found[0].startsWith("tagpup/a-setup.js:2 onclick sets"), found[0]);
 });

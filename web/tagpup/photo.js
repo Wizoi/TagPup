@@ -903,7 +903,15 @@ export function deleteActivePhoto() {
         // records lose it, and its scan is kept again without it (cache.js photoDeleted).
         const at = data.success ? photoDeleted(path) : -1;
         if (data.success && askedInView && state.library !== askedInView) {
-            // Another view (or a folder) was opened while the delete was out: nothing of it is this photo's.
+            // Another view (or a folder) was opened while the delete was out: nothing of it is this photo's, unless that
+            // folder is the photo's own (Back from the view): its record went (photoDeleted), so its card and count do too.
+            if (at !== -1) {
+                removeFromSelection([path]);
+                updateListStats();
+                folderViewStats.textContent = countSaid(state.folderPhotos);
+                renderFileList();
+                upper.renderThumbnails();
+            }
             statusDot.className = 'status-indicator-dot';
             statusText.textContent = data.message || 'Ready';
             return;
