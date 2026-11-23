@@ -1168,10 +1168,6 @@ def _told(library, op, changes, result):
         record["tags"] = vocabulary.extract_tags(raw_meta)
         record["captions"] = [own["title"]] if own["title"] else []
         record["title"] = own["title"]
-        if result.details["taken"] is not None:
-            # The Date Taken saved, as the reply gives it: a folder the library does not hold is served this record
-            # again, never scanned, while nothing moves its counter (#3318).
-            record["taken"] = result.details["taken"]
     return {asked: left}
 
 

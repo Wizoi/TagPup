@@ -474,6 +474,24 @@ class AWriteThroughTheOneEntryPoint(unittest.TestCase):
                          (moved["taken"], moved["order"], moved["mtime"], moved["size"]))
         self.assertNotIn("order", self.lib.folders().snapshot(loose)[paths.key(photos[1])], "given, never kept")
 
+    def test_a_date_taken_saved_in_another_year_in_a_folder_the_library_does_not_hold_is_kept_with_its_new_year(self):
+        # #3320, #3321: the kept record's date-derived fields (taken, year, order) follow what the file holds now, by
+        # page_record's own rule: the year of the date saved, as a fresh scan of the file gives it.
+        loose = os.path.join(self.lib.root, "Just Looking Again")
+        photo = make_photo(os.path.join(loose, "q0.jpg"))
+        date([photo], "2020:06:01 09:00:00")
+        status, opened = self.lib.get("/api/folder/scan", {"path": loose})
+        record = opened[0]
+        self.assertEqual("2020", record["year"])
+        status, reply = self.lib.post(ROUTE, {"op": "set", "changes": {record["path"]: {
+            "id": None, "title": record["title"], "tags": record["tags"], "date_taken": "2017-03-02T09:15",
+            "stamp": {"mtime": record["mtime"], "size": record["size"]},
+            "base": {"tags": record["tags"], "title": record["title"]}}}})
+        self.assertEqual(200, status, reply)
+        own = reply["written"][record["path"]]
+        kept = self.opened_again(loose)[paths.key(photo)]
+        self.assertEqual(("2017", "2017:03:02 09:15:00", own["order"]), (kept["year"], kept["taken"], kept["order"]))
+
     def as_the_page_test_reads(self, reply, sent):
         """`reply` as a page's test answers from it: each photo's stamp 1 and 1, each path of `sent` named PHOTO_<n> in the
         order sent."""

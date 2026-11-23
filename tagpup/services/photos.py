@@ -254,7 +254,17 @@ def record_written(library, record, path, tags, flat, hierarchical, dates_writte
     record["people"] = people_of(library, tags, path)
     if dates_written:
         fields.record_dates(raw_meta, dates_written)
+        rederive_dates(record, path)
     return raw_meta
+
+
+def rederive_dates(record, path):
+    """The date-derived fields of a page record (its `year` and `taken`) by page_record's own rule from its raw metadata
+    as patched: the one place a record kept after a save takes the dates the file holds now (#3320, #3321)."""
+    media = images.kind_of(paths.stored(path))
+    year = dates.photo_year(record["raw_metadata"], path, media)
+    record["year"] = dates.shown_year(None if year is None else str(year))
+    record["taken"] = dates.date_taken(record["raw_metadata"], path, media)
 
 
 def page_copy(photo_path, max_size=None, upright=True):
