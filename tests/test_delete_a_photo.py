@@ -22,6 +22,7 @@ is the test home's (own_home sets TAGPUP_DOWNLOADS), and so is the Recycle Bin's
 own_home sets to a large empty Bin); the Recycle Bin is the test's: nothing reaches, or reads, the owner's.
 """
 import ctypes
+import json
 import os
 import shutil
 import string
@@ -32,6 +33,7 @@ from unittest import mock
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import own_home  # noqa: E402
+import page_fixtures  # noqa: E402
 import web_client  # noqa: E402
 from service_fixture import TempLibrary  # noqa: E402
 from view_library import ViewLibrary, make_jpeg  # noqa: E402
@@ -46,6 +48,10 @@ from tagpup.services import photos as photo_actions  # noqa: E402
 
 #: The real send to the Recycle Bin, before any test stands in for it; asked only with SHFileOperationW stood in for too.
 REAL_SEND = recycle_bin.send_to_recycle_bin
+
+#: The replies of the photo panel's Delete (POST /api/photo/delete) its page tests answer from (harness.mjs deletedAs):
+#: written by JustLookDelete.test_the_delete_replies_the_page_reads_are_written_for_its_test.
+DELETE_REPLIES = page_fixtures.path_of("delete_replies.json")
 
 
 class Share(unittest.TestCase):
@@ -545,6 +551,49 @@ class JustLookDelete(jl.Base):
             if reason != recycle_bin.NETWORK:
                 self.assertNotIn("network share", body["message"], reason)
             self.assertEqual(reason, body["no_bin_reason"])
+
+    def test_the_delete_replies_the_page_reads_are_written_for_its_test(self):
+        # The photo panel's Delete as the page sends it (web/tagpup/photo.js): {"path"}, and `for_good` once the owner
+        # confirmed. `binned`: a photo of a folder the library holds, to the Recycle Bin; `binned_file_only`: one of a
+        # folder it does not hold (the file only, said in `message`); `through_this_pc`: one on a share with no Bin,
+        # copied to this PC's; `not_kept`: one this PC's Bin, nearly full, would not keep (400, named, `bin_full`);
+        # `for_good`: that one again, confirmed; `refused`: a file that is not a photo (400). The test's home is HOME.
+        found = {}
+        sent = lambda p: os.remove(p) or True  # noqa: E731
+        with mock.patch("tagpup.files.recycle_bin.send_to_recycle_bin", side_effect=sent):
+            for name, path in (("binned", self.held[0]), ("binned_file_only", self.loose[0])):
+                reply = self.post("/photo/delete", {"path": path})
+                found[name] = {"status": reply.status_code, "reply": reply.get_json()}
+            downloads = recycle_bin.downloads_folder()
+            judged = lambda path: None if paths.key(path).startswith(paths.key(downloads)) else recycle_bin.NETWORK  # noqa: E731
+            with mock.patch.object(recycle_bin, "no_bin_reason", side_effect=judged):
+                reply = self.post("/photo/delete", {"path": self.loose[1]})
+            found["through_this_pc"] = {"status": reply.status_code, "reply": reply.get_json()}
+            recycle_bin.forget_bin()
+            self.addCleanup(recycle_bin.forget_bin)
+            with mock.patch.dict(os.environ, {"TAGPUP_RECYCLE_BIN": "1000,999,0"}):
+                for name, for_good in (("not_kept", False), ("for_good", True)):
+                    reply = self.post("/photo/delete", {"path": self.loose[2], "for_good": for_good})
+                    found[name] = {"status": reply.status_code, "reply": reply.get_json()}
+            recycle_bin.forget_bin()
+        text_file = os.path.join(self.lighthouse, "notes.txt")
+        with open(text_file, "w") as handle:
+            handle.write("not a photo")
+        reply = self.post("/photo/delete", {"path": text_file})
+        found["refused"] = {"status": reply.status_code, "reply": reply.get_json()}
+        self.assertEqual({"binned": 200, "binned_file_only": 200, "through_this_pc": 200, "not_kept": 400, "for_good": 200,
+                          "refused": 400}, {name: each["status"] for name, each in found.items()}, found)
+        self.assertEqual(([os.path.basename(self.loose[2])], 1), (found["not_kept"]["reply"]["not_kept"],
+                                                                   found["not_kept"]["reply"]["bin_full"]))
+        self.assertEqual((True, True), (found["through_this_pc"]["reply"]["through_this_pc"],
+                                        found["for_good"]["reply"]["for_good"]))
+        text = json.dumps(found)
+        # The home, and its spelling under the copies' mirror (recycle_bin.mirror_of: the drive without its colon).
+        for root in (self.home.root, self.home.root.replace(":", "", 1)):
+            text = text.replace(json.dumps(root)[1:-1], "HOME")
+        self.assertNotIn(json.dumps(os.path.basename(self.home.root))[1:-1], text, "a path of the test's home left in")
+        text = json.dumps(json.loads(text), sort_keys=True, indent=1) + "\n"
+        page_fixtures.hold_to(self, DELETE_REPLIES, text, "tests.test_delete_a_photo", "the photo panel's Delete")
 
     def test_the_8_3_name_of_a_longer_extension_is_refused(self):
         real = os.path.join(self.lighthouse, "holiday.jpgold")

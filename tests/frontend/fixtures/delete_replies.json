@@ -1,0 +1,71 @@
+{
+ "binned": {
+  "reply": {
+   "file_only": 0,
+   "for_good": false,
+   "no_bin_reason": null,
+   "restores_to": null,
+   "success": true,
+   "through_this_pc": false,
+   "with_rows": 1
+  },
+  "status": 200
+ },
+ "binned_file_only": {
+  "reply": {
+   "file_only": 1,
+   "for_good": false,
+   "message": "Moved to the Recycle Bin. Nothing in library changed: it does not hold this folder.",
+   "no_bin_reason": null,
+   "restores_to": null,
+   "success": true,
+   "through_this_pc": false,
+   "with_rows": 0
+  },
+  "status": 200
+ },
+ "for_good": {
+  "reply": {
+   "file_only": 1,
+   "for_good": true,
+   "message": "Deleted for good, as you confirmed: the Recycle Bin of its drive is full. Nothing in library changed: it does not hold this folder.",
+   "no_bin_reason": null,
+   "restores_to": null,
+   "success": true,
+   "through_this_pc": false,
+   "with_rows": 0
+  },
+  "status": 200
+ },
+ "not_kept": {
+  "reply": {
+   "bin_full": 1,
+   "error": "IMG_0003.jpg would be deleted for good, not moved to the Recycle Bin: this PC's Recycle Bin on C:\\ is full: it holds 999 MB of 1,000 MB, and the copy is 1 MB; Windows would make room by deleting its oldest items for good. Nothing was deleted.",
+   "not_kept": [
+    "IMG_0003.jpg"
+   ],
+   "success": false
+  },
+  "status": 400
+ },
+ "refused": {
+  "reply": {
+   "error": "notes.txt is not a photo or video; only a photo or video file is deleted",
+   "success": false
+  },
+  "status": 400
+ },
+ "through_this_pc": {
+  "reply": {
+   "file_only": 1,
+   "for_good": false,
+   "message": "It was on a network share, which has no Recycle Bin: a copy went to this PC's Recycle Bin and the original was deleted. Restored, the copy goes to HOME\\Downloads\\TagPup deleted from shares\\HOME\\Share\\Lighthouse, not back to where it was. Nothing in library changed: it does not hold this folder.",
+   "no_bin_reason": "on a network share",
+   "restores_to": "HOME\\Downloads\\TagPup deleted from shares\\HOME\\Share\\Lighthouse\\IMG_0002.jpg",
+   "success": true,
+   "through_this_pc": true,
+   "with_rows": 0
+  },
+  "status": 200
+ }
+}
