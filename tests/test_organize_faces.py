@@ -247,7 +247,7 @@ class TheFileIsLookedAtOnceAndNotForeverOnAShare(Case):
         real = images.shown_shape
 
         def slow(path):
-            time.sleep(0.3)
+            time.sleep(0.15)   # the scenario: a local look three times as slow as SHAPE_WAIT (0.05 s, below)
             return real(path)
 
         with unittest.mock.patch.object(images, "shown_shape", slow), \
