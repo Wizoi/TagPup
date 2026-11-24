@@ -26,6 +26,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(WORKSPACE_DIR, "scripts"))
 
 import clear_duplicate_captions  # noqa: E402
+import corpus  # noqa: E402
 import photo_rows  # noqa: E402
 from test_file_journal import EXIFTOOL, Crash, FilesCase, crash_at, field_of, write_outside  # noqa: E402
 
@@ -68,12 +69,9 @@ def digest(path):
 
 class CaptionSweep(FilesCase):
     def made(self, name, written):
-        """A JPEG another program wrote `written` into, and its row as the indexer records the read of it."""
-        from PIL import Image
-
-        path = os.path.join(self.folder, name)
-        Image.new("RGB", (16, 12), (90, 110, 130)).save(path, "JPEG")
-        write_outside(path, written)
+        """A JPEG another program wrote `written` into (ExifTool, once per run for these fields, copied: tests/corpus.py),
+        and its row as the indexer records the read of it."""
+        path = corpus.jpeg(os.path.join(self.folder, name), written, EXIFTOOL)
         self.indexed_as(path, written)
         return path
 
