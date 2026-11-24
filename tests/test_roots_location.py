@@ -396,6 +396,8 @@ class ChangingTheLocation(RootsCase):
         first = sorted(path for _id, path, _m, _s in store_photos.stamps(conn))
         self.assertTrue(all(path.startswith(self.side.pictures) for path in first[:18] if "Elsewhere" not in path))
         self.move(apply=True)
+        # Not polled: each use of the connection stamps its map checked (roots._held), so a poll would put the
+        # recheck off for as long as it polls.
         time.sleep(store_roots.RECHECK_SECONDS + 0.2)   # wait: a held connection's map, at most this old
         again = sorted(path for _id, path, _m, _s in store_photos.stamps(conn))
         rooted = [path for path in again if "Elsewhere" not in path]
@@ -419,6 +421,8 @@ class ChangingTheLocation(RootsCase):
         self.addCleanup(conn.close)
         before = generations.values(conn)
         self.move(apply=True)
+        # Not polled: each use of the connection stamps its map checked (roots._held), so a poll would put the
+        # recheck off for as long as it polls.
         time.sleep(1.2)   # wait: a held connection's map, at most RECHECK_SECONDS old
         after = generations.values(conn)
         self.assertNotEqual(before[:2], after[:2], "a cache of this machine's paths would not be built again")

@@ -78,6 +78,23 @@ class Clock:
         return self.now
 
 
+class ReadsCounted:
+    """The watcher's clock (time.monotonic), each value it gave kept: a read at or after a moment shows the watcher's
+    thread has come round to it, a debounce's due or not decided by then."""
+
+    def __init__(self):
+        self.read = []
+
+    def __call__(self):
+        now = time.monotonic()
+        self.read.append(now)
+        return now
+
+    def since(self, moment):
+        """The reads at or after `moment`."""
+        return [value for value in self.read if value >= moment]
+
+
 class Stand:
     """A library as the watcher sees one: a key and a name."""
 
@@ -143,11 +160,12 @@ class AShareAsleep(unittest.TestCase):
         self.addCleanup(watcher.stop, 10)
         return watcher
 
-    def servers_watcher(self, libraries, synced):
+    def servers_watcher(self, libraries, synced, **timings):
         """The watcher the server makes of real libraries (runtime.folder_watcher): a whole sync claimed as a run of the
         daily `sync` job (recurring.sync_whole)."""
-        watcher = runtimes.folder_watcher(lambda: libraries, sync_with=synced, debounce=0.2, recheck=30.0, tick=0.05,
-                                          observer=FakeObserver)
+        options = dict(debounce=0.2, recheck=30.0, tick=0.05, observer=FakeObserver)
+        options.update(timings)
+        watcher = runtimes.folder_watcher(lambda: libraries, sync_with=synced, **options)
         self.addCleanup(watcher.stop, 10)
         return watcher
 
@@ -162,7 +180,8 @@ class AShareAsleep(unittest.TestCase):
         def synced(library, folder):
             results.append(sync.sync(library, folder=folder, apply=True, roots=[self.share]))
             return results[-1]
-        watcher = self.servers_watcher([regatta], synced)
+        clock = ReadsCounted()
+        watcher = self.servers_watcher([regatta], synced, clock=clock)
         self.wake_in(0.6)   # after the watcher's moment and the catch-up's start, well within FOLDER_WAIT
         watcher.start()
         wait_until(lambda: results)
@@ -171,7 +190,15 @@ class AShareAsleep(unittest.TestCase):
         self.assertTrue(results[0].details["in_step"], "the catch-up did not wait for the share")
         self.assertIsNotNone(sync.last(regatta)["last_in_step"])
         wait_until(lambda: watcher.watched() == [paths.stored(held)])
-        time.sleep(0.6)   # wait: no barrier yet; a second whole sync would come a debounce (0.2) after the look
+        # A second whole sync would be noted by the look that watched the folder, and due a debounce after it: the
+        # watcher's thread reads its clock past that, and once more after (the read past it may be the note's own),
+        # then has nothing pending and nothing running.
+        looked = time.monotonic()
+        past = len(wait_until(lambda: clock.since(looked + watcher.debounce), what="the watcher's clock past the debounce"))
+        wait_until(lambda: len(clock.since(looked + watcher.debounce)) > past, what="a look at what is due after it")
+        wait_until(lambda: not watcher.busy() and not any(
+            library["whole_pending"] or library["pending_folders"] for library in watcher.status()["libraries"].values()),
+            what="the watcher idle")
         self.assertEqual(1, len(results), "synced whole again although the catch-up looked at every folder")
 
     def test_a_share_that_never_answers_ends_the_sync_not_in_step_and_the_watcher_keeps_looking_on_one_thread(self):
