@@ -79,6 +79,8 @@ STAYS_REAL = {
     "test_bulk_edits_stalled_exiftool": "a command that does not answer: the deadline and what the batch does after",
     "test_minor_errors_in_a_journaled_write": "what ExifTool does with XMP it objects to: -m takes it, a packet cut short not",
     "test_the_two_writers_compared_on_copies": "ExifTool's writes compared with TagPup's own writer: ExifTool's half is the claim",
+    "test_a_tag_added_touches_its_file_no_more_than_it_must": "it counts each os.stat of the file and each start of ExifTool "
+    "(a call of ExifToolSession.run while not running): a keeper looks at the file to key it and starts ExifTool lazily",
     "test_exiftool_answers_kept_for_tests": "the keeper itself: it gives each test its own keeper, cache and real runs",
 }
 
