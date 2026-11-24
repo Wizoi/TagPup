@@ -7,12 +7,14 @@
     .venv/Scripts/python.exe tools/run_tests.py --no-slow       # fast and scenario; --all is every tier
     .venv/Scripts/python.exe tools/run_tests.py --owner people  # every Python file of a domain owner (tests/owners.py)
     .venv/Scripts/python.exe tools/run_tests.py --scenarios files   # only that owner's scenario files
+    .venv/Scripts/python.exe tools/run_tests.py --slowest 20    # the 20 slowest files and tests recorded; runs nothing
 
 The whole suite is the default and is what a commit and a merge run; --all says so. Each
-file is in one of three tiers (tests/tiers.py): fast, scenario and slow. --fast and --no-slow
-leave tiers out for the loop, never for the gate. The report ends with each tier's files,
+file is in one of four tiers (tests/tiers.py): fast, scenario, slow and page, the last the page tests
+(tests/frontend/*.test.mjs, each run as `node --test <file>`; harness.mjs and the other helpers are not tests).
+--fast and --no-slow leave tiers out for the loop, never for the gate. The report ends with each tier's files,
 tests and seconds, and each owner's (tests/owners.py gives every test file one owner). --owner and --scenarios
-run one owner's files, and print the `node --test` command for that owner's page tests, which this runner does not run.
+run one owner's Python files, and print the `node --test` command for that owner's page tests, which they leave out.
 
 A file that fails is run once more, alone, after the others have ended: a file that passes
 then is reported "flaky: passed alone" with the first run's output kept in the log, and does
@@ -20,15 +22,20 @@ not fail the run; a file that fails twice fails. --no-retry turns that off. The 
 never left out: a test that fails under load is told of each time it does, and the log of
 the first failure is kept for finding its cause.
 
-Each test file runs as its own process: `python -m unittest tests.<file>`, as the suite
-has always been run, so a file sees nothing of another's state -- and with a TAGPUP_HOME
+Each test file runs as its own process: `python -m unittest tools.timed_unittest tests.<file>`, as the suite
+has always been run with the module that writes each test's time named first (a page test: `node --test
+tests/frontend/<file>`), so a file sees nothing of another's state -- and with a TAGPUP_HOME
 of its own, an empty temporary folder, so that anything a test does not give a home of
 its own (tests/own_home.py) still lands there and not in the checkout's data/ folder or
 config.ini. The tests' libraries were in data/ under fixed names, so the files that used
 it ran one after another in a lane of their own (docs/findings.md, #14). None does now,
 and tests/test_tests_have_homes_of_their_own.py keeps it so; a file that named the
-checkout's data/ or config.ini would still get the lane. Each file's time is kept in
-tests/.durations.json (not in git), and the longest start first next time. The same file
+checkout's data/ or config.ini would still get the lane. Every run, green or not, keeps each
+file's time in tests/.durations.json and each Python test's in tests/.test_durations.json (both
+generated here, not in git, never edited by hand), and the longest start first next time. A
+file run again alone keeps its second time; the key of a file that no longer exists goes. Each
+save merges into the file as it is on disk under a lock, and replaces it whole, so a run stopped
+part-way leaves the last whole file and two runs at once both land. The same file
 keeps how many tests each file ran when it passed: a file that passes having run fewer than
 that fails, naming both counts (a run that counted 1,427 where the last counted 1,469 was the
 shape of the original flake, #101; #290). Tests removed on purpose: `--accept-fewer` records
@@ -42,6 +49,7 @@ unittest's summary, or holds none -- fails. Exits 1 when any file failed.
 """
 import argparse
 import concurrent.futures
+import contextlib
 import json
 import os
 import re
@@ -55,10 +63,21 @@ import time
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 
-from tagpup.core import processes  # noqa: E402
+from tagpup.core import byte_lock, processes  # noqa: E402
 from tests import owners, tiers  # noqa: E402
 TESTS = os.path.join(ROOT, "tests")
+FRONTEND = os.path.join(TESTS, "frontend")
 DURATIONS = os.path.join(TESTS, ".durations.json")
+#: Each Python test's seconds in its file's last run: {module: {test id: seconds}}.
+TEST_DURATIONS = os.path.join(TESTS, ".test_durations.json")
+#: The key both files say what they are under.
+GENERATED = "_generated"
+NOTE = "Written by tools/run_tests.py on every run (not in git); never edit it by hand."
+#: Named first on each Python file's unittest command line: it writes each test's seconds to TIMES.
+TIMED = "tools.timed_unittest"
+TIMES = "TAGPUP_TEST_TIMES"
+#: How long a save waits for another run's save (milliseconds, as a rule) before it gives up and says so.
+SAVE_WAIT = 30.0
 
 #: A test file that names the checkout's data/ folder or config.ini: joined to the
 #: checkout's own folder, relative to the working directory (the checkout, as files are
@@ -75,6 +94,11 @@ READS_CODE_NOT_DATA = frozenset({"test_config_single_owner"})
 
 #: The summary unittest ends with: "Ran 12 tests in 0.3s".
 RAN = re.compile(r"^Ran (\d+) tests? in", re.M)
+#: The count node's spec reporter ends with: "(i) tests 12".
+NODE_RAN = re.compile(r"^\S+ tests (\d+)\s*$", re.M)
+#: A page test that skips itself under a plain `node --test`, its tests run by a Python scenario against the real
+#: apps (tests/test_pages_against_the_real_server.py): five files, each counting 0 tests.
+NODE_SKIPPED = re.compile(r"# SKIP\s*$", re.M)
 
 #: Where a failed run's output is kept, and how many failed runs are.
 FAILED_RUNS = os.path.join(ROOT, "data", "logs")
@@ -83,12 +107,18 @@ FAILED_RUN = re.compile(r"^run_tests-\d{8}-\d{6}(?:-\d+)?\.log$")
 
 
 def test_files(names=None):
-    """Module names (test_x) of the files asked for, or of every tests/test_*.py."""
+    """Module names (test_x) and page test names (x.test.mjs) of the files asked for, or of every tests/test_*.py and
+    tests/frontend/*.test.mjs."""
     if not names:
         return sorted(name[:-3] for name in os.listdir(TESTS)
-                      if name.startswith("test_") and name.endswith(".py"))
+                      if name.startswith("test_") and name.endswith(".py")) + page_files()
     found = []
     for name in names:
+        if name.endswith(".test.mjs"):
+            if not os.path.exists(os.path.join(FRONTEND, os.path.basename(name))):
+                raise SystemExit("There is no page test %s." % name)
+            found.append(os.path.basename(name))
+            continue
         module = os.path.splitext(os.path.basename(name))[0]
         if module.startswith("tests."):
             module = module[len("tests."):]
@@ -96,6 +126,18 @@ def test_files(names=None):
             raise SystemExit("There is no test file %s." % module)
         found.append(module)
     return list(dict.fromkeys(found))
+
+
+def page_files():
+    """tests/frontend/*.test.mjs by name: the glob, never the folder, which holds harness.mjs and the other helpers."""
+    return sorted(name for name in os.listdir(FRONTEND) if name.endswith(".test.mjs"))
+
+
+def is_test_file(name):
+    """Is there still a test file of this name (test_x, or x.test.mjs)?"""
+    if name.endswith(".test.mjs"):
+        return os.path.exists(os.path.join(FRONTEND, name))
+    return os.path.exists(os.path.join(TESTS, name + ".py"))
 
 
 #: `from test_x import` or `import test_x`: a test file built on another's classes, and
@@ -121,9 +163,10 @@ def uses_the_checkout(module, seen=None):
     return any(uses_the_checkout(imported, seen) for imported in IMPORTS_A_TEST.findall(source))
 
 
-def load_durations():
+def load_durations(path=None):
+    """tests/.durations.json (or `path`) as a dict, {} when there is none yet."""
     try:
-        with open(DURATIONS, encoding="utf-8") as handle:
+        with open(path or DURATIONS, encoding="utf-8") as handle:
             return json.load(handle)
     except (OSError, ValueError):
         return {}
@@ -151,30 +194,95 @@ def check_counts(results, counts, accept_fewer=False):
     return checked, counts
 
 
-def save_durations(durations):
+def save_durations(durations, tests=None, prune=False):
+    """Merge `durations` ({file: seconds}, and COUNTS: {file: count} for the counts that changed) into
+    tests/.durations.json, and `tests` ({module: {test id: seconds}}, each module's whole) into
+    tests/.test_durations.json, as each is on disk now; `prune` drops the keys of files that no longer exist."""
+    # One save at a time between reading the times and replacing them: a second run's save waits its turn, so neither
+    # drops the other's. The system lets go of the lock when a run ends however it ends: a run killed leaves none.
+    held = byte_lock.Lock(DURATIONS + ".lock")
+    if not held.acquire(wait=SAVE_WAIT):
+        print("note: this run's times are not kept: another run held %s.lock for %ds" % (DURATIONS, SAVE_WAIT),
+              flush=True)
+        return
     try:
-        with open(DURATIONS, "w", encoding="utf-8") as handle:
-            json.dump(durations, handle, indent=1, sort_keys=True)
-    except OSError:
-        pass
+        _merge(DURATIONS, durations, prune)
+        if tests or prune:
+            _merge(TEST_DURATIONS, tests or {}, prune)
+    except OSError as error:
+        print("note: could not keep this run's times in %s: %s" % (DURATIONS, error), flush=True)
+    finally:
+        held.release()
+
+
+def _merge(path, updates, prune):
+    data = load_durations(path)
+    for key, value in updates.items():
+        data[key] = dict(data.get(COUNTS, {}), **value) if key == COUNTS else value
+    if prune:
+        data = {key: value for key, value in data.items() if key.startswith("_") or is_test_file(key)}
+        if COUNTS in data:
+            data[COUNTS] = {key: value for key, value in data[COUNTS].items() if is_test_file(key)}
+    data[GENERATED] = NOTE
+    temp = path + ".tmp"
+    with open(temp, "w", encoding="utf-8") as handle:
+        json.dump(data, handle, indent=1, sort_keys=True)
+    for attempt in range(50):
+        try:
+            os.replace(temp, path)   # whole, or not at all: a run stopped here leaves the last whole file
+            return
+        except PermissionError:   # Windows: a run starting this moment has it open to read its order
+            if attempt == 49:
+                raise
+            time.sleep(0.02)
+
+
+#: Each Python test's seconds from its file's latest process, {module: {test id: seconds}}, until the run saves them.
+_test_times = {}
+_test_times_lock = threading.Lock()
+
+
+def _keep_test_times(module, path):
+    try:
+        with open(path, encoding="utf-8") as handle:
+            seconds = json.load(handle)
+    except (OSError, ValueError):   # the process was killed before unittest ended: the file's own time still counts
+        return
+    finally:
+        with contextlib.suppress(OSError):
+            os.remove(path)
+    prefix = "tests.%s." % module
+    with _test_times_lock:
+        _test_times[module] = {name[len(prefix):] if name.startswith(prefix) else name: s
+                               for name, s in seconds.items()}
+
+
+def _take_test_times(modules):
+    with _test_times_lock:
+        return {m: _test_times.pop(m) for m in modules if m in _test_times}
 
 
 def run_one(module):
-    """(module, passed, tests run, seconds, output)."""
+    """(module, passed, tests run, seconds, output). A Python file's tests' times wait in _test_times for the save."""
     started = time.time()
     home = tempfile.mkdtemp(prefix="tagpup_run_tests_")
+    times = home + ".times.json"
+    page = module.endswith(".test.mjs")
+    command = (["node", "--test", "--test-reporter=spec", os.path.join("tests", "frontend", module)] if page
+               else [sys.executable, "-m", "unittest", TIMED, "tests." + module])
     try:
-        done = processes.run([sys.executable, "-m", "unittest", "tests." + module], cwd=ROOT,
-                              env=dict(os.environ, TAGPUP_HOME=home),
+        done = processes.run(command, cwd=ROOT, env=dict(os.environ, TAGPUP_HOME=home, **{TIMES: times}),
                               stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                               encoding="utf-8", errors="replace")
     finally:
         remove(home)
+        if not page:
+            _keep_test_times(module, times)
     output = done.stdout or ""
-    ran = RAN.search(output)
-    count = int(ran.group(1)) if ran else 0
-    passed = done.returncode == 0 and count > 0
-    if done.returncode == 0 and not count:
+    ran = NODE_RAN.findall(output)[-1:] if page else RAN.search(output)
+    count = int(ran[0] if page else ran.group(1)) if ran else 0
+    passed = done.returncode == 0 and (count > 0 or bool(page and ran and NODE_SKIPPED.search(output)))
+    if done.returncode == 0 and not passed:
         output += ("\n[run_tests] exited 0 having run no tests: it %s (#101)"
                    % ("holds none" if ran else "ended before unittest's summary"))
     return module, passed, count, time.time() - started, output
@@ -223,6 +331,7 @@ ALONE = ()   # none now; the supervisor's tests were the two that needed it
 def run(modules, jobs, accept_fewer=False):
     """Run `modules`; returns [(module, passed, tests run, seconds, output)]."""
     durations = load_durations()
+    measured = {}
     order = sorted(modules, key=lambda m: -durations.get(m, 1.0))
     alone = [m for m in order if m in ALONE]
     order = [m for m in order if m not in ALONE]
@@ -235,7 +344,7 @@ def run(modules, jobs, accept_fewer=False):
         with lock:
             results.append(result)
             module, passed, _ran, seconds, _output = result
-            durations[module] = round(seconds, 2)
+            measured[module] = round(seconds, 2)
             if not passed:
                 print("FAILED  %s (%.1fs)" % (module, seconds), flush=True)
 
@@ -259,11 +368,13 @@ def run(modules, jobs, accept_fewer=False):
         lane_thread.join()
         solo_thread.join()
     failed_already = {r[0] for r in results if not r[1]}
-    results, durations[COUNTS] = check_counts(results, durations.get(COUNTS, {}), accept_fewer)
+    before = durations.get(COUNTS, {})
+    results, counts = check_counts(results, before, accept_fewer)
+    measured[COUNTS] = {m: n for m, n in counts.items() if before.get(m) != n}
     for module, passed, _ran, _seconds, _output in results:
         if not passed and module not in failed_already:
             print("FAILED  %s (fewer tests than last time)" % module, flush=True)
-    save_durations(durations)
+    save_durations(measured, _take_test_times(modules), prune=True)
     return results
 
 
@@ -282,6 +393,7 @@ def rerun_alone(results, accept_fewer=False):
             continue
         print("RERUN   %s alone" % module, flush=True)
         second = check_counts([run_one(module)], counts, accept_fewer)[0][0]
+        save_durations({module: round(second[3], 2)}, _take_test_times([module]))   # the time it took alone
         if second[1]:
             flaky.append((module, first))
             again.append((module, True, second[2], seconds + second[3], second[4]))
@@ -314,6 +426,18 @@ def owner_lines(results):
     return lines
 
 
+def slowest(count):
+    """The `count` slowest files and Python tests the runs have recorded; runs nothing."""
+    files = sorted(((s, n) for n, s in load_durations().items() if not n.startswith("_")), reverse=True)
+    lines = ["The %d slowest test files (tests/.durations.json, each one's last run):" % min(count, len(files))]
+    lines += ["  %7.1fs  %-8s %s" % (s, tiers.tier_of(n), n) for s, n in files[:count]]
+    tests = sorted(((s, m, t) for m, each in load_durations(TEST_DURATIONS).items() if not m.startswith("_")
+                    for t, s in each.items()), reverse=True)
+    lines.append("The %d slowest tests (tests/.test_durations.json):" % min(count, len(tests)))
+    lines += ["  %7.2fs  %s  %s" % (s, m, t) for s, m, t in tests[:count]]
+    return lines
+
+
 def node_command(owner, scenarios_only=False):
     """The command for an owner's page tests (tests/frontend/*.test.mjs): they run under node, not here."""
     names = [n for n in owners.page_files_of(owner) if not scenarios_only or owners.FILES[n][1] == "scenario"]
@@ -328,14 +452,19 @@ def main(argv=None):
     parser.add_argument("--all", action="store_true",
                         help="every tier (the default: the whole suite is what a commit runs)")
     parser.add_argument("--fast", action="store_true", help="the fast tier only, for the edit loop")
-    parser.add_argument("--no-slow", action="store_true", help="the fast and scenario tiers")
+    parser.add_argument("--no-slow", action="store_true", help="the fast and scenario tiers (no slow, no page)")
     parser.add_argument("--owner", choices=owners.OWNERS, help="every Python test file of this domain owner")
     parser.add_argument("--scenarios", choices=owners.OWNERS, help="only this owner's scenario files")
     parser.add_argument("--no-retry", action="store_true",
                         help="do not run a failed file again alone")
     parser.add_argument("--accept-fewer", action="store_true",
                         help="record the count of a file that ran fewer tests than last time (tests removed on purpose)")
+    parser.add_argument("--slowest", type=int, metavar="N",
+                        help="print the N slowest files and tests of the recorded runs, and run nothing")
     args = parser.parse_args(argv)
+    if args.slowest is not None:
+        print("\n".join(slowest(args.slowest)))
+        return 0
     if sum([args.all, args.fast, args.no_slow]) > 1:
         parser.error("--all, --fast and --no-slow are one choice")
     if args.owner and args.scenarios and args.owner != args.scenarios:
@@ -347,7 +476,9 @@ def main(argv=None):
     node = node_command(chosen, bool(args.scenarios)) if chosen else None
     left_out = ()
     if not args.files and (args.fast or args.no_slow):
-        left_out = ("scenario", "slow") if args.fast else ("slow",)
+        # The page tier is about 2,550 file-seconds (about 320 s across 8 processes, 2026-11-24): twice the fast
+        # tier's wall, so the loop leaves it out, and the gate runs it.
+        left_out = ("scenario", "slow", "page") if args.fast else ("slow", "page")
         modules = [m for m in modules if tiers.tier_of(m) not in left_out]
     started = time.time()
     results = run(modules, args.jobs, args.accept_fewer)
@@ -381,4 +512,6 @@ def main(argv=None):
 
 
 if __name__ == "__main__":
+    # node's reporter writes marks (and a page test's text) a Windows console's code page has no letter for.
+    sys.stdout.reconfigure(errors="backslashreplace")
     sys.exit(main())
