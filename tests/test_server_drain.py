@@ -30,6 +30,7 @@ from flask import jsonify
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import own_home  # noqa: E402
+from waiting import wait_until  # noqa: E402
 
 from tagpup import launcher  # noqa: E402
 from tagpup import runtime as runtimes  # noqa: E402
@@ -123,19 +124,13 @@ class Base(unittest.TestCase):
     def drain(self, seconds=30):
         return self.client().post("/api/server/drain", json={"seconds": seconds, "lease": LEASE}, headers=HEADERS)
 
-    def wait_until(self, check, seconds=10):
-        deadline = time.time() + seconds
-        while not check():
-            self.assertLess(time.time(), deadline, "timed out")
-            time.sleep(0.01)
-
 
 class ADrain(Base):
     def test_lets_the_write_in_flight_finish_and_turns_new_requests_away(self):
         writing, wrote = self.in_thread(self.write)
         self.assertTrue(self.entered.wait(10))
         draining, drained = self.in_thread(self.drain)
-        self.wait_until(lambda: not self.lifecycle.status()["taking_work"])
+        wait_until(lambda: not self.lifecycle.status()["taking_work"])
 
         refused = self.client().get("/harbour/api/tags")
         self.assertEqual(503, refused.status_code)
@@ -256,7 +251,7 @@ class OneDrainAtATime(Base):
         writing, _wrote = self.in_thread(self.write)
         self.assertTrue(self.entered.wait(10))
         first, first_answer = self.in_thread(self.drain)
-        self.wait_until(lambda: not self.lifecycle.status()["taking_work"])
+        wait_until(lambda: not self.lifecycle.status()["taking_work"])
         second, second_answer = self.in_thread(self.drain)
         time.sleep(0.3)
         self.assertTrue(second.is_alive(), "the second drain did not wait for the first")
@@ -270,7 +265,7 @@ class OneDrainAtATime(Base):
         writing, _wrote = self.in_thread(self.write)
         self.assertTrue(self.entered.wait(10))
         draining, answer = self.in_thread(lambda: self.drain(seconds=30))
-        self.wait_until(lambda: not self.lifecycle.status()["taking_work"])
+        wait_until(lambda: not self.lifecycle.status()["taking_work"])
         started = time.monotonic()
         self.lifecycle.resume()      # the server's own: a lease ended
         draining.join(10)
@@ -443,10 +438,7 @@ class WhatALongRunIs(unittest.TestCase):
         self.runtime.index_queues.of(self.library).start([self.home.root], index)
         self.assertEqual(["indexing in 1 library(ies)"], [work.sentence for work in lifecycles.long_work(self.runtime.index_queues)])
         self.go.set()
-        deadline = time.time() + 10
-        while lifecycles.long_work(self.runtime.index_queues) and time.time() < deadline:
-            time.sleep(0.01)
-        self.assertEqual([], lifecycles.long_work(self.runtime.index_queues))
+        wait_until(lambda: not lifecycles.long_work(self.runtime.index_queues), what="no long work")
 
     def test_a_suggest_run_under_way(self):
         go = self.go
@@ -461,10 +453,7 @@ class WhatALongRunIs(unittest.TestCase):
         suggestion_jobs.runs_for(self.library).start(self.home.root, Work())
         self.assertEqual(["1 Suggest run(s)"], [work.sentence for work in lifecycles.long_work(self.runtime.index_queues)])
         self.go.set()
-        deadline = time.time() + 10
-        while lifecycles.long_work(self.runtime.index_queues) and time.time() < deadline:
-            time.sleep(0.01)
-        self.assertEqual([], lifecycles.long_work(self.runtime.index_queues))
+        wait_until(lambda: not lifecycles.long_work(self.runtime.index_queues), what="no long work")
 
 
 class AnIndexsEndWaitingForTheLibrary(unittest.TestCase):
@@ -506,9 +495,7 @@ class AnIndexsEndWaitingForTheLibrary(unittest.TestCase):
         return run
 
     def wait_for_no_long_work(self, seconds):
-        deadline = time.time() + seconds
-        while lifecycles.long_work(self.runtime.index_queues) and time.time() < deadline:
-            time.sleep(0.02)
+        wait_until(lambda: not lifecycles.long_work(self.runtime.index_queues), seconds, 0.02, "no long work")
 
     def test_refuses_a_drain_until_it_is_written(self):
         run = self.index_ending_beside_another_writer()
@@ -593,7 +580,7 @@ class AnUpdateWhileAShareIsAway(Base):
         started = time.monotonic()
         with self.assertLogs(lifecycles.logger, "WARNING") as logged:
             first, first_answer = self.in_thread(lambda: self.lifecycle.drain(1, lease=LEASE))
-            self.wait_until(lambda: self.stuck.stops == 1)
+            wait_until(lambda: self.stuck.stops == 1)
             # Given longer than the first, so a loaded machine's first does not outlast it ("another drain").
             second, second_answer = self.in_thread(lambda: self.lifecycle.drain(10, lease=LEASE))
             first.join(5)
@@ -681,7 +668,7 @@ class AnInstallWhileAWatchedShareStopsAnswering(Base):
     def test_the_install_drains_and_ends_the_old_server_without_waiting_out_the_idle_patience(self):
         self.away.set()
         self.lifecycle.background.start()
-        self.wait_until(lambda: self.watcher.watched() == [paths.stored(self.root)] and len(self.held) == 2)
+        wait_until(lambda: self.watcher.watched() == [paths.stored(self.root)] and len(self.held) == 2)
         found = {"pid": 4242, "started": 1, "ports": {"tagpup": 5}, "version": self.OLD, "token": TOKEN}
         said, ended, port_held, now = [], [], [True], [0.0]
         client = self.client()

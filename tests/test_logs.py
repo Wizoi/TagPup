@@ -21,7 +21,6 @@ import shutil
 import sys
 import tempfile
 import subprocess
-import time
 import unittest
 import urllib.request
 from unittest import mock
@@ -30,6 +29,7 @@ WORKSPACE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, WORKSPACE_DIR)
 sys.path.insert(0, os.path.join(WORKSPACE_DIR, "scripts"))
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from waiting import holds_for, wait_until  # noqa: E402
 
 from free_port import free_port  # noqa: E402
 from shipped_sources import ROOT, python_sources  # noqa: E402
@@ -175,15 +175,15 @@ class AServerLogsToItsFile(unittest.TestCase):
             env=dict(os.environ, TAGPUP_HOME=cls.home, TAGPUP_WEB_NO_WARMUP="1", TAGPUP_NO_MODEL_WEIGHTS="1",
                      TAGPUP_NO_JOBS="1", TAGPUP_SERVERS=os.path.join(cls.home, "servers")),
             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        deadline = time.time() + 60
-        while time.time() < deadline:
+        def answers():
             try:
                 urllib.request.urlopen("http://127.0.0.1:%d/api/databases" % cls.tuner_port, timeout=5)
-                break
+                return True
             except OSError:
                 if cls.process.poll() is not None:
                     raise AssertionError("the server exited before it was ready") from None
-                time.sleep(0.1)
+                return False
+        wait_until(answers, 60, 0.1, "the server to answer")
         cls.log_path = os.path.join(cls.home, "data", "logs", "tagpup_web.log")
 
     @classmethod
@@ -198,23 +198,18 @@ class AServerLogsToItsFile(unittest.TestCase):
             print("\nnote: could not delete %s yet (held open by the test server)" % cls.home,
                   file=sys.stderr)
 
-    def log_text(self, expected, seconds=5):
-        deadline = time.time() + seconds
-        while True:
-            text = ""
-            if os.path.exists(self.log_path):
-                with open(self.log_path, encoding="utf-8") as handle:
-                    text = handle.read()
-            if expected in text or time.time() > deadline:
-                return text
-            time.sleep(0.05)
+    def log_text(self):
+        if not os.path.exists(self.log_path):
+            return ""
+        with open(self.log_path, encoding="utf-8") as handle:
+            return handle.read()
 
     def test_the_server_writes_its_log_in_the_home(self):
-        self.assertIn("Serving", self.log_text("Serving"))
+        wait_until(lambda: "Serving" in self.log_text(), 5, 0.05, "Serving in the log")
 
     def test_a_quick_request_is_not_logged(self):
         urllib.request.urlopen("http://127.0.0.1:%d/api/databases?probe=quick" % self.tagpup_port)
-        self.assertNotIn("probe=quick", self.log_text("probe=quick", seconds=0.5))
+        self.assertTrue(holds_for(lambda: "probe=quick" not in self.log_text(), 0.5), "a quick probe was logged")
 
 
 if __name__ == "__main__":

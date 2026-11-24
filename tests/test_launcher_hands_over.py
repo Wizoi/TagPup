@@ -14,7 +14,6 @@ import json
 import os
 import subprocess
 import sys
-import time
 import unittest
 import urllib.request
 from unittest import mock
@@ -24,6 +23,7 @@ WORKSPACE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, WORKSPACE_DIR)
 sys.path.insert(0, os.path.join(WORKSPACE_DIR, "scripts"))
 import own_home  # noqa: E402
+from waiting import wait_until  # noqa: E402
 from free_port import free_port  # noqa: E402
 
 import tagpup_web  # noqa: E402
@@ -386,15 +386,6 @@ class ForReal(unittest.TestCase):
         except OSError:
             return None
 
-    def wait_until(self, check, seconds=90, why="timed out"):
-        deadline = time.time() + seconds
-        while True:
-            found = check()
-            if found:
-                return found
-            self.assertLess(time.time(), deadline, why)
-            time.sleep(0.2)
-
     def logs(self):
         text = []
         for name in sorted(os.listdir(self.home.root)):
@@ -405,11 +396,11 @@ class ForReal(unittest.TestCase):
 
     def test_a_server_run_from_a_checkout_makes_way_for_the_installed_version(self):
         old = self.start(WORKSPACE_DIR)
-        self.wait_until(lambda: self.version(self.ports["tagpup"]) == "checkout", why="the old server never answered")
+        wait_until(lambda: self.version(self.ports["tagpup"]) == "checkout", 90, 0.2, "the old server to answer")
         new_code = self.install(NEW)
         new = self.start(new_code, "--open", "tagpup")
-        self.wait_until(lambda: all(self.version(port) == NEW for port in self.ports.values()), seconds=120,
-                        why="the new version never answered on both ports:\n" + self.logs())
+        wait_until(lambda: all(self.version(port) == NEW for port in self.ports.values()), 120, 0.2,
+                        what="the new version never answered on both ports:\n" + self.logs())
         self.assertIsNotNone(old.wait(timeout=30), "the old server still runs")
         self.assertIsNone(new.poll(), "the launch that replaced it is the server")
         found = launcher.record(self.ports["tuner"])
@@ -423,15 +414,15 @@ class ForReal(unittest.TestCase):
     def test_two_launches_at_once_leave_exactly_one_new_server(self):
         old_code, new_code = self.install(OLD), self.install(NEW)
         old = self.start(old_code)
-        self.wait_until(lambda: self.version(self.ports["tagpup"]) == OLD, why="the old server never answered")
+        wait_until(lambda: self.version(self.ports["tagpup"]) == OLD, 90, 0.2, "the old server to answer")
         first = self.start(new_code, "--open", "tagpup")
         second = self.start(new_code, "--open", "tuner")
-        self.wait_until(lambda: all(self.version(port) == NEW for port in self.ports.values()), seconds=120,
-                        why="the new version never answered on both ports:\n" + self.logs())
+        wait_until(lambda: all(self.version(port) == NEW for port in self.ports.values()), 120, 0.2,
+                        what="the new version never answered on both ports:\n" + self.logs())
         self.assertIsNotNone(old.wait(timeout=30), "the old server still runs")
         # The one that did not win opens the page of the one that did, and exits.
-        self.wait_until(lambda: (first.poll() is None) != (second.poll() is None), seconds=120,
-                        why="not exactly one launch serves:\n" + self.logs())
+        wait_until(lambda: (first.poll() is None) != (second.poll() is None), 120, 0.2,
+                        what="not exactly one launch serves:\n" + self.logs())
         loser = first if first.poll() is not None else second
         self.assertEqual(0, loser.returncode, self.logs())
         winner = second if loser is first else first
@@ -448,7 +439,7 @@ class ForReal(unittest.TestCase):
         hung = processes.start([sys.executable, "-c", script], env=self.env, stdin=subprocess.DEVNULL,
                                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         self.addCleanup(lambda: hung.poll() is None and processes.kill_tree(hung.pid))
-        self.wait_until(lambda: launcher.record(port), why="the hung server never said where it answers")
+        wait_until(lambda: launcher.record(port), 90, 0.2, "the hung server to say where it answers")
         said = []
         with mock.patch.object(launcher, "HUNG_TIMEOUT", 0.5):
             way = launcher.make_way(port, NEW, say=said.append, open_page=lambda: None, answering=tagpup_web.answering)

@@ -9,13 +9,14 @@ import os
 import shutil
 import sys
 import tempfile
-import time
 
 WORKSPACE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, WORKSPACE_DIR)
 sys.path.insert(0, os.path.join(WORKSPACE_DIR, "scripts"))
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import corpus  # noqa: E402
+from waiting import wait_until  # noqa: E402
 from face_rows import add_face  # noqa: E402
 from tagpup.core.library import Library  # noqa: E402
 from tagpup.store import db  # noqa: E402
@@ -87,9 +88,7 @@ class TempLibrary:
 
     def remove(self):
         # Windows can hold a file a moment after the last connection lets go of it.
-        for _attempt in range(20):
+        def removed():
             shutil.rmtree(self.root, ignore_errors=True)
-            if not os.path.exists(self.root):
-                return
-            time.sleep(0.25)
-        raise AssertionError("Could not remove %s" % self.root)
+            return not os.path.exists(self.root)
+        wait_until(removed, timeout=5, interval=0.25, what="the removal of " + self.root)

@@ -21,6 +21,8 @@ sys.path.insert(0, os.path.join(WORKSPACE_DIR, "scripts"))
 
 import install_app  # noqa: E402
 sys.path.insert(0, WORKSPACE_DIR)
+sys.path.insert(0, os.path.join(WORKSPACE_DIR, "tests"))
+from waiting import wait_until  # noqa: E402
 from tagpup.core import byte_lock, processes  # noqa: E402
 from measure_identify_faces import free_port, remove_sandbox  # noqa: E402
 
@@ -316,10 +318,8 @@ class AServerOfAnotherVersionRunning(InstallCase):
             waiting = threading.Thread(target=lambda: install_app.update(self.dest, self.home, sys.executable,
                                                                          say=self.said.append), daemon=True)
             waiting.start()
-            deadline = time.time() + 30
-            while not any("another install is running" in line for line in self.said):
-                self.assertLess(time.time(), deadline, "nothing said while it waits: %s" % self.said)
-                time.sleep(0.05)
+            wait_until(lambda: any("another install is running" in line for line in self.said), 30,
+                       what="it to say it waits for the install under way")
             self.assertTrue(waiting.is_alive(), "it did not wait for the install under way")
             held.release()
             waiting.join(30)
@@ -378,14 +378,14 @@ class TheInstalledAppRuns(InstallCase):
                                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         self.addCleanup(self.stop, process)
 
-        deadline = time.time() + 60
-        while time.time() < deadline:
+        def answers():
             try:
                 with socket.create_connection(("127.0.0.1", port), timeout=1):
-                    break
+                    return True
             except OSError:
                 self.assertIsNone(process.poll(), "the launcher exited")
-                time.sleep(0.25)
+                return False
+        wait_until(answers, 60, 0.25, "the installed server to answer")
         reply = json.loads(urllib.request.urlopen(
             "http://127.0.0.1:%d/api/databases" % port, timeout=30).read())
 

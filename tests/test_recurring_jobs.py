@@ -27,6 +27,7 @@ from click.testing import CliRunner
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import own_home  # noqa: E402
+from waiting import wait_until  # noqa: E402
 
 import tagpup_cli  # noqa: E402
 from tagpup import runtime as runtimes  # noqa: E402
@@ -384,9 +385,7 @@ class OneRunAtATime(Base):
 class TheWebServersThread(Base):
     def test_looks_for_what_is_due_and_stops_cleanly(self):
         thread = self.runner.start(every=0.05, first_after=0)
-        deadline = time.time() + 30
-        while not self.service.calls and time.time() < deadline:
-            time.sleep(0.02)
+        wait_until(lambda: self.service.calls, timeout=30, what="a look at what is due")
         self.assertTrue(self.runner.stop(timeout=30))
         self.assertFalse(thread.is_alive())
         self.assertEqual(1, len(self.service.calls), "the fake clock never moved, so it was due once")

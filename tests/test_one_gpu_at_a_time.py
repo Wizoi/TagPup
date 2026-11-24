@@ -20,6 +20,7 @@ WORKSPACE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, WORKSPACE_DIR)
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import own_home  # noqa: E402
+from waiting import comes_true  # noqa: E402
 
 from tagpup.core import gpu_turns, processes  # noqa: E402
 from tagpup.ml import gpu  # noqa: E402
@@ -52,14 +53,6 @@ print(gpu.folder(), flush=True)
 """
 
 
-def until(condition, seconds=DEADLINE, step=0.02):
-    """Wait for `condition()`; whether it came true."""
-    end = time.monotonic() + seconds
-    while time.monotonic() < end:
-        if condition():
-            return True
-        time.sleep(step)   # wait: until()'s poll, a copy of tests/waiting.py's
-    return condition()
 
 
 class _Folder(unittest.TestCase):
@@ -79,7 +72,7 @@ class _Folder(unittest.TestCase):
         # card.lock cannot be deleted, and a folder was left in %TEMP% for each.
         for card in self.cards:
             card.close()
-        self.assertTrue(until(lambda: own_home.remove(self.where), 10), "left behind: %s" % self.where)
+        self.assertTrue(comes_true(lambda: own_home.remove(self.where), 10), "left behind: %s" % self.where)
 
     def card(self, **kwargs):
         kwargs.setdefault("poll", 0.05)
@@ -148,7 +141,7 @@ class TwoProcessesTakeTurns(_Folder):
         self.read_until(first, "HELD")
         lines = []
         thread, outcome = self.take_in_thread(self.card(), "Suggest Lighthouse (harbour)", report=lines.append)
-        self.assertTrue(until(lambda: lines), "the waiter never said it waits")
+        self.assertTrue(comes_true(lambda: lines), "the waiter never said it waits")
         self.assertIn("indexing Lighthouse (harbour)", lines[0])
         processes.kill_tree(first.pid)
         first.wait(timeout=30)
@@ -166,7 +159,7 @@ class AWaitThatIsCancelled(_Folder):
         lines = []
         thread, outcome = self.take_in_thread(self.card(), "Suggest Breakwater (harbour)",
                                               cancelled=stop.is_set, report=lines.append)
-        self.assertTrue(until(lambda: lines))
+        self.assertTrue(comes_true(lambda: lines))
         asked = time.monotonic()
         stop.set()
         thread.join(DEADLINE)
@@ -205,9 +198,9 @@ class InOrder(_Folder):
         order = []
         first_card, second_card = self.card(), self.card()
         one, first = self.take_in_thread(first_card, "first")
-        self.assertTrue(until(lambda: gpu.others_waiting(self.where)))
+        self.assertTrue(comes_true(lambda: gpu.others_waiting(self.where)))
         two, second = self.take_in_thread(second_card, "second")
-        self.assertTrue(until(lambda: len(os.listdir(os.path.join(self.where, gpu.QUEUE))) == 2))
+        self.assertTrue(comes_true(lambda: len(os.listdir(os.path.join(self.where, gpu.QUEUE))) == 2))
         held.release()
         one.join(DEADLINE)
         self.assertIn("hold", first)
@@ -272,7 +265,7 @@ class KeptBetweenRuns(_Folder):
         self.assertIsNone(self.card().try_hold("warming"))
         waiter_card = self.card()
         thread, outcome = self.take_in_thread(waiter_card, "Suggest Jetty (harbour)")
-        self.assertTrue(until(lambda: gpu.others_waiting(self.where)))
+        self.assertTrue(comes_true(lambda: gpu.others_waiting(self.where)))
         other.release()
         thread.join(DEADLINE)
         outcome["hold"].release()

@@ -23,6 +23,7 @@ from unittest import mock
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import own_home  # noqa: E402
 import photo_rows  # noqa: E402
+from waiting import wait_until  # noqa: E402
 
 from tagpup import runtime as runtimes  # noqa: E402
 from tagpup.core import paths  # noqa: E402
@@ -150,12 +151,6 @@ class AShareAsleep(unittest.TestCase):
         self.addCleanup(watcher.stop, 10)
         return watcher
 
-    def wait_until(self, check, seconds=10):
-        deadline = time.monotonic() + seconds
-        while not check():
-            self.assertLess(time.monotonic(), deadline, "timed out")
-            time.sleep(0.02)
-
     def test_the_server_starts_with_the_share_asleep_and_the_catch_up_waits_for_it_and_finds_the_library_in_step(self):
         """Runs 92/83/67 of 2026-10-28 08:33. Break: sync._scan asking shares.folder_state (the memo answers "away" at
         once), or the watcher syncing whole again when the share is back although its catch-up looked at it (the
@@ -170,12 +165,12 @@ class AShareAsleep(unittest.TestCase):
         watcher = self.servers_watcher([regatta], synced)
         self.wake_in(0.6)   # after the watcher's moment and the catch-up's start, well within FOLDER_WAIT
         watcher.start()
-        self.wait_until(lambda: results)
+        wait_until(lambda: results)
         counts = results[0].details["counts"]
         self.assertEqual((0, 0, 1), (counts["not_looked_at"], counts["folders_not_looked_at"], counts["folders_walked"]))
         self.assertTrue(results[0].details["in_step"], "the catch-up did not wait for the share")
         self.assertIsNotNone(sync.last(regatta)["last_in_step"])
-        self.wait_until(lambda: watcher.watched() == [paths.stored(held)])
+        wait_until(lambda: watcher.watched() == [paths.stored(held)])
         time.sleep(0.6)   # wait: no barrier yet; a second whole sync would come a debounce (0.2) after the look
         self.assertEqual(1, len(results), "synced whole again although the catch-up looked at every folder")
 
@@ -196,8 +191,8 @@ class AShareAsleep(unittest.TestCase):
             return real_look(*args, **kwargs)
         with mock.patch.object(sync, "FOLDER_WAIT", 0.3), mock.patch.object(watcher, "_look", look):
             watcher.start()
-            self.wait_until(lambda: results)
-            self.wait_until(lambda: len(looks) >= 5)
+            wait_until(lambda: results)
+            wait_until(lambda: len(looks) >= 5)
         counts = results[0].details["counts"]
         self.assertEqual((2, 1), (counts["not_looked_at"], counts["folders_not_looked_at"]))
         self.assertFalse(results[0].details["in_step"])
@@ -218,11 +213,11 @@ class AShareAsleep(unittest.TestCase):
         with mock.patch.object(sync, "FOLDER_WAIT", 0.2):
             first = self.servers_watcher([regatta], synced)
             first.start()
-            self.wait_until(lambda: results)
+            wait_until(lambda: results)
             self.assertFalse(results[0].details["in_step"])
             self.assertTrue(first.stop(10))
             self.servers_watcher([regatta], synced).start()   # the server restarted, the share still asleep
-            self.wait_until(lambda: len(results) == 2)
+            wait_until(lambda: len(results) == 2)
         self.assertEqual([False, False], [result.details["in_step"] for result in results])
         self.assertIsNone(sync.last(regatta)["last_in_step"])
 
@@ -260,12 +255,12 @@ class AShareAsleep(unittest.TestCase):
         library, synced = Stand("regatta"), []
         watcher = self.watcher([library], lambda lib: [self.share], lambda lib, folder: synced.append(folder))
         watcher.start()
-        self.wait_until(lambda: synced == [None])   # the catch-up, the share still asleep
+        wait_until(lambda: synced == [None])   # the catch-up, the share still asleep
         self.assertEqual([], watcher.watched())
         woke = time.monotonic()
         self.awake.set()
-        self.wait_until(lambda: watcher.watched() == [paths.stored(self.share)], 5)
-        self.wait_until(lambda: synced == [None, None], 5)
+        wait_until(lambda: watcher.watched() == [paths.stored(self.share)], 5)
+        wait_until(lambda: synced == [None, None], 5)
         self.assertLess(time.monotonic() - woke, 5.0)
 
     def test_two_libraries_on_one_share_are_both_woken_by_its_one_answer(self):
@@ -278,11 +273,11 @@ class AShareAsleep(unittest.TestCase):
         watcher = self.watcher([regatta, crew], lambda lib: [folders[lib.name]],
                                lambda lib, folder: synced.append((lib.name, folder)))
         watcher.start()
-        self.wait_until(lambda: sorted(synced) == [("crew", None), ("regatta", None)])
+        wait_until(lambda: sorted(synced) == [("crew", None), ("regatta", None)])
         del synced[:]
         self.awake.set()
-        self.wait_until(lambda: len(watcher.watched()) == 2, 5)
-        self.wait_until(lambda: sorted(synced) == [("crew", None), ("regatta", None)], 5)
+        wait_until(lambda: len(watcher.watched()) == 2, 5)
+        wait_until(lambda: sorted(synced) == [("crew", None), ("regatta", None)], 5)
 
 
 class TwoLibrariesSyncedOnAShareAsleep(unittest.TestCase):
