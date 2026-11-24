@@ -50,3 +50,4 @@ Findings fixed before 2026-09-23 are in the git log (`git log --grep="^fix"`). T
 
 | # | Found | Finding | Status |
 |---|---|---|---|
+| 3375 | 2026-11-24 | work: make the full test suite fast and trustworthy. Owner goals: full suite under 5 minutes (now about 5+ and the fast tier alone 165s); per-owner / per-area runs in under a minute, ideally seconds; no loss of coverage; fewer wasteful tests, more thorough where it matters; shift slow checks left (cheaper layer) rather than dropping them; research how production teams do it (parallelism, test selection, lighter browser for page tests). Step 1 is research and a plan (docs/plans/), not a build. | claimed: research-test-speed 2026-11-24 |
