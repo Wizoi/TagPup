@@ -27,7 +27,8 @@ has always been run with the module that writes each test's time named first (a 
 tests/frontend/<file>`), so a file sees nothing of another's state -- and with a TAGPUP_HOME
 of its own, an empty temporary folder, so that anything a test does not give a home of
 its own (tests/own_home.py) still lands there and not in the checkout's data/ folder or
-config.ini. The tests' libraries were in data/ under fixed names, so the files that used
+config.ini. Every file's process is also given the run's corpus folder (TAGPUP_TEST_CORPUS, tests/corpus.py):
+each photo, clip and library a test asks of it is made there once and copied. The tests' libraries were in data/ under fixed names, so the files that used
 it ran one after another in a lane of their own (docs/findings.md, #14). None does now,
 and tests/test_tests_have_homes_of_their_own.py keeps it so; a file that named the
 checkout's data/ or config.ini would still get the lane. Every run, green or not, keeps each
@@ -64,7 +65,7 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 
 from tagpup.core import byte_lock, processes  # noqa: E402
-from tests import owners, tiers  # noqa: E402
+from tests import corpus, owners, tiers  # noqa: E402
 TESTS = os.path.join(ROOT, "tests")
 FRONTEND = os.path.join(TESTS, "frontend")
 DURATIONS = os.path.join(TESTS, ".durations.json")
@@ -481,10 +482,11 @@ def main(argv=None):
         left_out = ("scenario", "slow", "page") if args.fast else ("slow", "page")
         modules = [m for m in modules if tiers.tier_of(m) not in left_out]
     started = time.time()
-    results = run(modules, args.jobs, args.accept_fewer)
-    flaky = []
-    if not args.no_retry and any(not r[1] for r in results):
-        results, flaky = rerun_alone(results, args.accept_fewer)
+    with corpus.for_run():   # each photo, clip and library made once for the run's files (tests/corpus.py)
+        results = run(modules, args.jobs, args.accept_fewer)
+        flaky = []
+        if not args.no_retry and any(not r[1] for r in results):
+            results, flaky = rerun_alone(results, args.accept_fewer)
     failed = [r for r in results if not r[1]]
     report = []
     for module, first in flaky:

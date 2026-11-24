@@ -2,8 +2,8 @@
 undone where each file still holds what the edit left (docs/ARCHITECTURE.md, phase 7.5,
 "Photo files"; tagpup.services.file_changes).
 
-Real JPEGs, made here in a home of the test's own, written by the real ExifTool; the
-test is skipped only where ExifTool is not installed. Rows are seeded as the indexer
+Real JPEGs, written by the real ExifTool once per run and copied into a home of the test's own (tests/corpus.py);
+the test is skipped only where ExifTool is not installed. Rows are seeded as the indexer
 stores them (tests/photo_rows.add_read, #309), never through the recorder under test. A crash is a
 BaseException raised at a step of the write (file_changes.STEPS), as tests/test_journal.py
 does for the journal of rows; `settle` then finishes what it left. A patch in place is the real one
@@ -23,6 +23,7 @@ sys.path.insert(0, WORKSPACE_DIR)
 sys.path.insert(0, os.path.join(WORKSPACE_DIR, "scripts"))
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
+import corpus  # noqa: E402
 import own_home  # noqa: E402
 import photo_rows  # noqa: E402
 
@@ -30,7 +31,7 @@ from tagpup.core.library import Library  # noqa: E402
 from tagpup.files import field_values, in_place  # noqa: E402
 from tagpup.files.exiftool_session import ExifToolSession  # noqa: E402
 from tagpup.services import file_changes, journal as journal_service, photos as photo_actions, tagging  # noqa: E402
-from tagpup.store import db, file_journal, schema  # noqa: E402
+from tagpup.store import db, file_journal  # noqa: E402
 
 EXIFTOOL = own_home.installed_exiftool()
 requires_exiftool = unittest.skipIf(EXIFTOOL is None, "ExifTool not installed")
@@ -113,18 +114,14 @@ def killed_before_the_save():
 class FilesCase(unittest.TestCase):
     def setUp(self):
         self.home = own_home.for_test(self, prefix="file_journal_")
-        self.library = Library(self.home.library("files.db"))
-        schema.ensure(self.library.path)
+        self.library = Library(corpus.library(self.home.library("files.db")))
         self.folder = os.path.join(self.home.root, "Photos")
         os.makedirs(self.folder)
 
     def make(self, name, tags=("Beach",), taken=None, caption=None, row=True, preserved=None):
         """A JPEG holding `tags`, and its row as the indexer leaves it; with `preserved`,
-        the name Smart Rename keeps of it, so that renaming it writes nothing first."""
-        from PIL import Image
-
-        path = os.path.join(self.folder, name)
-        Image.new("RGB", (16, 12), (90, 110, 130)).save(path, "JPEG")
+        the name Smart Rename keeps of it, so that renaming it writes nothing first. Written by ExifTool as another
+        program writes a file (write_outside), once per run for these values, and copied (tests/corpus.py)."""
         # Every field a keyword write sets that a file without people holds (fields.keyword_fields).
         values = {"XMP:Subject": list(tags), "IPTC:Keywords": list(tags), "EXIF:XPKeywords": ";".join(tags)}
         if taken:
@@ -133,7 +130,7 @@ class FilesCase(unittest.TestCase):
             values["XMP:Description"] = caption
         if preserved:
             values["XMP-xmpMM:PreservedFileName"] = preserved
-        write_outside(path, values)
+        path = corpus.jpeg(os.path.join(self.folder, name), values, EXIFTOOL)
         if row:
             conn = db.connect(self.library.path)
             try:
