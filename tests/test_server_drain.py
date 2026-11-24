@@ -19,6 +19,7 @@ test_is_refused_while_the_startup_migrations_run; the version label dropped from
 test_each_response_names_the_version_answering_also_when_turned_away; the lease check dropped from the drain route
 fails test_a_deadline_and_a_lease_must_be_numbers_of_seconds.
 """
+import collections
 import os
 import sys
 import threading
@@ -92,8 +93,9 @@ class Base(unittest.TestCase):
         self.background = FakeBackground()
         self.clock = Clock()
         self.runtime = Runtime()
+        self.reads = ReadsCounted()
         self.lifecycle = Lifecycle(version="20260926-101500-abc1234", launcher_token=TOKEN, background=self.background,
-                                   work=lambda: list(self.long), runtime=self.runtime)
+                                   work=lambda: list(self.long), runtime=self.runtime, clock=self.reads)
         self.app = web.create_app("tagpup", startup=self.library, runtime=self.runtime, lifecycle=self.lifecycle)
         self.app.testing = True
         self.addCleanup(self.lifecycle.resume)      # a drain asks the batches to stop, and keeps asking until it resumes
@@ -125,6 +127,27 @@ class Base(unittest.TestCase):
         return self.client().post("/api/server/drain", json={"seconds": seconds, "lease": LEASE}, headers=HEADERS)
 
 
+class ReadsCounted:
+    """time.monotonic for a Lifecycle, counting its reads by the thread and the function that read it: a drain reads it
+    once each time it has looked and goes on waiting, which is what a test waits for in place of a fixed time."""
+
+    def __init__(self):
+        self._lock = threading.Lock()
+        self._reads = collections.Counter()
+
+    def __call__(self):
+        function = sys._getframe(1).f_code.co_name
+        with self._lock:
+            self._reads[(threading.get_ident(), function)] += 1
+        return time.monotonic()
+
+    def by(self, function, thread=None):
+        """The reads in `function`, on `thread` (a Thread) or on any."""
+        with self._lock:
+            return sum(count for (ident, name), count in self._reads.items()
+                       if name == function and (thread is None or ident == thread.ident))
+
+
 class ADrain(Base):
     def test_lets_the_write_in_flight_finish_and_turns_new_requests_away(self):
         writing, wrote = self.in_thread(self.write)
@@ -140,7 +163,8 @@ class ADrain(Base):
         # Asked while draining, the server still says how it is.
         status = self.client().get("/api/server").get_json()
         self.assertEqual((False, 1), (status["taking_work"], status["requests"]))
-        time.sleep(0.3)
+        # Once to bound the background's stop, once more after it found the write in flight and went on waiting.
+        wait_until(lambda: self.reads.by("_drain_until") >= 2, what="the drain to look at the write in flight")
         self.assertTrue(draining.is_alive(), "drained with a write in flight")
         self.assertEqual([], self.written)
 
@@ -253,7 +277,8 @@ class OneDrainAtATime(Base):
         first, first_answer = self.in_thread(self.drain)
         wait_until(lambda: not self.lifecycle.status()["taking_work"])
         second, second_answer = self.in_thread(self.drain)
-        time.sleep(0.3)
+        # Once for its deadline, once more as it found the first under way and went on waiting for it.
+        wait_until(lambda: self.reads.by("drain", second) >= 2, what="the second drain to wait for the first")
         self.assertTrue(second.is_alive(), "the second drain did not wait for the first")
         self.release.set()
         for thread in (writing, first, second):
