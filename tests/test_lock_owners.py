@@ -21,6 +21,8 @@ from ctypes import wintypes
 from unittest import mock
 
 from tagpup.core.result import Refused
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from waiting import wait_until  # noqa: E402
 from tagpup.files import field_values, in_place, lock_owners, names
 from tagpup.services import file_changes, file_only
 
@@ -131,11 +133,7 @@ class NeverRaisesNeverWaitsLong(Base):
             self.assertEqual([], found)
             self.assertEqual(1, lock_owners._stuck)
             gate.set()
-            for _ in range(100):
-                if lock_owners._stuck == 0:
-                    break
-                time.sleep(0.05)
-            self.assertEqual(0, lock_owners._stuck, "the thread that ended is no longer counted as stuck")
+            wait_until(lambda: lock_owners._stuck == 0, 5, 0.05, "the thread that ended no longer counted as stuck")
 
     def test_stuck_lookups_are_capped(self):
         gate = threading.Event()
@@ -148,10 +146,7 @@ class NeverRaisesNeverWaitsLong(Base):
             self.assertEqual([], lock_owners.holders(self.path, timeout=5))
             self.assertLess(time.monotonic() - started, 1.0, "past the cap a lookup does not wait at all")
             gate.set()
-            for _ in range(100):
-                if lock_owners._stuck == 0:
-                    break
-                time.sleep(0.05)
+            wait_until(lambda: lock_owners._stuck == 0, 5, 0.05, "the stuck lookups' threads let go")
 
     def test_any_failure_is_no_holder(self):
         def broken(_path):

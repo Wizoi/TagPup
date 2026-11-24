@@ -56,6 +56,7 @@ from unittest import mock
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import own_home  # noqa: E402
 import photo_rows  # noqa: E402
+from waiting import wait_until  # noqa: E402
 
 from click.testing import CliRunner  # noqa: E402
 from PIL import Image  # noqa: E402
@@ -518,14 +519,11 @@ class TheOwnerWatchesASyncsNewFoldersIndexedAndBaked(unittest.TestCase):
                              lifecycle=Lifecycle(background=runtimes.Background([]), runtime=runtime))
         app.testing = True
         client = app.test_client()
-        deadline, running = time.time() + 60, None
-        while True:
+        def baking():
             reply = client.get("/api/activity/now").get_json()
-            running = next(each for each in reply["libraries"] if each["name"] == "harbour")["indexing"]["running"]
-            if running and running["message"].startswith("Bake folder 2 of 3"):
-                break
-            self.assertLess(time.time(), deadline, (running, heard))
-            time.sleep(0.05)
+            found = next(each for each in reply["libraries"] if each["name"] == "harbour")["indexing"]["running"]
+            return found if found and found["message"].startswith("Bake folder 2 of 3") else None
+        running = wait_until(baking, timeout=60, interval=0.05, what="the bake of folder 2 of 3 on the page")
         said = bake_after_index.FOLDER_SAID + "2 of 3, 1 written, 0 current, 0 conflicts: "
         self.assertIn(running["message"], [said + paths.stored(folder) for folder in folders], "the folder's path, whole")
         self.assertEqual(66, running["percent"], "one folder of three is done, in the bar's second half")

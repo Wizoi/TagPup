@@ -12,6 +12,7 @@ from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import own_home  # noqa: E402
+from waiting import wait_until  # noqa: E402
 
 from tagpup import runtime as runtimes  # noqa: E402
 from tagpup.core.library import Library  # noqa: E402
@@ -149,9 +150,7 @@ class Every(unittest.TestCase):
         calls = []
         every = runtimes.Every("TestEveryThread", lambda: calls.append(1), 0.01)
         every.start()
-        deadline = time.time() + 10
-        while len(calls) < 3 and time.time() < deadline:
-            time.sleep(0.01)
+        wait_until(lambda: len(calls) >= 3, what="three calls")
         self.assertTrue(every.stop(timeout=5))
         seen = len(calls)
         time.sleep(0.05)

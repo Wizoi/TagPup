@@ -17,6 +17,8 @@ import unittest
 from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from waiting import wait_until  # noqa: E402
 
 from tagpup.core import paths, runs  # noqa: E402
 from tagpup.core.library import Library  # noqa: E402
@@ -42,11 +44,8 @@ class QueueTest(unittest.TestCase):
         return made
 
     def wait_until_idle(self, timeout=10.0):
-        deadline = time.time() + timeout
-        while self.queue.active()["busy"] or self.queue._runner is not None:
-            if time.time() > deadline:
-                self.fail("still busy after %ss: %s" % (timeout, self.queue.active()))
-            time.sleep(0.01)
+        wait_until(lambda: not self.queue.active()["busy"] and self.queue._runner is None, timeout,
+                   what="the queue to be idle")
 
     def statuses(self, folders):
         return [self.queue.status(folder)["status"] for folder in folders]

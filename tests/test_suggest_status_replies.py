@@ -10,12 +10,12 @@ import json
 import os
 import sys
 import threading
-import time
 import unittest
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import page_fixtures  # noqa: E402
 from service_fixture import TempLibrary  # noqa: E402
+from waiting import wait_until  # noqa: E402
 
 from tagpup.core import gpu_turns, paths  # noqa: E402
 from tagpup.jobs import suggestions as jobs  # noqa: E402
@@ -81,14 +81,7 @@ class RepliesForTheBox(unittest.TestCase):
         self.lib.add_folder(*[meta["path"] for meta in self.photos.values()])
 
     def wait_for(self, folder, ready, what):
-        deadline = time.time() + 30
-        while True:
-            reply = self.runs.status(folder)
-            if ready(reply):
-                return reply
-            if time.time() > deadline:
-                self.fail("%s: still %s" % (what, reply))
-            time.sleep(0.02)
+        return wait_until(lambda: (lambda reply: ready(reply) and reply)(self.runs.status(folder)), 30, what=what)
 
     def page_spelling(self, value):
         """`value` with the temporary folder spelled as the page test's."""

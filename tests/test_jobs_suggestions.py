@@ -6,11 +6,11 @@ which runs TagPup's own work. The runs keep what they found in a real library.
 import os
 import sys
 import threading
-import time
 import unittest
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from service_fixture import TempLibrary  # noqa: E402
+from waiting import wait_until  # noqa: E402
 
 from tagpup.core import paths  # noqa: E402
 from tagpup.jobs.suggestions import SuggestionRuns  # noqa: E402
@@ -52,11 +52,7 @@ class RunsCase(unittest.TestCase):
         self.lib.add_folder(*[meta["path"] for meta in self.photos.values()])
 
     def wait_for(self, status, timeout=10):
-        deadline = time.time() + timeout
-        while self.runs.status(self.folder).get("status") != status:
-            if time.time() > deadline:
-                self.fail("still %s" % self.runs.status(self.folder))
-            time.sleep(0.02)
+        wait_until(lambda: self.runs.status(self.folder).get("status") == status, timeout, what="the run " + status)
 
 
 class StartingARun(RunsCase):

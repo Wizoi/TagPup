@@ -31,6 +31,7 @@ WORKSPACE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, WORKSPACE_DIR)
 sys.path.insert(0, os.path.join(WORKSPACE_DIR, "scripts"))
 import own_home  # noqa: E402
+from waiting import wait_until  # noqa: E402
 from free_port import free_port  # noqa: E402
 
 import install_app  # noqa: E402
@@ -501,7 +502,7 @@ class ForReal(unittest.TestCase):
                                "--tagpup-port", str(self.ports["tagpup"]), "--tuner-port", str(self.ports["tuner"])],
                               cwd=self.home.root, stdin=subprocess.DEVNULL, stdout=log, stderr=subprocess.STDOUT)
         self.addCleanup(lambda: old.poll() is None and processes.kill_tree(old.pid))
-        self.wait_until(lambda: self.version(self.ports["tagpup"]) == OLD, why="the old server never answered")
+        wait_until(lambda: self.version(self.ports["tagpup"]) == OLD, 90, 0.2, "the old server to answer")
         return old
 
     def version(self, port):
@@ -510,15 +511,6 @@ class ForReal(unittest.TestCase):
                 return json.loads(reply.read().decode("utf-8"))["version"] or "checkout"
         except OSError:
             return None
-
-    def wait_until(self, check, seconds=90, why="timed out"):
-        deadline = time.time() + seconds
-        while True:
-            found = check()
-            if found:
-                return found
-            self.assertLess(time.time(), deadline, why)
-            time.sleep(0.2)
 
     def hand_over(self):
         return launcher.hand_over(self.installed, sys.executable, self.home.root, say=self.said.append)
@@ -549,7 +541,7 @@ class ForReal(unittest.TestCase):
         hung = processes.start([sys.executable, "-c", script], stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
                                stderr=subprocess.DEVNULL)
         self.addCleanup(lambda: hung.poll() is None and processes.kill_tree(hung.pid))
-        self.wait_until(lambda: launcher.record(port), why="the hung server never said where it answers")
+        wait_until(lambda: launcher.record(port), 90, 0.2, "the hung server to say where it answers")
         self.install(NEW)
         with mock.patch.object(launcher, "HUNG_TIMEOUT", 0.5):
             self.assertTrue(self.hand_over(), self.said)

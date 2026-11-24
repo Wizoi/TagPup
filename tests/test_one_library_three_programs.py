@@ -28,6 +28,7 @@ WORKSPACE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, WORKSPACE_DIR)
 import own_home  # noqa: E402
 import photo_rows  # noqa: E402
+from waiting import wait_until  # noqa: E402
 from free_port import free_port  # noqa: E402
 import migration_names  # noqa: E402
 
@@ -70,13 +71,6 @@ class Waits:
         except OSError:
             return False
 
-    def wait_until(self, check, why, seconds=90):
-        import time
-        deadline = time.time() + seconds
-        while not check():
-            self.assertLess(time.time(), deadline, why)
-            time.sleep(0.2)
-
 
 class OneLibrary(Waits, unittest.TestCase):
     def setUp(self):
@@ -105,12 +99,12 @@ class OneLibrary(Waits, unittest.TestCase):
                                "--tuner-port", str(ports[1])], env=env, cwd=self.home.root, stdin=subprocess.DEVNULL,
                               stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         self.addCleanup(lambda: old.poll() is None and processes.kill_tree(old.pid))
-        self.wait_until(lambda: self.serving(ports[0]), "the server never answered")
+        wait_until(lambda: self.serving(ports[0]), 90, 0.2, "the server to answer")
         mid, go = os.path.join(self.home.root, "mid"), os.path.join(self.home.root, "go")
         writer = processes.start([sys.executable, "-c", WRITER % {"root": WORKSPACE_DIR, "tests": os.path.dirname(os.path.abspath(__file__)), "mid": mid, "go": go, "path": self.path}],
                                  env=env, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         self.addCleanup(lambda: writer.poll() is None and processes.kill_tree(writer.pid))
-        self.wait_until(lambda: os.path.exists(mid), "the CLI's write never began")
+        wait_until(lambda: os.path.exists(mid), 90, 0.2, "the CLI's write to begin")
 
         said = []
         with mock.patch.object(launcher, "QUIET", 0):

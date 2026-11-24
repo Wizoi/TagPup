@@ -397,7 +397,7 @@ class TheMachineMap(unittest.TestCase):
         environ = dict(os.environ, TAGPUP_HOME=self.home.root)
         readers = [processes.start([sys.executable, "-c", script], stdout=-1, stderr=-1, env=environ, text=True)
                    for _ in range(2)]
-        for turn in range(60):
+        for turn in range(60):   # wait: the scenario, a map replaced again and again while two read it
             scratch = self.file + ".new"
             with open(scratch, "w", encoding="utf-8") as handle:
                 handle.write(second if turn % 2 == 0 else first)

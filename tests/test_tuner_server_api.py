@@ -7,7 +7,6 @@ and assertions can be about *which* identity ranks first rather than about a thr
 """
 import os
 import sys
-import time
 import shutil
 import tempfile
 import unittest
@@ -20,6 +19,7 @@ sys.path.insert(0, WORKSPACE_DIR)
 sys.path.insert(0, os.path.join(WORKSPACE_DIR, "scripts"))
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import own_home  # noqa: E402
+from waiting import wait_until  # noqa: E402
 from face_rows import FACE_MODEL  # noqa: E402
 import photo_rows  # noqa: E402
 import face_rows  # noqa: E402
@@ -102,11 +102,7 @@ class TunerAPITestBase(unittest.TestCase):
     def wait_until_idle(self, timeout=20.0):
         """Until nothing is being indexed or waiting. A test that stands in for the CLI
         waits inside its patch, or the worker could reach the real one after it."""
-        deadline = time.time() + timeout
-        while self.index_queue().active()["busy"]:
-            if time.time() > deadline:
-                self.fail("the index queue was still busy after %ss" % timeout)
-            time.sleep(0.05)
+        wait_until(lambda: not self.index_queue().active()["busy"], timeout, 0.05, "the index queue to be idle")
 
     # ---------- helpers ----------
 
@@ -1045,13 +1041,8 @@ class TestTunerFolderIndexing(TunerAPITestBase):
             self.assertEqual(status, 200, body)
 
             q = urllib.parse.quote(folder)
-            deadline = time.time() + 20
-            final = {}
-            while time.time() < deadline:
-                final = self.get(f"/api/folder/index-status?path={q}")
-                if final.get("status") in ("completed", "failed"):
-                    break
-                time.sleep(0.1)
+            final = wait_until(lambda: (lambda reply: reply.get("status") in ("completed", "failed") and reply)(
+                self.get(f"/api/folder/index-status?path={q}")), 20, 0.1, "the folder's index to end")
 
         self.assertEqual(final.get("status"), "completed", final)
         self.assertTrue(popen.called, "the indexer subprocess never started")

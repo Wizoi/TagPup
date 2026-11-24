@@ -19,6 +19,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import corpus  # noqa: E402
 import own_home  # noqa: E402
+from waiting import wait_until  # noqa: E402
 
 from tagpup.core import processes  # noqa: E402
 from tagpup.files.exiftool_session import ExifToolSession  # noqa: E402
@@ -145,10 +146,7 @@ class ATestRunsEightProcesses(ACorpusOfItsOwn):
 
     def test_a_maker_killed_part_way_leaves_no_item_and_the_next_test_makes_it_whole_without_waiting(self):
         killed = self.ask("killed.bin", pause=60)
-        deadline = time.monotonic() + 30
-        while not self.made_by() and time.monotonic() < deadline:
-            time.sleep(0.05)
-        self.assertTrue(self.made_by(), "the maker started")
+        wait_until(self.made_by, timeout=30, interval=0.05, what="the maker to start")
         processes.kill_tree(killed.pid)
         killed.wait(timeout=30)
         parts = self.kept_items()
