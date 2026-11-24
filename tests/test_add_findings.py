@@ -462,6 +462,19 @@ class QueuedWork(unittest.TestCase):
         _, out = run(self.base + ["--claim", "2", "--branch", "worker-two"])
         self.assertIn("claimed #2 for worker-two", out)
 
+    def test_the_list_starts_with_what_can_be_started(self):
+        with open(self.findings, "a", encoding="utf-8", newline="") as handle:
+            handle.write("| 4 | 2026-11-24 | work: after the first. | blocked: #1 |\n"
+                         "| 5 | 2026-11-24 | work: after the queued one. | blocked: #2 |\n"
+                         "| 6 | 2026-11-24 | work: after a closed one. | blocked: #7 |\n"
+                         "| 7 | 2026-11-24 | wrong: done. | fixed: abc1234 |\n")
+        run(self.base + ["--claim", "2", "--branch", "worker-one"])
+        _, out = run(self.base + ["--work"])
+        order = [line.split()[0] for line in out.splitlines() if line.startswith("#")]
+        self.assertEqual(["#6", "#2", "#3", "#4", "#5"], order)
+        self.assertIn("UNBLOCKED", [line for line in out.splitlines() if line.startswith("#6")][0])
+        self.assertNotIn("UNBLOCKED", [line for line in out.splitlines() if line.startswith("#4")][0])
+
     def test_notes_are_appended_in_order_and_move_with_the_row_when_it_closes(self):
         notes = os.path.join(self.folder, "work", "2.md")
         _, first = run(self.base + ["--note", "2", "first thing"])

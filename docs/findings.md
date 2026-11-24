@@ -29,6 +29,14 @@ A reference such as "#726" is found by its number there. The owner's decisions a
   `blocked: owner decides <question>`; it closes (`fixed:`, `decided:` ...) and is archived like any row.
   `--note N "text"` appends a dated line to `work/N.md` (never rewritten); closing the row moves the notes to
   `history/work/N.md`. A branch's `B-n` row has no notes: `--take` it first.
+  **Who does what**: the main session claims, on the trunk, before it launches a worker (`--claim N --branch <the
+  worker's branch>`, committed); a claim made inside a worktree edits this table and conflicts on merge. A worker only
+  notes (`--note N`), which writes a file of its own and merges cleanly, and records in a note what did not work and any
+  follow-up. When it finishes, its last note is `metrics: agent=<type> model=<m> effort=<e> turns=<n> review-rounds=<n>`,
+  so a phase end can tell whether a worker's size and effort paid off (a convention, not parsed). `--work` lists the rows
+  that can be started first (`queued`, then `claimed`, then `blocked`; a row blocked on a closed `#NNNN` is shown
+  UNBLOCKED and listed with the queued). A session starts with `--work`, not a handoff memory; a handoff is written only
+  when a session must stop right now, and says so.
 - **Decisions the owner makes** are marked *(owner, date)*. Don't reopen them without a new fact.
 - **Never put real names here.** The library is photographs of real people.
 - **Numbering is the main session's.** A worker does not number rows into this file (two branches that both do collide on

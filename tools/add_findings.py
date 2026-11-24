@@ -423,6 +423,24 @@ def work_rows(text):
             for line in text.splitlines() if re.match(r"\| \d+ \|", line) and is_work(line) and not is_closed(line)]
 
 
+def ready_first(found, text, today, repo):
+    """[(number, finding, status, flag)] of `work_rows` in the order to start them: queued (and a row blocked on a closed
+    or archived `#NNNN`, flagged UNBLOCKED), then claimed (a day-old claim with no commits flagged STALE), then blocked."""
+    open_numbers = {number for number, _, _ in open_rows(text)} | {number for number, _, _ in work_rows(text)}
+    ranked = []
+    for number, finding, status in found:
+        waits = re.match(r"blocked: #(\d+)", status)
+        if waits and int(waits.group(1)) not in open_numbers:
+            ranked.append((0, number, finding, status, " UNBLOCKED"))
+        elif status.startswith("blocked"):
+            ranked.append((2, number, finding, status, ""))
+        elif status.startswith("claimed"):
+            ranked.append((1, number, finding, status, " STALE" if stale(status, today, repo) else ""))
+        else:
+            ranked.append((0, number, finding, status, ""))
+    return [row[1:] for row in sorted(ranked, key=lambda row: (row[0], row[1]))]
+
+
 def branch_active(repo, branch):
     """True when `branch` has a commit in the last day; a branch that is gone is not active."""
     done = processes.run(["git", "-C", repo, "log", "-1", "--since=1.day.ago", "--format=%H", branch],
@@ -571,8 +589,7 @@ def main(argv=None):
         today = datetime.date.today()
         if args.work:
             found = work_rows(text)
-            for number, finding, status in found:
-                flag = " STALE" if stale(status, today, args.repo) else ""
+            for number, finding, status, flag in ready_first(found, text, today, args.repo):
                 print("#%d %s: %s%s" % (number, status[:60], finding[:70], flag))
             print("%d work row(s)" % len(found))
         if args.note:
