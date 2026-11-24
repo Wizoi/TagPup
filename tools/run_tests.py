@@ -462,7 +462,7 @@ def exiftool_lines(path):
                     why[name] = why.get(name, 0) + n
     except (OSError, ValueError):
         return ["ExifTool: no counts were kept"]
-    lines = ["ExifTool (%s, %s): %d command(s), %d answered from kept answers, %d run, %d process start(s), %d kept" % (
+    lines = ["ExifTool, %s, %s: %d command(s), %d answered from kept answers, %d run, %d process start(s), %d kept" % (
         EXIFTOOL["mode"], exiftool_replay.cache_root(), total.get("commands", 0), total.get("hits", 0),
         total.get("misses", 0), total.get("starts", 0), total.get("kept", 0))]
     lines += ["  %6d  %s" % (n, name) for name, n in sorted(why.items(), key=lambda item: -item[1])]
