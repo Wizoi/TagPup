@@ -26,8 +26,9 @@ package-lock.json
 # Database backups
 backups/
 
-# Each test file's last time, kept by tools/run_tests.py
-tests/.durations.json
+# Each test file's and each test's last time, kept by tools/run_tests.py (with its lock and its half-written copy)
+tests/.durations.json*
+tests/.test_durations.json*
 
 # Where this machine keeps each library's roots (tagpup.config.machine_roots_path): per machine
 machine_roots.json

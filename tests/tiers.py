@@ -9,9 +9,11 @@
               most of the time (about 60% of the suite's seconds in about 10% of its files).
     slow      real processes and real time: the hand-over of one server version to another,
               the installer, and a 68,000-photo library built from nothing.
+    page      the page tests, tests/frontend/*.test.mjs, each file under `node --test` (jsdom):
+              every one of them, by its name, and nothing else.
 
-`tools/run_tests.py` runs all three unless told otherwise: the whole suite is still what
-a commit and a merge run. `--fast` leaves the other two out for the edit loop, `--no-slow`
+`tools/run_tests.py` runs all four unless told otherwise: the whole suite is still what
+a commit and a merge run. `--fast` leaves out scenario, slow and page for the edit loop, `--no-slow`
 leaves out the slow one. A file is in exactly one tier, and
 tests/test_the_test_map.py fails a name that is not a test file, so a rename
 cannot quietly move a scenario into the fast tier.
@@ -115,11 +117,13 @@ SCENARIO = frozenset({
     "test_ffmpeg_is_a_prerequisite",
 })
 
-TIERS = ("fast", "scenario", "slow")
+TIERS = ("fast", "scenario", "slow", "page")
 
 
 def tier_of(module):
-    """'slow', 'scenario' or 'fast' for a test module's name (test_x)."""
+    """'slow', 'scenario' or 'fast' for a test module's name (test_x), 'page' for a page test's (x.test.mjs)."""
+    if module.endswith(".test.mjs"):
+        return "page"
     if module in SLOW:
         return "slow"
     if module in SCENARIO:
