@@ -22,6 +22,13 @@ A reference such as "#726" is found by its number there. The owner's decisions a
   - `watching`: nothing to do until it is reported again or reproduced *(owner, 2026-11-02)*. The row is moved by
     `tools/add_findings.py --watch N "why"` to [watching.md](watching.md): not counted open, not brought up in a report;
     **read watching.md when an issue is reported**, to see whether it is one of those. A reproduced one goes back here by hand.
+- **Queued work** *(owner, 2026-11-24)*: a row whose Finding starts `work:` is work to do or in flight, kept here instead
+  of a prose handoff. It never blocks a merge and `--open` does not list it; `tools/add_findings.py --work` does. Its status
+  is `queued`, `claimed: <branch> <date>` (`--claim N`, refused when already claimed, closed or blocked; a claim over a day
+  old whose branch has no commit in the last day is shown STALE and may be claimed again) or `blocked: #NNNN` /
+  `blocked: owner decides <question>`; it closes (`fixed:`, `decided:` ...) and is archived like any row.
+  `--note N "text"` appends a dated line to `work/N.md` (never rewritten); closing the row moves the notes to
+  `history/work/N.md`. A branch's `B-n` row has no notes: `--take` it first.
 - **Decisions the owner makes** are marked *(owner, date)*. Don't reopen them without a new fact.
 - **Never put real names here.** The library is photographs of real people.
 - **Numbering is the main session's.** A worker does not number rows into this file (two branches that both do collide on

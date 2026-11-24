@@ -25,6 +25,18 @@ A new `low` row says `live: N` (rows it touches, counted read-only) or `user act
 `decided: no live instance, not built` in the same call (retro 2026-11-14).
 Nothing is written unless every row parses and every numbered row exists.
 
+Queued work and in-flight notes live beside findings (owner, 2026-11-24). A row whose Finding starts `work:` is queued work:
+it never blocks a merge and `--open` does not list it. Its status is `queued`, `claimed: <branch> <date>` or
+`blocked: <reason>`, then closes like any row (and is archived).
+
+    python tools/add_findings.py --work                      # the queued, claimed and blocked work rows; a stale claim flagged
+    python tools/add_findings.py --claim 3012 [--branch NAME]  # refused if claimed (unless stale), closed, blocked or not work
+    python tools/add_findings.py --note 3012 "tried X; Y fails because Z"   # appends a dated line to docs/work/3012.md
+
+A claim over a day old whose branch has no commit in the last day (or is gone) is STALE and may be claimed again. A note is
+appended, never rewritten; closing a row moves docs/work/N.md to docs/history/work/. Notes of a branch's `B-n` row are not
+supported: number the row first (`--take`).
+
 A worker on a branch does NOT number into findings.md: two branches that both number
 rows collide on merge, and the second is renumbered by hand. A worker keeps its rows in
 a file of its own, with provisional numbers, which merges without a conflict:
@@ -41,6 +53,7 @@ gives each row its number in findings.md in order, replaces a `B-n` named in ano
 the file by the number, and removes the file. Prints the numbers given.
 """
 import argparse
+import datetime
 import os
 import re
 import sys
@@ -104,12 +117,12 @@ def is_closed(line):
 
 
 def open_rows(text):
-    """[(number, severity, status)] of the numbered rows whose status is not a closed word, in order. A `planned:`
+    """[(number, severity, status)] of the numbered rows (not work rows) whose status is not a closed word, in order. A `planned:`
     or `tabled` row is open: something is still waiting on it (retro 2026-10-18)."""
     found = []
     for line in text.splitlines():
         match = re.match(r"^\| (\d+) \|", line)
-        if match and not is_closed(line):
+        if match and not is_closed(line) and not is_work(line):
             cells = [c.strip() for c in line.strip().strip("|").split("|")]
             found.append((int(match.group(1)), cells[2].split(":", 1)[0][:12], row_status(line)[:60]))
     return found
@@ -392,6 +405,86 @@ def git_files(repo):
     return files_of
 
 
+#: Queued work and in-flight notes live beside findings (owner, 2026-11-24). A row whose Finding starts `work:` is queued
+#: work; its status is `queued`, `claimed: <branch> <date>` or `blocked: <reason>` until it closes like any row.
+WORK = re.compile(r"work:", re.I)
+CLAIMED = re.compile(r"claimed: (\S+) (\d{4}-\d{2}-\d{2})\b")
+WORK_DIR = os.path.join(ROOT, "docs", "work")
+
+
+def is_work(line):
+    cells = line.strip().strip("|").split("|")
+    return len(cells) > 2 and bool(WORK.match(cells[2].strip()))
+
+
+def work_rows(text):
+    """[(number, finding, status)] of the work rows that are queued, claimed or blocked, in order."""
+    return [(int(re.match(r"\| (\d+) \|", line).group(1)), line.strip().strip("|").split("|")[2].strip(), row_status(line))
+            for line in text.splitlines() if re.match(r"\| \d+ \|", line) and is_work(line) and not is_closed(line)]
+
+
+def branch_active(repo, branch):
+    """True when `branch` has a commit in the last day; a branch that is gone is not active."""
+    done = processes.run(["git", "-C", repo, "log", "-1", "--since=1.day.ago", "--format=%H", branch],
+                         capture_output=True, text=True, encoding="utf-8", errors="replace")
+    return done.returncode == 0 and bool(done.stdout.strip())
+
+
+def stale(status, today, repo):
+    """The claim `status` names a day-old claim whose branch has no commit in the last day (a closed laptop)."""
+    held = CLAIMED.match(status)
+    return bool(held and (today - datetime.date.fromisoformat(held.group(2))).days >= 1
+                and not branch_active(repo, held.group(1)))
+
+
+def claim(text, key, branch, today, repo):
+    """`text` with work row `key` claimed by `branch`; ValueError says why a row cannot be claimed."""
+    match = re.search(r"^\| %s \|[^\n]*$" % re.escape(str(key)), text, re.M)
+    if not match:
+        raise ValueError("no finding #%s" % key)
+    line, status = match.group(0), row_status(match.group(0))
+    if not is_work(line):
+        raise ValueError("#%s is not a work row" % key)
+    if is_closed(line):
+        raise ValueError("#%s is closed: %s" % (key, status))
+    if not re.match(r"queued\b", status) and not stale(status, today, repo):
+        raise ValueError("#%s is not free: %s" % (key, status))
+    return set_status(text, key, "claimed: %s %s" % (branch, today.isoformat()))
+
+
+def note(text, key, work_dir, stamp, words):
+    """Append a dated line to the notes of open row `key` (one write, so two workers' lines stay whole). Returns the
+    number of lines the notes now hold; ValueError when the row is missing or closed."""
+    match = re.search(r"^\| %s \|[^\n]*$" % re.escape(str(key)), text, re.M)
+    if not match:
+        raise ValueError("no finding #%s" % key)
+    if is_closed(match.group(0)):
+        raise ValueError("#%s is closed: its notes were archived with it" % key)
+    path = os.path.join(work_dir, "%s.md" % key)
+    os.makedirs(work_dir, exist_ok=True)
+    head = "" if os.path.exists(path) else "# Notes on #%s\n" % key
+    with open(path, "a", encoding="utf-8", newline="") as handle:
+        handle.write(head + "%s %s\n" % (stamp, words.strip()))
+    with open(path, encoding="utf-8", newline="") as handle:
+        return len(handle.read().splitlines()) - 1
+
+
+def settle_notes(text, archives, work_dir, kept_dir):
+    """Move the notes of every closed row (in `text` or an archive) to `kept_dir`; returns their numbers."""
+    if not os.path.isdir(work_dir):
+        return []
+    closed = {int(m.group(1)) for line in text.splitlines() if (m := re.match(r"\| (\d+) \|", line)) and is_closed(line)}
+    closed |= {int(n) for body in archives.values() for n in NUMBERED.findall(body)}
+    moved = []
+    for name in sorted(os.listdir(work_dir)):
+        if re.fullmatch(r"\d+\.md", name) and int(name[:-3]) in closed:
+            os.makedirs(kept_dir, exist_ok=True)
+            os.replace(os.path.join(work_dir, name), os.path.join(kept_dir, name))
+            moved.append(int(name[:-3]))
+    return moved
+
+
+
 def existing_rows(*texts):
     return {int(m.group(1)): line for text in texts for line in text.splitlines()
             if (m := re.match(r"\| (\d+) \|", line))}
@@ -446,6 +539,11 @@ def main(argv=None):
     parser.add_argument("--watching-file", default=WATCHING, help=argparse.SUPPRESS)
     parser.add_argument("--branch-file", metavar="PATH", help="keep the rows (and statuses) in this file with B-n numbers")
     parser.add_argument("--take", metavar="PATH", help="number a branch's file into findings.md and remove it")
+    parser.add_argument("--work", action="store_true", help="list the queued, claimed and blocked work rows")
+    parser.add_argument("--claim", metavar="NUMBER", help="claim a queued work row for this branch")
+    parser.add_argument("--branch", help="the branch --claim records (default: the current one)")
+    parser.add_argument("--note", nargs=2, metavar=("NUMBER", "TEXT"), help="append a dated line to docs/work/NUMBER.md")
+    parser.add_argument("--work-dir", default=WORK_DIR, help=argparse.SUPPRESS)
     parser.add_argument("--findings", default=FINDINGS, help=argparse.SUPPRESS)
     parser.add_argument("--archive-dir", default=ARCHIVE_DIR, help=argparse.SUPPRESS)
     parser.add_argument("--repo", default=ROOT, help=argparse.SUPPRESS)
@@ -466,6 +564,32 @@ def main(argv=None):
         for number, severity, status in found:
             print("#%d %s: %s" % (number, severity, status))
         print("%d open" % len(found))
+        return 0
+
+    if args.work or args.claim or args.note:
+        text = _read(args.findings).replace("\r\n", "\n")
+        today = datetime.date.today()
+        if args.work:
+            found = work_rows(text)
+            for number, finding, status in found:
+                flag = " STALE" if stale(status, today, args.repo) else ""
+                print("#%d %s: %s%s" % (number, status[:60], finding[:70], flag))
+            print("%d work row(s)" % len(found))
+        if args.note:
+            try:
+                lines = note(text, args.note[0], args.work_dir, datetime.datetime.now().strftime("%Y-%m-%d %H:%M"), args.note[1])
+            except ValueError as why:
+                parser.error(str(why))
+            print("noted #%s, line %d" % (args.note[0], lines))
+        if args.claim:
+            branch = args.branch or processes.run(["git", "-C", args.repo, "rev-parse", "--abbrev-ref", "HEAD"],
+                                                  capture_output=True, text=True).stdout.strip()
+            try:
+                claimed = claim(text, args.claim, branch, today, args.repo)
+            except ValueError as why:
+                parser.error(str(why))
+            _write(args.findings, claimed, "\r\n" if "\r\n" in _read(args.findings) else "\n")
+            print("claimed #%s for %s" % (args.claim, branch))
         return 0
 
     if args.branch_file:
@@ -535,6 +659,8 @@ def main(argv=None):
         _write(args.watching_file, watching, newline)
     for name, body in changed.items():
         _write(os.path.join(args.archive_dir, name), body)
+    for number in settle_notes(text, {**archives, **changed}, args.work_dir, os.path.join(args.archive_dir, "work")):
+        print("notes of #%d moved to docs/history/work/" % number)
     if args.take:
         os.remove(args.take)
         print("numbered %s" % ", ".join("%s -> %d" % pair for pair in mapping.items()))
