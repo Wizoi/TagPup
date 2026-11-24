@@ -11,7 +11,6 @@ import socket
 import subprocess
 import sys
 import tempfile
-import time
 import unittest
 import urllib.request
 from unittest import mock
@@ -335,7 +334,9 @@ class AServerOfAnotherVersionRunning(InstallCase):
 
         def slow_install(*args, **kwargs):
             gate.set()
-            time.sleep(1.0)   # wait: the scenario, an install under way as the second launcher asks
+            # The scenario: an install under way as the second launcher asks, until it says it waits.
+            wait_until(lambda: any("another install is running" in line for line in self.said), 30,
+                       what="the second launcher to say it waits for the install under way")
             made.append(real_install(*args, **kwargs)[0])
             return made[-1], []
         answers = {"rev-parse": "bfeb9b7", "status": ""}
