@@ -1,7 +1,7 @@
 """The fixture every service test uses: a temporary library with a photos folder.
 
-The schema is made the way the app makes it (PhotoIndex, until the store owns the
-schema), never written out by hand: a test against a hand-made table agrees with the
+The schema is made the way the app makes it (schema.ensure, once per run, the library copied for each test:
+tests/corpus.py), never written out by hand: a test against a hand-made table agrees with the
 test, not with the library. No server is imported; a service is called directly.
 """
 import json
@@ -15,8 +15,8 @@ WORKSPACE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, WORKSPACE_DIR)
 sys.path.insert(0, os.path.join(WORKSPACE_DIR, "scripts"))
 
+import corpus  # noqa: E402
 from face_rows import add_face  # noqa: E402
-from tagpup.services.search import PhotoIndex  # noqa: E402
 from tagpup.core.library import Library  # noqa: E402
 from tagpup.store import db  # noqa: E402
 
@@ -28,10 +28,7 @@ class TempLibrary:
         self.root = tempfile.mkdtemp(prefix="tagpup_service_")
         self.photos = os.path.join(self.root, "Photos")
         os.makedirs(self.photos)
-        self.library = Library(os.path.join(self.root, "library.db"))
-        index = PhotoIndex(db_path=self.library.path)
-        index.load()
-        index.close()
+        self.library = Library(corpus.library(os.path.join(self.root, "library.db")))
         testcase.addCleanup(self.remove)
 
     def photo(self, name, content=b"not really a photo"):
