@@ -23,10 +23,11 @@ import unittest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import corpus  # noqa: E402
 import test_a_clip_dated_through_the_journal as dated  # noqa: E402
 import test_a_clip_tagged_through_the_journal as tagged  # noqa: E402
 
-from tagpup.core import dates, processes  # noqa: E402
+from tagpup.core import dates  # noqa: E402
 from tagpup.files.exiftool_session import ExifToolSession  # noqa: E402
 
 EXIFTOOL = tagged.EXIFTOOL
@@ -39,12 +40,11 @@ FOLDER = "2021-05-01 Harbour"
 
 
 def zeroed_clip(path, creation_time=None):
-    """A real ffmpeg clip at `path`: its QuickTime dates zeros, or `creation_time` (UTC) in each header."""
+    """A real ffmpeg clip at `path` (made once and kept, tests/corpus.py): its QuickTime dates zeros, or
+    `creation_time` (UTC) in each header."""
     stamp = ["-metadata", "creation_time=" + creation_time] if creation_time else []
-    made = processes.run([TOOLS.ffmpeg, "-y", "-loglevel", "error", "-f", "lavfi", "-i", "testsrc=size=160x120:rate=10",
-                          "-t", "1", "-pix_fmt", "yuv420p", *stamp, path], capture_output=True)
-    assert made.returncode == 0, made.stderr
-    return path
+    return corpus.clip(path, ["-y", "-loglevel", "error", "-f", "lavfi", "-i", "testsrc=size=160x120:rate=10",
+                              "-t", "1", "-pix_fmt", "yuv420p", *stamp], TOOLS.ffmpeg)
 
 
 @unittest.skipIf(EXIFTOOL is None or TOOLS.problem, "ExifTool or ffmpeg is not installed on this machine")

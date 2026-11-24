@@ -35,6 +35,7 @@ from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import corpus  # noqa: E402
 import page_fixtures  # noqa: E402
 import photo_rows  # noqa: E402
 import test_a_clip_patched_in_place as patched  # noqa: E402
@@ -43,7 +44,7 @@ from test_a_clip_tagged_through_the_journal import EXIFTOOL, TOOLS, ALibraryHold
 from test_file_journal import Crash, crash_at  # noqa: E402
 from view_library import ViewLibrary  # noqa: E402
 
-from tagpup.core import fields, paths, processes  # noqa: E402
+from tagpup.core import fields, paths  # noqa: E402
 from tagpup.core.result import Result  # noqa: E402
 from tagpup.files import (clip_convert, containers, field_values, in_place, metadata, recycle_bin,  # noqa: E402
                           shares, video_frames)
@@ -77,15 +78,14 @@ CONVERT_REPLIES = page_fixtures.path_of("convert_replies.json")
 
 def make_clip(path, title=None, created=None, taken=None):
     """A one-second clip at `path` in the old format its extension names (FORMATS), with sound, titled `title`; `created`,
-    its container's creation time (a .wmv's ASF one is when its file was made: never its Date Taken); a .wmv `taken`,
-    dated so in its XMP (wmv_dated)."""
+    its container's creation time (a .wmv's ASF one is when its file was made, here when the corpus made it, perhaps
+    days ago: never its Date Taken); a .wmv `taken`, dated so in its XMP (wmv_dated). Made once and kept (tests/corpus.py)."""
     video, audio, container = FORMATS[os.path.splitext(path)[1]]
     titled = ["-metadata", "title=" + title] if title else []
     titled += ["-metadata", "creation_time=" + created] if created else []
-    made = processes.run([TOOLS.ffmpeg, "-y", "-loglevel", "error", "-f", "lavfi", "-i", "testsrc=size=160x120:rate=25",
-                          "-f", "lavfi", "-i", "sine=frequency=440:sample_rate=22050", "-t", "1", "-c:v", video,
-                          "-c:a", audio] + titled + ["-f", container, path], capture_output=True)
-    assert made.returncode == 0, made.stderr
+    corpus.clip(path, ["-y", "-loglevel", "error", "-f", "lavfi", "-i", "testsrc=size=160x120:rate=25",
+                       "-f", "lavfi", "-i", "sine=frequency=440:sample_rate=22050", "-t", "1", "-c:v", video,
+                       "-c:a", audio] + titled + ["-f", container], TOOLS.ffmpeg)
     return wmv_dated(path, taken) if taken else path
 
 
@@ -880,12 +880,10 @@ def make_mov(path, crf, created=CREATED, apple=None):
     ("2018-03-02T09:15:00-0700", its Apple CreationDate, read before the creation time)."""
     container = "mp4" if path.endswith(".mp4") else "mov"
     phone = ["-metadata", "com.apple.quicktime.creationdate=" + apple, "-movflags", "use_metadata_tags"] if apple else []
-    made = processes.run([TOOLS.ffmpeg, "-y", "-loglevel", "error", "-f", "lavfi", "-i", "testsrc=size=320x240:rate=25",
-                          "-f", "lavfi", "-i", "sine=frequency=440:sample_rate=22050", "-t", "1", "-c:v", "libx264",
-                          "-preset", "ultrafast", "-crf", str(crf), "-pix_fmt", "yuv420p", "-c:a", "aac",
-                          "-metadata", "creation_time=" + created] + phone + ["-f", container, path], capture_output=True)
-    assert made.returncode == 0, made.stderr
-    return path
+    return corpus.clip(path, ["-y", "-loglevel", "error", "-f", "lavfi", "-i", "testsrc=size=320x240:rate=25",
+                              "-f", "lavfi", "-i", "sine=frequency=440:sample_rate=22050", "-t", "1", "-c:v", "libx264",
+                              "-preset", "ultrafast", "-crf", str(crf), "-pix_fmt", "yuv420p", "-c:a", "aac",
+                              "-metadata", "creation_time=" + created] + phone + ["-f", container], TOOLS.ffmpeg)
 
 
 class ThePanelButtons(AnOldClipInTheLibrary):

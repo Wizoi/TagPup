@@ -31,12 +31,13 @@ from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import corpus  # noqa: E402
 import own_home  # noqa: E402
 import web_client  # noqa: E402
 from view_library import ViewLibrary, make_jpeg  # noqa: E402
 
 from tagpup import config  # noqa: E402
-from tagpup.core import paths, processes  # noqa: E402
+from tagpup.core import paths  # noqa: E402
 from tagpup.files import recycle_bin, shares  # noqa: E402
 from tagpup.services import file_changes, thumbnails  # noqa: E402
 from tagpup.services import photos as photo_service  # noqa: E402
@@ -68,10 +69,9 @@ class APhotoAndAClip(unittest.TestCase):
         make_jpeg(self.photo_path, size=(32, 32))
         self.photo = self.vl.photo("Harbour", "pier.jpg", at=self.photo_path)
         self.clip_path = os.path.join(self.folder, "jetty.mov")
-        made = processes.run([TOOLS.ffmpeg, "-y", "-loglevel", "error", "-f", "lavfi", "-i", "testsrc=size=160x120:rate=10",
-                              "-t", "1", "-pix_fmt", "yuv420p", "-metadata", "creation_time=2021-07-04T18:30:00Z",
-                              self.clip_path], capture_output=True)
-        self.assertEqual(0, made.returncode, made.stderr)
+        corpus.clip(self.clip_path, ["-y", "-loglevel", "error", "-f", "lavfi", "-i", "testsrc=size=160x120:rate=10",
+                                     "-t", "1", "-pix_fmt", "yuv420p", "-metadata", "creation_time=2021-07-04T18:30:00Z"],
+                    TOOLS.ffmpeg)
         self.clip = self.vl.photo("Harbour", "jetty.mov", at=self.clip_path)
         self.assertEqual([("video",)], self.vl.rows("SELECT kind FROM photos WHERE id = ?", self.clip),
                          "the clip's row is of kind video, as the indexer records it")

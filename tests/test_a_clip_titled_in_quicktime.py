@@ -23,10 +23,10 @@ import unittest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import corpus  # noqa: E402
 from test_a_clip_tagged_through_the_journal import EXIFTOOL, TOOLS, ALibraryHoldingAClip  # noqa: E402
 
 from tests import page_writes  # noqa: E402
-from tagpup.core import processes  # noqa: E402
 from tagpup.files import containers, metadata  # noqa: E402
 from tagpup.files.exiftool_session import ExifToolSession  # noqa: E402
 
@@ -38,10 +38,9 @@ class AClipTitledInQuickTime(ALibraryHoldingAClip):
     def setUp(self):
         super().setUp()
         self.clip_path = os.path.join(self.folder, "slipway.mp4")
-        made = processes.run([TOOLS.ffmpeg, "-y", "-loglevel", "error", "-f", "lavfi", "-i", "testsrc=size=160x120:rate=10",
-                              "-t", "1", "-pix_fmt", "yuv420p", "-metadata", "title=" + QUICKTIME_TITLE, self.clip_path],
-                             capture_output=True)
-        self.assertEqual(0, made.returncode, made.stderr)
+        corpus.clip(self.clip_path, ["-y", "-loglevel", "error", "-f", "lavfi", "-i", "testsrc=size=160x120:rate=10",
+                                     "-t", "1", "-pix_fmt", "yuv420p", "-metadata", "title=" + QUICKTIME_TITLE],
+                    TOOLS.ffmpeg)
         self.assertEqual((QUICKTIME_TITLE, None), self.titles(), "the clip holds its title in QuickTime alone")
         self.clip, = self.index(self.clip_path)
 
@@ -143,9 +142,8 @@ class AClipTitledInQuickTime(ALibraryHoldingAClip):
 
     def test_a_movs_title_in_its_item_list_is_cleared_and_undone(self):
         self.clip_path = os.path.join(self.folder, "slipway.mov")
-        made = processes.run([TOOLS.ffmpeg, "-y", "-loglevel", "error", "-f", "lavfi", "-i", "testsrc=size=160x120:rate=10",
-                              "-t", "1", "-pix_fmt", "yuv420p", self.clip_path], capture_output=True)
-        self.assertEqual(0, made.returncode, made.stderr)
+        corpus.clip(self.clip_path, ["-y", "-loglevel", "error", "-f", "lavfi", "-i", "testsrc=size=160x120:rate=10",
+                                     "-t", "1", "-pix_fmt", "yuv420p"], TOOLS.ffmpeg)
         with ExifToolSession(executable=EXIFTOOL) as et:
             et.set_tags([self.clip_path], tags={"ItemList:Title": QUICKTIME_TITLE}, params=["-overwrite_original"])
         with open(self.clip_path, "rb") as handle:

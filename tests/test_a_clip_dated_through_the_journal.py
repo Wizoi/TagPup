@@ -43,12 +43,13 @@ from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import corpus  # noqa: E402
 import test_a_clip_tagged_through_the_journal as tagged  # noqa: E402
 from test_a_clip_patch_cut_short import cut_half_way  # noqa: E402
 from test_file_journal import Crash, crash_at  # noqa: E402
 
 from tests import page_writes  # noqa: E402
-from tagpup.core import fields, processes  # noqa: E402
+from tagpup.core import fields  # noqa: E402
 from tagpup.core.result import Refused  # noqa: E402
 from tagpup.files import clip_patch, containers, field_values, images, in_place, lock_owners  # noqa: E402
 from tagpup.files.exiftool_session import ExifToolSession  # noqa: E402
@@ -144,10 +145,9 @@ class AClipDatedThroughTheJournal(tagged.ALibraryHoldingAClip):
     def setUp(self):
         super().setUp()
         # As a camera leaves a clip: its QuickTime dates set (ffmpeg writes creation_time into each header), in UTC.
-        made = processes.run([TOOLS.ffmpeg, "-y", "-loglevel", "error", "-f", "lavfi", "-i", "testsrc=size=160x120:rate=10",
-                              "-t", "1", "-pix_fmt", "yuv420p", "-metadata", "creation_time=2020-07-04T18:30:00Z",
-                              self.clip_path], capture_output=True)
-        self.assertEqual(0, made.returncode, made.stderr)
+        corpus.clip(self.clip_path, ["-y", "-loglevel", "error", "-f", "lavfi", "-i", "testsrc=size=160x120:rate=10",
+                                     "-t", "1", "-pix_fmt", "yuv420p", "-metadata", "creation_time=2020-07-04T18:30:00Z"],
+                    TOOLS.ffmpeg)
         with ExifToolSession(executable=EXIFTOOL) as et:
             et.set_tags([self.photo_path], tags={"EXIF:DateTimeOriginal": PHOTO_TAKEN}, params=["-overwrite_original"])
 

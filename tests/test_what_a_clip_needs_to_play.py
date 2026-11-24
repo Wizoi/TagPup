@@ -23,6 +23,7 @@ from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import corpus  # noqa: E402
 import web_client  # noqa: E402
 from view_library import ViewLibrary  # noqa: E402
 
@@ -48,11 +49,9 @@ CLIPS = {
 def make(folder, name):
     picture, sound = CLIPS[name]
     target = os.path.join(folder, name)
-    done = processes.run([TOOLS.ffmpeg, "-v", "error", "-y", "-f", "lavfi", "-i", "testsrc2=size=64x48:rate=10:duration=1",
-                          "-f", "lavfi", "-i", "sine=frequency=440:duration=1", "-c:v", picture, "-c:a", sound,
-                          "-pix_fmt", "yuv420p", target], capture_output=True, timeout=60)
-    assert done.returncode == 0, done.stderr.decode("utf-8", "replace")
-    return target
+    return corpus.clip(target, ["-v", "error", "-y", "-f", "lavfi", "-i", "testsrc2=size=64x48:rate=10:duration=1",
+                                "-f", "lavfi", "-i", "sine=frequency=440:duration=1", "-c:v", picture, "-c:a", sound,
+                                "-pix_fmt", "yuv420p"], TOOLS.ffmpeg)
 
 
 class ThePlanOfEachClip(unittest.TestCase):
