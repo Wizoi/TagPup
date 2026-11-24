@@ -2,6 +2,7 @@
 rows, keeps a worker's rows in a file of its own until the main session numbers them, and refuses a third fix for one
 place."""
 import contextlib
+import datetime
 import io
 import os
 import shutil
@@ -409,6 +410,75 @@ class Files(unittest.TestCase):
         run(self.base + [rows, "--branch-file", branch])
         run(self.base + ["--take", branch])
         self.assertIn("| 252 | 2026-10-09 | New. | open |", self.read(self.findings))
+
+
+class QueuedWork(unittest.TestCase):
+    """Queued work and in-flight notes live beside findings: two sessions, a closed laptop, a row closed with notes."""
+    WORK = """| # | Found | Finding | Status |
+|---|---|---|---|
+| 1 | 2026-11-24 | wrong: a result. | open |
+| 2 | 2026-11-24 | work: build the thing. | queued |
+| 3 | 2026-11-24 | work: wait for the owner. | blocked: owner decides which |
+"""
+
+    def setUp(self):
+        self.folder = tempfile.mkdtemp()
+        self.addCleanup(lambda: shutil.rmtree(self.folder, ignore_errors=True))
+        self.findings = os.path.join(self.folder, "findings.md")
+        with open(self.findings, "w", encoding="utf-8", newline="") as handle:
+            handle.write(self.WORK)
+        self.base = ["--findings", self.findings, "--archive-dir", os.path.join(self.folder, "history"),
+                     "--watching-file", os.path.join(self.folder, "watching.md"),
+                     "--work-dir", os.path.join(self.folder, "work"), "--repo", ROOT]
+
+    def read(self, *path):
+        with open(os.path.join(*path), encoding="utf-8", newline="") as handle:
+            return handle.read()
+
+    def refused(self, argv):
+        with contextlib.redirect_stderr(io.StringIO()) as err, self.assertRaises(SystemExit) as raised:
+            run(self.base + argv)
+        self.assertNotEqual(0, raised.exception.code)
+        return err.getvalue()
+
+    def test_two_sessions_claim_one_row_and_a_claim_left_by_a_closed_laptop_is_stale(self):
+        _, out = run(self.base + ["--open"])
+        self.assertIn("1 open", out)
+        _, out = run(self.base + ["--claim", "2", "--branch", "worker-one"])
+        self.assertIn("claimed #2 for worker-one", out)
+        self.assertIn("claimed: worker-one " + datetime.date.today().isoformat(), self.read(self.findings))
+        self.assertIn("is not free", self.refused(["--claim", "2", "--branch", "worker-two"]))
+        self.assertIn("worker-one", self.read(self.findings))
+        self.assertNotIn("worker-two", self.read(self.findings))
+        self.assertIn("is not a work row", self.refused(["--claim", "1"]))
+        self.assertIn("is not free", self.refused(["--claim", "3"]))
+        self.assertIn("no finding #9", self.refused(["--claim", "9"]))
+        _, out = run(self.base + ["--work"])
+        self.assertNotIn("STALE", out)
+        self.assertIn("2 work row(s)", out)
+        run(self.base + ["--status", "2", "claimed: gone-branch 2026-11-01"])
+        _, out = run(self.base + ["--work"])
+        self.assertIn("claimed: gone-branch 2026-11-01: work: build the thing. STALE", out)
+        _, out = run(self.base + ["--claim", "2", "--branch", "worker-two"])
+        self.assertIn("claimed #2 for worker-two", out)
+
+    def test_notes_are_appended_in_order_and_move_with_the_row_when_it_closes(self):
+        notes = os.path.join(self.folder, "work", "2.md")
+        _, first = run(self.base + ["--note", "2", "first thing"])
+        _, second = run(self.base + ["--note", "2", "second thing"])
+        self.assertIn("noted #2, line 1", first)
+        self.assertIn("noted #2, line 2", second)
+        lines = self.read(notes).splitlines()
+        self.assertEqual("# Notes on #2", lines[0])
+        self.assertTrue(lines[1].endswith(" first thing") and lines[2].endswith(" second thing"))
+        self.assertIn("no finding #9", self.refused(["--note", "9", "x"]))
+        _, out = run(self.base + ["--status", "2", "fixed: abc1234"])
+        self.assertIn("notes of #2 moved", out)
+        self.assertFalse(os.path.exists(notes))
+        self.assertEqual(lines, self.read(self.folder, "history", "work", "2.md").splitlines())
+        self.assertIn("is closed", self.refused(["--note", "2", "late"]))
+        self.assertIn("is not free", self.refused(["--claim", "3"]))
+        self.assertIn("is closed", self.refused(["--claim", "2"]))
 
 
 class ALowNeedsALiveCount(unittest.TestCase):

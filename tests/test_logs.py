@@ -43,6 +43,7 @@ HANDLER_OWNER = os.path.join("tagpup", "logs.py")
 #: Files opened for appending in shipped code, and why each is bounded.
 APPENDED = {
     os.path.join("tagpup", "launcher.py"): "the output of a server an install started, rotated the same way as it starts",
+    os.path.join("tools", "add_findings.py"): "a row's notes (docs/work/N.md), moved to docs/history/work when the row closes",
 }
 
 FILE_HANDLERS = re.compile(r"\b(?:FileHandler|RotatingFileHandler|TimedRotatingFileHandler|WatchedFileHandler)\s*\(")
