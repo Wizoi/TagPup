@@ -33,7 +33,7 @@ time) is when the item was made, perhaps days before: no assertion reads it (a .
 
 Two processes asking for one item at once (two tests, or two runs in two worktrees): the maker takes a turn on its
 folder's lock for the item (one of STRIPES, tagpup.core.byte_lock), looks again, and makes it under a name of its own
-(`<key>-part-<pid><ext>`) that it renames into place (os.replace), so the item's name only ever holds a whole item. A
+(`<key>-part-making<ext>`) that it renames into place (os.replace), so the item's name only ever holds a whole item. A
 run killed part-way leaves at most a part file, never read (and deleted by the next eviction once STALE), and a lock
 the system lets go of. A folder deleted mid-run, or an item evicted by another process while this one copies it, is
 made again by the next test that asks. An item is read-only (its read-only attribute, set before it takes its name): a
@@ -203,8 +203,8 @@ def _make(source, build, keep):
         if os.path.exists(source):
             return   # another process made it while this one waited
         stem, ext = os.path.splitext(source)
-        part = "%s-part-%d%s" % (stem, os.getpid(), ext)
-        _discard(part)   # left by a process of this number killed part-way
+        part = "%s-part-making%s" % (stem, ext)
+        _discard(part)   # left by a maker killed part-way (one maker at a time holds the item's lock; the part carries no process number: a file's name is in the ExifTool replay key)
         try:
             build(part)
             os.chmod(part, stat.S_IREAD)
