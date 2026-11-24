@@ -75,3 +75,22 @@ a speed claim (docs/DEVELOPMENT.md, "Performance work").
 
 A RAM disk, `journal_mode=OFF` (breaks the undo journal), machine-learning test selection, antivirus exclusions (a setting on
 the owner's machine; measure by a run with and without, and tell the owner, never change it).
+
+## How a cut is measured (owner, 2026-11-24)
+
+A cut is judged on a fixed **benchmark subset**, about 20 files and 1 to 2 minutes at 8 jobs, run on a quiet machine and
+compared with the same subset at the baseline commit (a1309417, run once in a worktree of it). The full suite runs once at
+the end of the planned cuts (and the commit gate of CLAUDE.md is met there), not after each cut; each cut meets `--fast`,
+`tools/affected_tests.py` and the files it changed. The subset is stratified by what makes a file slow, and each stratum's
+change is reported, never one blended percentage, because a cut helps one cause and not another:
+
+    ExifTool setup:   test_file_journal test_bulk_edits test_stale_record_precondition test_a_photo_patched_in_place test_time_shift test_a_clip_patched_in_place
+    library, SQLite:  test_migrations test_batches test_tag_tree_edits_are_batches test_taxonomy_lifecycle
+    waits, watchers:  test_an_index_reads_the_next_photos_ahead test_sync
+    server, process:  test_server_drain test_web_app
+    ffmpeg clips:     test_a_clip_deleted test_a_clip_renamed
+    page tier:        activity-page.test.mjs navigator.test.mjs
+
+    .venv/Scripts/python.exe tools/run_tests.py <the names above>
+
+Re-pick the list only when a file is renamed or a cut makes one of its causes disappear; say so in the note of that cut.
