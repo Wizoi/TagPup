@@ -37,6 +37,10 @@ sent as a C string (`#[CSTR]`, ExifTool 11.08 or later: see CSTR); every other g
 Its ExifTool ends with the TagPup process that started it, however that ends (processes.end_with_this_process): a
 writer killed hard left its ExifTool running for weeks (#2660).
 
+A test run may give every command to a keeper of ExifTool's answers (REPLAY, set only by the tests package): it answers
+a command it has seen for the same bytes and arguments from what it kept, and the process starts only for the first one
+it has not.
+
 Everything else -- get_tags, set_tags, check_execute, auto-start -- is ExifToolHelper's.
 """
 import logging
@@ -54,6 +58,12 @@ from tagpup.core import processes
 __all__ = ["ExifToolSession", "ExifToolTimeout", "ExifToolFailed", "StaysDead", "DEFAULT_TIMEOUT"]
 
 logger = logging.getLogger(__name__)
+
+#: Tests only: the keeper of ExifTool's answers (tests/exiftool_replay.py) the tests package sets when a run asks for it;
+#: None in every product start, and nothing in tagpup, scripts or a launcher sets it
+#: (tests/test_exiftool_answers_kept_for_tests.py). When set, every command goes through it (_DrainingExifTool.execute),
+#: and a session starts its process for the first command it cannot answer, not at `with` (ExifToolSession.run).
+REPLAY = None
 
 #: Seconds one ExifTool command may take. A batch of a hundred photos reads in a few
 #: seconds; this is generous enough for a slow disk and still ends a stall the same
@@ -243,8 +253,22 @@ class _DrainingExifTool(exiftool.ExifTool):
     """ExifTool.execute, reading both output pipes at once and under a deadline."""
 
     timeout = DEFAULT_TIMEOUT
+    #: Under REPLAY: a start a command asked for (_sent), the one start run() makes then.
+    _starting = False
 
     def execute(self, *params, raw_bytes=False):
+        if REPLAY is not None:
+            return REPLAY.execute(self, params, raw_bytes, lambda: self._sent(params, raw_bytes))
+        return self._sent(params, raw_bytes)
+
+    def _sent(self, params, raw_bytes):
+        """The command sent to the ExifTool process, and its answer read."""
+        if not self.running and REPLAY is not None:
+            self._starting = True
+            try:
+                self.run()
+            finally:
+                self._starting = False
         if not self.running:
             raise ExifToolNotRunning("Cannot execute()")
 
@@ -370,8 +394,9 @@ class ExifToolSession(exiftool.ExifToolHelper, _DrainingExifTool):
 
     def run(self):
         """ExifToolHelper's, its ExifTool then ending with this process (processes.end_with_this_process); every
-        start goes through here, the one after a timeout too (ExifToolHelper.execute's auto-start)."""
-        if self.running:
+        start goes through here, the one after a timeout too (ExifToolHelper.execute's auto-start). Under REPLAY only the
+        start a command asks for (_DrainingExifTool._sent)."""
+        if self.running or (REPLAY is not None and not self._starting):
             return
         super().run()
         processes.end_with_this_process(self._process.pid)
