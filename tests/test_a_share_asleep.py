@@ -1233,7 +1233,7 @@ class AShareThatHangsAgain(unittest.TestCase):
         with mock.patch.object(shares, "SHARE_WAIT", 0.2), mock.patch.object(shares, "AWAY_SECONDS", 0.5), \
                 mock.patch.object(os, "stat", stat):
             self.assertIs(shares.UNANSWERED, shares.stamp_of(photo))
-            time.sleep(0.55)   # the first mark has expired; the look still hangs
+            time.sleep(0.55)   # wait: the first mark has expired (AWAY_SECONDS 0.5); the look still hangs
             self.assertIs(shares.UNANSWERED, shares.stamp_of(photo))
             for _ in range(3):
                 started = time.monotonic()

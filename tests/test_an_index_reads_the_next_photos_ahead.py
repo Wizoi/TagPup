@@ -236,7 +236,7 @@ class AnIndexReadingAhead(unittest.TestCase):
         def opened_slowly(path, upright):
             started = time.perf_counter()
             if path == slow and upright:
-                time.sleep(0.6)
+                time.sleep(0.6)   # wait: the scenario, a photo that decodes slowly
             picture = opened(path, upright)
             reads.append((os.path.basename(path), upright, started, time.perf_counter()))
             return picture
@@ -334,7 +334,7 @@ class AnIndexReadingAhead(unittest.TestCase):
 
         def opened_slowly(path, upright):
             if upright and os.path.basename(path) in ("p05.jpg", "p06.jpg", "p07.jpg"):
-                time.sleep(1.0)
+                time.sleep(1.0)   # wait: the scenario, reads still under way as the index stops
             return opened(path, upright)
 
         def gpu_turn(runtime, what, models, cancelled=None, report=None):
