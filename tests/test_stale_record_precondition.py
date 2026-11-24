@@ -21,6 +21,7 @@ import unittest
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
+import corpus  # noqa: E402
 import damaged_photos  # noqa: E402
 import own_home  # noqa: E402
 import page_writes  # noqa: E402
@@ -81,16 +82,14 @@ class Fresh(unittest.TestCase):
 
     def make(self, name, seed, file_tags=(), caption=None, row="read", folder=None):
         """A photo whose FILE holds `file_tags` and `caption`, and whose row is what the indexer made of a read of it
-        (row="read"), what Suggest makes of a photo never read (row="unread"), or none."""
-        path = os.path.join(folder or self.folder, name)
-        damaged_photos.whole_jpeg(path, seed=seed)
+        (row="read"), what Suggest makes of a photo never read (row="unread"), or none. The file is made once for its
+        seed and fields, and kept (tests/corpus.py)."""
         wrote = {}
         if file_tags:
             wrote["Subject"] = list(file_tags)
         if caption:
             wrote["Description"] = caption
-        if wrote:
-            write_into(path, **wrote)
+        path = corpus.noise_jpeg(os.path.join(folder or self.folder, name), seed, (160, 120), wrote, EXIFTOOL)
         conn = db.connect(self.library.path)
         try:
             if row == "read":
