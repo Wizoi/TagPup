@@ -1,19 +1,21 @@
 """ExifTool's answers kept for the tests, and given back without running it: record and replay at ExifToolSession.
 
 ExifTool is not TagPup's: once its answer to given arguments and given file bytes is known, running it again tells the
-suite nothing (owner, 2026-11-24; docs/work/3375.md). A test run that asks (tools/run_tests.py --replay-exiftool, or
-TAGPUP_TEST_EXIFTOOL=replay for a file run alone) has the tests package set a Keeper as
+suite nothing (owner, 2026-11-24; docs/work/3375.md). tools/run_tests.py asks for it by default (TAGPUP_TEST_EXIFTOOL=replay
+for each file's process; set it by hand for a file run alone) and the tests package then sets a Keeper as
 tagpup.files.exiftool_session.REPLAY, through which every command goes:
 
 * a hit -- a command kept before -- is answered from what was kept: its stdout, stderr and exit status, and the bytes of
   each file it wrote put where it wrote them (the new file of `-o`, a file rewritten in place, an `_original` backup).
   No ExifTool process starts for it: a session starts its process with the first command it cannot answer.
 * a miss runs the real ExifTool, and keeps its answer unless the answer depends on something the key leaves out.
---real-exiftool (TAGPUP_TEST_EXIFTOOL=record) runs every command for real and keeps each answer. Off (the default) the
-tests package sets nothing and every command is ExifTool's. A file in STAYS_REAL is never given a keeper by the runner.
+tools/run_tests.py --real-exiftool (TAGPUP_TEST_EXIFTOOL=record) runs every command for real and keeps each answer: the
+gate run before a release, which refreshes what is kept. A file run alone with plain `python -m unittest` sets nothing,
+and every command is ExifTool's. A file in STAYS_REAL is never given a keeper by the runner.
 
-The key: the command's arguments, each file named in them by its name, the sha256 of its bytes and whether it may be
-written, the target of `-o` by its name and whether it is there, the session's common arguments, the content of its
+The key: the command's arguments, each file named in them by its name, the sha256 of its bytes, whether it may be
+written and whether ExifTool's scratch or backup of it is there (SCRATCHES: a scratch in the way fails a write), the
+target of `-o` by its name and whether it is there, the session's common arguments, the content of its
 `-config` file, its encoding, the ExifTool installed (its version, its executable's and library's size and time) and
 pyexiftool's version. The `-execute N` framing is added after (_DrainingExifTool._sent), so it is not in it. Paths are
 not either: a test's folder is new each run, so each path ExifTool spells in its answer is kept as a mark and given back
@@ -32,7 +34,8 @@ machine's: every worktree and the checkout share it, and nothing in it is a chec
 names another). An entry is one file named by its key, written under a part name and os.replace'd while its stripe's
 lock is held (tagpup.core.byte_lock): two processes asking for one key both run it, and the later's entry replaces the
 earlier's whole; a reader never sees half of one, and a part a kill left is never read; a folder deleted mid-run is
-made again by the next entry.
+made again by the next entry. A hit marks its entry used (its time), and the runner trims the folder to CAP after a
+run, the entries used longest ago first (trim).
 
 The DocumentID a photo is given (tagpup.files.identity.mint_document_id) is a uuid4 in the arguments of its write, so a
 photo given one would miss at that write and at every later read of it. Under a keeper it is minted from a generator
@@ -48,6 +51,7 @@ import re
 import shutil
 import sys
 import threading
+import time
 import uuid
 
 import exiftool
@@ -63,12 +67,19 @@ CACHE_ENV = "TAGPUP_TEST_EXIFTOOL_CACHE"
 #: A file each test process adds a line of its counts to as it ends (tools/run_tests.py sums them).
 COUNTS_ENV = "TAGPUP_TEST_EXIFTOOL_COUNTS"
 
-#: Test files that run the real ExifTool every time, never given a keeper: their claim is about ExifTool's process
-#: itself (its framing, its pipes, a deadline, a kill, its encoding, a write stalled) or the seeded id would hide theirs.
-STAYS_REAL = frozenset({
-    "test_exiftool_session", "test_exiftool_encoding", "test_exiftool_says_why", "test_bulk_edits_stalled_exiftool",
-    "test_exiftool_answers_kept_for_tests",
-})
+#: Test files the runner never gives a keeper, so every command is ExifTool's: their claim is ExifTool's own behaviour
+#: or its process's, which a kept answer would stand in for. Judged replayable (their claim is TagPup's, ExifTool's
+#: answer an input keyed by its version): test_a_file_holds_what_exiftool_kept (the journal records what the file
+#: holds), test_bulk_edits_real_exiftool (a bulk edit end to end; "real" against test_bulk_edits' stand-in).
+STAYS_REAL = {
+    "test_exiftool_session": "the session's process: its framing, both pipes drained, a deadline, a kill, a restart",
+    "test_exiftool_encoding": "the bytes a command is sent and answered in (CSTR, the file-name charset), under the key",
+    "test_exiftool_says_why": "what ExifTool says when a write fails: its own sentences, its scratch in the way",
+    "test_bulk_edits_stalled_exiftool": "a command that does not answer: the deadline and what the batch does after",
+    "test_minor_errors_in_a_journaled_write": "what ExifTool does with XMP it objects to: -m takes it, a packet cut short not",
+    "test_the_two_writers_compared_on_copies": "ExifTool's writes compared with TagPup's own writer: ExifTool's half is the claim",
+    "test_exiftool_answers_kept_for_tests": "the keeper itself: it gives each test its own keeper, cache and real runs",
+}
 
 #: Locks the writers of entries take turns on: one of these per key's first two hex digits, folded.
 STRIPES = 64
@@ -90,6 +101,13 @@ STAT_TAGS = re.compile(r"File(?:Modify|Access|Create|InodeChange)Date|FilePermis
 NOT_KEPT_OPTIONS = frozenset({"-@", "-srcfile", "-w", "-w!", "-w+", "-W", "-W!", "-W+", "-textout", "-tagout"})
 #: What a seeded process's ids are minted from.
 SEED = "tagpup-tests"
+#: What ExifTool leaves beside a file it writes, each a hidden input of a write: its scratch (a write fails while one is
+#: there) and its backup.
+SCRATCHES = ("_exiftool_tmp", "_original")
+#: Bytes the kept answers may take on this machine before trim removes the entries used longest ago.
+CAP = 1024 * 1024 * 1024
+#: Seconds after which a part file is a writer's that was killed, removed by trim.
+STALE_PART = 3600
 
 
 def cache_root():
@@ -176,7 +194,8 @@ def arguments(params):
             digest = _digest(param)
             if digest is None:
                 return None, "a file that could not be read"
-            keyed.append(["file", os.path.basename(param), digest, os.access(param, os.W_OK)])
+            keyed.append(["file", os.path.basename(param), digest, os.access(param, os.W_OK),
+                          [os.path.exists(param + suffix) for suffix in SCRATCHES]])
             named.append((place, param, "file", digest))
             continue
         if ("\\" in param or "/" in param) and os.path.isdir(os.path.dirname(os.path.abspath(param))):
@@ -347,6 +366,51 @@ def _placed(blobs, named):
         return False
 
 
+def _used(entry):
+    """Mark an entry used now, for trim: its modified time."""
+    try:
+        os.utime(entry, None)
+    except OSError:
+        pass   # replaced or trimmed by another process since it was read: its answer was given all the same
+
+
+def trim(cap=CAP):
+    """Keep the kept answers within `cap` bytes, removing the entries used longest ago (every ExifTool's: an old
+    version's are never used again) and any part file older than STALE_PART. Returns (entries, bytes) left and removed.
+    An entry another process is reading cannot be removed on Windows and is left; one removed while another process
+    was about to read it is a miss there."""
+    now, entries, removed = time.time(), [], [0, 0]
+    for folder, _dirs, names in os.walk(cache_root()):
+        for name in names:
+            path = os.path.join(folder, name)
+            try:
+                held = os.stat(path)
+            except OSError:
+                continue
+            if name.endswith(".entry"):
+                entries.append((held.st_mtime, held.st_size, path))
+            elif ".entry.part-" in name and now - held.st_mtime > STALE_PART and _removed(path):
+                removed[0] += 1
+                removed[1] += held.st_size
+    total, left = sum(size for _when, size, _path in entries), len(entries)
+    for _when, size, path in sorted(entries):
+        if total <= cap:
+            break
+        if _removed(path):
+            total, left = total - size, left - 1
+            removed[0] += 1
+            removed[1] += size
+    return (left, total), tuple(removed)
+
+
+def _removed(path):
+    try:
+        os.remove(path)
+        return True
+    except OSError:
+        return False
+
+
 class Keeper:
     """ExifTool's answers for one test process: answered from the kept ones (REPLAY) or always run and kept (RECORD)."""
 
@@ -371,10 +435,12 @@ class Keeper:
         if folder is None:
             return self._ran(session, sent, key)
         if self.mode == REPLAY:
-            kept = read_entry(os.path.join(folder, key + ".entry"))
+            entry = os.path.join(folder, key + ".entry")
+            kept = read_entry(entry)
             if kept is not None:
                 header, blobs = kept
                 if _placed(blobs, named):
+                    _used(entry)
                     paths = {place: path for place, path, _kind, _digest in named}
                     session._last_stdout = _unmarked(header["stdout"], paths)
                     session._last_stderr = _unmarked(header["stderr"], paths)

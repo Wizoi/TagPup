@@ -257,7 +257,7 @@ class _DrainingExifTool(exiftool.ExifTool):
     _starting = False
 
     def execute(self, *params, raw_bytes=False):
-        if REPLAY is not None:
+        if REPLAY is not None and not self._starting:   # a start's own -ver is ExifTool's, never kept
             return REPLAY.execute(self, params, raw_bytes, lambda: self._sent(params, raw_bytes))
         return self._sent(params, raw_bytes)
 

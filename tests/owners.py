@@ -150,6 +150,11 @@ SCENARIOS = {
             "writes at once both land, one after the other; a photo on a share that does not answer is its error at "
             "once and the others are written (one that stops answering part-way ends the change there, what landed listed); a stale record, or an id now naming another file, is refused 409 and nothing is written; a photo "
             "of a folder the library does not hold is named by its path alone."),
+    "I16": ("apps", "The test runner answers an ExifTool command it has seen for the same bytes, arguments and ExifTool from "
+            "what it kept, starting no process, with the same answer and bytes as ExifTool's; a changed ExifTool, config "
+            "or scratch in the way is a miss; two processes at once, an entry cut off by a kill, the cache deleted "
+            "mid-run each end with one whole entry; a file's dates are never kept; the kept answers stay within a cap; "
+            "TagPup itself never replays."),
 }
 
 #: scenario id -> its scenario files; a file listed under more than one runs more than one scenario (the first is its owner's).
@@ -232,6 +237,7 @@ _SCENARIO_FILES = {
     "I13": "scenario-deleting-the-selected-photos-of-a-folder",
     "I14": "scenario-opening-the-phone-page",
     "I15": "test_a_write_through_the_one_entry_point",
+    "I16": "test_exiftool_answers_kept_for_tests",
     "P1": "test_people_by_id_at_once",
     "P2": (
         "test_a_cropped_picture_gets_new_faces test_bulk_faces_and_tags test_cluster_faces_on_a_crowded_library test_clustering_meets_naming "

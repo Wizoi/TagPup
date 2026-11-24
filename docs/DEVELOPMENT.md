@@ -91,6 +91,18 @@ tests recorded, and runs nothing: the numbers a speed change is measured against
 suite run (two or three at once on one machine tripped load-sensitive tests); a break it finds goes back to the worker
 with the file names, and a change made after a review runs only the files it touched.
 
+**ExifTool's answers are kept for the tests** (owner, 2026-11-24; `tests/exiftool_replay.py`, scenario I16).
+`tools/run_tests.py` gives each file's process a keeper by default: a command it has seen before for the same file bytes,
+arguments, config and ExifTool is answered from what it kept (its output, and the bytes of each file it wrote), with no
+ExifTool started; a command it has not runs the real ExifTool and is kept. The kept answers are the machine's, shared by
+every worktree, in `%LOCALAPPDATA%\TagPupTestCache\exiftool` (one folder per ExifTool installed), trimmed after each run
+to 1 GB, the entries used longest ago first. `--real-exiftool` runs every command for real and keeps each answer: **the
+final gate run before a release uses it**, and so refreshes what is kept. A file run alone with plain
+`python -m unittest tests.<file>` is never given a keeper: every command is ExifTool's (set `TAGPUP_TEST_EXIFTOOL=replay`
+to give it one). The files whose claim is ExifTool's own behaviour (its process, its encoding, its errors, what it does
+with a fault, its writes compared with TagPup's) always run it: `STAYS_REAL` in `tests/exiftool_replay.py`, each with
+its reason. A test that passes replayed and fails with `--real-exiftool` is a hidden input the key misses: a finding.
+
 **An install hands over to the running server.** Each launcher installs a newer clean commit, then replaces a server
 of another version still running once it has finished its work; `scripts/install_app.py --apply` does the same itself:
 it waits for the running server's work, ends it and starts the new version on the same ports with no window, so an
