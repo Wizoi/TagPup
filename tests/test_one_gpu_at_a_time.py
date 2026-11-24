@@ -20,7 +20,7 @@ WORKSPACE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, WORKSPACE_DIR)
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import own_home  # noqa: E402
-from waiting import comes_true  # noqa: E402
+from waiting import comes_true, holds_for  # noqa: E402
 
 from tagpup.core import gpu_turns, processes  # noqa: E402
 from tagpup.ml import gpu  # noqa: E402
@@ -199,13 +199,15 @@ class InOrder(_Folder):
         first_card, second_card = self.card(), self.card()
         one, first = self.take_in_thread(first_card, "first")
         self.assertTrue(comes_true(lambda: gpu.others_waiting(self.where)))
-        two, second = self.take_in_thread(second_card, "second")
+        said = []
+        two, second = self.take_in_thread(second_card, "second", report=said.append)
         self.assertTrue(comes_true(lambda: len(os.listdir(os.path.join(self.where, gpu.QUEUE))) == 2))
         held.release()
         one.join(DEADLINE)
         self.assertIn("hold", first)
         order.append("first")
-        time.sleep(0.3)
+        # The second has looked since the first took the card, and waits on: its line names the first.
+        self.assertTrue(comes_true(lambda: any("in use by: first" in line for line in said)), said)
         self.assertNotIn("hold", second, "the second took the card while the first had it")
         first["hold"].release()
         two.join(DEADLINE)
@@ -250,8 +252,12 @@ class KeptBetweenRuns(_Folder):
         keeper.keep_when_idle = True
         keeper.on_release = lambda: unloaded.append(True)
         run = keeper.hold("Suggest Mooring (harbour)")
-        thread, outcome = self.take_in_thread(self.card(), "indexing Mooring (harbour)")
-        time.sleep(0.4)
+        said = []
+        thread, outcome = self.take_in_thread(self.card(), "indexing Mooring (harbour)", report=said.append)
+        self.assertTrue(comes_true(lambda: any("in use by: Suggest Mooring (harbour)" in line for line in said)), said)
+        # The keeper looks for a waiter every yield_poll: over a few of them it does not give way under its run.
+        self.assertTrue(holds_for(lambda: "hold" not in outcome and not unloaded, 4 * keeper.yield_poll),
+                        (outcome, unloaded))
         self.assertNotIn("hold", outcome)
         self.assertEqual([], unloaded)
         run.release()
