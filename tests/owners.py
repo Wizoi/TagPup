@@ -417,7 +417,7 @@ _FILES = {
         "guard": (
             "context-budget dom-contract merge-budget no-heredoc-escapes page-modules page-shape plan-first read-budget "
             "test_config_single_owner test_database_axis_guard test_fixtures_make_photo_rows_like_the_indexer "
-            "test_layers test_lint "
+            "test_layers test_lint test_no_test_waits_a_fixed_time "
             "test_page_module_names test_processes_single_owner test_rules_have_one_owner test_sandbox_has_all_the_code "
             "test_spec_accuracy test_sync_entry_points "
             "test_tests_have_homes_of_their_own test_the_test_map test_verify_workflow_is_sandboxed"

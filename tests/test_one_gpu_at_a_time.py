@@ -58,7 +58,7 @@ def until(condition, seconds=DEADLINE, step=0.02):
     while time.monotonic() < end:
         if condition():
             return True
-        time.sleep(step)
+        time.sleep(step)   # wait: until()'s poll, a copy of tests/waiting.py's
     return condition()
 
 
@@ -135,7 +135,7 @@ class TwoProcessesTakeTurns(_Folder):
         self.assertTrue(gpu_turns.is_waiting(said[-1][5:]), said)
         self.assertIn("in use by: indexing Regatta (harbour), since ", said[-1])
         # It is still waiting: the first has not let go.
-        time.sleep(0.5)
+        time.sleep(0.5)   # wait: the second must still be waiting, and nothing says so but time
         self.assertIsNone(second.poll())
         self.release("indexing Regatta (harbour)")
         self.assertEqual("HELD Suggest Regatta (harbour)", self.read_until(second, "HELD")[-1])

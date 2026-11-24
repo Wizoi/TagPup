@@ -335,7 +335,7 @@ class AServerOfAnotherVersionRunning(InstallCase):
 
         def slow_install(*args, **kwargs):
             gate.set()
-            time.sleep(1.0)
+            time.sleep(1.0)   # wait: the scenario, an install under way as the second launcher asks
             made.append(real_install(*args, **kwargs)[0])
             return made[-1], []
         answers = {"rev-parse": "bfeb9b7", "status": ""}

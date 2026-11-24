@@ -190,7 +190,7 @@ def end_processes(root, rounds=10):
         for pid in found:
             processes.kill_tree(pid)
             ended.append(pid)
-        time.sleep(0.5)
+        time.sleep(0.5)   # wait: a process taskkill ended may still be listed; the next round looks again
     return ended
 
 
@@ -209,7 +209,7 @@ def _wait_for_exit(pid):
             os.kill(pid, 0)
         except OSError:
             return
-        time.sleep(0.5)
+        time.sleep(0.5)   # wait: not Windows, no handle to wait on
 
 
 def _reap(pid, listed):
@@ -226,7 +226,7 @@ def _reap(pid, listed):
         folders = [folder for folder in folders if os.path.exists(folder)]
         if not folders:
             break
-        time.sleep(0.5)
+        time.sleep(0.5)   # wait: the reaper, off every test's time, tries again a folder a process still holds
     os.remove(listed)
 
 

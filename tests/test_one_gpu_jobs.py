@@ -56,7 +56,7 @@ def until(condition, seconds=DEADLINE, step=0.02):
     while time.monotonic() < end:
         if condition():
             return True
-        time.sleep(step)
+        time.sleep(step)   # wait: until()'s poll, a copy of tests/waiting.py's
     return condition()
 
 

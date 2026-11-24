@@ -176,7 +176,7 @@ class AShareAsleep(unittest.TestCase):
         self.assertTrue(results[0].details["in_step"], "the catch-up did not wait for the share")
         self.assertIsNotNone(sync.last(regatta)["last_in_step"])
         self.wait_until(lambda: watcher.watched() == [paths.stored(held)])
-        time.sleep(0.6)
+        time.sleep(0.6)   # wait: no barrier yet; a second whole sync would come a debounce (0.2) after the look
         self.assertEqual(1, len(results), "synced whole again although the catch-up looked at every folder")
 
     def test_a_share_that_never_answers_ends_the_sync_not_in_step_and_the_watcher_keeps_looking_on_one_thread(self):
