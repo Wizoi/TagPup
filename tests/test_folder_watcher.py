@@ -21,6 +21,7 @@ from unittest import mock
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import own_home  # noqa: E402
 import photo_rows  # noqa: E402
+from waiting import wait_until  # noqa: E402
 
 from tagpup import runtime as runtimes  # noqa: E402
 from tagpup.core import paths  # noqa: E402
@@ -70,6 +71,7 @@ class Base(unittest.TestCase):
         self.library = Stand("harbour")
         self.synced = []
         self.gate = None
+        self.heard, self.looks, self.barriers = [], 0, 0
 
     def sync(self, library, folder):
         if self.gate is not None:
@@ -79,25 +81,57 @@ class Base(unittest.TestCase):
     def make(self, **timings):
         options = dict(debounce=0.5, recheck=0.2, tick=0.05)
         options.update(timings)
-        watcher = watching.Watcher(lambda: [self.library], lambda library: [self.root], self.sync,
-                                   images.is_photo, **options)
+        watcher = watching.Watcher(lambda: [self.library], self.folders, self.sync, images.is_photo, **options)
         self.addCleanup(watcher.stop, 10)
+        return self.hearing(watcher)
+
+    def folders(self, library):
+        """The library's one root; each call is the start of one of the watcher's looks at its folders."""
+        self.looks += 1
+        return [self.root]
+
+    def looked(self, times=1):
+        """Wait until the watcher has looked at its folders `times` times whole from now (the next look starting is the
+        last one ended)."""
+        now = self.looks
+        wait_until(lambda: self.looks > now + times, what="%d looks at the roots" % times)
+
+    def hearing(self, watcher):
+        """Note each notification the watcher has finished noting, by the names in it (`heard`): what quiet() waits for."""
+        for name in ("notice", "notice_parent"):
+            real = getattr(watcher, name)
+
+            def noted(key, event, real=real):
+                try:
+                    return real(key, event)
+                finally:
+                    self.heard.extend(paths.key(path) for path in (event.src_path, getattr(event, "dest_path", ""))
+                                      if path)
+            setattr(watcher, name, noted)
         return watcher
 
-    def wait_until(self, check, seconds=20):
-        deadline = time.time() + seconds
-        while True:
-            found = check()
-            if found:
-                return found
-            self.assertLess(time.time(), deadline, "timed out")
-            time.sleep(0.02)
+    def quiet(self, watcher, where=None):
+        """Wait until the watcher has heard all this test did and synced what it will. A file written after it, no
+        photo and so noted as nothing, is heard (a watch's notifications come in order, on one thread), and then
+        nothing waits for its debounce and nothing syncs: a sync the test must show did NOT happen would be in
+        `synced` by then, with no fixed wait."""
+        self.barriers += 1
+        barrier = os.path.join(where or self.root, "barrier %d.txt" % self.barriers)
+        with open(barrier, "w", encoding="utf-8") as handle:
+            handle.write("heard")
+        wait_until(lambda: paths.key(barrier) in self.heard, what="the notification of " + barrier)
+        wait_until(lambda: self.idle(watcher), what="the watcher to have nothing waiting and nothing syncing")
+
+    @staticmethod
+    def idle(watcher):
+        told = watcher.status()["libraries"].values()
+        return not watcher.busy() and not any(each["pending_folders"] or each["whole_pending"] for each in told)
 
     def started(self, watcher):
         watcher.start()
-        self.wait_until(lambda: watcher.watched() == [paths.stored(self.root)])
+        wait_until(lambda: watcher.watched() == [paths.stored(self.root)])
         # The catch-up: the whole library, once, as it starts.
-        self.wait_until(lambda: self.synced)
+        wait_until(lambda: self.synced)
         self.assertEqual([("harbour", None)], self.synced)
         del self.synced[:]
         return watcher
@@ -112,44 +146,41 @@ class WhatIsSynced(Base):
         regatta = os.path.join(self.root, "Regatta")
         noticed = time.monotonic()
         a_jpeg(os.path.join(regatta, "Regatta - 1.jpg"))
-        self.wait_until(lambda: self.synced)
+        wait_until(lambda: self.synced)
         self.assertGreaterEqual(time.monotonic() - noticed, 1.0, "synced before the notifications settled")
-        time.sleep(1.5)
+        self.quiet(watcher)
         self.assertEqual([paths.stored(regatta)], self.folder_syncs())
         self.assertFalse(watcher.busy())
 
     def test_fifty_photos_are_one_sync(self):
-        self.started(self.make(debounce=1.0))
+        watcher = self.started(self.make(debounce=1.0))
         regatta = os.path.join(self.root, "Regatta")
         for n in range(50):
             a_jpeg(os.path.join(regatta, "Regatta - %d.jpg" % n))
-        self.wait_until(lambda: self.synced)
-        time.sleep(2)
+        self.quiet(watcher)
         self.assertEqual([paths.stored(regatta)], self.folder_syncs())
 
     def test_a_file_that_is_no_photo_is_no_sync(self):
-        self.started(self.make())
+        watcher = self.started(self.make())
         with open(os.path.join(self.root, "Regatta", "notes.txt"), "w", encoding="utf-8") as handle:
             handle.write("race day")
         os.makedirs(os.path.join(self.root, "Empty"))
-        time.sleep(1.5)
+        self.quiet(watcher)
         self.assertEqual([], self.synced)
 
     def test_a_folder_and_one_under_it_are_one_sync_of_the_folder(self):
-        self.started(self.make(debounce=1.0))
+        watcher = self.started(self.make(debounce=1.0))
         a_jpeg(os.path.join(self.root, "Start.jpg"))
         a_jpeg(os.path.join(self.root, "Regatta", "Finish.jpg"))
-        self.wait_until(lambda: self.synced)
-        time.sleep(1.5)
+        self.quiet(watcher)
         self.assertEqual([paths.stored(self.root)], self.folder_syncs())
 
     def test_a_photo_moved_between_folders_syncs_both(self):
         a_jpeg(os.path.join(self.root, "Regatta", "Buoy.jpg"))
         os.makedirs(os.path.join(self.root, "Harbour"))
-        self.started(self.make())
+        watcher = self.started(self.make())
         os.replace(os.path.join(self.root, "Regatta", "Buoy.jpg"), os.path.join(self.root, "Harbour", "Buoy.jpg"))
-        self.wait_until(lambda: len(self.synced) >= 2)
-        time.sleep(1)
+        self.quiet(watcher)
         self.assertEqual(sorted([paths.stored(os.path.join(self.root, "Regatta")),
                                  paths.stored(os.path.join(self.root, "Harbour"))], key=paths.key),
                          sorted(self.folder_syncs(), key=paths.key))
@@ -162,20 +193,18 @@ class AFolderMovedOrDeleted(Base):
 
     def test_moved_out_of_the_root_syncs_the_folder_it_was_in(self):
         a_jpeg(os.path.join(self.root, "Regatta", "Buoy.jpg"))
-        self.started(self.make())
+        watcher = self.started(self.make())
         elsewhere = os.path.join(self.home.root, "Elsewhere")
         os.makedirs(elsewhere)
         os.replace(os.path.join(self.root, "Regatta"), os.path.join(elsewhere, "Regatta"))
-        self.wait_until(lambda: self.synced)
-        time.sleep(1)
+        self.quiet(watcher)
         self.assertEqual([paths.stored(self.root)], self.folder_syncs())
 
     def test_deleted_syncs_the_folder_it_was_in(self):
         a_jpeg(os.path.join(self.root, "Regatta", "Buoy.jpg"))
-        self.started(self.make())
+        watcher = self.started(self.make())
         shutil.rmtree(os.path.join(self.root, "Regatta"))
-        self.wait_until(lambda: self.synced)
-        time.sleep(1)
+        self.quiet(watcher)
         self.assertEqual([paths.stored(self.root)], self.folder_syncs())
 
     def test_a_folder_renamed_that_watchdog_called_a_file_syncs_its_parent_with_no_look_at_a_path(self):
@@ -187,7 +216,7 @@ class AFolderMovedOrDeleted(Base):
                 mock.patch.object(shares, "stamp_of", side_effect=AssertionError("a look on the dispatch thread")):
             watcher.notice(paths.key(self.root), FileMovedEvent(os.path.join(self.root, "Regatta"),
                                                                 os.path.join(self.root, "Races")))
-        self.wait_until(lambda: self.synced)
+        wait_until(lambda: self.synced)
         self.assertEqual([paths.stored(self.root)], self.folder_syncs())
 
     def test_a_file_that_is_no_photo_deleted_is_still_no_sync_of_its_own_folder(self):
@@ -196,7 +225,7 @@ class AFolderMovedOrDeleted(Base):
             handle.write("race day")
         self.started(self.make())
         os.remove(notes)
-        self.wait_until(lambda: self.synced)
+        wait_until(lambda: self.synced)
         # Its parent is synced -- it might have been a folder -- never the file's name.
         self.assertEqual([paths.stored(os.path.join(self.root, "Regatta"))], self.folder_syncs())
 
@@ -206,7 +235,7 @@ class WhenNotificationsMayHaveBeenMissed(Base):
         watcher = self.started(self.make())
         with self.assertLogs("tagpup.jobs.watching", level="WARNING"):
             watcher.notice(paths.key(self.root), watching.Overflow(self.root, watching._Lately().said()))
-        self.wait_until(lambda: self.synced)
+        wait_until(lambda: self.synced)
         self.assertEqual([("harbour", None)], self.synced)
 
     @unittest.skipUnless(os.name == "nt", "Windows' notifications")
@@ -238,26 +267,27 @@ class WhenNotificationsMayHaveBeenMissed(Base):
         os.replace(self.root, away)
         watcher = self.make()
         watcher.start()
-        time.sleep(0.8)
+        wait_until(lambda: self.synced and [root["absent"] for root in watcher.status()["roots"]] == [True],
+                   what="the first look to find the root not there, and the catch-up")
         self.assertEqual([], watcher.watched())
         self.assertEqual([("harbour", None)], self.synced, "the catch-up at start")
         del self.synced[:]
         os.replace(away, self.root)
-        self.wait_until(lambda: watcher.watched() == [paths.stored(self.root)])
-        self.wait_until(lambda: self.synced)
+        wait_until(lambda: watcher.watched() == [paths.stored(self.root)])
+        wait_until(lambda: self.synced)
         self.assertEqual([("harbour", None)], self.synced, "not synced whole when its folder came back")
         del self.synced[:]
         a_jpeg(os.path.join(self.root, "Regatta", "Back.jpg"))
-        self.wait_until(lambda: self.synced)
+        wait_until(lambda: self.synced)
         self.assertEqual([paths.stored(os.path.join(self.root, "Regatta"))], self.folder_syncs())
 
     def test_a_watched_folder_removed_is_let_go_and_watched_again_when_it_is_back(self):
         watcher = self.started(self.make())
         shutil.rmtree(self.root)
-        self.wait_until(lambda: not os.path.exists(self.root) and watcher.watched() == [])
+        wait_until(lambda: not os.path.exists(self.root) and watcher.watched() == [])
         os.makedirs(os.path.join(self.root, "Regatta"))
-        self.wait_until(lambda: watcher.watched() == [paths.stored(self.root)])
-        self.wait_until(lambda: ("harbour", None) in self.synced)
+        wait_until(lambda: watcher.watched() == [paths.stored(self.root)])
+        wait_until(lambda: ("harbour", None) in self.synced)
 
     def test_a_watched_folder_whose_share_stops_answering_keeps_its_watch_and_is_not_synced_whole(self):
         """#1392: the watcher asked a bare os.path.isdir, so a root on a share that stopped answering was let go as not
@@ -269,34 +299,36 @@ class WhenNotificationsMayHaveBeenMissed(Base):
         with mock.patch.object(os.path, "isdir", lambda path: False if paths.key(path) == root else real_isdir(path)), \
                 mock.patch("tagpup.files.shares.on_a_network_drive", lambda path: paths.key(path) == root), \
                 mock.patch("tagpup.files.shares._share_answers", lambda path: paths.key(path) != root):
-            time.sleep(0.8)   # four looks at the roots (recheck 0.2)
+            self.looked(2)
             self.assertEqual([paths.stored(self.root)], watcher.watched(), "a share that does not answer was let go")
-        time.sleep(0.5)
+        self.looked(2)
+        self.assertTrue(self.idle(watcher), "synced whole as if it had come back")
         self.assertEqual([], self.synced, "synced whole as if it had come back")
 
     def test_a_watched_folder_renamed_is_noticed_from_its_parent_and_its_library_synced_whole(self):
         # The 30 s look at the folders is not what finds it: its watch sees nothing of its own rename.
         watcher = self.started(self.make(recheck=30.0))
-        self.wait_until(lambda: watcher.watched_parents() == [paths.stored(self.home.root)])
+        wait_until(lambda: watcher.watched_parents() == [paths.stored(self.home.root)])
         os.rename(self.root, self.root + " 2026")
-        self.wait_until(lambda: ("harbour", None) in self.synced, 10)
+        wait_until(lambda: ("harbour", None) in self.synced, 10)
 
     def test_a_folder_beside_a_watched_one_renamed_is_no_sync(self):
         watcher = self.started(self.make(recheck=30.0))
-        self.wait_until(lambda: watcher.watched_parents() == [paths.stored(self.home.root)])
+        wait_until(lambda: watcher.watched_parents() == [paths.stored(self.home.root)])
         os.makedirs(os.path.join(self.home.root, "Other"))
         os.rename(os.path.join(self.home.root, "Other"), os.path.join(self.home.root, "Other 2"))
-        time.sleep(1.5)
+        self.quiet(watcher, where=self.home.root)
         self.assertEqual([], self.synced)
 
     def test_a_library_in_too_many_separate_folders_is_not_watched_and_is_told_why(self):
         folders = [tempfile.mkdtemp(dir=self.home.root) for _ in range(3)]
-        watcher = watching.Watcher(lambda: [self.library], lambda library: folders, self.sync,
+        looks = []
+        watcher = watching.Watcher(lambda: [self.library], lambda library: looks.append(library) or folders, self.sync,
                                    images.is_photo, debounce=0.2, recheck=0.2, tick=0.05, max_watches=2)
         self.addCleanup(watcher.stop, 10)
         with self.assertLogs("tagpup.jobs.watching", level="WARNING") as logged:
             watcher.start()
-            time.sleep(0.6)
+            wait_until(lambda: len(looks) > 2, what="two whole looks at the roots")
         self.assertEqual([], watcher.watched())
         self.assertEqual(1, sum("root folders" in line for line in logged.output), "said at every look")
 
@@ -348,7 +380,7 @@ class WhatAWatchAsksWindowsFor(Base):
     def test_a_photo_written_in_pieces_is_synced_after_its_last_piece(self):
         started = []
         self.sync = lambda library, folder: (started.append(time.monotonic()), self.synced.append((library.name, folder)))
-        self.started(self.make(debounce=0.5))
+        watcher = self.started(self.make(debounce=0.2))
         del started[:]
         photo = os.path.join(self.regatta, "Regatta - slow.jpg")
         whole = a_jpeg(os.path.join(self.home.root, "whole.jpg"))
@@ -357,16 +389,16 @@ class WhatAWatchAsksWindowsFor(Base):
         with open(photo, "wb") as handle:
             for n in range(4):
                 if n:
-                    time.sleep(0.8)    # longer than the debounce: each piece is heard, or the folder settles early
+                    time.sleep(watcher.debounce + 2 * watcher.tick)    # wait: longer than the debounce, the folder settles early
                 handle.write(data[n * len(data) // 4:(n + 1) * len(data) // 4])
                 handle.flush()
                 os.fsync(handle.fileno())
         last = time.monotonic()
-        self.wait_until(lambda: started and started[-1] >= last)
+        wait_until(lambda: started and started[-1] >= last)
         self.assertEqual({paths.stored(self.regatta)}, set(self.folder_syncs()))
 
     def test_a_burst_of_photos_made_renamed_and_deleted_is_one_sync_of_their_folder(self):
-        self.started(self.make(debounce=1.0))
+        watcher = self.started(self.make(debounce=1.0))
         with self.assertNoLogs("tagpup.jobs.watching", level="WARNING"):
             for n in range(40):
                 made = a_jpeg(os.path.join(self.regatta, "Regatta - %d.jpg" % n))
@@ -374,16 +406,14 @@ class WhatAWatchAsksWindowsFor(Base):
                 os.replace(made, renamed)
                 if n % 2:
                     os.remove(renamed)
-            self.wait_until(lambda: self.synced)
-            time.sleep(1.5)
+            self.quiet(watcher)
         self.assertEqual([paths.stored(self.regatta)], self.folder_syncs())
 
     def test_a_photo_renamed_in_its_folder_syncs_it(self):
         a_jpeg(os.path.join(self.regatta, "Buoy.jpg"))
-        self.started(self.make())
+        watcher = self.started(self.make())
         os.replace(os.path.join(self.regatta, "Buoy.jpg"), os.path.join(self.regatta, "Buoy at dawn.jpg"))
-        self.wait_until(lambda: self.synced)
-        time.sleep(1)
+        self.quiet(watcher)
         self.assertEqual([paths.stored(self.regatta)], self.folder_syncs())
 
     def test_an_overflow_names_its_folder_and_what_its_watch_read_before(self):
@@ -391,14 +421,14 @@ class WhatAWatchAsksWindowsFor(Base):
         self.hold.set()
         with self.assertLogs("tagpup.jobs.watching", level="WARNING") as said:
             a_jpeg(os.path.join(self.regatta, "Regatta - first.jpg"))
-            self.wait_until(self.held.is_set)
+            wait_until(self.held.is_set)
             # While the watch's thread is held, Windows keeps what happens in its buffer, which these overfill.
             for n in range(400):
                 with open(os.path.join(self.regatta, "%s %03d.txt" % ("a long name for a race note" * 4, n)), "w",
                           encoding="utf-8") as handle:
                     handle.write("lap")
             self.release.set()
-            self.wait_until(lambda: self.synced)
+            wait_until(lambda: self.synced)
         self.assertEqual([("harbour", None)], self.synced)
         line = [record.getMessage() for record in said.records if "overflowed" in record.getMessage()]
         self.assertEqual(1, len(line), said.output)
@@ -425,35 +455,37 @@ class WhatAWatchAsksWindowsFor(Base):
                 mock.patch.object(threading, "excepthook", lambda hooked: ended.append(hooked.exc_value)):
             # The read under way returns with this photo's notifications; the next one fails, as a share's that dropped.
             a_jpeg(os.path.join(self.regatta, "Regatta - 1.jpg"))
-            self.wait_until(lambda: ("harbour", None) in self.synced)
+            wait_until(lambda: ("harbour", None) in self.synced)
         self.assertTrue(any("failed; watching it again" in line for line in said.output), said.output)
         self.assertEqual([64], [error.errno for error in ended])
-        self.wait_until(lambda: watcher.watched() == [paths.stored(self.root)])
-        time.sleep(1)
+        wait_until(lambda: watcher.watched() == [paths.stored(self.root)])
+        self.quiet(watcher)
         del self.synced[:]
         a_jpeg(os.path.join(self.regatta, "Regatta - 2.jpg"))
-        self.wait_until(lambda: self.synced)
+        wait_until(lambda: self.synced)
         self.assertEqual([paths.stored(self.regatta)], self.folder_syncs())
 
 
 class Stopping(Base):
     def test_waits_for_a_sync_under_way_and_then_watches_nothing(self):
-        watcher = self.started(self.make())
+        watcher = self.started(self.make(debounce=0.2))
         self.gate = threading.Event()
         a_jpeg(os.path.join(self.root, "Regatta", "Slow.jpg"))
-        self.wait_until(watcher.busy)
+        wait_until(watcher.busy)
         stopped = []
         stopping = threading.Thread(target=lambda: stopped.append(watcher.stop(timeout=20)), daemon=True)
         stopping.start()
-        time.sleep(0.3)
+        stopping.join(0.3)   # wait: the stop must still be waiting for the sync; nothing else says it is
         self.assertTrue(stopping.is_alive(), "stopped under a sync")
         self.gate.set()
         stopping.join(20)
         self.assertEqual([True], stopped)
         self.assertFalse(watcher.busy())
         del self.synced[:]
-        a_jpeg(os.path.join(self.root, "Regatta", "After.jpg"))
-        time.sleep(1)
+        after = a_jpeg(os.path.join(self.root, "Regatta", "After.jpg"))
+        # Stopped, it hears nothing to wait for: a sync would come a debounce after the photo's notification.
+        time.sleep(watcher.debounce + 4 * watcher.tick)   # wait: nothing may happen, and nothing is there to hear
+        self.assertNotIn(paths.key(after), self.heard, "heard after it stopped")
         self.assertEqual([], self.synced)
 
     def test_watches_that_will_not_stop_are_left_behind_at_the_deadline(self):
@@ -480,18 +512,19 @@ class Stopping(Base):
         self.assertLess(time.monotonic() - started, 3, "the stop waited for watches that would not stop")
         self.assertEqual(1, len(stops))
         watcher.start()
-        self.wait_until(lambda: watcher.watched() == [paths.stored(self.root)])
+        wait_until(lambda: watcher.watched() == [paths.stored(self.root)])
         let_go.set()
 
     def test_started_again_it_watches_again_without_the_catch_up(self):
         watcher = self.started(self.make())
         watcher.stop()
         watcher.start()
-        self.wait_until(lambda: watcher.watched() == [paths.stored(self.root)])
-        time.sleep(0.5)
+        wait_until(lambda: watcher.watched() == [paths.stored(self.root)])
+        # Its first look notes a catch-up before it watches: once it watches, one would be waiting or synced.
+        self.assertTrue(self.idle(watcher), "a catch-up noted when started again")
         self.assertEqual([], self.synced)
         a_jpeg(os.path.join(self.root, "Regatta", "Again.jpg"))
-        self.wait_until(lambda: self.synced)
+        wait_until(lambda: self.synced)
         self.assertEqual([paths.stored(os.path.join(self.root, "Regatta"))], self.folder_syncs())
 
 
@@ -509,14 +542,15 @@ class TheCatchUpAtStart(Base):
     def test_is_skipped_for_a_library_synced_whole_lately(self):
         watcher = self.make_with(lambda library: True)
         watcher.start()
-        self.wait_until(lambda: watcher.watched())
-        time.sleep(0.8)
+        wait_until(lambda: watcher.watched())
+        # Its first look notes a catch-up before it watches: once it watches, one would be waiting or synced.
+        self.assertTrue(self.idle(watcher), "a catch-up noted for a library synced whole lately")
         self.assertEqual([], self.synced)
 
     def test_is_made_for_one_that_was_not(self):
         watcher = self.make_with(lambda library: False)
         watcher.start()
-        self.wait_until(lambda: self.synced)
+        wait_until(lambda: self.synced)
         self.assertEqual([("harbour", None)], self.synced)
 
     def test_a_whole_sync_is_recent_by_the_librarys_own_record(self):
@@ -644,19 +678,25 @@ class TagPupsOwnWrites(Base):
         watcher = runtimes.folder_watcher(libraries=lambda: list(libraries), sync_with=self.record,
                                           debounce=1.5, recheck=0.5, tick=0.05)
         self.addCleanup(watcher.stop, 20)
+        self.hearing(watcher)
         watcher.start()
-        self.wait_until(lambda: watcher.watched() == [paths.stored(self.regatta)])
+        wait_until(lambda: watcher.watched() == [paths.stored(self.regatta)])
         return watcher
 
     def settled(self, watcher, *libraries):
-        """Wait until each library's notifications were heard and none waits, then a tick more."""
+        """Wait until all this test did was heard (a file written after it is heard) and each library's notifications
+        were noted and none waits or syncs."""
+        barrier = os.path.join(self.regatta, "barrier.txt")
+        with open(barrier, "w", encoding="utf-8") as handle:
+            handle.write("heard")
+        wait_until(lambda: paths.key(barrier) in self.heard, 60, what="the notification of " + barrier)
+
         def done():
             told = watcher.status()["libraries"]
             return all(told.get(library.name, {}).get("last_event") and not told[library.name]["pending_folders"]
                        and not told[library.name]["whole_pending"] for library in libraries)
-        self.wait_until(done, 60)
-        self.wait_until(lambda: not watcher.busy(), 60)
-        time.sleep(0.3)
+        wait_until(done, 60)
+        wait_until(lambda: not watcher.busy(), 60)
 
     def write(self, photos, library=None):
         written = tagging.change_tags(library or self.harbour, photos, ["Harbour"], [], EXIFTOOL)
@@ -681,7 +721,7 @@ class TagPupsOwnWrites(Base):
         renamed = os.path.join(self.regatta, "Regatta - start line.jpg")
         writing = threading.Thread(target=self.write, args=(self.photos[:200],), daemon=True)
         writing.start()
-        time.sleep(0.2)
+        time.sleep(0.2)   # wait: the scenario, a rename while the writes go on
         os.rename(self.photos[200], renamed)
         writing.join(120)
         self.settled(watcher, self.harbour)
@@ -728,13 +768,13 @@ class TagPupsOwnWrites(Base):
         self.addCleanup(watcher.stop, 20)
         self.addCleanup(answer.set)
         watcher.start()
-        self.wait_until(lambda: watcher.watched() == [paths.stored(self.regatta)])
+        wait_until(lambda: watcher.watched() == [paths.stored(self.regatta)])
         self.write(self.photos[:1])
-        self.wait_until(looking.is_set)
+        wait_until(looking.is_set)
         self.assertTrue(watcher.busy(), "not busy while it decides whether to sync")
         answer.set()
-        self.wait_until(lambda: self.synced)
-        self.wait_until(lambda: not watcher.busy())
+        wait_until(lambda: self.synced)
+        wait_until(lambda: not watcher.busy())
         self.assertEqual([("harbour", paths.stored(self.regatta))], self.synced)
 
     def test_a_look_that_fails_still_syncs(self):
