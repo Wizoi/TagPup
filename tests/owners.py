@@ -411,7 +411,7 @@ _FILES = {
             "test_mcp_config_resolves "
             "test_code_tool test_patch_tool test_photo_open test_recurring_jobs test_result "
             "test_every_route_answers_this_pc_or_says_why test_roots_ingress_keys_cover_the_routes test_roots_map "
-            "test_run_tests_keeps_failures test_server_startup test_serving_photos test_suggest_thread_keeps_its_library test_tagpup_routes "
+            "test_a_photo_made_once_is_copied_for_each_test test_run_tests_keeps_failures test_server_startup test_serving_photos test_suggest_thread_keeps_its_library test_tagpup_routes "
             "test_web_app undo-from-reply validation"
         ),
         "guard": (
