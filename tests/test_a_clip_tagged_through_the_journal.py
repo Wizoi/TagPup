@@ -25,13 +25,14 @@ from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import corpus  # noqa: E402
 import test_a_clip_patched_in_place as patched  # noqa: E402
 import photo_rows  # noqa: E402
 import web_client  # noqa: E402
 from view_library import ViewLibrary, make_jpeg  # noqa: E402
 
 from tests import page_writes  # noqa: E402
-from tagpup.core import fields, paths, processes  # noqa: E402
+from tagpup.core import fields, paths  # noqa: E402
 from tagpup.core.result import Refused  # noqa: E402
 from tagpup.files import containers, field_values, images, in_place, metadata, segment_edits  # noqa: E402
 from tagpup.services import file_only  # noqa: E402
@@ -138,7 +139,7 @@ def with_a_quicktime_subject_that_is_not_text(path):
 
 @unittest.skipIf(EXIFTOOL is None or TOOLS.problem, "ExifTool or ffmpeg is not installed on this machine")
 class ALibraryHoldingAClip(unittest.TestCase):
-    """A library holding a photo and a real ffmpeg clip, each row recorded by the indexer's own read
+    """A library holding a photo and a real ffmpeg clip (made once and kept, tests/corpus.py), each row recorded by the indexer's own read
     (metadata.MetadataExtractor.batch_read), saved through the pages (Flask's test client, a home of its own). No test of its own: the scenarios of a clip in a library are its subclasses (here, test_a_clip_tag_undone,
     test_a_clip_patch_cut_short, test_a_clip_dated_through_the_journal)."""
 
@@ -155,9 +156,8 @@ class ALibraryHoldingAClip(unittest.TestCase):
         self.photo_path = os.path.join(self.folder, "pier.jpg")
         make_jpeg(self.photo_path, size=(32, 32))
         self.clip_path = os.path.join(self.folder, "jetty.mp4")
-        made = processes.run([TOOLS.ffmpeg, "-y", "-loglevel", "error", "-f", "lavfi", "-i", "testsrc=size=160x120:rate=10",
-                              "-t", "1", "-pix_fmt", "yuv420p", self.clip_path], capture_output=True)
-        self.assertEqual(0, made.returncode, made.stderr)
+        corpus.clip(self.clip_path, ["-y", "-loglevel", "error", "-f", "lavfi", "-i", "testsrc=size=160x120:rate=10",
+                                     "-t", "1", "-pix_fmt", "yuv420p"], TOOLS.ffmpeg)
 
     def index(self, *photo_paths):
         """Record each of `photo_paths` as the indexer reads it now; their ids."""

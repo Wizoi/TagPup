@@ -42,6 +42,7 @@ from unittest import mock
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
+import corpus  # noqa: E402
 import damaged_photos  # noqa: E402
 import numpy as np  # noqa: E402
 import own_home  # noqa: E402
@@ -49,7 +50,7 @@ import photo_rows  # noqa: E402
 import test_analyse_only_suggest as base  # noqa: E402
 
 from tagpup import config  # noqa: E402
-from tagpup.core import paths, processes  # noqa: E402
+from tagpup.core import paths  # noqa: E402
 from tagpup.files import field_values, images, shares  # noqa: E402
 from tagpup.jobs import suggestions as suggestion_jobs  # noqa: E402
 from tagpup.services import faces as faces_service  # noqa: E402
@@ -264,9 +265,8 @@ class AHeldFolderOfPhotosAndClips(Base):
     def setUpClass(cls):
         super().setUpClass()
         cls.made = os.path.join(own_home.for_class(cls, "tagpup_suggest_clips_").root, "made.mp4")
-        processes.run([TOOLS.ffmpeg, "-v", "error", "-y", "-f", "lavfi", "-i", "testsrc=size=64x48:rate=10", "-t", "1",
-                       "-pix_fmt", "yuv420p", "-movflags", "+faststart", cls.made],
-                      check=True, capture_output=True, timeout=60)
+        corpus.clip(cls.made, ["-v", "error", "-y", "-f", "lavfi", "-i", "testsrc=size=64x48:rate=10", "-t", "1",
+                               "-pix_fmt", "yuv420p", "-movflags", "+faststart"], TOOLS.ffmpeg)
 
     def app_home(self):
         super().app_home()

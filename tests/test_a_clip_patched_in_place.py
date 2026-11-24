@@ -42,6 +42,7 @@ import unittest
 from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import corpus  # noqa: E402
 import own_home  # noqa: E402
 import test_xmp_packet_edits_what_it_owns as shapes  # noqa: E402
 from tagpup import config  # noqa: E402
@@ -583,7 +584,7 @@ class APixelClipsXmpItem(unittest.TestCase):
 
 
 class FfmpegClips(unittest.TestCase):
-    """Clips made by the real ffmpeg in a home of the class's own, copied for each test, and read back by ExifTool and
+    """Clips made by the real ffmpeg (once, and kept: tests/corpus.py) in a home of the class's own, copied for each test, and read back by ExifTool and
     ffprobe."""
 
     @classmethod
@@ -592,8 +593,8 @@ class FfmpegClips(unittest.TestCase):
         cls.made = {}
         for name, extra in (("first.mp4", ("-movflags", "+faststart")), ("last.mp4", ()), ("clip.mov", ())):
             path = os.path.join(cls.folder, "made_" + name)
-            processes.run([TOOLS.ffmpeg, "-v", "error", "-y", "-f", "lavfi", "-i", "testsrc=size=64x48:rate=10",
-                           "-t", "1", "-pix_fmt", "yuv420p", *extra, path], check=True, capture_output=True, timeout=60)
+            corpus.clip(path, ["-v", "error", "-y", "-f", "lavfi", "-i", "testsrc=size=64x48:rate=10",
+                               "-t", "1", "-pix_fmt", "yuv420p", *extra], TOOLS.ffmpeg)
             cls.made[name] = path
 
     def clip(self, name):
@@ -876,9 +877,8 @@ class AClipSavedInPlace(FfmpegClips):
 
     def test_a_title_clear_killed_part_way_is_told_by_its_four_bytes_and_its_undo_gives_the_title_back(self):
         path = os.path.join(self.folder, "titled.mp4")
-        processes.run([TOOLS.ffmpeg, "-v", "error", "-y", "-f", "lavfi", "-i", "testsrc=size=64x48:rate=10", "-t", "1",
-                       "-pix_fmt", "yuv420p", "-metadata", "title=" + TITLE, path], check=True, capture_output=True,
-                      timeout=60)
+        corpus.clip(path, ["-v", "error", "-y", "-f", "lavfi", "-i", "testsrc=size=64x48:rate=10", "-t", "1",
+                           "-pix_fmt", "yuv420p", "-metadata", "title=" + TITLE], TOOLS.ffmpeg)
         original = self.bytes_of(path)
 
         def titled(title, saving=None):

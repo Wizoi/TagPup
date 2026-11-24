@@ -47,12 +47,13 @@ from PIL import Image
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+import corpus  # noqa: E402
 import own_home  # noqa: E402
 from test_an_index_reads_the_next_photos_ahead import StandIns, photo, recorded  # noqa: E402
 
 import tagpup_cli  # noqa: E402
 from tagpup import config  # noqa: E402
-from tagpup.core import fields, paths, processes  # noqa: E402
+from tagpup.core import fields, paths  # noqa: E402
 from tagpup.core.result import Refused  # noqa: E402
 from tagpup.core.library import Library  # noqa: E402
 from tagpup.files import field_values, images, video_frames  # noqa: E402
@@ -83,10 +84,8 @@ def clip(folder, name):
     """A one-second clip of ffmpeg's test pattern at `folder`/`name`, with CLIPS' metadata."""
     os.makedirs(folder, exist_ok=True)
     target = os.path.join(folder, name)
-    made = processes.run([TOOLS.ffmpeg, "-y", "-loglevel", "error", "-f", "lavfi", "-i", "testsrc=size=160x120:rate=10",
-                          "-t", "1", "-pix_fmt", "yuv420p"] + CLIPS[name] + [target], capture_output=True)
-    assert made.returncode == 0, made.stderr
-    return target
+    return corpus.clip(target, ["-y", "-loglevel", "error", "-f", "lavfi", "-i", "testsrc=size=160x120:rate=10",
+                                "-t", "1", "-pix_fmt", "yuv420p"] + CLIPS[name], TOOLS.ffmpeg)
 
 
 #: Clips in an older format, each as its program leaves one: (picture codec, container's own options).
@@ -97,11 +96,8 @@ def older(folder, name):
     """A one-second clip of ffmpeg's test pattern at `folder`/`name`, in an older format (OLDER), with no date."""
     os.makedirs(folder, exist_ok=True)
     target = os.path.join(folder, name)
-    made = processes.run([TOOLS.ffmpeg, "-y", "-loglevel", "error", "-f", "lavfi", "-i", "testsrc=size=160x120:rate=10",
-                          "-t", "1", "-pix_fmt", "yuv420p", "-map_metadata", "-1"] + OLDER[name] + [target],
-                         capture_output=True)
-    assert made.returncode == 0, made.stderr
-    return target
+    return corpus.clip(target, ["-y", "-loglevel", "error", "-f", "lavfi", "-i", "testsrc=size=160x120:rate=10",
+                                "-t", "1", "-pix_fmt", "yuv420p", "-map_metadata", "-1"] + OLDER[name], TOOLS.ffmpeg)
 
 
 def digest(path):

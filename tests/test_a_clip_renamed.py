@@ -24,12 +24,13 @@ from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import corpus  # noqa: E402
 import test_a_clip_patched_in_place as patched  # noqa: E402
 import test_a_clip_tagged_through_the_journal as tagged  # noqa: E402
 from view_library import make_jpeg  # noqa: E402
 
 from tests import page_writes  # noqa: E402
-from tagpup.core import paths, processes  # noqa: E402
+from tagpup.core import paths  # noqa: E402
 from tagpup.files import field_values, images, names  # noqa: E402
 from tagpup.files.exiftool_session import ExifToolSession  # noqa: E402
 from tagpup.services import file_changes, journal, relink_photos  # noqa: E402
@@ -178,10 +179,8 @@ class AClipRenamed(tagged.ALibraryHoldingAClip):
         os.makedirs(loose)
         photo_path, clip_path = os.path.join(loose, "slip.jpg"), os.path.join(loose, "slipway.mp4")
         make_jpeg(photo_path, size=(32, 32))
-        made = processes.run([tagged.TOOLS.ffmpeg, "-y", "-loglevel", "error", "-f", "lavfi", "-i",
-                              "testsrc=size=160x120:rate=10", "-t", "1", "-pix_fmt", "yuv420p", clip_path],
-                             capture_output=True)
-        self.assertEqual(0, made.returncode, made.stderr)
+        corpus.clip(clip_path, ["-y", "-loglevel", "error", "-f", "lavfi", "-i", "testsrc=size=160x120:rate=10", "-t", "1",
+                                "-pix_fmt", "yuv420p"], tagged.TOOLS.ffmpeg)
         clip_bytes = self.read_bytes(clip_path)
         reply = self.renamed([photo_path, clip_path], folder=loose)
         self.assertFalse(reply.get_json()["success"])
