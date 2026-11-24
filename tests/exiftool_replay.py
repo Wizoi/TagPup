@@ -19,7 +19,8 @@ target of `-o` by its name and whether it is there, the session's common argumen
 `-config` file, its encoding, the ExifTool installed (its version, its executable's and library's size and time) and
 pyexiftool's version. The `-execute N` framing is added after (_DrainingExifTool._sent), so it is not in it. Paths are
 not either: a test's folder is new each run, so each path ExifTool spells in its answer is kept as a mark and given back
-as the command's own path.
+as the command's own path. A file's name is kept (an answer may spell it alone, as FileName): a file named by the
+process that made it (a pid, a time) is a miss in every run, as tests/corpus.py's part file was.
 
 Never kept, so a miss each time (`why` in the counts): raw bytes asked; a folder, an argument file (`-@`) or a file
 read or written by name in an option (-w, -srcfile, -csv=, `<=`); a file that cannot be read; an answer that names a
