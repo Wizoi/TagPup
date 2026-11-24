@@ -273,6 +273,18 @@ export function pageScript(pageDir, commonDir = COMMON_DIR, htmlFile = "index.ht
   return `"use strict";\n${parts.join("\n")}\nglobalThis.__pageModules = { ${exposed} };\n`;
 }
 
+const APP_SCRIPTS = new Map();
+
+/**
+ * A real app's page script, built once per test process. Building it reads and takes apart every module of the page
+ * (about 0.4 s for the TagPup page) and the files do not change while a test file runs; a test that builds a page of its
+ * own in a temporary folder calls `pageScript` and is not cached.
+ */
+function appScript(appName, app, appDir) {
+  if (!APP_SCRIPTS.has(appName)) APP_SCRIPTS.set(appName, pageScript(appDir, COMMON_DIR, htmlOf(app)));
+  return APP_SCRIPTS.get(appName);
+}
+
 /** A module of the page, as the page itself holds it: `pageExports(window, "web/tagpup/state.js").state`. */
 export function pageExports(window, file) {
   return window.__pageModules[file];
@@ -822,7 +834,7 @@ export async function loadApp(appName, { url, server = new FakeServer(), t, befo
 
   const appDir = path.join(REPO_ROOT, app.dir);
   const html = fs.readFileSync(path.join(appDir, htmlOf(app)), "utf8");
-  const script = pageScript(appDir, COMMON_DIR, htmlOf(app));
+  const script = appScript(appName, app, appDir);
 
   // Silence expected console noise from the app; surface real jsdom errors.
   const virtualConsole = new VirtualConsole();
