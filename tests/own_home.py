@@ -190,7 +190,7 @@ def end_processes(root, rounds=10):
         for pid in found:
             processes.kill_tree(pid)
             ended.append(pid)
-        time.sleep(0.5)   # wait: a process taskkill ended may still be listed; the next round looks again
+        time.sleep(0.5)   # wait: a process just ended may still be listed; the next round looks again
     return ended
 
 

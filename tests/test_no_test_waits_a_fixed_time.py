@@ -9,10 +9,12 @@ seen blocked) are listed by the reason they give.
 """
 import ast
 import os
+import sys
 import time
 import unittest
 
-import waiting
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import waiting  # noqa: E402
 
 TESTS = os.path.dirname(os.path.abspath(__file__))
 #: Seconds from which a fixed sleep needs its reason.
