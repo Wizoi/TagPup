@@ -123,7 +123,7 @@ class SuggestWaitsForTheFoldersIndex(_Library):
         self.assertTrue(comes_true(lambda: self.status().get("message") == suggestion_jobs.WAITING_FOR_THE_INDEX),
                         self.status())
         self.assertEqual(suggestion_jobs.WAITING_FOR_THE_INDEX, self.status()["message"])
-        time.sleep(0.3)
+        # Said once it found the index under way; it looks again only after INDEX_POLL (1 s), and the index runs on.
         self.assertEqual([], models.began, "Suggest began while its folder was being indexed")
         self.release.set()
         self.wait_for("completed")
