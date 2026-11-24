@@ -105,7 +105,7 @@ class Rename(T.Bulk):
         self.assertTrue(started.wait(30))
         before = self.files.writes
         waiting, answered = B.in_thread(lambda: self.rename(self.app.test_client()))
-        B.wait_until(lambda: batches.running_here() == 2, "the rename waits")
+        B.wait_until(lambda: batches.running_here() == 2, what="the rename waits")
         queued = [each for each in batches.listing(self.library) if each["state"] == "queued"][0]
         self.assertTrue(batches.cancel(self.library, queued["ticket"]))
         waiting.join(30)
@@ -146,7 +146,7 @@ class Rename(T.Bulk):
         self.assertTrue(gate.reached.wait(30))
         moving = lifecycle.Lifecycle(runtime=Runtime())
         draining, drained = B.in_thread(lambda: moving.drain(seconds=30, lease=60))
-        B.wait_until(lambda: [each["state"] for each in batches.listing(self.library)] == ["stopping"], "asked to stop")
+        B.wait_until(lambda: [each["state"] for each in batches.listing(self.library)] == ["stopping"], what="asked to stop")
         gate.release.set()
         writing.join(30)
         draining.join(30)
