@@ -1,3 +1,5 @@
+Status: CLOSED 2026-11-23. Cuts 4 and 5 are NOT built (DECISIONS 2026-11-23: no live instance). Kept as the record of why.
+
 # One write path for photo files, and a durable server queue: a save, a bulk and a delete follow one set of rules, and a restart loses no accepted work
 Live count: counted 2026-11-23, read-only through the MCP tools: three libraries (kr-track 2,186 photos, photo_index
 60,270, renton_parkrun 1,309), all at schema 39, so migration 39 has run on all three and migration 40 may be the one
