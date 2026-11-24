@@ -15,3 +15,4 @@
 *.jpeg binary
 *.ico binary
 *.db binary
+docs/work/*.md merge=union
