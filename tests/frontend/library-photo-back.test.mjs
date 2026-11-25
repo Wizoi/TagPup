@@ -5,10 +5,12 @@
  * through. How it fails: unsaved edits in the photo, the open photo deleted, another view opened over it, a photo's title saved,
  * a reload (the place is kept best-effort). Fictional names only.
  */
-import { test, describe, afterEach } from "node:test";
+import { test, describe, beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";
-import { closeAllApps, click, deletedAs } from "./harness.mjs";
+import { closeAllApps, click, deletedAs, testClock } from "./harness.mjs";
 import { loadViewPage, pageErrors, recordOf, STRIDE } from "./view-page.mjs";
+
+beforeEach((t) => testClock(t));   // the page's timers run when a test advances them
 
 afterEach(() => {
   closeAllApps();
