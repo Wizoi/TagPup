@@ -11,6 +11,7 @@ import sys
 import unittest
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import corpus  # noqa: E402
 import own_home  # noqa: E402
 import test_xmp_packet_edits_what_it_owns as shapes  # noqa: E402
 from tagpup import config  # noqa: E402
@@ -40,8 +41,8 @@ class AnAdobeClipEditedAndReadBack(unittest.TestCase):
     def setUpClass(cls):
         cls.folder = own_home.for_class(cls, "tagpup_adobe_clip_").root
         cls.made = os.path.join(cls.folder, "made.mp4")
-        processes.run([TOOLS.ffmpeg, "-v", "error", "-y", "-f", "lavfi", "-i", "testsrc=size=64x48:rate=10",
-                       "-t", "1", "-pix_fmt", "yuv420p", cls.made], check=True, capture_output=True, timeout=60)
+        corpus.clip(cls.made, ["-v", "error", "-y", "-f", "lavfi", "-i", "testsrc=size=64x48:rate=10",
+                               "-t", "1", "-pix_fmt", "yuv420p"], TOOLS.ffmpeg)
 
     def placed(self, path, packet, how):
         with open(path, "rb") as handle:

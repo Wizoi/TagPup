@@ -17,6 +17,7 @@ from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import own_home  # noqa: E402
+from waiting import wait_until  # noqa: E402
 
 from tagpup import launcher, logs  # noqa: E402
 from tagpup import runtime as runtimes  # noqa: E402
@@ -142,10 +143,7 @@ class Now(Base):
         os.makedirs(folder_a)
         os.makedirs(folder_b)
         queue.start([folder_a, folder_b], index)
-        deadline = time.time() + 10
-        while queue.now()["running"] is None or queue.now()["running"]["percent"] != 40:
-            self.assertLess(time.time(), deadline)
-            time.sleep(0.01)
+        wait_until(lambda: (queue.now()["running"] or {}).get("percent") == 40, what="the run at 40%")
         claim = job_runs.claim(self.regatta.path, "snapshots", "regatta", time.time())
         try:
             found = self.get("/api/activity/now")
@@ -404,10 +402,8 @@ class RunNow(Base):
         reply = client.post("/api/activity/jobs/run", json={"job": "tidy", "library": "regatta"}).get_json()
         self.assertTrue(reply["started"], reply)
         self.assertEqual("job:regatta:%d" % reply["run_id"], reply["run"])
-        deadline = time.time() + 10
-        while not job_runs.runs(self.regatta.path, "tidy") or job_runs.runs(self.regatta.path, "tidy")[0].outcome == "running":
-            self.assertLess(time.time(), deadline)
-            time.sleep(0.02)
+        wait_until(lambda: [run.outcome for run in job_runs.runs(self.regatta.path, "tidy")][:1] not in ([], ["running"]),
+                   what="the tidy run to end")
         self.assertEqual([("regatta", True)], self.calls)
         self.assertEqual({"attempted": 2, "changed": 2, "skipped": 0, "errors": 0},
                          job_runs.runs(self.regatta.path, "tidy")[0].changed)
@@ -844,19 +840,12 @@ class TheWatcherSays(unittest.TestCase):
                                    images.is_photo, debounce=0.3, recheck=0.2, tick=0.05)
         self.addCleanup(watcher.stop, 10)
         watcher.start()
-        deadline = time.time() + 20
-        while not synced:
-            self.assertLess(time.time(), deadline)
-            time.sleep(0.02)
+        wait_until(lambda: synced, what="the catch-up")
         with open(os.path.join(root, "Regatta", "new.jpg"), "wb") as handle:
             handle.write(b"\xff\xd8\xff")
-        while len(synced) < 2:
-            self.assertLess(time.time(), deadline)
-            time.sleep(0.02)
+        wait_until(lambda: len(synced) >= 2, what="the folder's sync")
         # The fake sync appends inside the sync; the watcher clears `syncing` after it returns (#2257).
-        while watcher.status()["syncing"] is not None:
-            self.assertLess(time.time(), deadline)
-            time.sleep(0.02)
+        wait_until(lambda: watcher.status()["syncing"] is None, what="the watcher to say no sync is under way")
         found = watcher.status()
         self.assertTrue(found["running"])
         self.assertEqual([{"path": root, "watched": True, "absent": False, "libraries": ["harbour"]}],

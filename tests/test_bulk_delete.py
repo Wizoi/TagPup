@@ -17,6 +17,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import web_client  # noqa: E402
 from fake_exiftool import Files  # noqa: E402
 from view_library import ViewLibrary  # noqa: E402
+from waiting import wait_until  # noqa: E402
 
 from tagpup.core import paths  # noqa: E402
 from tagpup.files import recycle_bin  # noqa: E402
@@ -212,8 +213,7 @@ class Deleting(Delete):
         waiting = threading.Thread(target=lambda: second.append(self.app.test_client().post("/library/api/library/bulk-edit", json={
             "op": "delete", "selection": {"ids": self.lakes}, "params": {"token": other}}).status_code))
         waiting.start()
-        while batches.running_here() < 2:
-            threading.Event().wait(0.01)
+        wait_until(lambda: batches.running_here() >= 2, 30, what="the second delete to queue behind the first")
         self.assertEqual(["running", "queued"], [each["state"] for each in batches.listing(self.library)])
         self.assertEqual(self.lakes, self.held(self.lakes), "the waiting delete has deleted nothing")
         release.set()

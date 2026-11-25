@@ -31,6 +31,7 @@ sys.path.insert(0, WORKSPACE_DIR)
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import stand_in_models  # noqa: E402
 import own_home  # noqa: E402
+from waiting import comes_true  # noqa: E402
 from click.testing import CliRunner  # noqa: E402
 from PIL import Image  # noqa: E402
 
@@ -51,13 +52,6 @@ from tagpup.services import suggester as suggester_service  # noqa: E402
 DEADLINE = 20
 
 
-def until(condition, seconds=DEADLINE, step=0.02):
-    end = time.monotonic() + seconds
-    while time.monotonic() < end:
-        if condition():
-            return True
-        time.sleep(step)
-    return condition()
 
 
 class _Library(unittest.TestCase):
@@ -78,7 +72,7 @@ class _Library(unittest.TestCase):
         return self.runs.status(self.folder)
 
     def wait_for(self, state):
-        self.assertTrue(until(lambda: self.status().get("status") == state), self.status())
+        self.assertTrue(comes_true(lambda: self.status().get("status") == state), self.status())
 
 
 class _FakeModels:
@@ -119,17 +113,17 @@ class SuggestWaitsForTheFoldersIndex(_Library):
             return Result(attempted=1, changed=1)
         self.queue = indexing_jobs.IndexQueue(self.library.name, self.library)
         self.queue.start([self.folder], index)
-        self.assertTrue(until(lambda: self.queue.indexing(self.folder) is not None))
+        self.assertTrue(comes_true(lambda: self.queue.indexing(self.folder) is not None))
 
     def test_it_runs_once_the_index_is_done(self):
         models = _FakeModels()
         self.runs.start(self.folder, suggestion_jobs.work_for(self.library, lambda: self.photos, models, self.queue))
         # The index's own line, once it has claimed its run and begun: "Starting indexing..." until then.
-        self.assertTrue(until(lambda: "Generating embeddings: 33% (1/3)" in self.queue.indexing(self.folder)["message"]))
-        self.assertTrue(until(lambda: self.status().get("message") == suggestion_jobs.WAITING_FOR_THE_INDEX),
+        self.assertTrue(comes_true(lambda: "Generating embeddings: 33% (1/3)" in self.queue.indexing(self.folder)["message"]))
+        self.assertTrue(comes_true(lambda: self.status().get("message") == suggestion_jobs.WAITING_FOR_THE_INDEX),
                         self.status())
         self.assertEqual(suggestion_jobs.WAITING_FOR_THE_INDEX, self.status()["message"])
-        time.sleep(0.3)
+        # Said once it found the index under way; it looks again only after INDEX_POLL (1 s), and the index runs on.
         self.assertEqual([], models.began, "Suggest began while its folder was being indexed")
         self.release.set()
         self.wait_for("completed")
@@ -150,7 +144,7 @@ class SuggestWaitsForTheFoldersIndex(_Library):
         os.makedirs(another)
         queue = indexing_jobs.IndexQueue(self.library.name, self.library)
         queue.start([another], index)
-        self.assertTrue(until(lambda: bake in (queue.active()["active"] or [{}])[0].get("message", "")), queue.active())
+        self.assertTrue(comes_true(lambda: bake in (queue.active()["active"] or [{}])[0].get("message", "")), queue.active())
         self.assertTrue(queue.busy())
         self.assertIsNone(queue.indexing(another))
 
@@ -163,7 +157,7 @@ class SuggestWaitsForTheFoldersIndex(_Library):
     def test_cancel_stops_the_wait_at_once(self):
         models = _FakeModels()
         self.runs.start(self.folder, suggestion_jobs.work_for(self.library, lambda: self.photos, models, self.queue))
-        self.assertTrue(until(lambda: "indexed first" in (self.status().get("message") or "")))
+        self.assertTrue(comes_true(lambda: "indexed first" in (self.status().get("message") or "")))
         asked = time.monotonic()
         self.assertTrue(self.runs.cancel(self.folder))
         self.wait_for("cancelled")
@@ -274,7 +268,7 @@ class SuggestWaitsForTheCard(_Library):
 
     def test_its_status_says_who_has_the_card(self):
         self.start()
-        self.assertTrue(until(lambda: gpu_turns.is_waiting(self.status().get("message"))), self.status())
+        self.assertTrue(comes_true(lambda: gpu_turns.is_waiting(self.status().get("message"))), self.status())
         self.assertIn("in use by: indexing Lighthouse (harbour), since ", self.status()["message"])
         [run] = [each for each in suggestion_jobs.under_way() if each["folder"] == "Regatta"]
         self.assertTrue(gpu_turns.is_waiting(run["message"]), run)
@@ -288,7 +282,7 @@ class SuggestWaitsForTheCard(_Library):
 
     def test_cancel_while_it_waits_keeps_nothing(self):
         self.start()
-        self.assertTrue(until(lambda: gpu_turns.is_waiting(self.status().get("message"))))
+        self.assertTrue(comes_true(lambda: gpu_turns.is_waiting(self.status().get("message"))))
         asked = time.monotonic()
         self.assertTrue(self.runs.cancel(self.folder))
         self.wait_for("cancelled")
@@ -327,7 +321,7 @@ class TheQueuesCancelStopsAnIndexThatWaits(_Library):
         def index(folder, report):
             return indexing_service.index_folder(self.library, folder, code, report=report)
         queue.start([self.folder], index)
-        self.assertTrue(until(lambda: gpu_turns.is_waiting(queue.status(self.folder).get("message"))),
+        self.assertTrue(comes_true(lambda: gpu_turns.is_waiting(queue.status(self.folder).get("message"))),
                         queue.status(self.folder))
         self.assertIn("in use by: Suggest Regatta (harbour), since 15:41", queue.status(self.folder)["message"])
         outcome = queue.cancel(everything=True)
@@ -348,7 +342,7 @@ class TheQueuesCancelStopsAnIndexThatWaits(_Library):
             release.wait(DEADLINE)
             return Result(attempted=1, changed=1)
         queue.start([self.folder], index)
-        self.assertTrue(until(lambda: "33%" in (queue.status(self.folder).get("message") or "")))
+        self.assertTrue(comes_true(lambda: "33%" in (queue.status(self.folder).get("message") or "")))
         self.assertEqual([], queue.cancel([self.folder]).details["stopping"])
         self.assertFalse(os.path.exists(os.path.join(self.home.root, "stop")))
         release.set()
@@ -372,7 +366,7 @@ class TheIndexerWaitsBeforeItsFirstPhoto(_Library):
             report(gpu_turns.waiting_line({"what": "Suggest Regatta (harbour)", "since": time.time()}))
             with open(stop, "w") as handle:
                 handle.write("stop")
-            until(cancelled, 5)
+            comes_true(cancelled, 5)
             raise gpu_turns.Cancelled("stopped")
         runtime.gpu_turn.side_effect = gpu_turn
         extractor = mock.Mock()

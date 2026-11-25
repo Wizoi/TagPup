@@ -27,6 +27,7 @@ from exiftool.exceptions import ExifToolExecuteError  # noqa: E402
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import own_home  # noqa: E402
+from waiting import NeverHappened, wait_until  # noqa: E402
 from tagpup.core import processes  # noqa: E402
 from tagpup.files.exiftool_session import ExifToolSession, ExifToolTimeout  # noqa: E402
 
@@ -188,9 +189,10 @@ class TestAWriterKilledHardTakesItsExifToolWithIt(unittest.TestCase):
         pid, started = (int(word) for word in out.split())
         exiftool = {"pid": pid, "started": started}
         self.addCleanup(lambda: processes.recorded_alive(exiftool) and processes.kill_tree(pid))
-        deadline = time.monotonic() + 20
-        while processes.recorded_alive(exiftool) and time.monotonic() < deadline:
-            time.sleep(0.25)
+        try:
+            wait_until(lambda: not processes.recorded_alive(exiftool), timeout=20, interval=0.25, what="ExifTool to end")
+        except NeverHappened:
+            pass   # the test says what outlived its writer
         return exiftool
 
     def test_its_exiftool_ends_with_it(self):

@@ -29,13 +29,13 @@ import json
 import logging
 import os
 import sys
-import threading
 import time
 import unittest
 from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import own_home  # noqa: E402,F401
+from waiting import wait_until  # noqa: E402
 import page_fixtures  # noqa: E402
 from test_a_failed_run_says_what_to_do import NIGHT, Clock, _Libraries  # noqa: E402
 from test_activity_routes import FakeWatcher  # noqa: E402
@@ -117,12 +117,6 @@ class RepliesForTheActivityPage(_Libraries):
             json.dump({"root": ROOT, "lines": lines, "exit": 0}, handle)
         return code
 
-    def until(self, done, what):
-        deadline = time.monotonic() + 60
-        while not done():
-            self.assertLess(time.monotonic(), deadline, what)
-            threading.Event().wait(0.02)
-
     def index_row(self, library):
         rows = [run for run in job_runs.runs(library, job_runs.INDEX, 5) if run.outcome == "running"]
         return rows[0] if rows else None
@@ -152,13 +146,13 @@ class RepliesForTheActivityPage(_Libraries):
         with runs.running(runs.job_tag(library.name, sync.run_id)):
             self.assertTrue(queue.start(folders[:1], lambda folders, told: indexing.index_folder(
                 library, folders, running, told), together=True).ok)
-        self.until(lambda: self.index_row(library) is not None, "the queue claimed no run of its index")
+        wait_until(lambda: self.index_row(library) is not None, 60, what="the queue to claim a run of its index")
         self.assertTrue(queue.start(folders[1:], lambda folders, told: indexing.index_folder(
             library, folders, waiting, told), together=True).ok)
         self.clock.now = at - 3
         open(go[0], "w").close()
-        self.until(lambda: (self.index_row(library).progress or {}).get("phase") == "metadata",
-                   "the index's row never said the metadata bar")
+        wait_until(lambda: (self.index_row(library).progress or {}).get("phase") == "metadata", 60,
+                   what="the index's row to say the metadata bar")
         return sync.run_id, release
 
     def cli_index(self, library, started, said_at):

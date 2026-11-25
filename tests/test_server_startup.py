@@ -13,7 +13,6 @@ import os
 import socket
 import subprocess
 import sys
-import time
 import unittest
 import urllib.request
 from unittest import mock
@@ -23,6 +22,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, PROJECT_ROOT)
 from tagpup.core import processes  # noqa: E402
 import own_home  # noqa: E402
+from waiting import wait_until  # noqa: E402
 from free_port import free_port  # noqa: E402
 
 import tagpup_web  # noqa: E402
@@ -38,17 +38,15 @@ class TestServerStartup(unittest.TestCase):
             env=dict(os.environ, TAGPUP_HOME=home.root, TAGPUP_NO_MODEL_WEIGHTS="1", TAGPUP_NO_JOBS="1"),
             stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, cwd=PROJECT_ROOT)
         try:
-            deadline = time.time() + 60
-            while time.time() < deadline:
+            def answers():
                 if proc.poll() is not None:
                     self.fail("the server exited before it was ready:\n" + proc.stderr.read()[-3000:])
                 try:
                     with socket.create_connection(("127.0.0.1", tuner_port), timeout=1):
-                        break
+                        return True
                 except OSError:
-                    time.sleep(0.1)
-            else:
-                self.fail("the server never came up")
+                    return False
+            wait_until(answers, 60, 0.1, "the server to come up")
 
             for port, title in ((tagpup_port, "TagPup"), (tuner_port, "TagTuner")):
                 with urllib.request.urlopen("http://127.0.0.1:%d/" % port, timeout=5.0) as response:

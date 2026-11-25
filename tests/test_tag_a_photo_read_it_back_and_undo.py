@@ -46,6 +46,7 @@ import unittest
 from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import corpus  # noqa: E402
 import damaged_photos  # noqa: E402
 import face_rows  # noqa: E402
 import page_fixtures  # noqa: E402
@@ -135,10 +136,10 @@ class TaggingAPhoto(ReadFilesCase):
 
     def damaged(self, name, shape):
         """A photo of noise holding Beach, then damaged as a copy that stopped leaves it -- `cut` short, or with its
-        second half `zeros` in a file of its full size -- and its row as the indexer leaves it after reading it."""
-        path = os.path.join(self.folder, name)
-        damaged_photos.whole_jpeg(path, size=(480, 360))
-        write_outside(path, {"XMP:Subject": ["Beach"], "IPTC:Keywords": ["Beach"]})
+        second half `zeros` in a file of its full size -- and its row as the indexer leaves it after reading it. The photo
+        before its damage is made once and kept (tests/corpus.py)."""
+        path = corpus.noise_jpeg(os.path.join(self.folder, name), 7, (480, 360),
+                                 {"XMP:Subject": ["Beach"], "IPTC:Keywords": ["Beach"]}, EXIFTOOL)
         with open(path, "rb") as handle:
             whole = handle.read()
         half = len(whole) // 2

@@ -19,12 +19,12 @@ import os
 import socket
 import sys
 import threading
-import time
 import unittest
 from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from waiting import wait_until  # noqa: E402
 
 from test_file_journal import EXIFTOOL, Crash, FilesCase, crash_at, keywords_of, requires_exiftool  # noqa: E402
 
@@ -39,13 +39,6 @@ from tagpup.web import lifecycle  # noqa: E402
 GONE = "%s:4000000:1" % socket.gethostname()      # a process of this machine that has ended
 PHOTOS = 12
 
-
-def wait_until(check, what):
-    deadline = time.monotonic() + 30
-    while not check():
-        if time.monotonic() > deadline:
-            raise AssertionError("never happened: %s" % what)
-        threading.Event().wait(0.01)
 
 
 @requires_exiftool
@@ -117,7 +110,7 @@ class ALongChangeCutOff(CutOff):
                     save["ok"], save["settled then"] = result.ok, self.done()
                 save["thread"] = threading.Thread(target=saving)
                 save["thread"].start()
-                wait_until(lambda: file_changes._waiting == 1, "the save waits for the lock")
+                wait_until(lambda: file_changes._waiting == 1, what="the save waits for the lock")
 
         finished, said, wrote = self.open_library(step)
         save["thread"].join(60)
@@ -190,7 +183,7 @@ class ALongChangeCutOff(CutOff):
                         tried["rename said"] = str(refused)
                 tried["thread"] = threading.Thread(target=saving)
                 tried["thread"].start()
-                wait_until(lambda: file_changes._waiting == 1, "the save waits for the lock")
+                wait_until(lambda: file_changes._waiting == 1, what="the save waits for the lock")
 
         finished, _said, _wrote = self.open_library(step)
         tried["thread"].join(60)
@@ -327,7 +320,7 @@ class OnAThreadInTheServer(CutOff):
         self.open_in_the_server()
         # The page sees the settle: a batch of this process, waiting its turn, cancellable, naming the change.
         wait_until(lambda: [row["state"] for row in batches.listing(self.library) if row["id"] == self.change]
-                   == [batches.QUEUED], "the settle is listed, waiting its turn")
+                   == [batches.QUEUED], what="the settle is listed, waiting its turn")
         listed = [row for row in batches.listing(self.library) if row["id"] == self.change]
         self.assertEqual([(True, 10)], [(row["here"], row["photos"]) for row in listed])
         self.assertIsNotNone(listed[0]["ticket"])
@@ -382,7 +375,7 @@ class OnAThreadInTheServer(CutOff):
     def test_cancel_while_it_waits_its_turn_writes_nothing_and_keeps_its_photos_refused_until_the_next_start(self):
         go = self.bulk_ahead()
         self.open_in_the_server()
-        wait_until(lambda: any(row["id"] == self.change for row in batches.listing(self.library)), "the settle waits")
+        wait_until(lambda: any(row["id"] == self.change for row in batches.listing(self.library)), what="the settle waits")
         ticket = [row for row in batches.listing(self.library) if row["id"] == self.change][0]["ticket"]
         self.assertTrue(batches.cancel(self.library, ticket))
         self.join_settles()
@@ -581,7 +574,7 @@ class AnOlderChangeOfItsPhotos(CutOff):
                     tried["ok"], tried["said"] = result.ok, result.message()
                 tried["thread"] = threading.Thread(target=undoing)
                 tried["thread"].start()
-                wait_until(lambda: file_changes._waiting == 1, "the undo waits for the lock")
+                wait_until(lambda: file_changes._waiting == 1, what="the undo waits for the lock")
 
         finished, _said, _wrote = self.open_library(step)
         tried["thread"].join(60)

@@ -200,7 +200,7 @@ class ARunSaysHowFarItGot(unittest.TestCase):
             try:
                 db.begin(conn, immediate=True)
                 held.set()
-                time.sleep(seconds)
+                time.sleep(seconds)   # wait: the scenario, another writer holds the library this long
                 conn.rollback()
             finally:
                 conn.close()

@@ -30,7 +30,6 @@ import re
 import subprocess
 import sys
 import tempfile
-import time
 import unittest
 import urllib.request
 from unittest import mock
@@ -41,6 +40,7 @@ for folder in (WORKSPACE_DIR, os.path.join(WORKSPACE_DIR, "scripts"), os.path.jo
     sys.path.insert(0, folder)
 
 import own_home  # noqa: E402
+from waiting import wait_until  # noqa: E402
 import run_tests  # noqa: E402
 import sandbox  # noqa: E402
 from free_port import free_port  # noqa: E402
@@ -247,16 +247,14 @@ class NoSandboxIsMadeByHand(unittest.TestCase):
                                   "--tagpup-port", str(ports[0]), "--tuner-port", str(ports[1])],
                                  env=env, cwd=home.root, stdin=subprocess.DEVNULL, stdout=log, stderr=subprocess.STDOUT)
         self.addCleanup(lambda: server.poll() is None and processes.kill_tree(server.pid))
-        deadline = time.time() + 90
-        while True:
+        def answers():
             try:
                 with urllib.request.urlopen("http://127.0.0.1:%d/api/server" % ports[0], timeout=5) as reply:
-                    json.loads(reply.read().decode("utf-8"))
-                break
+                    return json.loads(reply.read().decode("utf-8")) is not None
             except OSError:
                 self.assertIsNone(server.poll(), "the server exited")
-                self.assertLess(time.time(), deadline, "the server never answered")
-                time.sleep(0.2)
+                return False
+        wait_until(answers, 90, 0.2, "the server to answer")
         # Its records are the sandbox's (written once it serves, before it answers) ... and nothing is under the owner's profile.
         self.assertEqual(sorted("%d.json" % port for port in ports),
                          sorted(os.listdir(os.path.join(home.root, "servers"))))
@@ -279,10 +277,7 @@ class EndingWhatATestStarted(unittest.TestCase):
         self.addCleanup(lambda: first.poll() is None and processes.kill_tree(first.pid))
         self.assertEqual(0, first.wait(timeout=60))
         # What the test knows of has ended; what it left has not, and no record names it.
-        deadline = time.time() + 30
-        while not own_home._named_under(self.home.root):
-            self.assertLess(time.time(), deadline, "the process it starts never ran")
-            time.sleep(0.2)
+        wait_until(lambda: own_home._named_under(self.home.root), 30, 0.2, "the process it starts to run")
         self.assertTrue(own_home.end_processes(self.home.root))
         self.assertEqual([], own_home._named_under(self.home.root), "a process started from the home still runs")
 
@@ -293,11 +288,8 @@ class EndingWhatATestStarted(unittest.TestCase):
         server = processes.start([sys.executable, "-c", script], stdin=subprocess.DEVNULL,
                                  stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         self.addCleanup(lambda: server.poll() is None and processes.kill_tree(server.pid))
-        deadline = time.time() + 60
-        while launcher.record(1) is None:
-            self.assertIsNone(server.poll(), "it did not start")
-            self.assertLess(time.time(), deadline, "it never said where it answers")
-            time.sleep(0.1)
+        wait_until(lambda: self.assertIsNone(server.poll(), "it did not start") or launcher.record(1) is not None,
+                   60, 0.1, "it to say where it answers")
         recorded = launcher.record(1)["pid"]
         self.assertTrue(own_home.ran_processes(self.home.root))
         own_home.end_processes(self.home.root)

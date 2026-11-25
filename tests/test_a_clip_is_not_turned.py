@@ -23,13 +23,14 @@ from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import corpus  # noqa: E402
 import own_home  # noqa: E402
 import web_client  # noqa: E402
 from view_library import ViewLibrary, make_jpeg  # noqa: E402
 
 from tests import page_writes  # noqa: E402
 from tagpup import config  # noqa: E402
-from tagpup.core import paths, processes  # noqa: E402
+from tagpup.core import paths  # noqa: E402
 from tagpup.files import images  # noqa: E402
 from tagpup.files.exiftool_session import ExifToolSession  # noqa: E402
 
@@ -61,10 +62,9 @@ class AClipBesideAPhoto(unittest.TestCase):
             et.set_tags([self.photo_path], tags={"EXIF:DateTimeOriginal": TAKEN}, params=["-overwrite_original"])
         self.photo = self.vl.photo("Harbour", "pier.jpg", taken=TAKEN, at=self.photo_path)
         self.clip_path = os.path.join(self.folder, "jetty.mov")
-        made = processes.run([TOOLS.ffmpeg, "-y", "-loglevel", "error", "-f", "lavfi", "-i", "testsrc=size=160x120:rate=10",
-                              "-t", "1", "-pix_fmt", "yuv420p", "-metadata", "creation_time=2021-07-04T18:30:00Z",
-                              self.clip_path], capture_output=True)
-        self.assertEqual(0, made.returncode, made.stderr)
+        corpus.clip(self.clip_path, ["-y", "-loglevel", "error", "-f", "lavfi", "-i", "testsrc=size=160x120:rate=10",
+                                     "-t", "1", "-pix_fmt", "yuv420p", "-metadata", "creation_time=2021-07-04T18:30:00Z"],
+                    TOOLS.ffmpeg)
         self.clip = self.vl.photo("Harbour", "jetty.mov", at=self.clip_path)
         self.assertEqual([("video",)], self.vl.rows("SELECT kind FROM photos WHERE id = ?", self.clip),
                          "the clip's row is of kind video, as the indexer records it")
@@ -101,10 +101,8 @@ class AClipBesideAPhoto(unittest.TestCase):
         """#2584: 2,017 photo_index clips hold only QuickTime:Title (counted 2026-11-06). The page shows it as the title;
         the save's compare reads the title fields alone, so a tag save from the panel was refused 409 'changed on disk'."""
         titled = os.path.join(self.folder, "slipway.mov")
-        made = processes.run([TOOLS.ffmpeg, "-y", "-loglevel", "error", "-f", "lavfi", "-i", "testsrc=size=160x120:rate=10",
-                              "-t", "1", "-pix_fmt", "yuv420p", "-metadata", "title=Slipway at dusk", titled],
-                             capture_output=True)
-        self.assertEqual(0, made.returncode, made.stderr)
+        corpus.clip(titled, ["-y", "-loglevel", "error", "-f", "lavfi", "-i", "testsrc=size=160x120:rate=10",
+                             "-t", "1", "-pix_fmt", "yuv420p", "-metadata", "title=Slipway at dusk"], TOOLS.ffmpeg)
         clip = self.vl.photo("Harbour", "slipway.mov", at=titled, fields={"QuickTime:Title": "Slipway at dusk"})
         reply = self.client.get("/library/api/library/photo", query_string={"id": clip})
         self.assertEqual(200, reply.status_code, reply.data)

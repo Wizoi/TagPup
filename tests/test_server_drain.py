@@ -19,6 +19,7 @@ test_is_refused_while_the_startup_migrations_run; the version label dropped from
 test_each_response_names_the_version_answering_also_when_turned_away; the lease check dropped from the drain route
 fails test_a_deadline_and_a_lease_must_be_numbers_of_seconds.
 """
+import collections
 import os
 import sys
 import threading
@@ -30,6 +31,7 @@ from flask import jsonify
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import own_home  # noqa: E402
+from waiting import wait_until  # noqa: E402
 
 from tagpup import launcher  # noqa: E402
 from tagpup import runtime as runtimes  # noqa: E402
@@ -91,8 +93,9 @@ class Base(unittest.TestCase):
         self.background = FakeBackground()
         self.clock = Clock()
         self.runtime = Runtime()
+        self.reads = ReadsCounted()
         self.lifecycle = Lifecycle(version="20260926-101500-abc1234", launcher_token=TOKEN, background=self.background,
-                                   work=lambda: list(self.long), runtime=self.runtime)
+                                   work=lambda: list(self.long), runtime=self.runtime, clock=self.reads)
         self.app = web.create_app("tagpup", startup=self.library, runtime=self.runtime, lifecycle=self.lifecycle)
         self.app.testing = True
         self.addCleanup(self.lifecycle.resume)      # a drain asks the batches to stop, and keeps asking until it resumes
@@ -123,11 +126,26 @@ class Base(unittest.TestCase):
     def drain(self, seconds=30):
         return self.client().post("/api/server/drain", json={"seconds": seconds, "lease": LEASE}, headers=HEADERS)
 
-    def wait_until(self, check, seconds=10):
-        deadline = time.time() + seconds
-        while not check():
-            self.assertLess(time.time(), deadline, "timed out")
-            time.sleep(0.01)
+
+class ReadsCounted:
+    """time.monotonic for a Lifecycle, counting its reads by the thread and the function that read it: a drain reads it
+    once each time it has looked and goes on waiting, which is what a test waits for in place of a fixed time."""
+
+    def __init__(self):
+        self._lock = threading.Lock()
+        self._reads = collections.Counter()
+
+    def __call__(self):
+        function = sys._getframe(1).f_code.co_name
+        with self._lock:
+            self._reads[(threading.get_ident(), function)] += 1
+        return time.monotonic()
+
+    def by(self, function, thread=None):
+        """The reads in `function`, on `thread` (a Thread) or on any."""
+        with self._lock:
+            return sum(count for (ident, name), count in self._reads.items()
+                       if name == function and (thread is None or ident == thread.ident))
 
 
 class ADrain(Base):
@@ -135,7 +153,7 @@ class ADrain(Base):
         writing, wrote = self.in_thread(self.write)
         self.assertTrue(self.entered.wait(10))
         draining, drained = self.in_thread(self.drain)
-        self.wait_until(lambda: not self.lifecycle.status()["taking_work"])
+        wait_until(lambda: not self.lifecycle.status()["taking_work"])
 
         refused = self.client().get("/harbour/api/tags")
         self.assertEqual(503, refused.status_code)
@@ -145,7 +163,8 @@ class ADrain(Base):
         # Asked while draining, the server still says how it is.
         status = self.client().get("/api/server").get_json()
         self.assertEqual((False, 1), (status["taking_work"], status["requests"]))
-        time.sleep(0.3)
+        # Once to bound the background's stop, once more after it found the write in flight and went on waiting.
+        wait_until(lambda: self.reads.by("_drain_until") >= 2, what="the drain to look at the write in flight")
         self.assertTrue(draining.is_alive(), "drained with a write in flight")
         self.assertEqual([], self.written)
 
@@ -256,9 +275,10 @@ class OneDrainAtATime(Base):
         writing, _wrote = self.in_thread(self.write)
         self.assertTrue(self.entered.wait(10))
         first, first_answer = self.in_thread(self.drain)
-        self.wait_until(lambda: not self.lifecycle.status()["taking_work"])
+        wait_until(lambda: not self.lifecycle.status()["taking_work"])
         second, second_answer = self.in_thread(self.drain)
-        time.sleep(0.3)
+        # Once for its deadline, once more as it found the first under way and went on waiting for it.
+        wait_until(lambda: self.reads.by("drain", second) >= 2, what="the second drain to wait for the first")
         self.assertTrue(second.is_alive(), "the second drain did not wait for the first")
         self.release.set()
         for thread in (writing, first, second):
@@ -270,7 +290,7 @@ class OneDrainAtATime(Base):
         writing, _wrote = self.in_thread(self.write)
         self.assertTrue(self.entered.wait(10))
         draining, answer = self.in_thread(lambda: self.drain(seconds=30))
-        self.wait_until(lambda: not self.lifecycle.status()["taking_work"])
+        wait_until(lambda: not self.lifecycle.status()["taking_work"])
         started = time.monotonic()
         self.lifecycle.resume()      # the server's own: a lease ended
         draining.join(10)
@@ -443,10 +463,7 @@ class WhatALongRunIs(unittest.TestCase):
         self.runtime.index_queues.of(self.library).start([self.home.root], index)
         self.assertEqual(["indexing in 1 library(ies)"], [work.sentence for work in lifecycles.long_work(self.runtime.index_queues)])
         self.go.set()
-        deadline = time.time() + 10
-        while lifecycles.long_work(self.runtime.index_queues) and time.time() < deadline:
-            time.sleep(0.01)
-        self.assertEqual([], lifecycles.long_work(self.runtime.index_queues))
+        wait_until(lambda: not lifecycles.long_work(self.runtime.index_queues), what="no long work")
 
     def test_a_suggest_run_under_way(self):
         go = self.go
@@ -461,10 +478,7 @@ class WhatALongRunIs(unittest.TestCase):
         suggestion_jobs.runs_for(self.library).start(self.home.root, Work())
         self.assertEqual(["1 Suggest run(s)"], [work.sentence for work in lifecycles.long_work(self.runtime.index_queues)])
         self.go.set()
-        deadline = time.time() + 10
-        while lifecycles.long_work(self.runtime.index_queues) and time.time() < deadline:
-            time.sleep(0.01)
-        self.assertEqual([], lifecycles.long_work(self.runtime.index_queues))
+        wait_until(lambda: not lifecycles.long_work(self.runtime.index_queues), what="no long work")
 
 
 class AnIndexsEndWaitingForTheLibrary(unittest.TestCase):
@@ -506,9 +520,7 @@ class AnIndexsEndWaitingForTheLibrary(unittest.TestCase):
         return run
 
     def wait_for_no_long_work(self, seconds):
-        deadline = time.time() + seconds
-        while lifecycles.long_work(self.runtime.index_queues) and time.time() < deadline:
-            time.sleep(0.02)
+        wait_until(lambda: not lifecycles.long_work(self.runtime.index_queues), seconds, 0.02, "no long work")
 
     def test_refuses_a_drain_until_it_is_written(self):
         run = self.index_ending_beside_another_writer()
@@ -593,7 +605,7 @@ class AnUpdateWhileAShareIsAway(Base):
         started = time.monotonic()
         with self.assertLogs(lifecycles.logger, "WARNING") as logged:
             first, first_answer = self.in_thread(lambda: self.lifecycle.drain(1, lease=LEASE))
-            self.wait_until(lambda: self.stuck.stops == 1)
+            wait_until(lambda: self.stuck.stops == 1)
             # Given longer than the first, so a loaded machine's first does not outlast it ("another drain").
             second, second_answer = self.in_thread(lambda: self.lifecycle.drain(10, lease=LEASE))
             first.join(5)
@@ -681,7 +693,7 @@ class AnInstallWhileAWatchedShareStopsAnswering(Base):
     def test_the_install_drains_and_ends_the_old_server_without_waiting_out_the_idle_patience(self):
         self.away.set()
         self.lifecycle.background.start()
-        self.wait_until(lambda: self.watcher.watched() == [paths.stored(self.root)] and len(self.held) == 2)
+        wait_until(lambda: self.watcher.watched() == [paths.stored(self.root)] and len(self.held) == 2)
         found = {"pid": 4242, "started": 1, "ports": {"tagpup": 5}, "version": self.OLD, "token": TOKEN}
         said, ended, port_held, now = [], [], [True], [0.0]
         client = self.client()

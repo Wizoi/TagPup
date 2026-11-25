@@ -27,6 +27,7 @@ from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import own_home  # noqa: E402
+from waiting import holds_for, wait_until  # noqa: E402
 import migration_names  # noqa: E402
 
 from PIL import Image  # noqa: E402
@@ -168,11 +169,8 @@ class _Indexing(unittest.TestCase):
                                    "folder": self.folder("Regatta")})
         server = processes.start([sys.executable, script], cwd=self.home.root)
         try:
-            deadline = time.monotonic() + 60
-            while not os.path.exists(ready):
-                self.assertIsNone(server.poll(), "the server ended before its index began")
-                self.assertLess(time.monotonic(), deadline)
-                time.sleep(0.05)
+            wait_until(lambda: self.assertIsNone(server.poll(), "the server ended before its index began")
+                       or os.path.exists(ready), timeout=60, what="the server's index to begin")
         except BaseException:
             processes.kill_tree(server.pid)
             server.wait(30)
@@ -261,13 +259,10 @@ class AnIndexIsOneRunUnderTheSyncThatQueuedIt(_Indexing):
                                               (queues[1], other, theirs, "code-lighthouse")):
             code = self.code(["WAIT " + release] + bake(folders), name=name)
             self.assertTrue(queue.start(folders, self.index_with(library, code), together=True).ok)
-        deadline = time.monotonic() + 30
         try:
             # Both under way at once, each its own run in its own library.
-            while not all(rows(each.path, "SELECT outcome FROM job_runs") == [("running",)]
-                          for each in (self.library, other)):
-                self.assertLess(time.monotonic(), deadline)
-                time.sleep(0.02)
+            wait_until(lambda: all(rows(each.path, "SELECT outcome FROM job_runs") == [("running",)]
+                                   for each in (self.library, other)), timeout=30, what="both runs under way")
             now = {entry["name"]: entry for entry in self.page("/api/activity/now")["libraries"]}
             for library in (self.library, other):
                 self.assertEqual((self.index_run(library).changed["run"], []),
@@ -451,11 +446,8 @@ class AnIndexStartsAtOnceBesideAnotherWriter(_Indexing):
         writer = processes.start([sys.executable, script], cwd=self.home.root)
         self.addCleanup(writer.wait, 30)
         self.addCleanup(lambda: open(release, "w").close())
-        deadline = time.monotonic() + 60
-        while not os.path.exists(ready):
-            self.assertIsNone(writer.poll(), "the writer ended before it held the library")
-            self.assertLess(time.monotonic(), deadline)
-            time.sleep(0.05)
+        wait_until(lambda: self.assertIsNone(writer.poll(), "the writer ended before it held the library")
+                   or os.path.exists(ready), timeout=60, what="the writer to hold the library")
         return release
 
     def test_a_library_another_process_holds_is_indexed_at_once_and_unrecorded(self):
@@ -510,12 +502,8 @@ class AnIndexStartsAtOnceBesideAnotherWriter(_Indexing):
         self.assertEqual(job_runs.RUNNING, seen["first"].outcome)
         self.assertEqual([(seen["first"].id, activity.RUNNING)],
                          [(run["run_id"], run["state"]) for run in seen["now"]])
-        deadline = time.monotonic() + 60
-        while True:
-            [first] = [run for run in self.runs() if run.id == seen["first"].id]
-            if first.outcome != job_runs.RUNNING or time.monotonic() > deadline:
-                break
-            time.sleep(0.05)
+        [first] = wait_until(lambda: [run for run in self.runs() if run.id == seen["first"].id
+                                      and run.outcome != job_runs.RUNNING], timeout=60, what="the first run to end")
         self.assertEqual((job_runs.DONE, 1, 1), (first.outcome, first.changed["folders"], first.changed["attempted"]),
                          first.changed)
         self.assertEqual([], roots_location._running_here(self.library))
@@ -529,16 +517,10 @@ class AnIndexStartsAtOnceBesideAnotherWriter(_Indexing):
         release = self.another_writer()
         open(os.path.join(self.home.root, "SERVER_GO"), "w").close()
         ended = os.path.join(self.home.root, "SERVER_ENDED")
-        deadline = time.monotonic() + 60
-        while not os.path.exists(ended):
-            self.assertLess(time.monotonic(), deadline, "the CLI's queue never ended")
-            time.sleep(0.05)
+        wait_until(lambda: os.path.exists(ended), timeout=60, what="the CLI's queue to end")
         # Its queue is done and its last line run: a process with nothing left to wait for is gone within a few
         # seconds. The other process still writes, longer than an end is tried for (RECORD_WITHIN).
-        gone_by = time.monotonic() + 3 + job_runs.RECORD_WITHIN
-        while cli.poll() is None and time.monotonic() < gone_by:
-            time.sleep(0.05)
-        alive = cli.poll() is None
+        alive = holds_for(lambda: cli.poll() is None, 3 + job_runs.RECORD_WITHIN)
         open(release, "w").close()
         cli.wait(60)
         run = self.index_run()

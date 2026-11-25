@@ -39,6 +39,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import damaged_photos  # noqa: E402
 import own_home  # noqa: E402
+from waiting import comes_true, wait_until  # noqa: E402
 from face_rows import VECTOR_OF_FACE  # noqa: E402
 
 import tagpup_cli  # noqa: E402
@@ -230,13 +231,18 @@ class AnIndexReadingAhead(unittest.TestCase):
     def test_a_photo_that_decodes_slowly_holds_up_nothing_and_is_recorded_in_its_turn(self):
         library = self.library("meadow.db")
         folder = self.folder("Meadow", count=6)
-        slow = os.path.join(folder, "p01.jpg")
+        slow, after = os.path.join(folder, "p01.jpg"), os.path.join(folder, "p02.jpg")
         opened, reads = images.opened, []
+        slow_begun, after_begun = threading.Event(), threading.Event()
 
         def opened_slowly(path, upright):
             started = time.perf_counter()
+            if path == after and slow_begun.is_set():
+                after_begun.set()
             if path == slow and upright:
-                time.sleep(0.6)
+                # Slow until the next photo's read has begun meanwhile; one that never begins fails the test below.
+                slow_begun.set()
+                after_begun.wait(20)
             picture = opened(path, upright)
             reads.append((os.path.basename(path), upright, started, time.perf_counter()))
             return picture
@@ -332,13 +338,19 @@ class AnIndexReadingAhead(unittest.TestCase):
                 loads.append(threading.current_thread().name)
                 model.model, model.preprocess = object(), lambda img: (img.size, colour_of(img))
 
+        given_back = threading.Event()
+
         def opened_slowly(path, upright):
             if upright and os.path.basename(path) in ("p05.jpg", "p06.jpg", "p07.jpg"):
-                time.sleep(1.0)
+                # The scenario: these reads are still under way as the index stops, and finish after the turn is back.
+                wait_until(given_back.is_set, what="the index to give its turn on the card back")
             return opened(path, upright)
 
         def gpu_turn(runtime, what, models, cancelled=None, report=None):
-            return mock.Mock(release=runtime._unload_every_model)
+            def release():
+                runtime._unload_every_model()
+                given_back.set()
+            return mock.Mock(release=release)
 
         def give_then_stop(writer, meta, *args, **kwargs):
             if len(given) == 3:
@@ -350,6 +362,7 @@ class AnIndexReadingAhead(unittest.TestCase):
                 mock.patch.object(Runtime, "gpu_turn", gpu_turn), \
                 mock.patch.object(tagpup_cli.IdentityWriter, "give", give_then_stop):
             self.index(library, folder, code=1)
+            self.assertTrue(given_back.is_set(), "the index stopped without giving its turn on the card back")
             for thread in threading.enumerate():
                 if thread.name.startswith("read ahead"):
                     thread.join(10)
@@ -389,13 +402,12 @@ class AnIndexReadingAhead(unittest.TestCase):
             blocked.wait(10)
             done.wait(10)
             names = ("p00.jpg", "p01.jpg", "p02.jpg")
-            deadline = time.monotonic() + 3
-            while time.monotonic() < deadline:
+
+            def let_go():
                 gc.collect()
                 alive["left"] = [name for name in names if made[name]() is not None]
-                if not alive["left"]:
-                    break
-                time.sleep(0.05)
+                return not alive["left"]
+            comes_true(let_go, 3, 0.05)   # the test says which were still held
             released.set()
         looker = threading.Thread(target=look)
         looker.start()
@@ -476,7 +488,7 @@ class ThePhotosReadAhead(unittest.TestCase):
                     seen.append(result.result())
                 except LookupError:
                     seen.append(None)
-                time.sleep(0.01)    # the card's work on it
+                time.sleep(0.01)    # wait: the scenario, the card's work on it
         return held, seen
 
     def test_a_193_mp_photo_is_read_alone_and_the_bound_holds_for_the_rest(self):

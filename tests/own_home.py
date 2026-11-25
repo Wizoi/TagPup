@@ -38,6 +38,7 @@ WORKSPACE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if WORKSPACE_DIR not in sys.path:
     sys.path.insert(0, WORKSPACE_DIR)
 
+import waiting  # noqa: E402
 from tagpup import config as tagpup_config  # noqa: E402
 from tagpup.core import processes  # noqa: E402
 
@@ -190,26 +191,36 @@ def end_processes(root, rounds=10):
         for pid in found:
             processes.kill_tree(pid)
             ended.append(pid)
-        time.sleep(0.5)
+        # Each gone before the next round looks, so none is listed again for having just ended; one still there after
+        # its timeout is ended again by the next round.
+        for pid in found:
+            _wait_for_exit(pid, ENDED_WITHIN)
     return ended
 
 
-def _wait_for_exit(pid):
+#: Seconds end_processes waits for a process it ended to be gone (taskkill /F ends one in milliseconds).
+ENDED_WITHIN = 2.0
+
+
+def _wait_for_exit(pid, timeout=None):
+    """Return once process `pid` has ended, or after `timeout` seconds (None: however long it takes)."""
     if os.name == "nt":
         import ctypes
         synchronize, infinite = 0x00100000, 0xFFFFFFFF
         kernel = ctypes.windll.kernel32
         process = kernel.OpenProcess(synchronize, False, pid)
         if process:
-            kernel.WaitForSingleObject(process, infinite)
+            kernel.WaitForSingleObject(process, infinite if timeout is None else int(timeout * 1000))
             kernel.CloseHandle(process)
         return
-    while True:
+
+    def gone():
         try:
             os.kill(pid, 0)
         except OSError:
-            return
-        time.sleep(0.5)
+            return True
+        return False
+    waiting.comes_true(gone, float("inf") if timeout is None else timeout, interval=0.05)
 
 
 def _reap(pid, listed):
@@ -226,7 +237,7 @@ def _reap(pid, listed):
         folders = [folder for folder in folders if os.path.exists(folder)]
         if not folders:
             break
-        time.sleep(0.5)
+        time.sleep(0.5)   # wait: the reaper, off every test's time, tries again a folder a process still holds
     os.remove(listed)
 
 

@@ -20,6 +20,7 @@ from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import corpus  # noqa: E402
 import photo_rows  # noqa: E402
 import web_client  # noqa: E402
 from PIL import Image  # noqa: E402
@@ -38,12 +39,10 @@ NEEDS_FFMPEG = unittest.skipIf(TOOLS.problem, "ffmpeg is not installed on this m
 
 
 def make_clip(path, seconds=2, size="480x270"):
-    """A clip of ffmpeg's test pattern at `path`, `seconds` long."""
+    """A clip of ffmpeg's test pattern at `path`, `seconds` long (made once and kept, tests/corpus.py)."""
     os.makedirs(os.path.dirname(path), exist_ok=True)
-    made = processes.run([TOOLS.ffmpeg, "-y", "-loglevel", "error", "-f", "lavfi",
-                          "-i", "testsrc2=size=%s:rate=10:duration=%g" % (size, seconds), "-pix_fmt", "yuv420p", path],
-                         capture_output=True)
-    assert made.returncode == 0, made.stderr
+    corpus.clip(path, ["-y", "-loglevel", "error", "-f", "lavfi",
+                       "-i", "testsrc2=size=%s:rate=10:duration=%g" % (size, seconds), "-pix_fmt", "yuv420p"], TOOLS.ffmpeg)
 
 
 def entries_of(library):

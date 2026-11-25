@@ -100,7 +100,7 @@ class RepliesForTheStrip(T.Bulk):
         self.assertTrue(gate.reached.wait(30))
         second, second_reply = in_thread(lambda: self.post(
             {**body, "params": {"add": ["Trips/Lakes"]}}, client=self.app.test_client()))
-        wait_until(lambda: batches.running_here() == 2, "the second batch queues")
+        wait_until(lambda: batches.running_here() == 2, what="the second batch queues")
         listed = self.get("/api/activity/batches")["batches"]
         found["running_and_queued"] = steady(listed)
         queued = [row for row in listed if row["state"] == "queued"][0]
@@ -142,7 +142,7 @@ class RepliesForTheStrip(T.Bulk):
             holder = threading.Thread(target=hold)
             holder.start()
             holders.append(holder)
-            wait_until(lambda: batches.running_here() == n, "batch %d is in line" % n)
+            wait_until(lambda: batches.running_here() == n, what="batch %d is in line" % n)
         full = self.post({"op": "tags", "selection": T.ALL, "params": {"add": ["Trips/Coast"]}})
         found["queue_full"] = {"status": full.status_code, "body": full.get_json()}
         release.set()

@@ -13,6 +13,7 @@ from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from waiting import wait_until  # noqa: E402
 import page_writes  # noqa: E402
 import test_bulk_edits as T  # noqa: E402
 
@@ -26,13 +27,6 @@ from tagpup.runtime import Runtime  # noqa: E402
 ANOTHER = "otherhost:1:1"                                 # a live process on another machine: this one cannot tell
 GONE = "%s:4000000:1" % socket.gethostname()             # a process of this machine that ended
 
-
-def wait_until(check, what="the condition"):
-    deadline = time.monotonic() + 30
-    while not check():
-        if time.monotonic() > deadline:
-            raise AssertionError("never happened: %s" % what)
-        threading.Event().wait(0.01)
 
 
 def in_thread(call):
@@ -61,7 +55,7 @@ class Chunks(T.Bulk):
                         saved["after"] = self.files.writes
                 saved["thread"] = threading.Thread(target=save)
                 saved["thread"].start()
-                wait_until(lambda: file_changes._waiting == 1, "the save waits for the lock")
+                wait_until(lambda: file_changes._waiting == 1, what="the save waits for the lock")
         self.files.on_write = hook
         self.tags_edit(add=["Trips/Coast"])
         saved["thread"].join(30)
@@ -130,7 +124,7 @@ class ASaveBetweenTwoChunks(T.Bulk):
                     seen["answered at"] = self.files.writes
                 seen["thread"] = threading.Thread(target=save)
                 seen["thread"].start()
-                wait_until(lambda: file_changes._waiting == 1, "the save waits for the lock")
+                wait_until(lambda: file_changes._waiting == 1, what="the save waits for the lock")
 
         def on_read(_path, _n):
             if threading.current_thread() is seen.get("save thread"):
@@ -177,7 +171,7 @@ class Line(T.Bulk):
         self.assertTrue(gate.reached.wait(30))
         second, second_reply = in_thread(lambda: self.post(
             {"op": "tags", "selection": T.ALL, "params": {"add": ["Trips/Lakes"]}}, client=self.app.test_client()).status_code)
-        wait_until(lambda: batches.running_here() == 2, "the second batch queues")
+        wait_until(lambda: batches.running_here() == 2, what="the second batch queues")
         listed = batches.listing(self.library)
         self.assertEqual([("running", 0), ("queued", 1)], [(each["state"], each["position"]) for each in listed])
         self.assertEqual([self.PHOTOS, self.PHOTOS], [each["photos"] for each in listed])
@@ -208,9 +202,9 @@ class Line(T.Bulk):
             thread = threading.Thread(target=hold)
             thread.start()
             threads.append(thread)
-            wait_until(lambda: batches.running_here() == n, "batch %d is in line" % n)
+            wait_until(lambda: batches.running_here() == n, what="batch %d is in line" % n)
         threading.Thread(target=hold).start()
-        wait_until(lambda: refused, "the tenth is refused")
+        wait_until(lambda: refused, what="the tenth is refused")
         self.assertEqual("9 photo batches are ahead of this one (one running, 8 waiting). Try again when one has finished.", refused[0])
         release.set()
         for thread in threads:
@@ -230,7 +224,7 @@ class Line(T.Bulk):
         holder.start()
         self.assertTrue(started.wait(30))
         waiter, outcome = in_thread(lambda: self.edit_refused())
-        wait_until(lambda: batches.running_here() == 2, "the edit waits")
+        wait_until(lambda: batches.running_here() == 2, what="the edit waits")
         queued = [each for each in batches.listing(self.library) if each["state"] == "queued"][0]
         self.assertTrue(batches.cancel(self.library, queued["ticket"]))
         waiter.join(30)
@@ -364,7 +358,7 @@ class HandOver(T.Bulk):
         self.assertTrue(gate.reached.wait(30))
         moving = lifecycle.Lifecycle(runtime=Runtime())
         draining, drained = in_thread(lambda: moving.drain(seconds=30, lease=60))
-        wait_until(lambda: [each["state"] for each in batches.listing(self.library)] == ["stopping"], "the batch is asked to stop")
+        wait_until(lambda: [each["state"] for each in batches.listing(self.library)] == ["stopping"], what="the batch is asked to stop")
         asked = time.monotonic()
         gate.release.set()
         writing.join(30)
