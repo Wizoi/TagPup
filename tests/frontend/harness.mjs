@@ -1033,24 +1033,28 @@ export function testClock(t) {
 
 /**
  * The page's timers of the next `ms` run, and what each started settles, as on a browser: on the test's clock (testClock)
- * one millisecond at a time, the loop turning after each, so a reply that lands between two timers is seen by the second;
- * otherwise `ms` of real time on the page's own timer.
+ * one millisecond at a time, the loop turning after each, so a reply that lands between two timers is seen by the second.
+ * Only on the test's clock: a test that has not taken it is told so, rather than waiting real time (work row #3375).
  */
 export async function advance(window, ms) {
-  if (clockIsTheTests) await tickBy(ms);
-  else await new Promise((resolve) => window.setTimeout(resolve, ms));
+  holdsTheClock("advance");
+  await tickBy(ms);
 }
 
-/** The next animation frame has run: one of jsdom's frames (1000/60 ms) on the test's clock, else the page's next frame. */
+/** The next animation frame has run: one of jsdom's frames (1000/60 ms) on the test's clock. */
 export async function frame(window) {
+  holdsTheClock("frame");
   let ran = false;
-  const done = new Promise((resolve) => window.requestAnimationFrame(() => {
+  window.requestAnimationFrame(() => {
     ran = true;
-    resolve();
-  }));
-  if (!clockIsTheTests) return done;
+  });
   for (let ms = 0; !ran && ms < 100; ms++) await tickBy(1);
   if (!ran) throw new Error("no animation frame in 100 ms of the test's clock");
+}
+
+/** `what` moves the test's clock: a test that calls it takes the clock first (beforeEach((t) => testClock(t))). */
+function holdsTheClock(what) {
+  if (!clockIsTheTests) throw new Error(`${what} moves the test's clock: take it first, beforeEach((t) => testClock(t))`);
 }
 
 /** The test's clock moves on `ms`, a millisecond at a time, the event loop turning after each (setImmediate: not mocked). */
