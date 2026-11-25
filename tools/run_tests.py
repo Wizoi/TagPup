@@ -27,7 +27,11 @@ has always been run with the module that writes each test's time named first (a 
 tests/frontend/<file>`), so a file sees nothing of another's state -- and with a TAGPUP_HOME
 of its own, an empty temporary folder, so that anything a test does not give a home of
 its own (tests/own_home.py) still lands there and not in the checkout's data/ folder or
-config.ini. Every file's process is also given the run's corpus folder (TAGPUP_TEST_CORPUS, tests/corpus.py):
+config.ini. Each file's process is given ExifTool's answers kept on this machine, running and keeping only the commands
+not kept before; --real-exiftool runs every command and keeps its answer, the gate run before a release, with the
+product's own DocumentID mint and ExifTool start (tests/exiftool_replay.py; a file in its STAYS_REAL always runs ExifTool). The run ends with the counts of each, and the
+kept answers trimmed to their cap.
+Every file's process is also given the run's corpus folder (TAGPUP_TEST_CORPUS, tests/corpus.py):
 each photo, clip and library a test asks of it is made there once and copied. The tests' libraries were in data/ under fixed names, so the files that used
 it ran one after another in a lane of their own (docs/findings.md, #14). None does now,
 and tests/test_tests_have_homes_of_their_own.py keeps it so; a file that named the
@@ -65,7 +69,7 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 
 from tagpup.core import byte_lock, processes  # noqa: E402
-from tests import corpus, owners, tiers  # noqa: E402
+from tests import corpus, exiftool_replay, owners, tiers  # noqa: E402
 TESTS = os.path.join(ROOT, "tests")
 FRONTEND = os.path.join(TESTS, "frontend")
 DURATIONS = os.path.join(TESTS, ".durations.json")
@@ -79,6 +83,9 @@ TIMED = "tools.timed_unittest"
 TIMES = "TAGPUP_TEST_TIMES"
 #: How long a save waits for another run's save (milliseconds, as a rule) before it gives up and says so.
 SAVE_WAIT = 30.0
+#: What each file's process does with ExifTool's answers (exiftool_replay.REPLAY or RECORD), and the file the processes
+#: add their counts to: main's.
+EXIFTOOL = {"mode": None, "counts": None}
 
 #: A test file that names the checkout's data/ folder or config.ini: joined to the
 #: checkout's own folder, relative to the working directory (the checkout, as files are
@@ -271,9 +278,12 @@ def run_one(module):
     page = module.endswith(".test.mjs")
     command = (["node", "--test", "--test-reporter=spec", os.path.join("tests", "frontend", module)] if page
                else [sys.executable, "-m", "unittest", TIMED, "tests." + module])
+    env = dict(os.environ, TAGPUP_HOME=home, **{TIMES: times})
+    env.pop(exiftool_replay.ENV, None)
+    if EXIFTOOL["mode"] and module not in exiftool_replay.STAYS_REAL:
+        env.update({exiftool_replay.ENV: EXIFTOOL["mode"], exiftool_replay.COUNTS_ENV: EXIFTOOL["counts"]})
     try:
-        done = processes.run(command, cwd=ROOT, env=dict(os.environ, TAGPUP_HOME=home, **{TIMES: times}),
-                              stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+        done = processes.run(command, cwd=ROOT, env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                               encoding="utf-8", errors="replace")
     finally:
         remove(home)
@@ -439,6 +449,30 @@ def slowest(count):
     return lines
 
 
+def exiftool_lines(path):
+    """The run's ExifTool counts, summed over the lines its processes added to `path` (tests/exiftool_replay.py)."""
+    total, why = {}, {}
+    try:
+        with open(path, encoding="utf-8") as handle:
+            for line in handle:
+                each = json.loads(line)
+                for name, n in each["counts"].items():
+                    total[name] = total.get(name, 0) + n
+                for name, n in each["why"].items():
+                    why[name] = why.get(name, 0) + n
+    except (OSError, ValueError):
+        return ["ExifTool: no counts were kept"]
+    lines = ["ExifTool, %s, %s: %d command(s), %d answered from kept answers, %d run, %d process start(s), %d kept" % (
+        EXIFTOOL["mode"], exiftool_replay.cache_root(), total.get("commands", 0), total.get("hits", 0),
+        total.get("misses", 0), total.get("starts", 0), total.get("kept", 0))]
+    lines += ["  %6d  %s" % (n, name) for name, n in sorted(why.items(), key=lambda item: -item[1])]
+    (left, size), (gone, freed) = exiftool_replay.trim()
+    lines.append("  kept answers: %d entries, %.0f MB%s" % (left, size / 1e6, (
+        "; %d used longest ago removed (%.0f MB, the cap %.0f MB)" % (gone, freed / 1e6, exiftool_replay.CAP / 1e6)
+        if gone else "")))
+    return lines
+
+
 def node_command(owner, scenarios_only=False):
     """The command for an owner's page tests (tests/frontend/*.test.mjs): they run under node, not here."""
     names = [n for n in owners.page_files_of(owner) if not scenarios_only or owners.FILES[n][1] == "scenario"]
@@ -460,6 +494,10 @@ def main(argv=None):
                         help="do not run a failed file again alone")
     parser.add_argument("--accept-fewer", action="store_true",
                         help="record the count of a file that ran fewer tests than last time (tests removed on purpose)")
+    parser.add_argument("--real-exiftool", action="store_true",
+                        help="run the real ExifTool for every command and keep each answer, with the product's own "
+                             "DocumentID mint and ExifTool start (the gate before a release); "
+                             "without it, a command kept before is answered from this machine's kept answers")
     parser.add_argument("--slowest", type=int, metavar="N",
                         help="print the N slowest files and tests of the recorded runs, and run nothing")
     args = parser.parse_args(argv)
@@ -482,6 +520,9 @@ def main(argv=None):
         left_out = ("scenario", "slow", "page") if args.fast else ("slow", "page")
         modules = [m for m in modules if tiers.tier_of(m) not in left_out]
     started = time.time()
+    EXIFTOOL["mode"] = exiftool_replay.RECORD if args.real_exiftool else exiftool_replay.REPLAY
+    counted = tempfile.mkdtemp(prefix="tagpup_exiftool_counts_")
+    EXIFTOOL["counts"] = os.path.join(counted, "counts.jsonl")
     with corpus.for_run():   # each photo, clip and library made once for the run's files (tests/corpus.py)
         results = run(modules, args.jobs, args.accept_fewer)
         flaky = []
@@ -501,6 +542,8 @@ def main(argv=None):
     report.extend(tier_lines(results, args.jobs))
     report.append("Owners run (tests/owners.py):")
     report.extend(owner_lines(results))
+    report.extend(exiftool_lines(EXIFTOOL["counts"]))
+    remove(counted)
     if node:
         report.append("Page tests of %s (run beside this): %s" % (chosen, node))
     for module, _first in flaky:
