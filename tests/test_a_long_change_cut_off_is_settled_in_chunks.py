@@ -121,7 +121,8 @@ class ALongChangeCutOff(CutOff):
         self.assertEqual(1, finished)
         self.assertTrue(save["ok"])
         # The settle's first chunk is the written file and the first never reached: the save ran after it, not after all.
-        self.assertEqual(4, save["settled then"], "the save waited for the whole settle")
+        # None: the save recorded its file only once the settle (and its watch of the steps) had ended.
+        self.assertEqual(4, save.get("settled then"), "the save waited for the whole settle")
         self.assertEqual(["Beach", "Lighthouse"], keywords_of(self.other))
         self.assertEqual(9, wrote, "only the nine files never reached are written")
         for line in ("2 of 10 file(s) settled", "4 of 10 file(s) settled", "8 of 10 file(s) settled"):
