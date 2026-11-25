@@ -987,17 +987,6 @@ function turnFor(ms) {
   });
 }
 
-/** Advance jsdom's clock far enough for a polling interval to fire. */
-export async function tick(window, ms) {
-  const deadline = Date.now() + 50;
-  window.jest_now = ms;
-  await new Promise((resolve) => setTimeout(resolve, Math.min(ms, 40)));
-  while (Date.now() < deadline) {
-    await new Promise((resolve) => setTimeout(resolve, 5));
-    break;
-  }
-}
-
 /** Fire a click, optionally with modifiers, the way a browser would. */
 export function click(window, element, { shiftKey = false, ctrlKey = false, metaKey = false } = {}) {
   const event = new window.MouseEvent("click", {
