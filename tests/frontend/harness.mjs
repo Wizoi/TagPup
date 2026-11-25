@@ -910,6 +910,7 @@ export async function loadApp(appName, { url, server = new FakeServer(), t, befo
     });
   }
   server.install(window);
+  if (clockIsTheTests) dateOnTheTestsClock(window);
   if (before) before(window);
 
   // Record image loads instead of attempting them, and keep the src rewriting
@@ -989,18 +990,40 @@ function turnFor(ms) {
 
 /** Whether the test holds the clock (testClock): flush and advance move it themselves. */
 let clockIsTheTests = false;
+/** The real time the test took the clock at, and how far it has moved it since, in ms: the page's Date.now(). */
+let clockStarted = 0;
+let clockMoved = 0;
+
+/** The page's Date reads the test's clock: Date.now() and new Date() are when the test took it plus how far it moved. */
+function dateOnTheTestsClock(window) {
+  const PageDate = window.Date;
+  window.Date = class extends PageDate {
+    constructor(...given) {
+      if (given.length) super(...given);
+      else super(clockStarted + clockMoved);
+    }
+
+    static now() {
+      return clockStarted + clockMoved;
+    }
+  };
+}
 
 /**
  * The page's clock is the test's from here to the test's end (node:test's mock timers: the page's setTimeout and
  * setInterval, and jsdom's animation frames, which run on an interval): time passes only when the test says so, through
  * `advance` and `flush`. Call it before loadApp: a timer set before stays on the real clock. Nothing runs by itself, so a
  * check that a debounce or the 5 s undo has NOT fired yet holds however busy the machine is, and costs no real time.
- * Not node's timers in a test's own code (a reply that waits on node's setTimeout waits for `advance` too); not the
- * page's Date, which is the window's own and keeps real time.
+ * The page's Date follows it too (the grid asks for a card's picture once it has been in view 120 ms by Date.now); the
+ * test's own Date keeps real time. A test's own node timers are on it as well: a reply that waits on node's setTimeout
+ * waits for `advance`. A second page in the test is on the same clock.
  */
 export function testClock(t) {
+  if (clockIsTheTests) return;
   mock.timers.enable({ apis: ["setTimeout", "setInterval"] });
   clockIsTheTests = true;
+  clockStarted = Date.now();
+  clockMoved = 0;
   t.after(async () => {
     await closeAllApps();   // the page's timers cleared on the test's clock, before it goes
     mock.timers.reset();
@@ -1034,6 +1057,7 @@ export async function frame(window) {
 async function tickBy(ms) {
   for (let i = 0; i < ms; i++) {
     mock.timers.tick(1);
+    clockMoved += 1;
     await new Promise((resolve) => setImmediate(resolve));
   }
 }
