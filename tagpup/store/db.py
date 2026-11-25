@@ -26,6 +26,10 @@ writers to different databases never wait on each other.
 
 **A retry** for the writer this process cannot see -- another process, or a checkpoint.
 
+**One connection for a bulk write's many**, on its thread (connections_held): a write of thousands of photo files
+opened four connections a photo, 43% of its time; inside the scope its writes and reads each reuse one, every write still
+its own transaction under the lock and the retry.
+
 **The library's roots, held by the connection.** A path column holds a root's name and the path
 under it once a library has been adopted by a root (tagpup.store.roots), and the store converts
 at its boundary. The conversion a connection uses is kept on the connection (`roots_state`), so
@@ -35,6 +39,7 @@ moment its paths were converted and the moment it commits.
 
 Never call `sqlite3.connect` directly; `tests/test_db_access.py` fails if you do.
 """
+import contextlib
 import logging
 import os
 import sqlite3
@@ -184,6 +189,95 @@ def write(target, operation, label="database write"):
         return retry_when_busy(operation, label=label)
 
 
+class _ThisThread(threading.local):
+    """What connections_held holds on one thread: {key(target): _Held}. Named nowhere but here
+    (tests/test_db_access.py): a connection is never lent to another thread."""
+
+    def __init__(self):
+        self.scopes = {}
+
+
+_held_by_this_thread = _ThisThread()
+
+
+class _Held:
+    """The connections one connections_held scope lends: a read-write one to write_with_connection, a read-only one to
+    read_with_connection, each opened at its first use and closed when the scope ends or a failure drops it."""
+
+    def __init__(self, target):
+        self.target, self.writer, self.reader = target, None, None
+
+    def lend_writer(self):
+        if self.writer is None:
+            self.writer = connect(self.target)
+        elif self.writer.in_transaction:
+            # Every write commits, or rolls back and drops it (write_with_connection): one still in a transaction is
+            # asked for by a write inside another's operation, and would commit the outer write's half.
+            raise RuntimeError("the library's held connection was asked for while a write's transaction is open on it")
+        return self.writer
+
+    def lend_reader(self):
+        if self.reader is None:
+            self.reader = connect(readonly_uri(self.target), uri=True)
+        return self.reader
+
+    def drop(self, which):
+        conn = getattr(self, which)
+        setattr(self, which, None)
+        if conn is not None:
+            conn.close()
+
+    def close(self):
+        try:
+            self.drop("writer")
+        finally:
+            self.drop("reader")
+
+
+@contextlib.contextmanager
+def connections_held(target):
+    """On this thread only, until the block ends: write_with_connection(target, ...) writes on one read-write connection
+    and read_with_connection(target, ...) reads on one read-only connection, rather than each opening and closing its own
+    (a bulk write of photo files: docs/plans/bulk-write-connections.md). Each write is still its own transaction,
+    committed where it was, under lock_for and retry_when_busy, and the lock is not held between two writes: in WAL a
+    connection with no transaction holds up no other writer. Another thread, or process, opens its own as before.
+
+    A block inside another for the same database (key) shares the outer's connections and closes nothing; the outermost
+    closes both, also when it is left by a crash (a BaseException). write_if_free and connect are never served from it."""
+    scopes = _held_by_this_thread.scopes
+    name = key(target)
+    if name in scopes:
+        yield
+        return
+    held = scopes[name] = _Held(target)
+    try:
+        yield
+    finally:
+        del scopes[name]
+        held.close()
+
+
+def _rolled_back(conn):
+    """Roll back what a failed write left on `conn`: True when that left it in no transaction."""
+    try:
+        conn.rollback()
+        return not conn.in_transaction
+    except Exception:
+        return False
+
+
+def _fit_after(error):
+    """Is a held connection, rolled back, fit for the next write after a write on it raised `error`: an error of the
+    operation's own (not SQLite's: a follower's), a lock another writer held (`locked`: run again on it), or a constraint
+    the write broke (IntegrityError)? Anything else of SQLite's (a DatabaseError, a ProgrammingError, another
+    OperationalError) or a crash (a BaseException) drops it, and the next write opens a fresh one."""
+    if not isinstance(error, Exception):
+        return False
+    if not isinstance(error, sqlite3.Error):
+        return True
+    return locked(error) or isinstance(error, sqlite3.IntegrityError)
+
+
 def write_with_connection(target, operation, label="database write"):
     """Run a write on a connection of its own, with other writers held back.
 
@@ -202,9 +296,14 @@ def write_with_connection(target, operation, label="database write"):
     should not carry state between attempts: one is that the library's roots changed, by
     another process, between the moment the operation converted its paths and the moment it
     would commit (roots.unchanged), when it is run again with the roots as they now are.
+
+    Inside connections_held(target) on this thread the connection is the scope's: rolled back after a failed attempt, and
+    kept for the next only when that left it in no transaction and the error leaves it fit (_fit_after).
     """
+    held = _held_by_this_thread.scopes.get(key(target))
+
     def attempt():
-        conn = connect(target)
+        conn = held.lend_writer() if held is not None else connect(target)
         try:
             result = operation(conn)
             if conn.roots_state is not None:
@@ -212,16 +311,38 @@ def write_with_connection(target, operation, label="database write"):
                 roots.unchanged(conn)
             conn.commit()
             return result
-        except Exception:
-            try:
-                conn.rollback()
-            except Exception:
-                pass
+        except BaseException as error:
+            if not _rolled_back(conn) or not _fit_after(error):
+                if held is not None and held.writer is conn:
+                    held.drop("writer")
             raise
         finally:
-            conn.close()
+            if held is None:
+                conn.close()
 
     return write(target, attempt, label=label)
+
+
+def read_with_connection(target, operation):
+    """`operation(cursor)`'s result, read from the database at `target` (a path) on a read-only connection: the one
+    connections_held lends on this thread, else one of its own, closed after. The cursor is closed after the call, so no
+    statement outlives it: an open one keeps its snapshot, and a read after it would not see a write committed since. A
+    failure drops a held connection: the next read opens a fresh one."""
+    held = _held_by_this_thread.scopes.get(key(target))
+    conn = held.lend_reader() if held is not None else connect(readonly_uri(target), uri=True)
+    try:
+        cursor = conn.cursor()
+        try:
+            return operation(cursor)
+        finally:
+            cursor.close()
+    except BaseException:
+        if held is not None:
+            held.drop("reader")
+        raise
+    finally:
+        if held is None:
+            conn.close()
 
 
 class _Busy:

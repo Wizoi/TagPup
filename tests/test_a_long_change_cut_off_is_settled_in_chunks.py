@@ -103,11 +103,15 @@ class ALongChangeCutOff(CutOff):
         save = {}
 
         def step(name):
+            if name == "file recorded" and threading.current_thread() is save.get("thread"):
+                # Counted while the save holds the lock: once it lets go, the settle's next file may be done before a
+                # count taken after the save returned.
+                save["settled then"] = self.done()
             if name == "file recorded" and "thread" not in save:
                 # The owner saves another photo while the settle is under way: it waits for the lock.
                 def saving():
                     result = tagging.change_tags(self.library, [self.other], ["Lighthouse"], [], EXIFTOOL)
-                    save["ok"], save["settled then"] = result.ok, self.done()
+                    save["ok"] = result.ok
                 save["thread"] = threading.Thread(target=saving)
                 save["thread"].start()
                 wait_until(lambda: file_changes._waiting == 1, what="the save waits for the lock")

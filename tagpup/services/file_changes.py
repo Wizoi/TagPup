@@ -589,112 +589,115 @@ def _write_fields(et, library, operation, exiftool_path, photo_paths, read, plan
     if unpooled is not None:
         unpooled.watch(change_id)
     mine = (library.key, change_id)
-    try:
-        # Its files are refused to a writer let in between two chunks (unsettled) until their chunk is carried out: written
-        # ahead of it, a file would hold neither what the change read nor what it was to leave, its edit lost as a conflict.
-        _unsettled.update((paths.key(row.path), mine) for row in rows)
-        _reached("plan committed")
-        if on_planned is not None:
-            on_planned(change_id)
-        stalled = None
-        for n, row in enumerate(rows):
-            if n and n % batches.CHUNK == 0:
-                read_back()
-                _free(mine, rows[n - batches.CHUNK:n])
-            if n and n % batches.CHUNK == 0 and on_chunk is not None:
-                on_chunk(n, len(rows))
-            if n and n % batches.CHUNK == 0 and not between_chunks(batch):
-                file_journal.withdraw(library.path, [r.id for r in rows[n:]])
-                result.details["stopped"] = {"after": n, "of": len(rows)}
-                break
-            path, detail = planned[n][0], planned[n][3]
-            # Read just now, in this session, by the caller: that is the check.
-            now = planned[n][1] if fresh is not None else None
-            try:
-                outcome, why = _carry(et, library, row, row.before, row.after, "done", on_failure="withdraw",
-                                      wrote=wrote, now=now, whole=read_whole if whole or images.is_clip(path) else None,
-                                      stall_stops=True,
-                                      held_out=not (alongside is not None and alongside.wants(path)))
-            except _Stalled:
-                stalled = row
-                result.details["stopped"] = {"after": n, "of": len(rows), "share": True}
-                not_answered.extend(each[0] for each in planned[n:])
-                break
-            if outcome == OUT:
-                written[path] = detail      # held already, as a file found holding it at the plan is
-                continue
-            if outcome == "done":
-                if not _holds_already(path, planned[n][1], planned[n][2]):
-                    result.changed += 1       # a file held what it was to hold: its rows alone were written
-                if isinstance(detail, dict) and row.followed:
-                    detail["faces_turned"] = row.followed
-                if row.named_faces:
-                    result.details.setdefault("named_faces", []).extend(row.named_faces)   # the one-face rule's, for the reply
-                if row.id in wrote:
-                    # The stat its row was recorded with, taken after the write: the reply's stamp, not looked at again.
-                    seen = wrote[row.id][1]
-                    result.details.setdefault("stamps", {})[paths.key(path)] = (
-                        (seen.st_mtime, seen.st_size) if seen is not None else None)
-                written[path] = detail
-                continue
-            result.fail(path, why)
-            if outcome == "conflict":
-                result.details["conflicts"].append(row.named())
-                continue
-            if row.read_only:
-                # Told apart, and an error all the same: a run that stops at its first error stops here too.
-                result.details.setdefault("read_only", []).append(path)
-            if isinstance(why, Refused):
-                # Told apart: its writer refused it before a byte was written (a clip not patchable, open in another
-                # program), which Smart Rename leaves out rather than stops at (services.photos._refused_clips).
-                result.details.setdefault(WRITER_REFUSED, []).append(path)
-            if stop_at_first_error and not isinstance(why, Refused):
-                # A clip the writer refused (open in another program, not patchable, its last QuickTime keyword) is its
-                # own error, as a clip leave_out_clips refuses is: the photos after it are written.
-                file_journal.withdraw(library.path, [r.id for r in rows[n + 1:]])
-                break
-        read_back()
-        stopped = result.details.get("stopped")
-        if stopped and stopped.get("share"):
-            _share_stopped(library, operation in file_journal.INTERNAL, change_id, result, stopped, stalled)
-        else:
-            if finish_forward(library, change_id, result) is None:
-                # A patched file that could not be read after its write stays `writing` with its record (_by_bytes):
-                # the change is let go, for the next settle to finish.
-                file_journal.release(library.path, change_id)
-            if stopped:
-                result.refuse("Stopped as asked after %d of %d photos: %d file(s) were written%s; the rest were not written."
-                              % (stopped["after"], stopped["of"], result.changed,
-                                 _kept_as(operation in file_journal.INTERNAL, change_id) if result.details["change"] else ""))
-    except BaseException as stopped:
-        if isinstance(stopped, KeyboardInterrupt):
-            # First, in one transaction, the files not reached are taken out (_settle_stopped takes out what is left): a
-            # second Ctrl+C in what follows leaves no file planned for the next open to write, only the one under way.
-            try:
-                file_journal.withdraw(library.path, [r.id for r in file_journal.files_of(library.path, change_id)
-                                                     if r.state == "planned"])
-            except Exception as problem:
-                logger.warning("Could not take the files not reached out of change %s: %s", change_id, problem)
-        # The files recorded done since the last chunk's read back are read back all the same: settling reads
-        # back only the files it writes (docs/findings.md, #286).
-        _read_back(et, library, wrote)
-        if isinstance(stopped, KeyboardInterrupt):
-            # Stopped by the person (Ctrl+C, Ctrl+Break in the CLI): what is written stays, applied and undoable; the files
-            # not reached are taken out, not written by whatever opens the library next (#1493). A crash is settled forward.
-            stopped.left = _settle_stopped(library, change_id, et, result)
-            # What the journal holds done, not what this loop had counted: the file under way may be done already.
-            try:
-                stopped.written = files_done(library, change_id)
-            except Exception:
-                stopped.written = None
-            stopped.change = result.details["change"]      # None: it wrote nothing, and is erased
-        file_journal.release(library.path, change_id)
-        raise
-    finally:
-        # Done, stopped, withdrawn, or cut off by an error: what a cut-off change left planned is the next settle's.
-        _free(mine, rows)
-        if unpooled is not None:
-            unpooled.release()
+    # One connection for the chunks' writes and one for their reads, on this thread (db.connections_held): each write
+    # is still its own transaction, committed in the write-ahead order.
+    with db.connections_held(library.path):
+        try:
+            # Its files are refused to a writer let in between two chunks (unsettled) until their chunk is carried out: written
+            # ahead of it, a file would hold neither what the change read nor what it was to leave, its edit lost as a conflict.
+            _unsettled.update((paths.key(row.path), mine) for row in rows)
+            _reached("plan committed")
+            if on_planned is not None:
+                on_planned(change_id)
+            stalled = None
+            for n, row in enumerate(rows):
+                if n and n % batches.CHUNK == 0:
+                    read_back()
+                    _free(mine, rows[n - batches.CHUNK:n])
+                if n and n % batches.CHUNK == 0 and on_chunk is not None:
+                    on_chunk(n, len(rows))
+                if n and n % batches.CHUNK == 0 and not between_chunks(batch):
+                    file_journal.withdraw(library.path, [r.id for r in rows[n:]])
+                    result.details["stopped"] = {"after": n, "of": len(rows)}
+                    break
+                path, detail = planned[n][0], planned[n][3]
+                # Read just now, in this session, by the caller: that is the check.
+                now = planned[n][1] if fresh is not None else None
+                try:
+                    outcome, why = _carry(et, library, row, row.before, row.after, "done", on_failure="withdraw",
+                                          wrote=wrote, now=now, whole=read_whole if whole or images.is_clip(path) else None,
+                                          stall_stops=True,
+                                          held_out=not (alongside is not None and alongside.wants(path)))
+                except _Stalled:
+                    stalled = row
+                    result.details["stopped"] = {"after": n, "of": len(rows), "share": True}
+                    not_answered.extend(each[0] for each in planned[n:])
+                    break
+                if outcome == OUT:
+                    written[path] = detail      # held already, as a file found holding it at the plan is
+                    continue
+                if outcome == "done":
+                    if not _holds_already(path, planned[n][1], planned[n][2]):
+                        result.changed += 1       # a file held what it was to hold: its rows alone were written
+                    if isinstance(detail, dict) and row.followed:
+                        detail["faces_turned"] = row.followed
+                    if row.named_faces:
+                        result.details.setdefault("named_faces", []).extend(row.named_faces)   # the one-face rule's, for the reply
+                    if row.id in wrote:
+                        # The stat its row was recorded with, taken after the write: the reply's stamp, not looked at again.
+                        seen = wrote[row.id][1]
+                        result.details.setdefault("stamps", {})[paths.key(path)] = (
+                            (seen.st_mtime, seen.st_size) if seen is not None else None)
+                    written[path] = detail
+                    continue
+                result.fail(path, why)
+                if outcome == "conflict":
+                    result.details["conflicts"].append(row.named())
+                    continue
+                if row.read_only:
+                    # Told apart, and an error all the same: a run that stops at its first error stops here too.
+                    result.details.setdefault("read_only", []).append(path)
+                if isinstance(why, Refused):
+                    # Told apart: its writer refused it before a byte was written (a clip not patchable, open in another
+                    # program), which Smart Rename leaves out rather than stops at (services.photos._refused_clips).
+                    result.details.setdefault(WRITER_REFUSED, []).append(path)
+                if stop_at_first_error and not isinstance(why, Refused):
+                    # A clip the writer refused (open in another program, not patchable, its last QuickTime keyword) is its
+                    # own error, as a clip leave_out_clips refuses is: the photos after it are written.
+                    file_journal.withdraw(library.path, [r.id for r in rows[n + 1:]])
+                    break
+            read_back()
+            stopped = result.details.get("stopped")
+            if stopped and stopped.get("share"):
+                _share_stopped(library, operation in file_journal.INTERNAL, change_id, result, stopped, stalled)
+            else:
+                if finish_forward(library, change_id, result) is None:
+                    # A patched file that could not be read after its write stays `writing` with its record (_by_bytes):
+                    # the change is let go, for the next settle to finish.
+                    file_journal.release(library.path, change_id)
+                if stopped:
+                    result.refuse("Stopped as asked after %d of %d photos: %d file(s) were written%s; the rest were not written."
+                                  % (stopped["after"], stopped["of"], result.changed,
+                                     _kept_as(operation in file_journal.INTERNAL, change_id) if result.details["change"] else ""))
+        except BaseException as stopped:
+            if isinstance(stopped, KeyboardInterrupt):
+                # First, in one transaction, the files not reached are taken out (_settle_stopped takes out what is left): a
+                # second Ctrl+C in what follows leaves no file planned for the next open to write, only the one under way.
+                try:
+                    file_journal.withdraw(library.path, [r.id for r in file_journal.files_of(library.path, change_id)
+                                                         if r.state == "planned"])
+                except Exception as problem:
+                    logger.warning("Could not take the files not reached out of change %s: %s", change_id, problem)
+            # The files recorded done since the last chunk's read back are read back all the same: settling reads
+            # back only the files it writes (docs/findings.md, #286).
+            _read_back(et, library, wrote)
+            if isinstance(stopped, KeyboardInterrupt):
+                # Stopped by the person (Ctrl+C, Ctrl+Break in the CLI): what is written stays, applied and undoable; the files
+                # not reached are taken out, not written by whatever opens the library next (#1493). A crash is settled forward.
+                stopped.left = _settle_stopped(library, change_id, et, result)
+                # What the journal holds done, not what this loop had counted: the file under way may be done already.
+                try:
+                    stopped.written = files_done(library, change_id)
+                except Exception:
+                    stopped.written = None
+                stopped.change = result.details["change"]      # None: it wrote nothing, and is erased
+            file_journal.release(library.path, change_id)
+            raise
+        finally:
+            # Done, stopped, withdrawn, or cut off by an error: what a cut-off change left planned is the next settle's.
+            _free(mine, rows)
+            if unpooled is not None:
+                unpooled.release()
     logger.info("%s: change %d, %s, wrote %d file(s)", library.path, change_id, operation, result.changed)
     return result
 
@@ -1456,25 +1459,26 @@ def rename(library, operation, renames, aside, exiftool_path=None, summary=None)
     change_id, rows = file_journal.plan(library.path, operation, [
         {"photo_id": (found.get(paths.key(old)) or (None,))[0], "path": old, "new_path": new,
          "before": fingerprints[old], "after": fingerprints[old]} for old, new in moves.items()], summary)
-    try:
-        _reached("plan committed")
-        file_journal.mark(library.path, [row.id for row in rows], "writing")
-        _reached("file writing")
+    with db.connections_held(library.path):
         try:
-            done, moved_aside = names.rename_all(renames, aside=aside)
-        except names.RenameFailed:
-            # Every file it could put back is where it was, and was never renamed; one it
-            # could not is a conflict.
-            _settle_renames(library, rows, forward=True, redo=False)
+            _reached("plan committed")
+            file_journal.mark(library.path, [row.id for row in rows], "writing")
+            _reached("file writing")
+            try:
+                done, moved_aside = names.rename_all(renames, aside=aside)
+            except names.RenameFailed:
+                # Every file it could put back is where it was, and was never renamed; one it
+                # could not is a conflict.
+                _settle_renames(library, rows, forward=True, redo=False)
+                file_journal.finish(library.path, change_id)
+                raise
+            _reached("file written")
+            moved, skipped = _record_renames(library, rows, "done", forward=True)
+            _reached("file recorded")
             file_journal.finish(library.path, change_id)
+        except BaseException:
+            file_journal.release(library.path, change_id)
             raise
-        _reached("file written")
-        moved, skipped = _record_renames(library, rows, "done", forward=True)
-        _reached("file recorded")
-        file_journal.finish(library.path, change_id)
-    except BaseException:
-        file_journal.release(library.path, change_id)
-        raise
     return Renamed(done, moved_aside, moved, skipped, change_id)
 
 
@@ -1735,7 +1739,7 @@ def _settle_files(library, change, exiftool_path, changed, stop):
     kept = (face_batch.photos_kept(library, change.id)
             if not undoing and any(row.state == "planned" for row in changed) else set())
     put_off, mine = False, (library.key, change.id)
-    with field_values.session(exiftool_path) as session:
+    with field_values.session(exiftool_path) as session, db.connections_held(library.path):
         et, wrote = exiftool_session.StaysDead(session), {}
         try:
             for row in changed:
@@ -2004,7 +2008,7 @@ def undo(library, change_id, exiftool_path, check, apply=False):
                 result.changed += len(renames)
         changed = [row for row in ready if not row.is_rename]
         if changed:
-            with field_values.session(exiftool_path) as et:
+            with field_values.session(exiftool_path) as et, db.connections_held(library.path):
                 for row in changed:
                     outcome, why = _carry(et, library, row, row.after, row.before, "undone", on_failure="conflict")
                     result.details["faces_left"] = result.details.get("faces_left", 0) + row.faces_left
