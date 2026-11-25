@@ -11,7 +11,7 @@
 Each Python test file runs as tools/run_tests.py runs it (its own process and home, the run's corpus, ExifTool's kept
 answers, the files that use the checkout one at a time), with tools/covered_unittest.py tracing which function of tagpup/
 each test enters: a function, not a line (coverage.py is not in the venv), and only in the test's own process and its
-threads. A file whose tests start a Python child is marked `children`; one whose process ended before writing is
+threads; a file that fails runs once more alone when the others have, as run_tests reruns one. A file whose tests start a Python child is marked `children`; one whose process ended before writing is
 `unmapped`; tools/affected_tests.py goes back to the imports for both. The page tests reach no Python and are not here.
 
 The map is text, kept xz-compressed (about 2.4 MB of text, 0.2 MB kept; a trial --out not ending .xz is plain text).
@@ -81,6 +81,19 @@ def run_one(module, scratch, run_tests):
     return module, "ok" if done.returncode == 0 else "failed", contexts, time.time() - started, done.stdout
 
 
+def rerun_alone(result, scratch, run_tests):
+    """A file that failed in the pool, run once more alone once the pool has ended, as tools/run_tests.py reruns one;
+    its rerun is what the map keeps. The tracer enters a hook at every call: a test that times itself (CPU seconds
+    over a loop, a request's cost in microseconds, a share's 0.05 s answer) failed under it on a loaded machine and
+    passed alone (2026-11-24: test_derived_batches, test_roots_ingress, test_a_share_asleep)."""
+    if result[1] == "ok":
+        return result
+    print("RERUN   %s alone" % result[0], flush=True)
+    again = run_one(result[0], scratch, run_tests)
+    print("        %-8s %6.1fs  %s" % (again[1], again[3], again[0]), flush=True)
+    return again
+
+
 def generate(modules, jobs, out):
     """Run `modules` under the tracer, `jobs` at once, and write the map to `out`. Returns the map's lines."""
     sys.path.insert(0, TOOLS)
@@ -103,20 +116,23 @@ def generate(modules, jobs, out):
     started = time.time()
     results = []
     try:
-        with corpus.for_run(), concurrent.futures.ThreadPoolExecutor(max_workers=max(1, jobs)) as pool:
-            def lane():
-                return [run_one(m, scratch, run_tests) for m in shared]
-            futures = [pool.submit(lambda m=m: [run_one(m, scratch, run_tests)]) for m in spread]
-            for future in concurrent.futures.as_completed(futures + [pool.submit(lane)]):
-                for result in future.result():
-                    results.append(result)
-                    print("%4d/%d  %-8s %6.1fs  %s" % (len(results), len(modules), result[1], result[3], result[0]),
-                          flush=True)
+        with corpus.for_run():
+            with concurrent.futures.ThreadPoolExecutor(max_workers=max(1, jobs)) as pool:
+                def lane():
+                    return [run_one(m, scratch, run_tests) for m in shared]
+                futures = [pool.submit(lambda m=m: [run_one(m, scratch, run_tests)]) for m in spread]
+                for future in concurrent.futures.as_completed(futures + [pool.submit(lane)]):
+                    for result in future.result():
+                        results.append(result)
+                        print("%4d/%d  %-8s %6.1fs  %s" % (len(results), len(modules), result[1], result[3],
+                                                         result[0]), flush=True)
+            results = [rerun_alone(result, scratch, run_tests) for result in results]
     finally:
         shutil.rmtree(scratch, ignore_errors=True)
     for module, status, _contexts, _seconds, output in sorted(results):
         if status != "ok":   # why it failed, read here: the map keeps only that it did
-            print("\n==== %s %s under the tracer:\n%s" % (module, status, "\n".join((output or "").splitlines()[-40:])))
+            print("\n==== %s %s under the tracer, alone:\n%s" % (
+                module, status, "\n".join((output or "").splitlines()[-40:])))
     lines = render(results, commit, when, time.time() - started, jobs)
     part = "%s.part-%d" % (out, os.getpid())
     text = ("\n".join(lines) + "\n").encode("utf-8")

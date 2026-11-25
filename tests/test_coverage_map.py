@@ -14,6 +14,7 @@ import shutil
 import sys
 import tempfile
 import unittest
+from unittest import mock
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
@@ -103,6 +104,27 @@ class AFileTheMapCannotSeeAllOf(unittest.TestCase):
     def test_it_is_taken_whole_by_its_imports(self):
         _modules, _frontend, reached = affected_tests.affected([RESULT], None, self.found("unmapped", False))
         self.assertIsNone(reached["test_result"], "the whole file, as before the map")
+
+
+class AFileThatFailsOnlyUnderLoad(unittest.TestCase):
+    """The tracer slows every call: a test that times itself failed in the pool and passed alone (2026-11-24)."""
+
+    def test_it_runs_once_more_alone_and_the_map_keeps_the_rerun(self):
+        real = test_map.run_one
+        runs = []
+
+        def loaded_then_alone(module, scratch, run_tests):
+            runs.append(module)
+            result = real(module, scratch, run_tests)
+            return (result[0], "failed") + result[2:] if len(runs) == 1 else result
+
+        folder = tempfile.mkdtemp(prefix="tagpup_coverage_map_rerun_")
+        self.addCleanup(shutil.rmtree, folder, True)
+        with mock.patch.object(test_map, "run_one", loaded_then_alone), contextlib.redirect_stdout(io.StringIO()) as said:
+            found = test_map.Map(test_map.generate(["test_result"], 1, os.path.join(folder, "map.txt")))
+        self.assertEqual(["test_result", "test_result"], runs)
+        self.assertIn("RERUN   test_result alone", said.getvalue())
+        self.assertTrue(found.trusted("test_result"), found.files)
 
 
 class AStaleMap(unittest.TestCase):
