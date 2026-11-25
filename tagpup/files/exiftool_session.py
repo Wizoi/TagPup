@@ -62,7 +62,8 @@ logger = logging.getLogger(__name__)
 #: Tests only: the keeper of ExifTool's answers (tests/exiftool_replay.py) the tests package sets when a run asks for it;
 #: None in every product start, and nothing in tagpup, scripts or a launcher sets it
 #: (tests/test_exiftool_answers_kept_for_tests.py). When set, every command goes through it (_DrainingExifTool.execute),
-#: and a session starts its process for the first command it cannot answer, not at `with` (ExifToolSession.run).
+#: and when it is `lazy` a session starts its process for the first command it cannot answer, not at `with`
+#: (ExifToolSession.run).
 REPLAY = None
 
 #: Seconds one ExifTool command may take. A batch of a hundred photos reads in a few
@@ -253,7 +254,8 @@ class _DrainingExifTool(exiftool.ExifTool):
     """ExifTool.execute, reading both output pipes at once and under a deadline."""
 
     timeout = DEFAULT_TIMEOUT
-    #: Under REPLAY: a start a command asked for (_sent), the one start run() makes then.
+    #: Under REPLAY: a start under way, whose own -ver is ExifTool's (never the keeper's); under a lazy one, the start
+    #: a command asked for (_sent), the one start run() makes then.
     _starting = False
 
     def execute(self, *params, raw_bytes=False):
@@ -263,7 +265,7 @@ class _DrainingExifTool(exiftool.ExifTool):
 
     def _sent(self, params, raw_bytes):
         """The command sent to the ExifTool process, and its answer read."""
-        if not self.running and REPLAY is not None:
+        if not self.running and REPLAY is not None and REPLAY.lazy:
             self._starting = True
             try:
                 self.run()
@@ -394,11 +396,15 @@ class ExifToolSession(exiftool.ExifToolHelper, _DrainingExifTool):
 
     def run(self):
         """ExifToolHelper's, its ExifTool then ending with this process (processes.end_with_this_process); every
-        start goes through here, the one after a timeout too (ExifToolHelper.execute's auto-start). Under REPLAY only the
-        start a command asks for (_DrainingExifTool._sent)."""
-        if self.running or (REPLAY is not None and not self._starting):
+        start goes through here, the one after a timeout too (ExifToolHelper.execute's auto-start). Under a lazy REPLAY
+        only the start a command asks for (_DrainingExifTool._sent)."""
+        if self.running or (REPLAY is not None and REPLAY.lazy and not self._starting):
             return
-        super().run()
+        starting, self._starting = self._starting, True
+        try:
+            super().run()
+        finally:
+            self._starting = starting
         processes.end_with_this_process(self._process.pid)
 
     def execute(self, *params, **kwargs):

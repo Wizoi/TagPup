@@ -8,9 +8,11 @@ tagpup.files.exiftool_session.REPLAY, through which every command goes:
 * a hit -- a command kept before -- is answered from what was kept: its stdout, stderr and exit status, and the bytes of
   each file it wrote put where it wrote them (the new file of `-o`, a file rewritten in place, an `_original` backup).
   No ExifTool process starts for it: a session starts its process with the first command it cannot answer.
+  A hit whose bytes cannot be put there (the file held open) runs the real ExifTool instead, and its entry stays.
 * a miss runs the real ExifTool, and keeps its answer unless the answer depends on something the key leaves out.
 tools/run_tests.py --real-exiftool (TAGPUP_TEST_EXIFTOOL=record) runs every command for real and keeps each answer: the
-gate run before a release, which refreshes what is kept. A file run alone with plain `python -m unittest` sets nothing,
+gate run before a release, which refreshes what is kept. It runs the product's own start (at `with`) and its own
+DocumentID mint, so a command naming a minted id is kept under an id no later run asks for (trim removes it). A file run alone with plain `python -m unittest` sets nothing,
 and every command is ExifTool's. A file in STAYS_REAL is never given a keeper by the runner.
 
 The key: the command's arguments, each file named in them by its name, the sha256 of its bytes, whether it may be
@@ -25,8 +27,10 @@ process that made it (a pid, a time) is a miss in every run, as tests/corpus.py'
 Never kept, so a miss each time (`why` in the counts): raw bytes asked; a folder, an argument file (`-@`) or a file
 read or written by name in an option (-w, -srcfile, -csv=, `<=`); a file that cannot be read; an answer that names a
 folder or carries a file's dates or attributes (the file's times, not its bytes); a run during which a file other than
-its outputs appeared or one went, in a folder it names; a failed run (a timeout). Hidden inputs, checked and not in the
-key: a file open in another program (ExifTool reads it, as the key does: only tagpup's move over it fails); the time
+its outputs appeared or one went, in a folder it names; a run ExifTool failed (a status not 0: a file held open by a
+scan, Explorer or a test's own handle fails a write once, "Error renaming temporary file", and the key cannot hold it)
+or one that did not end (a timeout). Hidden inputs, checked and not in the key: a file open in another program
+(ExifTool reads it, as the key does: only a write over it fails, and a failure is never kept); the time
 zone (TagPup reads with -n: dates as stored); an ExifTool config in the user's profile (there is none; one would
 change answers no key holds).
 
@@ -39,8 +43,8 @@ made again by the next entry. A hit marks its entry used (its time), and the run
 run, the entries used longest ago first (trim).
 
 The DocumentID a photo is given (tagpup.files.identity.mint_document_id) is a uuid4 in the arguments of its write, so a
-photo given one would miss at that write and at every later read of it. Under a keeper it is minted from a generator
-seeded per process: a file's run mints the same ids in the same order each run.
+photo given one would miss at that write and at every later read of it. Under a replaying keeper it is minted from a
+generator seeded per process: a file's run mints the same ids in the same order each run.
 """
 import atexit
 import collections
@@ -82,6 +86,7 @@ STAYS_REAL = {
     "test_a_tag_added_touches_its_file_no_more_than_it_must": "it counts each os.stat of the file and each start of ExifTool "
     "(a call of ExifToolSession.run while not running): a keeper looks at the file to key it and starts ExifTool lazily",
     "test_exiftool_answers_kept_for_tests": "the keeper itself: it gives each test its own keeper, cache and real runs",
+    "test_photo_identity": "the DocumentID mint itself, which a replaying keeper replaces with its seeded one",
 }
 
 #: Locks the writers of entries take turns on: one of these per key's first two hex digits, folded.
@@ -354,6 +359,7 @@ def _placed(blobs, named):
             path, kind = paths[place]
             if kind == "file" and not suffix:
                 part = path + ".replay-part"
+                made.append(part)   # gone once replaced over the file; removed when the replace fails (a held file)
                 with open(part, "wb") as handle:
                     handle.write(data)
                 os.replace(part, path)
@@ -419,6 +425,9 @@ class Keeper:
 
     def __init__(self, mode):
         self.mode = mode
+        #: Whether a session starts ExifTool only for a command this keeper cannot answer (REPLAY), or at `with`, as
+        #: the product does (RECORD: the release gate runs the product's own start).
+        self.lazy = mode == REPLAY
         self.counts = collections.Counter()
         self.why = collections.Counter()
         self._lock = threading.Lock()
@@ -450,12 +459,15 @@ class Keeper:
                     session._last_status = header["status"]
                     self._count("hits")
                     return session._last_stdout
-                self._count(why="a kept output could not be placed")
+                # A file held open: this run's answer is ExifTool's, and the entry kept stays as it is.
+                return self._ran(session, sent, "a kept output could not be placed")
         before = _listings(named)
         answer = self._ran(session, sent, "not kept before" if self.mode == REPLAY else None)
         stdout, stderr = _marked(session._last_stdout, named), _marked(session._last_stderr, named)
         outputs = _outputs(named, before)
-        if stdout is None or stderr is None:
+        if session._last_status != 0:
+            why = "ExifTool failed it"
+        elif stdout is None or stderr is None:
             why = "its answer names a folder"
         elif STAT_TAGS.search(stdout):
             why = "its answer holds a file's dates"
@@ -496,12 +508,14 @@ def seeded_mint(seed=SEED):
 
 
 def install(mode=None):
-    """Give this test process a Keeper when `mode` (else ENV's) is REPLAY or RECORD; returns it, or None."""
+    """Give this test process a Keeper when `mode` (else ENV's) is REPLAY or RECORD, and under REPLAY the seeded mint;
+    returns it, or None."""
     mode = mode or os.environ.get(ENV)
     if mode not in (REPLAY, RECORD):
         return None
     keeper = Keeper(mode)
     exiftool_session.REPLAY = keeper
-    identity.mint_document_id = seeded_mint()
+    if mode == REPLAY:
+        identity.mint_document_id = seeded_mint()
     atexit.register(keeper.report)
     return keeper

@@ -7,6 +7,9 @@ is the keeper's own scenarios, each with a keeper and a cache folder of its own 
 * a command kept before is answered with no process started, the same answer and the same bytes as the real run;
 * a changed ExifTool (its version, its launcher) or a changed -config file's content is a miss, never an old answer;
 * a scratch ExifTool left in the way is a miss, and fails as the real run fails;
+* a failed run is never kept: a file held open (a scan, Explorer, a test's own handle) fails that run only, a kept
+  answer whose bytes cannot be placed over it leaves no part file and its entry whole, and the next run hits it;
+* the release gate (--real-exiftool, record) runs the product's own DocumentID mint and starts ExifTool at `with`;
 * two processes asking for one command at once both get the real answer, and one whole entry is kept;
 * an entry cut off part-way (a kill) is not read and is replaced; a cache folder deleted mid-run is made again;
 * an answer that carries a file's own dates is never kept;
@@ -33,7 +36,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import own_home  # noqa: E402
 from tagpup.core import processes  # noqa: E402
-from tagpup.files import exiftool_session  # noqa: E402
+from tagpup.files import exiftool_session, identity  # noqa: E402
 from tagpup.files.exiftool_session import ExifToolFailed, ExifToolSession  # noqa: E402
 from tests import exiftool_replay  # noqa: E402
 
@@ -115,8 +118,8 @@ class KeptAnswers(unittest.TestCase):
             return handle.read()
 
     def work(self, folder):
-        """A write in place, a write to a new file, a read, and a write that fails, in `folder`: what each answered, the
-        bytes left and whether an ExifTool process ran, with the folder spelled <F>."""
+        """A write in place, a write to a new file and a read, in `folder`: what each answered, the bytes left and
+        whether an ExifTool process ran, with the folder spelled <F>."""
         photo = self.copy(folder)
         target = os.path.join(os.path.dirname(photo), "pier-rated.jpg")
         answers = []
@@ -125,11 +128,6 @@ class KeptAnswers(unittest.TestCase):
                                       photo))
             answers.append(et.execute("-m", "-o", target, "-XMP:Rating=4", photo))
             answers.append(json.loads(et.execute("-j", "-G", "-n", "-XMP:Subject", "-XMP:Title", photo)))
-            try:
-                et.execute("-overwrite_original", "-XMP:Title=Gone", os.path.join(os.path.dirname(photo), "gone.jpg"))
-                answers.append("no failure")
-            except ExifToolFailed as failed:
-                answers.append(("failed", failed.returncode, str(failed)))
             running = et.running
         folder_path = os.path.dirname(photo)
         text = json.dumps(answers)
@@ -141,19 +139,18 @@ class KeptAnswers(unittest.TestCase):
     def test_a_kept_command_starts_no_process_and_answers_as_exiftool_did(self):
         cold = self.keeper()
         first = self.work("first")
-        self.assertEqual(cold.counts["kept"], 4, cold.why)
+        self.assertEqual(cold.counts["kept"], 3, cold.why)
         self.real()
         real = self.work("real")
         warm = self.keeper()
         again = self.work("again")
-        self.assertEqual((warm.counts["hits"], warm.counts["misses"], warm.counts["starts"]), (4, 0, 0), warm.why)
+        self.assertEqual((warm.counts["hits"], warm.counts["misses"], warm.counts["starts"]), (3, 0, 0), warm.why)
         self.assertFalse(again.pop("running"))
         real.pop("running")
         first.pop("running")
         self.assertEqual(again, real)
         self.assertEqual(first, real)
         self.assertIn("Trips/Coast", json.dumps(real["answers"][2]))
-        self.assertEqual(real["answers"][3][:2], ["failed", 1])
 
     def test_a_changed_exiftool_is_a_miss(self):
         # What the key holds of an install: its version as its library says it, and its launcher's and library's stamps.
@@ -212,6 +209,51 @@ class KeptAnswers(unittest.TestCase):
         self.assertEqual(str(kept.exception).replace(os.path.dirname(blocked), "<F>"),
                          str(real.exception).replace(os.path.dirname(blocked).replace("kept", "real"), "<F>"))
         self.assertEqual(self.bytes_of(blocked), self.bytes_of(self.pristine))
+
+    def test_a_file_held_open_fails_that_run_only(self):
+        # A photo held open by another program fails ExifTool's rename over it and a kept answer's os.replace over it
+        # alike. The key cannot hold that, so a failure is never kept: it would be replayed in every later run.
+        keeper = self.keeper()
+        held = self.copy("held")
+        with open(held, "rb"):
+            with self.assertRaises(ExifToolFailed) as failed:
+                self.write(held)
+        self.assertIn("Error renaming temporary file", str(failed.exception))
+        self.assertEqual(self.entries(), [])
+        self.assertEqual(keeper.why["not kept: ExifTool failed it"], 1, keeper.why)
+        good = self.copy("good")
+        self.write(good)   # the same command and bytes, the file let go: run, and kept
+        [entry] = self.entries()
+        whole = self.bytes_of(entry)
+        held = self.copy("held-again")
+        with open(held, "rb"):
+            with self.assertRaises(ExifToolFailed):
+                self.write(held)   # a hit whose bytes cannot be placed, then the real run, which fails too
+        self.assertEqual(self.bytes_of(held), self.bytes_of(self.pristine))
+        self.assertEqual(os.listdir(os.path.dirname(held)), ["pier.jpg"])
+        self.assertEqual(self.bytes_of(entry), whole)
+        after = self.copy("after")
+        self.assertFalse(self.write(after))   # the next run hits the good entry: no ExifTool started
+        self.assertEqual(self.bytes_of(after), self.bytes_of(good))
+        self.assertEqual((keeper.counts["hits"], keeper.counts["misses"]), (1, 3), keeper.why)
+        self.assertEqual(keeper.why["a kept output could not be placed"], 1, keeper.why)
+
+    def test_the_release_gate_runs_the_products_own_mint_and_start(self):
+        was = identity.mint_document_id
+        self.addCleanup(setattr, identity, "mint_document_id", was)
+        with mock.patch.object(exiftool_replay.atexit, "register"):
+            recording = exiftool_replay.install(exiftool_replay.RECORD)
+        self.assertIs(identity.mint_document_id, was)
+        with ExifToolSession(executable=EXIFTOOL) as et:
+            self.assertTrue(et.running)   # started at `with`, as in the product
+            self.assertEqual(recording.counts["commands"], 0)   # its start's -ver is ExifTool's, never kept
+            et.execute("-overwrite_original", "-XMP:Subject=Trips/Coast", "-XMP:Title=Pier at dusk", self.copy("a"))
+        self.assertEqual((recording.counts["kept"], recording.counts["starts"]), (1, 0), recording.why)
+        with mock.patch.object(exiftool_replay.atexit, "register"):
+            replaying = exiftool_replay.install(exiftool_replay.REPLAY)
+        self.assertIsNot(identity.mint_document_id, was)
+        self.assertFalse(self.write(self.copy("b")))   # replayed: started for the first command it cannot answer
+        self.assertEqual(replaying.counts["hits"], 1, replaying.why)
 
     def test_two_processes_asking_for_one_command_at_once(self):
         go = os.path.join(self.temp, "go")
