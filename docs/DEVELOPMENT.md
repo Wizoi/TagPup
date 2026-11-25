@@ -179,6 +179,18 @@ reaches most of the suite anyway. The full suite still runs before each commit a
 merge: what a test reaches through a subprocess or a file named at run time is not an
 import.
 
+For a file of `tagpup/`, it asks the per-test coverage map first (`tests/coverage_map.txt`, made by
+`tools/test_map.py`): the tests that entered a function the diff changes, by name (`--tests`), not
+every file importing the module; a change that runs at import (a module or class body, a def line, a
+decorator) reaches every test that entered the file. The map is by function, not line, traced in each
+test's own process and threads (coverage.py is not in the venv); a test file that starts a Python
+child, failed or wrote nothing is taken by its imports as before. `tools/test_map.py covers
+tagpup/x.py[::name]` lists the tests that reach a function, `tools/test_map.py unique <test or file>`
+what only it reaches: the input for retiring a test (docs/plans/fast-trustworthy-test-suite.md), with
+the charter, since coverage says what ran and not what was checked. The map is made again by the tool
+on a clean tree and committed, never edited; `tests/test_coverage_map.py` fails when it was edited or
+`tagpup/`/`tests/` changed more than a day of commits after the commit it names.
+
 `tools/run_tests.py` runs each test file as its own process across half the cores, each
 with a `TAGPUP_HOME` of its own. A file that named the checkout's own `data/` or
 `config.ini` -- or imported a test file that did -- would run in a lane of its own, one
