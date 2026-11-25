@@ -1,4 +1,4 @@
-"""Which test reaches which function of tagpup/: the per-test coverage map, generated, kept in tests/coverage_map.txt.
+"""Which test reaches which function of tagpup/: the per-test coverage map, generated, kept in tests/coverage_map.txt.xz.
 
     .venv/Scripts/python.exe tools/test_map.py                        # make the whole map (many minutes; never in the gate)
     .venv/Scripts/python.exe tools/test_map.py --jobs 4
@@ -14,7 +14,8 @@ each test enters: a function, not a line (coverage.py is not in the venv), and o
 threads. A file whose tests start a Python child is marked `children`; one whose process ended before writing is
 `unmapped`; tools/affected_tests.py goes back to the imports for both. The page tests reach no Python and are not here.
 
-The map is written whole when every file has run (a run cut off leaves the old map), and only from a clean tagpup/ and
+The map is text, kept xz-compressed (about 2.4 MB of text, 0.2 MB kept; a trial --out not ending .xz is plain text).
+It is written whole when every file has run (a run cut off leaves the old map), and only from a clean tagpup/ and
 tests/, so it describes the commit it names. tests/test_coverage_map.py fails when the map was edited by hand, or when
 tagpup/ or tests/ changed after that commit and HEAD is more than MAX_AGE of commit time later: it is made again by this
 tool, at most about once a day, never by hand.
@@ -30,6 +31,7 @@ import argparse
 import concurrent.futures
 import hashlib
 import json
+import lzma
 import os
 import shutil
 import subprocess
@@ -42,7 +44,7 @@ TOOLS = os.path.join(ROOT, "tools")
 sys.path.insert(0, ROOT)
 
 from tagpup.core import processes  # noqa: E402
-MAP = os.path.join(ROOT, "tests", "coverage_map.txt")
+MAP = os.path.join(ROOT, "tests", "coverage_map.txt.xz")
 #: How far HEAD's commit time may run past the map's commit, with tagpup/ or tests/ changed, before the guard fails.
 MAX_AGE = 24 * 3600
 SHARED = "<shared>"
@@ -91,7 +93,7 @@ def generate(modules, jobs, out):
     when = int(_git("show", "-s", "--format=%ct", commit))
     if os.path.abspath(out) == MAP:
         dirty = [line for line in _git("status", "--porcelain", "--", "tagpup", "tests").splitlines()
-                 if not line.endswith("tests/coverage_map.txt")]
+                 if not line.endswith("tests/coverage_map.txt.xz")]
         if dirty:
             raise SystemExit("tagpup/ or tests/ has uncommitted changes (%d); the map describes a commit: commit "
                              "first, or give --out." % len(dirty))
@@ -116,8 +118,9 @@ def generate(modules, jobs, out):
         shutil.rmtree(scratch, ignore_errors=True)
     lines = render(results, commit, when, time.time() - started, jobs)
     part = "%s.part-%d" % (out, os.getpid())
-    with open(part, "w", encoding="utf-8", newline="\n") as handle:
-        handle.write("\n".join(lines) + "\n")
+    text = ("\n".join(lines) + "\n").encode("utf-8")
+    with open(part, "wb") as handle:
+        handle.write(lzma.compress(text) if out.endswith(".xz") else text)
     os.replace(part, out)
     return lines
 
@@ -223,7 +226,7 @@ class Map:
 def load(path=MAP):
     """The map at `path`, or None when there is none."""
     try:
-        with open(path, encoding="utf-8") as handle:
+        with (lzma.open if path.endswith(".xz") else open)(path, "rt", encoding="utf-8") as handle:
             return Map(handle.readlines())
     except FileNotFoundError:
         return None
@@ -293,7 +296,7 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--jobs", type=int, default=max(2, (os.cpu_count() or 2) // 2))
     parser.add_argument("--files", nargs="+", help="only these test files (with --out)")
-    parser.add_argument("--out", default=MAP, help="where the map goes (default tests/coverage_map.txt)")
+    parser.add_argument("--out", default=MAP, help="where the map goes (default tests/coverage_map.txt.xz)")
     parser.add_argument("--map", default=MAP, help="the map a report reads")
     parser.add_argument("--list", action="store_true", help="covers: name each test, not only the count")
     parser.add_argument("command", nargs="?", choices=("covers", "unique"))

@@ -57,10 +57,14 @@ def key_of(filename, qualname, body=False):
 
 
 def _starts_python(frame):
+    """Is this processes.start or run starting Python? Not tests/own_home.py's reaper, which every test home starts
+    and which runs no tagpup/ code: counted, it marked 253 of 360 files on the first whole map (2026-11-24)."""
     code = frame.f_code
     args = frame.f_locals.get(code.co_varnames[0]) if code.co_argcount else None
-    first = args[0] if isinstance(args, (list, tuple)) and args else args
-    return isinstance(first, str) and os.path.basename(first).lower().startswith("python")
+    args = list(args) if isinstance(args, (list, tuple)) else [args]
+    if not (isinstance(args[0], str) and os.path.basename(args[0]).lower().startswith("python")):
+        return False
+    return not (len(args) > 1 and isinstance(args[1], str) and os.path.basename(args[1]) == "own_home.py")
 
 
 def _trace(frame, event, arg):

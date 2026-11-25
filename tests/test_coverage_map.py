@@ -1,4 +1,4 @@
-"""The per-test coverage map (tools/test_map.py, tests/coverage_map.txt): which test entered which function of tagpup/.
+"""The per-test coverage map (tools/test_map.py, tests/coverage_map.txt.xz): which test entered which function of tagpup/.
 
 A worker changes one function and asks which tests to run: tools/affected_tests.py names the tests the map says entered
 it, not every file that imports the module. A change that runs at import reaches every test that entered the file; a
@@ -122,7 +122,7 @@ class TheKeptMap(unittest.TestCase):
         if os.environ.get(test_map.COVERAGE):
             self.skipTest("the map is being made: the one it replaces is stale by design")
         reason = test_map.check()
-        self.assertIsNone(reason, "tests/coverage_map.txt: %s. Make it again: .venv/Scripts/python.exe "
+        self.assertIsNone(reason, "tests/coverage_map.txt.xz: %s. Make it again: .venv/Scripts/python.exe "
                                   "tools/test_map.py (on a clean tree; commit the map it writes)." % reason)
 
 

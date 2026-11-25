@@ -5,7 +5,7 @@
     .venv/Scripts/python.exe tools/affected_tests.py --run      # and run them (tools/run_tests.py)
     .venv/Scripts/python.exe tools/affected_tests.py --tests    # name each test the coverage map says is reached
 
-For a changed file of tagpup/ that the coverage map knows (tests/coverage_map.txt, tools/test_map.py), a test is
+For a changed file of tagpup/ that the coverage map knows (tests/coverage_map.txt.xz, tools/test_map.py), a test is
 affected when it entered a function the diff changes, on either side of it: a changed module or class body, a def
 line or a decorator (what runs at import) reaches every test that entered the file. A test file the map does not
 trust (it failed, wrote nothing, or starts a Python child the map cannot see into) is taken by its imports instead.

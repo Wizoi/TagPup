@@ -179,7 +179,7 @@ reaches most of the suite anyway. The full suite still runs before each commit a
 merge: what a test reaches through a subprocess or a file named at run time is not an
 import.
 
-For a file of `tagpup/`, it asks the per-test coverage map first (`tests/coverage_map.txt`, made by
+For a file of `tagpup/`, it asks the per-test coverage map first (`tests/coverage_map.txt.xz`, made by
 `tools/test_map.py`): the tests that entered a function the diff changes, by name (`--tests`), not
 every file importing the module; a change that runs at import (a module or class body, a def line, a
 decorator) reaches every test that entered the file. The map is by function, not line, traced in each
