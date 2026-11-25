@@ -18,10 +18,12 @@
  *
  * Every name is made up; the real library is photographs of real people, many of them minors.
  */
-import { test, describe, afterEach } from "node:test";
+import { test, describe, beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";
-import { loadApp, FakeServer, click, closeAllApps } from "./harness.mjs";
+import { loadApp, FakeServer, click, closeAllApps, testClock } from "./harness.mjs";
 import { PHONE_PAGE, el, shown, settle, phoneCard, phoneLayout, tab } from "./phone-page.mjs";
+
+beforeEach((t) => testClock(t));   // the page's timers run when a test advances them
 
 const KEYWORDS = { keywords: [{ tag: "Events", name: "Events", parent: null, count: 3 }], untagged: 0 };
 
