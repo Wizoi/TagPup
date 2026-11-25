@@ -61,15 +61,12 @@ def _git(*args):
 
 # -- making it ---------------------------------------------------------------------------------------------------
 
-def run_one(module, scratch, run_tests, exiftool_replay):
-    """(module, ok|failed|unmapped, {context: {covered, status, children}}, seconds)."""
+def run_one(module, scratch, run_tests):
+    """(module, ok|failed|unmapped, {context: {covered, status, children}}, seconds, its output)."""
     started = time.time()
     home = tempfile.mkdtemp(prefix="tagpup_test_map_")
     out = os.path.join(scratch, module + ".json")
-    env = dict(os.environ, TAGPUP_HOME=home, **{COVERAGE: out})
-    env.pop(exiftool_replay.ENV, None)
-    if module not in exiftool_replay.STAYS_REAL:
-        env[exiftool_replay.ENV] = exiftool_replay.REPLAY
+    env = run_tests.file_env(module, home, {COVERAGE: out})
     try:
         done = processes.run([sys.executable, "-m", "unittest", "tools.covered_unittest", "tests." + module], cwd=ROOT,
                              env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, encoding="utf-8",
@@ -80,15 +77,16 @@ def run_one(module, scratch, run_tests, exiftool_replay):
         with open(out, encoding="utf-8") as handle:
             contexts = json.load(handle)
     except (OSError, ValueError):   # the process ended before unittest did: nothing of it is known
-        return module, "unmapped", {}, time.time() - started
-    return module, "ok" if done.returncode == 0 else "failed", contexts, time.time() - started
+        return module, "unmapped", {}, time.time() - started, done.stdout
+    return module, "ok" if done.returncode == 0 else "failed", contexts, time.time() - started, done.stdout
 
 
 def generate(modules, jobs, out):
     """Run `modules` under the tracer, `jobs` at once, and write the map to `out`. Returns the map's lines."""
     sys.path.insert(0, TOOLS)
     import run_tests
-    from tests import corpus, exiftool_replay
+    from tests import corpus
+    run_tests.kept_answers()
     commit = _git("rev-parse", "HEAD")
     when = int(_git("show", "-s", "--format=%ct", commit))
     if os.path.abspath(out) == MAP:
@@ -107,8 +105,8 @@ def generate(modules, jobs, out):
     try:
         with corpus.for_run(), concurrent.futures.ThreadPoolExecutor(max_workers=max(1, jobs)) as pool:
             def lane():
-                return [run_one(m, scratch, run_tests, exiftool_replay) for m in shared]
-            futures = [pool.submit(lambda m=m: [run_one(m, scratch, run_tests, exiftool_replay)]) for m in spread]
+                return [run_one(m, scratch, run_tests) for m in shared]
+            futures = [pool.submit(lambda m=m: [run_one(m, scratch, run_tests)]) for m in spread]
             for future in concurrent.futures.as_completed(futures + [pool.submit(lane)]):
                 for result in future.result():
                     results.append(result)
@@ -116,6 +114,9 @@ def generate(modules, jobs, out):
                           flush=True)
     finally:
         shutil.rmtree(scratch, ignore_errors=True)
+    for module, status, _contexts, _seconds, output in sorted(results):
+        if status != "ok":   # why it failed, read here: the map keeps only that it did
+            print("\n==== %s %s under the tracer:\n%s" % (module, status, "\n".join((output or "").splitlines()[-40:])))
     lines = render(results, commit, when, time.time() - started, jobs)
     part = "%s.part-%d" % (out, os.getpid())
     text = ("\n".join(lines) + "\n").encode("utf-8")
@@ -144,7 +145,7 @@ def _digest(lines):
 def render(results, commit, when, seconds, jobs):
     """The map's lines from run_one's results."""
     files, tests, covers = [], [], {}
-    for module, status, contexts, _seconds in sorted(results):
+    for module, status, contexts, _seconds, *_output in sorted(results):
         children = any(c.get("children") for c in contexts.values())
         files.append("file %s %s %s" % (module, status, "children" if children else "-"))
         prefix = "tests.%s." % module

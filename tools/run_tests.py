@@ -270,6 +270,25 @@ def _take_test_times(modules):
         return {m: _test_times.pop(m) for m in modules if m in _test_times}
 
 
+def kept_answers():
+    """ExifTool's kept answers for every file run from here on, as a run without --real-exiftool has them: for a tool
+    that runs the test files as this one does (tools/test_map.py)."""
+    EXIFTOOL["mode"] = exiftool_replay.REPLAY
+
+
+def file_env(module, home, more):
+    """The environment a test file's process runs in: its own `home`, `more`, and ExifTool as EXIFTOOL says (none of the
+    caller's own), unless the file is one that always runs it (tests/exiftool_replay.py's STAYS_REAL)."""
+    env = dict(os.environ, TAGPUP_HOME=home, **more)
+    env.pop(exiftool_replay.ENV, None)
+    env.pop(exiftool_replay.COUNTS_ENV, None)
+    if EXIFTOOL["mode"] and module not in exiftool_replay.STAYS_REAL:
+        env[exiftool_replay.ENV] = EXIFTOOL["mode"]
+        if EXIFTOOL["counts"]:
+            env[exiftool_replay.COUNTS_ENV] = EXIFTOOL["counts"]
+    return env
+
+
 def run_one(module):
     """(module, passed, tests run, seconds, output). A Python file's tests' times wait in _test_times for the save."""
     started = time.time()
@@ -278,10 +297,7 @@ def run_one(module):
     page = module.endswith(".test.mjs")
     command = (["node", "--test", "--test-reporter=spec", os.path.join("tests", "frontend", module)] if page
                else [sys.executable, "-m", "unittest", TIMED, "tests." + module])
-    env = dict(os.environ, TAGPUP_HOME=home, **{TIMES: times})
-    env.pop(exiftool_replay.ENV, None)
-    if EXIFTOOL["mode"] and module not in exiftool_replay.STAYS_REAL:
-        env.update({exiftool_replay.ENV: EXIFTOOL["mode"], exiftool_replay.COUNTS_ENV: EXIFTOOL["counts"]})
+    env = file_env(module, home, {TIMES: times})
     try:
         done = processes.run(command, cwd=ROOT, env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                               encoding="utf-8", errors="replace")
