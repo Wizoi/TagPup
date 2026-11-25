@@ -5,10 +5,12 @@
  * in; and one sort, Date taken or Name either way, for every tab. The address holds all of it, so Back, Forward and a bookmark
  * restore it. The library is invented at photo_index's size (view-page.mjs) and every name in it is fictional.
  */
-import { test, describe, afterEach } from "node:test";
+import { test, describe, beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";
-import { closeAllApps, click } from "./harness.mjs";
+import { closeAllApps, click, testClock } from "./harness.mjs";
 import { loadViewPage, pageErrors, personRow, syntheticDates, syntheticKeywords } from "./view-page.mjs";
+
+beforeEach((t) => testClock(t));   // the page's timers run when a test advances them
 
 afterEach(() => {
   closeAllApps();
