@@ -69,6 +69,12 @@ async function loadWithStatus(t, statusPath, sequence, extra = () => {}) {
   return ctx;
 }
 
+/**
+ * Long enough for two polls of either poller (Suggest's every 1.5 s, the index's every 1 s: web/tagpup/suggestions.js), so
+ * a poller that did not stop is seen asking again. On the test's clock it costs no real time.
+ */
+const TWO_POLLS = 3200;
+
 describe("suggestion progress polling", () => {
   test("an idle folder stops polling instead of spinning forever", async (t) => {
     // Regression: "idle" is what the server returns for a folder that has never been
@@ -76,7 +82,7 @@ describe("suggestion progress polling", () => {
     const ctx = await loadWithStatus(t, "/api/folder/suggest-status", [{ status: "idle" }]);
 
     const afterLoad = ctx.server.statusCalls;
-    await advance(ctx.window, 200);
+    await advance(ctx.window, TWO_POLLS);
     const afterWait = ctx.server.statusCalls;
 
     assert.ok(afterLoad >= 1, "the poller never ran");
@@ -111,7 +117,7 @@ describe("suggestion progress polling", () => {
     ]);
     await advance(ctx.window, 120);
     const settled = ctx.server.statusCalls;
-    await advance(ctx.window, 200);
+    await advance(ctx.window, TWO_POLLS);
 
     assert.equal(ctx.server.statusCalls, settled, "poller kept running after completion");
     const container = ctx.document.getElementById("suggest-progress-container");
@@ -124,7 +130,7 @@ describe("suggestion progress polling", () => {
     ]);
     await advance(ctx.window, 120);
     const settled = ctx.server.statusCalls;
-    await advance(ctx.window, 200);
+    await advance(ctx.window, TWO_POLLS);
 
     assert.equal(ctx.server.statusCalls, settled, "poller kept running after an error");
     assert.match(
@@ -142,7 +148,7 @@ describe("suggestion progress polling", () => {
     ]);
     await advance(ctx.window, 120);
     const settled = ctx.server.statusCalls;
-    await advance(ctx.window, 200);
+    await advance(ctx.window, TWO_POLLS);
 
     assert.equal(
       ctx.server.statusCalls,
@@ -192,7 +198,7 @@ describe("indexing progress polling", () => {
     await advance(ctx.window, 200);
     const settled = ctx.server.statusCalls;
     assert.ok(settled > 0, "the index poller never ran");
-    await advance(ctx.window, 300);
+    await advance(ctx.window, TWO_POLLS);
 
     assert.equal(ctx.server.statusCalls, settled, "poller kept running when ready");
   });
@@ -218,7 +224,7 @@ describe("indexing progress polling", () => {
     ]);
     await advance(ctx.window, 200);
     const settled = ctx.server.statusCalls;
-    await advance(ctx.window, 200);
+    await advance(ctx.window, TWO_POLLS);
 
     assert.equal(ctx.server.statusCalls, settled, "poller kept running after failure");
     assert.ok(
