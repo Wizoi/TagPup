@@ -25,12 +25,12 @@
  * - What is written redraws the photo's facts under the sheet (mobile-photo.js), as the file holds it.
  *
  * Names hold spaces and apostrophes, as the live libraries' do. Every name here is made up. The Undo's five seconds are
- * shortened to UNDO here: the page's timers are what it would wait on.
+ * shortened to UNDO here: the page's timers are what it would wait on, on the test's clock (harness testClock).
  */
 import { test, describe, afterEach } from "node:test";
 import assert from "node:assert/strict";
 import { loadApp, FakeServer, flush, click, closeAllApps, pageExports, PEOPLE_ROUTE, PHOTO_WRITES, CLIP_WRITES, SAVE, lastSave, saveCalls,
-  saved, changedOnDisk, taggedAs, answer } from "./harness.mjs";
+  saved, changedOnDisk, taggedAs, answer, testClock } from "./harness.mjs";
 import { PHONE_PAGE, el, shown, pageState, settle, phoneCard, phoneLayout } from "./phone-page.mjs";
 
 const KEYWORDS = { keywords: [{ tag: "Events", name: "Events", parent: null, count: 20 }], untagged: 0 };
@@ -84,6 +84,7 @@ async function phone(t, file = {}) {
       held.mtime += 1;
       return saved({ mtime: held.mtime, size: held.size, taken: held.taken, base: { tags: held.tags.slice(), title: held.title } })(url, sent);
     });
+  testClock(t);
   const ctx = await loadApp("phone", { t, server, url: PHONE_PAGE });
   phoneLayout(ctx);
   // What each request asked of the browser: a write sent as the page goes must outlive it (keepalive).

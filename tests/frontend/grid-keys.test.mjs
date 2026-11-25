@@ -3,11 +3,12 @@
  * arrow keys by card and by row, Home and End, PageUp and PageDown by a window, Enter to open the photo, Space to select,
  * Shift to extend -- in a library view and in a folder view, across the edge of the window and at 20,000 photos, with the
  * focused card kept in the DOM and the focus kept across a redraw. jsdom has no layout, so the page is given one (a 600 px
- * view, four columns, so two rows in view); the focus is jsdom's own. Fictional names only.
+ * view, four columns, so two rows in view); the focus is jsdom's own; the page's clock is the test's (harness testClock).
+ * Fictional names only.
  */
 import { test, describe, afterEach } from "node:test";
 import assert from "node:assert/strict";
-import { closeAllApps, click, openFolder, photoRecord } from "./harness.mjs";
+import { closeAllApps, click, openFolder, photoRecord, testClock, frame } from "./harness.mjs";
 import { loadViewPage, pageErrors, cardOf, GRID_TOP, STRIDE } from "./view-page.mjs";
 
 afterEach(() => {
@@ -15,10 +16,10 @@ afterEach(() => {
   assert.deepEqual(pageErrors(), [], "the page raised an error");
 });
 
-const frame = (window) => new Promise((resolve) => window.requestAnimationFrame(() => resolve()));
 const idsOf = (n) => Array.from({ length: n }, (_, i) => 1000 + i);
 
 async function viewPage(t, n = 400, options = {}) {
+  testClock(t);
   const ctx = await loadViewPage(t, { search: "?view=all", ids: idsOf(n), ...options });
   Object.assign(ctx, {
     focused: () => ctx.document.activeElement,

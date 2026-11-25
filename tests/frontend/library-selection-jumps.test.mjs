@@ -3,10 +3,12 @@
  * People jump and Keyword jump, links that open a view -- and TAGGING below, a section that starts closed and keeps its choice per
  * browser, holding the tools the panel always had. Fictional names only.
  */
-import { test, describe, afterEach } from "node:test";
+import { test, describe, beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";
-import { closeAllApps, click, openFolder, photoRecord } from "./harness.mjs";
+import { closeAllApps, click, openFolder, photoRecord, testClock } from "./harness.mjs";
 import { loadViewPage, pageErrors } from "./view-page.mjs";
+
+beforeEach((t) => testClock(t));   // the page's timers run when a test advances them
 
 afterEach(() => {
   closeAllApps();

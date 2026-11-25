@@ -5,10 +5,12 @@
  * view paints, with a deadline, and shown only as an offer), and when the library was last in step -- said only when something
  * is wrong (#670). Fictional names only.
  */
-import { test, describe, afterEach } from "node:test";
+import { test, describe, beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";
-import { closeAllApps, click, openFolder, photoRecord, flush } from "./harness.mjs";
+import { closeAllApps, click, openFolder, photoRecord, flush, testClock } from "./harness.mjs";
 import { loadViewPage, pageErrors, GRID_TOP, STRIDE, cardOf } from "./view-page.mjs";
+
+beforeEach((t) => testClock(t));   // the page's timers run when a test advances them
 
 afterEach(() => {
   closeAllApps();
