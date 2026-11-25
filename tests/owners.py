@@ -510,7 +510,7 @@ _SIZES = {
         "test_view_indexes "
     ),
     "subprocess": (
-        "test_a_bake_is_planned_from_the_library test_a_bake_is_used_only_whole "
+        "test_a_bake_is_planned_from_the_library test_coverage_map test_a_bake_is_used_only_whole "
         "test_a_bulk_delete_stopped_part_way test_a_caption_repeating_the_title_is_cleared "
         "test_a_chunked_tag_write_is_one_line_of_history test_a_clip_converted test_a_clip_dated_by_its_name "
         "test_a_clip_dated_through_the_journal test_a_clip_deleted test_a_clip_is_indexed_as_a_video "
