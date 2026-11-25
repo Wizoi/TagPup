@@ -7,7 +7,7 @@
  * The library is invented: 2,746 folders, 895 keyword nodes, 413 people and 61 years, the sizes photo_index has. Every
  * name is fictional; the real library is photographs of real people, many of them minors.
  */
-import { FakeServer, loadApp, flush, pageExports, photoRecord, SAVE, saved, deletedAs } from "./harness.mjs";
+import { FakeServer, loadApp, flush, advance, frame, pageExports, photoRecord, SAVE, saved, deletedAs } from "./harness.mjs";
 
 /** Every page loaded by this file's tests: afterwards each is checked for an error the page itself raised. */
 export const opened = [];
@@ -123,9 +123,6 @@ export function syntheticDates(thisYear = new Date().getFullYear()) {
   for (let i = 0; years.length < 61; i++) years.push(make(junk[i], 3 + i));
   return { years: years.sort((a, b) => a.year - b.year), undated: 1180 };
 }
-
-const wait = (window, ms) => new Promise((resolve) => window.setTimeout(resolve, ms));
-const frame = (window) => new Promise((resolve) => window.requestAnimationFrame(() => resolve()));
 
 export const cardOf = (id, extra = {}) => ({
   id, name: `IMG_${id}.jpg`, path: `D:\\Library\\2020\\Event 01\\IMG_${id}.jpg`, taken: "2020:01:01 10:00:00",
@@ -251,7 +248,8 @@ export async function loadViewPage(t, {
     },
     strip: () => ctx.document.getElementById("library-strip"),
     stripText: () => ctx.strip().textContent.replace(/\s+/g, " ").trim(),
-    settle: async (ms = 160) => { await wait(ctx.window, ms); await flush(ctx.window, 6); },
+    // The page's timers of `ms` run (on the test's clock when it holds it: harness testClock), and what they started settles.
+    settle: async (ms = 160) => { await advance(ctx.window, ms); await flush(ctx.window, 6); },
     release: async (key) => {
       const waiting = ctx.held.filter((each) => !key || each.key === key);
       ctx.held = ctx.held.filter((each) => !waiting.includes(each));
