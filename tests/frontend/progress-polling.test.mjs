@@ -7,9 +7,11 @@
  * it was waiting for was never written. These tests drive the real pollers against a
  * scripted server.
  */
-import { test, describe } from "node:test";
+import { test, describe, beforeEach } from "node:test";
 import assert from "node:assert/strict";
-import { loadApp, FakeServer, photoRecord, flush, openFolder } from "./harness.mjs";
+import { advance, loadApp, FakeServer, photoRecord, flush, openFolder, testClock } from "./harness.mjs";
+
+beforeEach((t) => testClock(t));   // the page's timers run when a test advances them
 
 const FOLDER = "D:\\Library\\2020";
 
@@ -67,11 +69,6 @@ async function loadWithStatus(t, statusPath, sequence, extra = () => {}) {
   return ctx;
 }
 
-/** Let real timers run long enough for N poll intervals. */
-async function waitMs(ms) {
-  await new Promise((resolve) => setTimeout(resolve, ms));
-}
-
 describe("suggestion progress polling", () => {
   test("an idle folder stops polling instead of spinning forever", async (t) => {
     // Regression: "idle" is what the server returns for a folder that has never been
@@ -79,7 +76,7 @@ describe("suggestion progress polling", () => {
     const ctx = await loadWithStatus(t, "/api/folder/suggest-status", [{ status: "idle" }]);
 
     const afterLoad = ctx.server.statusCalls;
-    await waitMs(200);
+    await advance(ctx.window, 200);
     const afterWait = ctx.server.statusCalls;
 
     assert.ok(afterLoad >= 1, "the poller never ran");
@@ -100,7 +97,7 @@ describe("suggestion progress polling", () => {
     const ctx = await loadWithStatus(t, "/api/folder/suggest-status", [
       { status: "running", completed: 25, total: 100, suggestions: {} },
     ]);
-    await waitMs(60);
+    await advance(ctx.window, 60);
 
     const text = ctx.document.getElementById("suggest-progress-text").textContent;
     assert.match(text, /25/, `progress text did not report progress: ${text}`);
@@ -112,9 +109,9 @@ describe("suggestion progress polling", () => {
     const ctx = await loadWithStatus(t, "/api/folder/suggest-status", [
       { status: "completed", completed: 1, total: 1, suggestions: {} },
     ]);
-    await waitMs(120);
+    await advance(ctx.window, 120);
     const settled = ctx.server.statusCalls;
-    await waitMs(200);
+    await advance(ctx.window, 200);
 
     assert.equal(ctx.server.statusCalls, settled, "poller kept running after completion");
     const container = ctx.document.getElementById("suggest-progress-container");
@@ -125,9 +122,9 @@ describe("suggestion progress polling", () => {
     const ctx = await loadWithStatus(t, "/api/folder/suggest-status", [
       { status: "error", message: "boom" },
     ]);
-    await waitMs(120);
+    await advance(ctx.window, 120);
     const settled = ctx.server.statusCalls;
-    await waitMs(200);
+    await advance(ctx.window, 200);
 
     assert.equal(ctx.server.statusCalls, settled, "poller kept running after an error");
     assert.match(
@@ -143,9 +140,9 @@ describe("suggestion progress polling", () => {
     const ctx = await loadWithStatus(t, "/api/folder/suggest-status", [
       { status: "something-new" },
     ]);
-    await waitMs(120);
+    await advance(ctx.window, 120);
     const settled = ctx.server.statusCalls;
-    await waitMs(200);
+    await advance(ctx.window, 200);
 
     assert.equal(
       ctx.server.statusCalls,
@@ -162,7 +159,7 @@ describe("suggestion progress polling", () => {
 
     // The suggestion poller ticks every 1500ms, so allow one full interval
     // beyond the immediate first query.
-    await waitMs(1800);
+    await advance(ctx.window, 1800);
     const container = ctx.document.getElementById("suggest-progress-container");
     assert.ok(
       container.classList.contains("hidden"),
@@ -192,10 +189,10 @@ describe("indexing progress polling", () => {
     const ctx = await openOnAFolder(t, [
       { status: "completed", percent: 100, message: "Ready" },
     ]);
-    await waitMs(200);
+    await advance(ctx.window, 200);
     const settled = ctx.server.statusCalls;
     assert.ok(settled > 0, "the index poller never ran");
-    await waitMs(300);
+    await advance(ctx.window, 300);
 
     assert.equal(ctx.server.statusCalls, settled, "poller kept running when ready");
   });
@@ -204,7 +201,7 @@ describe("indexing progress polling", () => {
     const ctx = await openOnAFolder(t, [
       { status: "running", percent: 45, message: "Indexing photos: 50%" },
     ]);
-    await waitMs(60);
+    await advance(ctx.window, 60);
 
     const container = ctx.document.getElementById("index-progress-container");
     assert.ok(!container.classList.contains("hidden"), "progress bar not shown");
@@ -219,9 +216,9 @@ describe("indexing progress polling", () => {
     const ctx = await openOnAFolder(t, [
       { status: "failed", percent: 0, message: "Indexing failed with exit code 1." },
     ]);
-    await waitMs(200);
+    await advance(ctx.window, 200);
     const settled = ctx.server.statusCalls;
-    await waitMs(200);
+    await advance(ctx.window, 200);
 
     assert.equal(ctx.server.statusCalls, settled, "poller kept running after failure");
     assert.ok(
