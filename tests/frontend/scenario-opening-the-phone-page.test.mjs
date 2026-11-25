@@ -13,10 +13,12 @@
  * jsdom does not navigate: a page that goes to another library records "Not implemented: navigation" in its console,
  * and the address it goes to is libraryAddress's (library-picker.test.mjs does the same).
  */
-import { test, describe, afterEach } from "node:test";
+import { test, describe, beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";
-import { loadApp, FakeServer, flush, click, closeAllApps, pageExports } from "./harness.mjs";
+import { loadApp, FakeServer, flush, click, closeAllApps, pageExports, testClock } from "./harness.mjs";
 import { tab } from "./phone-page.mjs";
+
+beforeEach((t) => testClock(t));   // the page's timers run when a test advances them
 
 const LIBRARIES = ["alpha", "beta"];
 
