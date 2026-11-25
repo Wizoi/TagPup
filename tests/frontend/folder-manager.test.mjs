@@ -6,9 +6,11 @@
  * three folders, one of them gone from disk; the sandbox's folder is written D:\Pictures, and the folders above it,
  * which its temporary folder added to the list, are left out.
  */
-import { test, describe, afterEach } from "node:test";
+import { test, describe, beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";
-import { loadApp, FakeServer, closeAllApps, click, flush, pageExports } from "./harness.mjs";
+import { advance, loadApp, FakeServer, closeAllApps, click, flush, pageExports, testClock } from "./harness.mjs";
+
+beforeEach((t) => testClock(t));   // the page's timers run when a test advances them
 
 const PICTURES = "D:\\Pictures";
 const OLD_MEET = `${PICTURES}\\Old Meet`;
@@ -67,7 +69,6 @@ function serverFor() {
     .on("/api/folder/remove", REPLIES.remove);
 }
 
-const settle = (window, ms) => new Promise((resolve) => window.setTimeout(resolve, ms));
 /** Longer than the dialog waits after the filter stops changing before it asks what is on disk. */
 const LOOK = 300;
 
@@ -124,7 +125,7 @@ describe("the library's folders, to remove one", () => {
     const server = serverFor().first("/api/folder/on-disk", onDisk({ [OLD_MEET]: "gone", [SEASON]: "unanswered" }));
     const { window, document } = await openManager(t, { server });
     assert.deepEqual(looks(server), [], "asked before the dialog had settled");
-    await settle(window, LOOK);
+    await advance(window, LOOK);
     assert.equal(looks(server).length, 1);
     assert.deepEqual(askedOf(looks(server)[0]), [PICTURES, OLD_MEET, SEASON, MEET]);
 
@@ -145,16 +146,16 @@ describe("the library's folders, to remove one", () => {
     const { window, document } = await openManager(t, { server });
     assert.equal(removeRows(document).length, 100);
     assert.match(part(document, 1).textContent, /50 more: type in the filter to find one/);
-    await settle(window, LOOK);
+    await advance(window, LOOK);
     assert.deepEqual(askedOf(looks(server)[0]), many.slice(0, 100));
 
     const filter = part(document, 1).querySelector(".folder-manager-filter");
     for (const typed of ["Meet 1", "Meet 14"]) {
       filter.value = typed;
       filter.dispatchEvent(new window.Event("input", { bubbles: true }));
-      await settle(window, 50);
+      await advance(window, 50);
     }
-    await settle(window, LOOK);
+    await advance(window, LOOK);
     assert.equal(looks(server).length, 2, "a look for each keystroke");
     assert.deepEqual(askedOf(looks(server)[1]), many.slice(139, 149));
     assert.equal(removeRows(document).length, 10);
@@ -162,7 +163,7 @@ describe("the library's folders, to remove one", () => {
     // Back to a wider filter: the rows answered already are not asked again.
     filter.value = "Meet 1";
     filter.dispatchEvent(new window.Event("input", { bubbles: true }));
-    await settle(window, LOOK);
+    await advance(window, LOOK);
     assert.equal(looks(server).length, 3);
     assert.deepEqual(askedOf(looks(server)[2]), [...many.slice(100, 139), many[149]]);
   });
@@ -339,7 +340,7 @@ describe("both libraries", () => {
       click(ctx.window, button(ctx.document, "Add"));
       await choose(ctx, OLD_MEET);
       click(ctx.window, button(ctx.document, "Remove..."));
-      await settle(ctx.window, LOOK);
+      await advance(ctx.window, LOOK);
       const asked = ctx.server.urls().filter((u) => /\/api\/(folder\/(indexed|on-disk|subfolders|index-start|remove)|browse-folder)/.test(u));
       for (const route of ["indexed", "on-disk", "subfolders", "index-start", "remove", "browse-folder"]) {
         assert.ok(asked.some((u) => u.includes(route)), `fixture: ${route} was not asked`);
@@ -370,13 +371,13 @@ describe("a folder queued again after it finished", () => {
         return { ...REPLIES.indexStart, queued: [NEW_MEET], pending: 1, added: 1 };
       });
     const ctx = await loadApp("tagtuner", { server, t });
-    await settle(ctx.window, 1600);
+    await advance(ctx.window, 1600);
     assert.equal(phase, "done", "fixture: the first run finished");
 
     await openFromGear(ctx);
     await browse(ctx);
     click(ctx.window, button(ctx.document, "Add"));
-    await settle(ctx.window, 700);
+    await advance(ctx.window, 700);
     assert.ok(!ctx.document.getElementById("index-progress-container").classList.contains("hidden"),
       "the second run of the folder has no progress bar");
     assert.equal(ctx.document.getElementById("index-progress-text").textContent, "Indexing again");
@@ -397,7 +398,7 @@ describe("review of cut 2", () => {
   test("a look that fails says so in the dialog, not only in the console", async (t) => {
     const server = serverFor().first("/api/folder/on-disk", { error: "share gone" }, { status: 500 });
     const { window, document } = await openManager(t, { server });
-    await settle(window, LOOK);
+    await advance(window, LOOK);
     assert.match(said(document), /Could not look at the folders/);
   });
 
@@ -421,11 +422,11 @@ describe("review of cut 2", () => {
     const held = later();
     const server = serverFor().first("/api/folder/on-disk", () => held.reply);
     const { window, document } = await openManager(t, { server });
-    await settle(window, LOOK);
+    await advance(window, LOOK);
     const filter = part(document, 1).querySelector(".folder-manager-filter");
     filter.value = "Season";
     filter.dispatchEvent(new window.Event("input", { bubbles: true }));
-    await settle(window, LOOK);
+    await advance(window, LOOK);
     assert.equal(looks(server).length, 1, "the folders still being looked at are not asked again");
     held.answer({ folders: askedOf(looks(server)[0]).map((path) => ({ path, state: "there" })) });
     await flush(window, 4);
