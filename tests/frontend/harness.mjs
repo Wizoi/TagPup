@@ -965,11 +965,26 @@ export async function intersect(window, elements, near = true) {
   await flush(window);
 }
 
-/** Let pending promise callbacks and timers settle. */
+/**
+ * Let pending promise callbacks and timers settle: `times` steps, each FLUSH_STEP_MS of real time on an event loop that
+ * keeps turning, so the page's replies' promises run and each of its timers that is due by then fires (a page's
+ * setTimeout(fn, 0) is due after 1 ms). A step is not node's setTimeout(0): on Windows that sleeps a whole timer tick,
+ * 15.6 ms, and the page tests' flushes slept about a third of the page tier's time (work row #3375, cut 7).
+ */
 export async function flush(window, times = 3) {
-  for (let i = 0; i < times; i++) {
-    await new Promise((resolve) => setTimeout(resolve, 0));
-  }
+  for (let i = 0; i < times; i++) await turnFor(FLUSH_STEP_MS);
+}
+
+/** How long one step of `flush` lets the page run: past the 1 ms a zero-delay timer waits. */
+export const FLUSH_STEP_MS = 2;
+
+/** Resolves after `ms` of real time, the event loop turning meanwhile (setImmediate: no OS timer, so no 15.6 ms tick). */
+function turnFor(ms) {
+  const end = performance.now() + ms;
+  return new Promise((resolve) => {
+    const turn = () => (performance.now() >= end ? resolve() : setImmediate(turn));
+    setImmediate(turn);
+  });
 }
 
 /** Advance jsdom's clock far enough for a polling interval to fire. */

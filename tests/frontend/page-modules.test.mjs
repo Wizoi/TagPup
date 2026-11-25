@@ -12,7 +12,8 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { REPO_ROOT, pageModules, pageScript, entryModule } from "./harness.mjs";
+import { JSDOM } from "jsdom";
+import { REPO_ROOT, pageModules, pageScript, entryModule, flush } from "./harness.mjs";
 
 const made = [];
 after(() => made.forEach((folder) => fs.rmSync(folder, { recursive: true, force: true })));
@@ -187,5 +188,34 @@ describe("what the page loader cannot take is refused", () => {
       "page/b.js": 'import { a } from "./a.js";\nexport const b = 1;\n',
     });
     assert.throws(() => pageModules(page, common), /import each other/);
+  });
+});
+
+describe("a test's flush lets the page's work run, and sleeps no timer tick (#3375)", () => {
+  test("a zero-delay timer the page set, and the promises it starts, have run after one step", async () => {
+    const { window } = new JSDOM("", { runScripts: "outside-only" });
+    try {
+      window.eval("globalThis.done = []; setTimeout(() => Promise.resolve().then(() => done.push('timer')), 0);"
+        + " Promise.resolve().then(() => done.push('promise'));");
+      await flush(window, 1);
+      assert.deepEqual([...window.done], ["promise", "timer"]);
+    } finally {
+      window.close();
+    }
+  });
+
+  test("a step starts no node timer: on Windows each sleeps a whole 15.6 ms tick, a third of the page tier's time", async () => {
+    const real = globalThis.setTimeout;
+    let started = 0;
+    globalThis.setTimeout = (...args) => {
+      started += 1;
+      return real(...args);
+    };
+    try {
+      await flush(null, 5);
+    } finally {
+      globalThis.setTimeout = real;
+    }
+    assert.equal(started, 0);
   });
 });
