@@ -767,11 +767,16 @@ export async function realLibrary(seed, appName = "tagpup") {
   return { ...facts, server: new RealServer(REAL[kind]), url: `http://localhost:8090/${facts.library}/` };
 }
 
+/** The real timers, taken before any test mocks them: a test's clock must not stop a deadline (`until` gives up after
+ *  real seconds, not mocked ones, or a condition that never comes true would hang the file instead of failing). */
+const REAL_SET_TIMEOUT = globalThis.setTimeout;
+const REAL_CLEAR_TIMEOUT = globalThis.clearTimeout;
+
 /** Wait on replies, not on time, until `done()` holds; after `seconds` it fails saying what it waited for (`what`, or a function of it). */
 export async function until(ctx, done, what, seconds = 30) {
   let timer;
   const gaveUp = new Promise((_, reject) => {
-    timer = setTimeout(() => reject(new Error(`gave up waiting for ${typeof what === "function" ? what() : what}`)), seconds * 1000);
+    timer = REAL_SET_TIMEOUT(() => reject(new Error(`gave up waiting for ${typeof what === "function" ? what() : what}`)), seconds * 1000);
   });
   gaveUp.catch(() => {});
   try {
@@ -781,7 +786,7 @@ export async function until(ctx, done, what, seconds = 30) {
       await Promise.race([ctx.server.nextReply(), gaveUp]);
     }
   } finally {
-    clearTimeout(timer);
+    REAL_CLEAR_TIMEOUT(timer);
   }
 }
 
