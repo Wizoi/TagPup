@@ -6,10 +6,12 @@
  * unsaved edits in the open photo, a page with no view. Off, the navigator is Browse as it always was (navigator.test.mjs).
  * Every name is fictional; the real library is photographs of real people, many of them minors.
  */
-import { test, describe, afterEach } from "node:test";
+import { test, describe, beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";
-import { closeAllApps, click } from "./harness.mjs";
+import { closeAllApps, click, testClock } from "./harness.mjs";
 import { loadViewPage, pageErrors, personRow } from "./view-page.mjs";
+
+beforeEach((t) => testClock(t));   // the page's timers run when a test advances them
 
 afterEach(() => {
   closeAllApps();
