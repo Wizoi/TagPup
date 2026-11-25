@@ -1,5 +1,5 @@
-"""Which domain owner each test file belongs to, and which scenario a scenario file runs. Read by
-tools/run_tests.py (--owner, --scenarios, the per-owner line), tests/test_the_test_map.py; written like tests/tiers.py, by hand, in the commit that adds a test file.
+"""Which domain owner each test file belongs to, which scenario a scenario file runs, and each file's size. Read by
+tools/run_tests.py (--owner, --scenarios, --size, the per-owner line), tests/test_the_test_map.py; written like tests/tiers.py, by hand, in the commit that adds a test file.
 
     OWNERS     the six domain owners (docs/OWNERS.md): their charters are .claude/agents/tagpup-owner-<data, people,
                files, media, views-ai, integration>.md; `apps` is Integration and apps.
@@ -8,6 +8,11 @@ tools/run_tests.py (--owner, --scenarios, the per-owner line), tests/test_the_te
                one or more (its owner is the owner of its first; test_roots_scenarios is D7 and I6).
     FILES      {test file: (owner, kind, scenario ids)} for every tests/test_*.py (the module name) and every
                tests/frontend/*.test.mjs (the file name).
+    SIZES      {test file: size} for every tests/test_*.py: the most its tests reach for, in SIZE_ORDER: pure
+               (Python only), sqlite (a database), subprocess (a process, or a Flask app: its routes start
+               ExifTool), browser (a real server under a real page). Derived from the names the file uses and
+               kept by tests/test_every_test_file_has_its_size.py, which prints the _SIZES to paste; a page
+               test (node) counts as browser.
     kind       scenario (runs a flow, names its ids), unit (one module's behaviour), migration (a schema step), guard (a
                rule about the source text), unmapped (legacy: no import or name placed it; apps owns it until it is
                placed; the count may only go down, tests/test_the_test_map.py).
@@ -422,8 +427,8 @@ _FILES = {
         ),
         "guard": (
             "context-budget dom-contract merge-budget no-heredoc-escapes page-modules page-shape plan-first read-budget "
-            "test_config_single_owner test_database_axis_guard test_fixtures_make_photo_rows_like_the_indexer "
-            "test_layers test_lint test_no_test_waits_a_fixed_time "
+            "test_config_single_owner test_database_axis_guard test_every_test_file_has_its_size "
+            "test_fixtures_make_photo_rows_like_the_indexer test_layers test_lint test_no_test_waits_a_fixed_time "
             "test_page_module_names test_processes_single_owner test_rules_have_one_owner test_sandbox_has_all_the_code "
             "test_spec_accuracy test_sync_entry_points "
             "test_tests_have_homes_of_their_own test_the_test_map test_verify_workflow_is_sandboxed"
@@ -451,6 +456,136 @@ def _build():
 
 FILES = _build()
 
+#: The sizes, smallest first: `tools/run_tests.py --size sqlite` runs pure and sqlite.
+SIZE_ORDER = ("pure", "sqlite", "subprocess", "browser")
+#: size -> the test files of it (tests/test_every_test_file_has_its_size.py prints these lines to paste).
+_SIZES = {
+    "pure": (
+        "test_a_face_box_turned_upright_and_back test_a_patch_that_grows_a_file_is_settled_by_its_bytes "
+        "test_a_search_keeps_no_thread_buffers test_background_tasks test_background_work_is_waited_for "
+        "test_browser_opens_once test_clip_sees_photos_upright test_cluster_candidates test_code_tool test_config "
+        "test_config_single_owner test_container_layout test_derived_writers "
+        "test_every_change_kind_has_an_undo_check test_every_test_file_has_its_size "
+        "test_exif_block_edits_what_it_owns test_face_values_have_one_owner "
+        "test_face_writes_go_through_the_assignment test_gpu_single_owner test_indexing_names_a_real_control "
+        "test_iptc_block_edits_what_it_owns test_jobs_indexing test_keyword_fields test_layers "
+        "test_library_registry_race test_local_server_socket test_models_in_use_survive_an_unload "
+        "test_no_test_loads_a_model test_no_test_waits_a_fixed_time test_one_value_for_a_suggested_tag "
+        "test_page_module_names test_page_record_fields test_patch_tool test_path_locker "
+        "test_person_ids_single_owner test_person_tag_edges test_photo_looks_have_one_owner test_photo_meta "
+        "test_result test_roots_map test_scrfd_adaface_faces test_segment_edits_choose_what_to_write "
+        "test_stale_findings test_suggest_status_poll_is_a_snapshot test_tag_order test_tag_sort_key_edges "
+        "test_the_block_editors_have_one_caller test_the_test_map test_trace_file_per_library test_vector_index "
+        "test_view_rules_follow_the_server test_vocabulary test_what_counts_as_a_photo "
+        "test_xmp_packet_edits_what_it_owns test_zero_shot_skips_people "
+    ),
+    "sqlite": (
+        "test_a_clip_is_matched_on_its_best_frame test_a_person_count_reads_only_their_photos "
+        "test_a_share_that_drops_mid_walk test_a_share_that_wakes test_automatch_references "
+        "test_automatch_writes_once test_backups_are_kept_to_five test_bulk_scripts_back_up test_camera_words "
+        "test_census_of_jpeg_segments test_chip_keys_follow_the_server test_cluster_faces_on_a_crowded_library "
+        "test_clustering_evidence test_clustering_keeps_a_name_the_tags_confirm test_clustering_meets_naming "
+        "test_compact_gives_back_free_space test_dates test_db_access test_derived_batches "
+        "test_derived_follow_writes test_derived_tables test_doctor test_embeddings_follow_their_photo "
+        "test_every_face_has_a_photo_row test_every_tag_has_an_id test_face_clustering_rules "
+        "test_face_roots_are_the_trees test_face_save_retries_a_lock test_faces_detected_record "
+        "test_faces_from_tags test_fixtures_make_photo_rows_like_the_indexer test_folder_scope_roots "
+        "test_group_tag_is_not_a_person test_identify_cache_sees_every_change "
+        "test_index_adds_the_folder_it_is_given test_index_reload_reuses_its_connection "
+        "test_index_resolves_people test_inspect_reads_only_the_photos_asked_about "
+        "test_inspect_uses_the_stores_mtime_rule test_jobs_suggestions test_journal "
+        "test_journal_keys_and_cascades test_journal_through_the_services test_journal_undo_refusals test_library "
+        "test_library_roots test_library_view test_library_view_plans test_lock_owners test_maintenance "
+        "test_making_a_new_photo_models_vectors test_measuring_the_neighbour_cut_for_clips test_naming_faces_job "
+        "test_one_walk_of_a_library_at_a_time test_paths test_people_by_id_tree test_person_ids "
+        "test_photo_index_keeps_only_vectors test_photo_people_follow_their_sources test_photo_rows "
+        "test_relink_checks_the_destination test_retiring_the_old_photo_models_vectors test_roots_at_scale "
+        "test_roots_sample test_roots_unplaced test_rules_have_one_owner test_runs_nest_and_say_how_far_they_got "
+        "test_sandbox_roots test_schema test_search_words test_server_lists_are_alphabetical test_service_faces "
+        "test_service_page_images test_service_smart_rename test_service_tags test_snapshots "
+        "test_store_taxonomy_add_path test_suggest_index_stays_current test_suggest_reads_people_once "
+        "test_suggest_respects_face_decisions test_suggest_status_replies test_suggester_scoring "
+        "test_suggestions_keep_hierarchy test_switching_a_librarys_face_model test_sync_records "
+        "test_the_runtime_keeps_models_by_settings test_the_tree_is_the_librarys test_thumbnails test_thumbs_cli "
+        "test_view_indexes "
+    ),
+    "subprocess": (
+        "test_a_bake_is_planned_from_the_library test_a_bake_is_used_only_whole "
+        "test_a_bulk_delete_stopped_part_way test_a_caption_repeating_the_title_is_cleared "
+        "test_a_chunked_tag_write_is_one_line_of_history test_a_clip_converted test_a_clip_dated_by_its_name "
+        "test_a_clip_dated_through_the_journal test_a_clip_deleted test_a_clip_is_indexed_as_a_video "
+        "test_a_clip_is_not_turned test_a_clip_patch_cut_short test_a_clip_patched_in_place test_a_clip_renamed "
+        "test_a_clip_shows_its_poster test_a_clip_tag_undone test_a_clip_tagged_through_the_journal "
+        "test_a_clip_titled_in_quicktime test_a_clips_people_are_the_people_its_frames_show "
+        "test_a_crash_part_way_is_settled_at_the_next_start test_a_cropped_picture_gets_new_faces "
+        "test_a_delete_cut_short test_a_delete_when_the_recycle_bin_is_full "
+        "test_a_face_gets_one_nearest_person_everywhere test_a_face_in_the_background_is_one_answer "
+        "test_a_failed_run_says_what_to_do test_a_file_holds_what_exiftool_kept test_a_folders_refresh_syncs_it "
+        "test_a_library_from_a_newer_tagpup test_a_library_indexes_and_suggests_with_its_face_model "
+        "test_a_library_that_cannot_be_migrated_is_still_served test_a_librarys_settings_are_its_own "
+        "test_a_long_change_cut_off_is_settled_in_chunks test_a_machine_without_a_card "
+        "test_a_photo_is_known_by_its_picture test_a_photo_made_once_is_copied_for_each_test "
+        "test_a_photo_patched_in_place test_a_photo_written_by_its_own_editors test_a_photos_title_and_caption "
+        "test_a_rename_stopped_part_way test_a_request_is_decoded_once test_a_row_describes_its_file_one_way "
+        "test_a_share_asleep test_a_tag_added_touches_its_file_no_more_than_it_must "
+        "test_a_tag_tree_edit_of_a_tag_a_clip_holds test_a_view_of_photos_or_videos_alone "
+        "test_a_write_through_the_one_entry_point test_activity_page_replies test_activity_routes "
+        "test_add_findings test_an_adobe_clip_packet_edited_and_read_back test_an_empty_folder_is_scanned_again "
+        "test_an_index_is_one_run_under_its_sync test_an_index_reads_a_bake "
+        "test_an_index_reads_the_next_photos_ahead test_analyse_only_looks_are_kept test_analyse_only_suggest "
+        "test_answers_carry_their_person test_batch_strip_replies test_batches test_batches_go_through_the_model "
+        "test_bulk_delete test_bulk_edits test_bulk_edits_real_exiftool test_bulk_edits_stalled_exiftool "
+        "test_bulk_faces_and_tags test_bulk_writes_start_from_the_file test_caption_order test_dark_selects "
+        "test_database_axis_guard test_database_context_isolation test_delete_a_photo test_derived_file_changes "
+        "test_every_library_keeps_its_saved_suggestions test_every_route_answers_this_pc_or_says_why "
+        "test_excluded_faces_stay_unnamed test_exiftool_answers_kept_for_tests test_exiftool_encoding "
+        "test_exiftool_says_why test_exiftool_session test_face_click_reads_named_faces_once test_face_exclusion "
+        "test_face_people_follow_file_changes test_faces_and_tags_in_step test_faces_from_tags_in_a_folder "
+        "test_ffmpeg_is_a_prerequisite test_file_changes_one_at_a_time test_file_journal "
+        "test_filtering_the_library_by_rows test_folder_membership test_folder_scan_follows_the_library "
+        "test_folder_watcher test_frames_of_a_video test_gzip_json test_heavy_imports_stay_lazy "
+        "test_history_routes test_identify_cache_keeps_others_writes test_identify_ignore_assign_restore_undo "
+        "test_identify_queries test_index_progress_end_to_end test_index_startup_reads test_install_app "
+        "test_install_hands_over test_just_look_bin_and_long_names test_just_look_delete_and_rename_rules "
+        "test_just_look_edits test_launcher_hands_over test_library_covers test_library_search "
+        "test_library_union_and_order test_library_views_scenarios test_lint test_log_runs test_logs "
+        "test_mcp_config_resolves test_mcp_photo_against_file test_mcp_server test_metadata_extraction "
+        "test_migrations test_minor_errors_in_a_journaled_write test_models_released_when_idle "
+        "test_name_faces_routes test_new_faces_are_matched_after_an_index test_new_person_reads_the_pool_once "
+        "test_newer_library_guard_in_a_long_lived_process test_no_person_row_without_an_id "
+        "test_no_writes_to_damaged_photos test_one_answer_to_the_librarys_folders test_one_gpu_at_a_time "
+        "test_one_gpu_jobs test_one_library_three_programs test_one_photo_whatever_its_spelling "
+        "test_organize_faces test_partial_writes_leave_rows_unread test_paths_roots test_people_by_id_at_once "
+        "test_people_representative_faces test_person_face_samples test_person_filing_table "
+        "test_person_rename_reaches_the_files test_photo_identity test_photo_open test_photos_with_no_tag "
+        "test_pipeline_measurements test_playing_a_video test_processes_single_owner test_recurring_jobs "
+        "test_reexamine_folder test_reindex_keeps_face_decisions test_remove_folder_lists_the_library "
+        "test_removing_a_folder_from_either_app test_renaming test_retro_metrics test_roots_ingress "
+        "test_roots_ingress_keys_cover_the_routes test_roots_location test_roots_old_place test_roots_pinned_runs "
+        "test_roots_scenarios test_roots_store test_rotate_crash_settles_with_the_boxes test_rotate_is_journaled "
+        "test_rotate_keeps_the_photo test_rows_only_in_folders_added test_run_tests_keeps_failures "
+        "test_sandbox_has_all_the_code test_scenario_two_libraries_share_a_folder test_selection "
+        "test_selection_scenarios test_selection_tally test_server_drain test_server_migrates_at_start "
+        "test_server_startup test_service_indexing test_services_refuse_what_the_rules_refuse test_serving_photos "
+        "test_settling_carries_vectors test_shared_taxonomy_routes test_smart_rename_one_photo test_spec_accuracy "
+        "test_stale_record_precondition test_suggest_then_apply_all test_suggest_thread_keeps_its_library "
+        "test_switching_a_librarys_photo_model test_sync test_sync_entry_points "
+        "test_tag_a_photo_read_it_back_and_undo test_tag_tree_edits_are_batches test_tag_usage_from_photo_tags "
+        "test_tag_view_api test_tag_writes_keep_the_index_true test_tagpup_routes "
+        "test_tags_are_checked_where_they_are_set test_tags_from_faces test_tags_from_faces_in_a_folder "
+        "test_taxonomy_edits_report_what_they_wrote test_taxonomy_lifecycle test_tests_have_homes_of_their_own "
+        "test_the_index_writes_the_bake test_the_runtime_reaches_suggest test_the_two_writers_compared_on_copies "
+        "test_thumbnail_routes test_time_shift test_tuner_photo_copy_upright test_tuner_reads "
+        "test_tuner_server_api test_two_cousins_called_alike test_undo_after_every_later_kind test_validation "
+        "test_verify_workflow_is_sandboxed test_web_app test_what_a_clip_needs_to_play "
+        "test_what_the_server_keeps_follows_a_rename test_write_routes_are_classified "
+    ),
+    "browser": (
+        "test_pages_against_the_real_server "
+    ),
+}
+SIZES = {name: size for size, names in _SIZES.items() for name in names.split()}
+
 
 def files_of(owner, kind=None):
     """The Python test modules (test_x) of an owner, or of one kind of it, sorted."""
@@ -460,3 +595,14 @@ def files_of(owner, kind=None):
 def page_files_of(owner):
     """The .test.mjs files of an owner, sorted."""
     return sorted(n for n, (o, _k, _ids) in FILES.items() if o == owner and n.endswith(".test.mjs"))
+
+
+def size_of(name):
+    """A test file's size (a module test_x, or a page test x.test.mjs: browser); a file not in SIZES is browser
+    until the guard gives it its line."""
+    return SIZES.get(name, "browser")
+
+
+def within(name, size):
+    """Is the file `name` of `size` or smaller?"""
+    return SIZE_ORDER.index(size_of(name)) <= SIZE_ORDER.index(size)

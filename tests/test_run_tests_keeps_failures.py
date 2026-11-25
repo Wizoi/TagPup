@@ -383,5 +383,34 @@ class ThePageTestsAreATier(unittest.TestCase):
         self.assertIn("node --test tests/frontend/", seen[("--owner", "views")][1])
 
 
+class AnOwnersQuickLoop(unittest.TestCase):
+    """An owner editing: --owner X --size sqlite runs their files that start no process, a loop of seconds; the
+    sizes are tests/owners.py SIZES, kept by tests/test_every_test_file_has_its_size.py."""
+
+    def chosen(self, *argv):
+        printed = io.StringIO()
+        with mock.patch.object(run_tests, "run", side_effect=lambda modules, jobs, accept_fewer=False: (
+                [(m, True, 1, 0.1, "") for m in modules])) as ran, contextlib.redirect_stdout(printed):
+            run_tests.main(list(argv))
+        return ran.call_args.args[0], printed.getvalue()
+
+    def test_an_owners_pure_and_sqlite_files_and_nothing_that_starts_a_process(self):
+        from tests import owners
+        modules, printed = self.chosen("--owner", "people", "--size", "sqlite")
+        self.assertEqual([m for m in owners.files_of("people") if owners.SIZES[m] in ("pure", "sqlite")], modules)
+        self.assertTrue(modules)
+        self.assertNotIn("node --test", printed)   # the page tests are the browser size
+        self.assertIn("Sizes run (tests/owners.py SIZES): pure, sqlite", printed)
+        self.assertIn("node --test", self.chosen("--owner", "people", "--size", "browser")[1])
+
+    def test_the_size_goes_with_the_fast_tier_and_with_file_names(self):
+        from tests import owners
+        fast_pure = self.chosen("--fast", "--size", "pure")[0]
+        self.assertTrue(fast_pure)
+        self.assertEqual({"pure"}, {owners.SIZES[m] for m in fast_pure})
+        self.assertEqual({"fast"}, {run_tests.tiers.tier_of(m) for m in fast_pure})
+        self.assertEqual(["test_vocabulary"], self.chosen("test_vocabulary", "test_schema", "--size", "pure")[0])
+
+
 if __name__ == "__main__":
     unittest.main()

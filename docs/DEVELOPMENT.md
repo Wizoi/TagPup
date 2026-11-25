@@ -79,7 +79,10 @@ the 152 `tests/frontend/*.test.mjs` files (each run as `node --test <file>`; nev
 are left out; `--no-slow` leaves out slow and page. The default is every tier, and that is the commit gate: about 3,600
 Python tests and 2,200 page tests; the page tier alone is about 2,550 file-seconds, about 320 s across 8 processes
 (2026-11-24). `--owner` and `--scenarios` run an owner's Python files and print the `node --test` line for its page
-tests. A file that fails is run once more alone: if it passes, the report says "flaky: passed alone" and keeps the first
+tests. `--size sqlite` runs only the files that start no process (pure and sqlite; `tests/owners.py` SIZES, derived
+from the names each file uses and kept by `tests/test_every_test_file_has_its_size.py`, which prints the lines to
+paste). `--owner X --size sqlite` took 1 to 47 s an owner (2026-11-24, 8 processes); data's 47 s is the slow tier's
+`test_roots_at_scale`, and 15 s with `--fast`. A Flask app counts as subprocess: its routes start ExifTool. A file that fails is run once more alone: if it passes, the report says "flaky: passed alone" and keeps the first
 output; if it fails twice it fails.
 
 **The suite's times.** Every run, green or not, keeps each file's time in `tests/.durations.json` (with each file's test
