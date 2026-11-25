@@ -7,11 +7,13 @@
  * the page sends for the owner's examples, and tests/test_filtering_the_library_by_rows.py the photos the server finds for them.
  * Every name is fictional.
  */
-import { test, describe, afterEach } from "node:test";
+import { test, describe, beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { closeAllApps } from "./harness.mjs";
+import { closeAllApps, testClock } from "./harness.mjs";
 import { loadViewPage, pageErrors, syntheticDates, syntheticFolders, syntheticKeywords, syntheticPeople } from "./view-page.mjs";
+
+beforeEach((t) => testClock(t));   // the page's timers run when a test advances them
 
 const TABLE = JSON.parse(readFileSync(new URL("../fixtures/filter_searches.json", import.meta.url), "utf-8"));
 const YEAR = new Date().getFullYear();
