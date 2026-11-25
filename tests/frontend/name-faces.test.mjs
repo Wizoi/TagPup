@@ -17,7 +17,11 @@ import { loadViewPage } from "./view-page.mjs";
 import { OPEN_DIALOG } from "../../web/common/dialog.js";
 import { questionText, folderText, scopeLabel } from "../../web/common/name-faces.js";
 
-beforeEach((t) => testClock(t));   // the page's timers run when a test advances them
+// The page's timers run when a test advances them; a test against the real server does not take the clock: its page polls
+// the server's real replies, which a clock nobody advances would never let it see.
+beforeEach((t) => {
+  if (!t.fullName.includes("against the server")) testClock(t);
+});
 
 afterEach(() => closeAllApps());
 
