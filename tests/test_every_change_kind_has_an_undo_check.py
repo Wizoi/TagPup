@@ -34,6 +34,7 @@ PARAMETER = "operation"
 #: (module, function) whose `operation` is not the name of a change: the write itself (a callable), the reader of the
 #: table, and a batch's label in the line of batches (the change it holds is named to its writer).
 NOT_NAMES = {("tagpup.store.db", "write"), ("tagpup.store.db", "write_with_connection"), ("tagpup.store.db", "write_if_free"),
+             ("tagpup.store.db", "read_with_connection"),
              ("tagpup.services.journal", "undo_rule"), ("tagpup.services.batches", "claim"),
              ("tagpup.services.file_changes", "batch_exclusively"),
              # A read of the changes made as `operation`: the face pass's undo asks it of a retired kind (pass_check).
