@@ -337,8 +337,12 @@ def save_patch(db_path, file_id, record, before):
 
 def patch_of(db_path, file_id):
     """(record, before) of the patch file `file_id` is under (save_patch), or None: the one reader of the record."""
-    found = db.read_with_connection(db_path, lambda cursor: cursor.execute(
-        "SELECT patch, patch_before FROM change_files WHERE id = ? AND patch IS NOT NULL", (file_id,)).fetchone())
+
+    def read(cursor):
+        return cursor.execute("SELECT patch, patch_before FROM change_files WHERE id = ? AND patch IS NOT NULL",
+                              (file_id,)).fetchone()
+
+    found = db.read_with_connection(db_path, read)
     return None if found is None else (json.loads(found[0]), bytes(found[1] or b""))
 
 
