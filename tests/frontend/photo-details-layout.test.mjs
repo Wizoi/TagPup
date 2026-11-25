@@ -3,11 +3,13 @@
  * that copies the whole path (web/tagpup/photo-path.js); Date taken, Size and the camera as labelled lines of the second column;
  * and the boxes that add a person or a keyword shown by a pencil, closed until it is clicked (web/tagpup/edit-toggles.js).
  */
-import { test, afterEach } from "node:test";
+import { test, beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { loadApp, FakeServer, closeAllApps, openFolder, click, PHOTO_WRITES } from "./harness.mjs";
+import { loadApp, FakeServer, advance, closeAllApps, openFolder, click, PHOTO_WRITES, testClock } from "./harness.mjs";
 import { loadViewPage, recordOf } from "./view-page.mjs";
+
+beforeEach((t) => testClock(t));   // the page's timers run when a test advances them
 
 const PHOTO = { path: "D:\\Pictures\\Run\\a.jpg", filename: "a.jpg", tags: [], people: [], captions: [], title: "", writes: PHOTO_WRITES, camera: "Tidewater TX R6m2", lens: "" };
 
@@ -21,16 +23,14 @@ function server(records = [PHOTO]) {
     .on("/api/folder/suggest-status", { status: "idle" });
 }
 
-const settle = (window, ms = 40) => new Promise((r) => window.setTimeout(r, ms));
-
 afterEach(() => closeAllApps());
 
 async function openPhoto(t) {
   const { window, document } = await loadApp("tagpup", { server: server(), t });
   await openFolder({ document, window }, "D:\\Pictures\\Run");
-  await settle(window, 60);
+  await advance(window, 60);
   click(window, document.querySelector(".photo-item-file"));
-  await settle(window);
+  await advance(window, 40);
   return { window, document };
 }
 
@@ -64,9 +64,9 @@ async function openWith(t, record, { before } = {}) {
   const srv = server([record]);
   const { window, document } = await loadApp("tagpup", { server: srv, t, before });
   await openFolder({ document, window }, "D:\\Pictures\\Run");
-  await settle(window, 60);
+  await advance(window, 60);
   click(window, document.querySelector(".photo-item-file"));
-  await settle(window);
+  await advance(window, 40);
   return document;
 }
 
@@ -86,7 +86,7 @@ test("where the photo is reads as its folder's name and its own, each whole in i
   assert.equal(name.title, `Open in the default app: ${path}`);
   assert.ok(folder.classList.contains("one-line") && name.classList.contains("one-line"), "a long name is cut with an ellipsis");
   click(page.defaultView, page.getElementById("btn-copy-path"));
-  await settle(page.defaultView);
+  await advance(page.defaultView, 40);
   assert.deepEqual(copied, [path]);
   assert.match(page.getElementById("status-text").textContent, /Copied the full path/);
 });
@@ -95,7 +95,7 @@ test("a browser that will not let the page copy says so, rather than seeming to 
   const before = (window) => Object.defineProperty(window.navigator, "clipboard", { value: undefined });
   const page = await openWith(t, PHOTO, { before });
   click(page.defaultView, page.getElementById("btn-copy-path"));
-  await settle(page.defaultView);
+  await advance(page.defaultView, 40);
   assert.equal(page.getElementById("status-text").textContent, "This browser will not let the page copy; select the path in the panel instead.");
 });
 
@@ -103,7 +103,7 @@ test("a copy the browser refuses says the same sentence, never the browser's own
   const before = (window) => Object.defineProperty(window.navigator, "clipboard", { value: { writeText: async () => { throw new Error("NotAllowedError: Document is not focused"); } } });
   const page = await openWith(t, PHOTO, { before });
   click(page.defaultView, page.getElementById("btn-copy-path"));
-  await settle(page.defaultView);
+  await advance(page.defaultView, 40);
   assert.equal(page.getElementById("status-text").textContent, "This browser will not let the page copy; select the path in the panel instead.");
 });
 
@@ -152,15 +152,15 @@ test("a photo opened in Organize: its folder's name goes back to the Organize gr
   const srv = server([PHOTO]);
   const { window, document } = await loadApp("tagpup", { server: srv, t });
   await openFolder({ document, window }, "D:\\Pictures\\Run");
-  await settle(window, 60);
+  await advance(window, 60);
   click(window, document.querySelector(".photo-item-file"));
-  await settle(window);
+  await advance(window, 40);
   const folder = document.getElementById("detail-folder");
   assert.equal(folder.title, "Back to this folder's grid: D:\\Pictures\\Run");
   assert.ok(!document.getElementById("panel-content").classList.contains("hidden"), "the photo is open");
   const asked = srv.urls().length;
   click(window, folder);
-  await settle(window, 100);
+  await advance(window, 100);
   assert.ok(document.getElementById("panel-content").classList.contains("hidden"), "the photo closed");
   assert.ok(!document.getElementById("folder-view-content").classList.contains("hidden"), "the Organize grid is shown");
   assert.equal(srv.urls().slice(asked).filter((url) => url.includes("/api/library/ids")).length, 0);

@@ -24,13 +24,15 @@
  *
  * Names hold spaces and apostrophes, as the live libraries' do. Every name here is made up.
  */
-import { test, describe, afterEach } from "node:test";
+import { test, describe, beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { loadApp, FakeServer, flush, click, closeAllApps, pageExports, PEOPLE_ROUTE, answer } from "./harness.mjs";
-import { PHONE_PAGE, el, shown, pageState, wait, settle, phoneCard, phoneLayout } from "./phone-page.mjs";
+import { loadApp, FakeServer, advance, flush, click, closeAllApps, pageExports, PEOPLE_ROUTE, answer, testClock } from "./harness.mjs";
+import { PHONE_PAGE, el, shown, pageState, settle, phoneCard, phoneLayout } from "./phone-page.mjs";
+
+beforeEach((t) => testClock(t));   // the page's timers run when a test advances them
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const KEYWORDS = { keywords: [{ tag: "Events", name: "Events", parent: null, count: 2000 }], untagged: 0 };
@@ -52,7 +54,7 @@ async function until(ctx, done, what) {
   const end = Date.now() + 10000;
   while (!done()) {
     if (Date.now() > end) throw new Error(`waited 10 s for ${what}`);
-    await wait(ctx.window, 5);
+    await advance(ctx.window, 5);
   }
   await flush(ctx.window, 6);
 }

@@ -9,9 +9,11 @@
  * in the status line. Driven through the real page against a scripted server; the status poll is
  * the page's own (every 1.5 s).
  */
-import { test, describe } from "node:test";
+import { test, describe, beforeEach } from "node:test";
 import assert from "node:assert/strict";
-import { loadApp, FakeServer, photoRecord, flush, click, openFolder } from "./harness.mjs";
+import { advance, loadApp, FakeServer, photoRecord, flush, click, openFolder, testClock } from "./harness.mjs";
+
+beforeEach((t) => testClock(t));   // the page's timers run when a test advances them
 
 const FOLDER = "D:\\Library\\Regatta";
 const WAITING = "Waiting for the graphics card (in use by: indexing Regatta (harbour), since 15:41)...";
@@ -34,7 +36,6 @@ async function pageWithStatus(t, sequence, cancelReply = { success: true, cancel
   return ctx;
 }
 
-const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 const el = (ctx, id) => ctx.document.getElementById(id);
 
 describe("a Suggest that waits", () => {
@@ -61,7 +62,7 @@ describe("one bar for the work of a folder (#2355)", () => {
   test("a Suggest waiting for the index shows the index's progress in its own bar, and the index's bar stays hidden", async (t) => {
     const ctx = await pageWithStatus(t, [{ status: "preparing", completed: 0, total: 3, message: "Waiting for this folder to be indexed first" }],
       undefined, { status: "running", percent: 40, message: "Generating embeddings: 40% (2/5)" });
-    await wait(POLL_MS);
+    await advance(ctx.window, POLL_MS);
     await flush(ctx.window, 6);
     assert.equal(el(ctx, "suggest-progress-bar").style.width, "40%");
     assert.ok(el(ctx, "index-progress-container").classList.contains("hidden"), "two bars showed");
@@ -77,7 +78,7 @@ describe("a Suggest that is refused", () => {
     assert.equal(el(ctx, "status-text").textContent, refused);
     assert.ok(el(ctx, "suggest-progress-container").classList.contains("hidden"));
     const polled = ctx.server.calls.filter((c) => c.url.includes("suggest-status")).length;
-    await wait(POLL_MS);
+    await advance(ctx.window, POLL_MS);
     await flush(ctx.window, 4);
     assert.equal(ctx.server.calls.filter((c) => c.url.includes("suggest-status")).length, polled,
       "the page kept polling a run that failed");
@@ -100,17 +101,17 @@ describe("Suggest's Cancel", () => {
     assert.equal(el(ctx, "suggest-progress-text").textContent, "Cancelling...");
     assert.equal(button.disabled, true);
 
-    await wait(POLL_MS);
+    await advance(ctx.window, POLL_MS);
     await flush(ctx.window, 4);
     assert.equal(button.disabled, true, "the poll saying Cancelling enabled it again");
     assert.equal(el(ctx, "suggest-progress-text").textContent, "Cancelling...");
 
-    await wait(POLL_MS);
+    await advance(ctx.window, POLL_MS);
     await flush(ctx.window, 4);
     assert.ok(el(ctx, "suggest-progress-container").classList.contains("hidden"), "the bar stayed after the cancel");
     assert.match(el(ctx, "status-text").textContent, /cancelled/i);
     const polled = ctx.server.calls.filter((c) => c.url.includes("suggest-status")).length;
-    await wait(POLL_MS);
+    await advance(ctx.window, POLL_MS);
     await flush(ctx.window, 4);
     assert.equal(ctx.server.calls.filter((c) => c.url.includes("suggest-status")).length, polled,
       "the page kept polling a cancelled run");

@@ -16,10 +16,12 @@
  * `for_good` only on OK; on Cancel nothing is deleted and the clip plays again (DECISIONS 2026-11-08, 'FOR GOOD'). Fictional
  * names only.
  */
-import { test, describe, afterEach } from "node:test";
+import { test, describe, beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";
-import { closeAllApps, click, CLIP_WRITES, answer as replied, deletedAs } from "./harness.mjs";
+import { closeAllApps, click, CLIP_WRITES, answer as replied, deletedAs, testClock } from "./harness.mjs";
 import { loadViewPage, pageErrors, recordOf } from "./view-page.mjs";
+
+beforeEach((t) => testClock(t));   // the page's timers run when a test advances them
 
 afterEach(() => {
   closeAllApps();

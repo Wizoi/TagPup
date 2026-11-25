@@ -15,14 +15,16 @@
  * photo the run could not read says why (owner, 2026-11-05); the replies are the real SuggestionRuns.status()'s
  * (tests/test_suggest_status_replies.py writes fixtures/suggest_status.json).
  */
-import { test, describe } from "node:test";
+import { test, describe, beforeEach } from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
 import {
-  loadApp, FakeServer, photoRecord, flush, click, openFolder, pageExports, peopleRecordsOf, PEOPLE_ROUTE, REPO_ROOT,
-  SAVE, saved,
+  advance, loadApp, FakeServer, photoRecord, flush, click, openFolder, pageExports, peopleRecordsOf, PEOPLE_ROUTE, REPO_ROOT,
+  SAVE, saved, testClock,
 } from "./harness.mjs";
+
+beforeEach((t) => testClock(t));   // the page's timers run when a test advances them
 
 const TAXONOMY = [
   { id: 1, tag: "People", name: "People", parent_id: null, has_face: 1 },
@@ -201,7 +203,6 @@ describe("the analysis row", () => {
 const served = JSON.parse(fs.readFileSync(path.join(REPO_ROOT, "tests", "frontend", "fixtures", "suggest_status.json"), "utf8"));
 const OTHER = "D:\\Library\\2021";
 const POLL_MS = 1600;
-const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 const note = (ctx) => ctx.document.querySelector("#suggestions-section .suggestions-note");
 
 /**
@@ -245,7 +246,7 @@ describe("while the folder's run goes, the box says how it stands", () => {
     assert.ok(!hidden(section(ctx)), "the box is hidden while the run waits");
     assert.equal(note(ctx).textContent, served.waiting_for_the_card.message);
     assert.equal(note(ctx).getAttribute("role"), "status");
-    await wait(POLL_MS);
+    await advance(ctx.window, POLL_MS);
     await flush(ctx.window, 8);
     assert.equal(note(ctx), null, "the waiting line stayed after the run completed");
     assert.match(chips(ctx, "suggested-tags-container").join(" "), /Activity\/Rowing/);
@@ -305,7 +306,7 @@ describe("while the folder's run goes, the box says how it stands", () => {
       if (first) { first = false; return served.waiting_for_the_card; }
       return late;   // the poll of 2020 under way when 2021 is opened
     });
-    await wait(POLL_MS);   // 2020's next poll is asked, and not answered yet
+    await advance(ctx.window, POLL_MS);   // 2020's next poll is asked, and not answered yet
     await openFolder(ctx, OTHER);
     await openRow(ctx, "d.jpg");
     release(served.running);
@@ -332,9 +333,9 @@ describe("while the folder's run goes, the box says how it stands", () => {
         if (first) { first = false; return served.waiting_for_the_card; }
         return late;
       }, { theirScan: () => scanning });
-      if (when.startsWith("under way")) await wait(POLL_MS);   // 2020's next poll is asked, and not answered yet
+      if (when.startsWith("under way")) await advance(ctx.window, POLL_MS);   // 2020's next poll is asked, and not answered yet
       await openFolder(ctx, OTHER);   // 2021's scan is under way
-      if (when.startsWith("asked again")) await wait(POLL_MS);   // a poll of 2020 still going is asked now
+      if (when.startsWith("asked again")) await advance(ctx.window, POLL_MS);   // a poll of 2020 still going is asked now
       releasePoll(served.running);
       await flush(ctx.window, 8);
       releaseScan(theirs());
@@ -359,7 +360,7 @@ describe("while the folder's run goes, the box says how it stands", () => {
       return late;
     });
     assert.ok(note(ctx), "no line before the view opened");
-    await wait(POLL_MS);
+    await advance(ctx.window, POLL_MS);
     pageExports(ctx.window, "web/tagpup/library-view.js").openLibraryView({ kind: "all" });
     await flush(ctx.window, 8);
     release(served.running);

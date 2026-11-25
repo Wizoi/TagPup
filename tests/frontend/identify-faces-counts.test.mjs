@@ -13,9 +13,11 @@
  * asking for one name. The badges already say who each face is, so the button uses
  * them rather than asking for something that cannot be answered.
  */
-import { test, describe } from "node:test";
+import { test, describe, beforeEach } from "node:test";
 import assert from "node:assert/strict";
-import { loadApp, FakeServer, flush, click, PUBLISHED_RULES, PEOPLE_ROUTE } from "./harness.mjs";
+import { advance, loadApp, FakeServer, flush, click, PUBLISHED_RULES, PEOPLE_ROUTE, testClock } from "./harness.mjs";
+
+beforeEach((t) => testClock(t));   // the page's timers run when a test advances them
 
 const NAME = "Unknown Faces";
 
@@ -63,7 +65,7 @@ async function open(t, people, faces, extra = (s) => s, person = NAME) {
     server,
     url: `http://localhost:8080/kr-track/?mode=unmatched-faces&person=${encodeURIComponent(person)}`,
   });
-  await new Promise((r) => window.setTimeout(r, 140));
+  await advance(window, 140);
   return { window, document, server };
 }
 
@@ -116,7 +118,7 @@ describe("assigning a mixed selection", () => {
     // Ctrl-click, because a plain click now selects only what it lands on -- the
     // way a file list behaves.
     cards.forEach((card) => click(ctx.window, card, { ctrlKey: true }));
-    await new Promise((r) => ctx.window.setTimeout(r, 40));
+    await advance(ctx.window, 40);
     return ctx;
   }
 
@@ -137,7 +139,7 @@ describe("assigning a mixed selection", () => {
     const ctx = await selectBoth(t);
     ctx.window.confirm = () => true;
     ctx.document.getElementById("btn-reassign-selected").click();
-    await new Promise((r) => ctx.window.setTimeout(r, 80));
+    await advance(ctx.window, 80);
 
     const sent = ctx.server.calls
       .filter((c) => c.url.includes("/api/faces/match-bulk") && c.body)
@@ -150,7 +152,7 @@ describe("assigning a mixed selection", () => {
     const ctx = await selectBoth(t);
     ctx.window.confirm = () => false;
     ctx.document.getElementById("btn-reassign-selected").click();
-    await new Promise((r) => ctx.window.setTimeout(r, 60));
+    await advance(ctx.window, 60);
     assert.equal(
       ctx.server.calls.filter((c) => c.url.includes("/api/faces/match-bulk")).length, 0);
   });
@@ -161,7 +163,7 @@ describe("assigning a mixed selection", () => {
     const input = ctx.document.getElementById("input-reassign-name");
     input.value = "Rory Olwen";
     input.dispatchEvent(new ctx.window.Event("input", { bubbles: true }));
-    await new Promise((r) => ctx.window.setTimeout(r, 40));
+    await advance(ctx.window, 40);
 
     const button = ctx.document.getElementById("btn-reassign-selected");
     // The button names who the click will send them to: the typed name.
@@ -174,7 +176,7 @@ describe("assigning a mixed selection", () => {
     const ctx = await open(t, [{ name: NAME, count: 2, unit: "face" }], agreeing);
     const cards = [...ctx.document.querySelectorAll("#matching-faces-grid .face-match-item")];
     cards.forEach((card) => click(ctx.window, card, { ctrlKey: true }));
-    await new Promise((r) => ctx.window.setTimeout(r, 40));
+    await advance(ctx.window, 40);
 
     const button = ctx.document.getElementById("btn-reassign-selected");
     assert.ok(!/to their matches/.test(button.textContent),
@@ -206,7 +208,7 @@ describe("picking faces the way a file list does", () => {
     return ctx;
   }
 
-  const settle = (ctx) => new Promise((r) => ctx.window.setTimeout(r, 30));
+  const settle = (ctx) => advance(ctx.window, 30);
 
   test("a plain click selects only what it lands on", async (t) => {
     const ctx = await grid(t);
@@ -325,7 +327,7 @@ describe("a selection the machine only half recognises", () => {
     const ctx = await open(t, [{ name: NAME, count: 3, unit: "face" }], partly);
     const cards = [...ctx.document.querySelectorAll("#matching-faces-grid .face-match-item")];
     cards.forEach((card) => click(ctx.window, card, { ctrlKey: true }));
-    await new Promise((r) => ctx.window.setTimeout(r, 40));
+    await advance(ctx.window, 40);
     return ctx;
   }
 
@@ -347,7 +349,7 @@ describe("a selection the machine only half recognises", () => {
     let asked = "";
     ctx.window.confirm = (message) => { asked = message; return false; };
     ctx.document.getElementById("btn-reassign-selected").click();
-    await new Promise((r) => ctx.window.setTimeout(r, 40));
+    await advance(ctx.window, 40);
     assert.match(asked, /1 selected face\(s\) resemble nobody yet and are left alone/);
   });
 
@@ -355,7 +357,7 @@ describe("a selection the machine only half recognises", () => {
     const ctx = await selectAll(t);
     ctx.window.confirm = () => true;
     ctx.document.getElementById("btn-reassign-selected").click();
-    await new Promise((r) => ctx.window.setTimeout(r, 120));
+    await advance(ctx.window, 120);
 
     const sent = ctx.server.calls
       .filter((c) => c.url.includes("/api/faces/match-bulk") && c.body);
@@ -369,7 +371,7 @@ describe("a selection the machine only half recognises", () => {
     const ctx = await selectAll(t);
     ctx.window.confirm = () => true;
     ctx.document.getElementById("btn-reassign-selected").click();
-    await new Promise((r) => ctx.window.setTimeout(r, 120));
+    await advance(ctx.window, 120);
 
     const sent = ctx.server.calls.filter((c) => c.url.includes("/api/faces/match-bulk"));
     assert.equal(sent.length, 2, "expected one call per person");
@@ -392,7 +394,7 @@ describe("a name put there by a badge", () => {
     const badge = ctx.document.querySelector("#matching-faces-grid .face-guess");
     assert.ok(badge, "no badge rendered");
     click(ctx.window, badge);
-    await new Promise((r) => ctx.window.setTimeout(r, 40));
+    await advance(ctx.window, 40);
     ctx.cards = () =>
       [...ctx.document.querySelectorAll("#matching-faces-grid .face-match-item")];
     ctx.input = () => ctx.document.getElementById("input-reassign-name");
@@ -410,7 +412,7 @@ describe("a name put there by a badge", () => {
     // new face's own match rather than nothing.
     const ctx = await clickFirstBadge(t);
     click(ctx.window, ctx.cards()[1]);
-    await new Promise((r) => ctx.window.setTimeout(r, 40));
+    await advance(ctx.window, 40);
     assert.equal(ctx.input().value, "Kira Bao",
       "the previous badge's name followed the new selection");
   });
@@ -419,14 +421,14 @@ describe("a name put there by a badge", () => {
     // The reported case: a badge, then a multi-select, and the stale name still there.
     const ctx = await clickFirstBadge(t);
     click(ctx.window, ctx.cards()[1], { ctrlKey: true });
-    await new Promise((r) => ctx.window.setTimeout(r, 40));
+    await advance(ctx.window, 40);
     assert.equal(ctx.input().value, "");
   });
 
   test("with it cleared, the selection is assigned by its own badges", async (t) => {
     const ctx = await clickFirstBadge(t);
     click(ctx.window, ctx.cards()[1], { ctrlKey: true });
-    await new Promise((r) => ctx.window.setTimeout(r, 40));
+    await advance(ctx.window, 40);
     assert.match(
       ctx.document.getElementById("btn-reassign-selected").textContent,
       /to their matches/);
@@ -437,10 +439,10 @@ describe("a name put there by a badge", () => {
     const input = ctx.input();
     input.value = "Someone Else";
     input.dispatchEvent(new ctx.window.Event("input", { bubbles: true }));
-    await new Promise((r) => ctx.window.setTimeout(r, 30));
+    await advance(ctx.window, 30);
 
     click(ctx.window, ctx.cards()[1], { ctrlKey: true });
-    await new Promise((r) => ctx.window.setTimeout(r, 40));
+    await advance(ctx.window, 40);
     assert.equal(input.value, "Someone Else", "the user's own typing was discarded");
   });
 });
@@ -460,7 +462,7 @@ describe("a selection that agrees who it is", () => {
     const ctx = await open(t, [{ name: NAME, count: 4, unit: "face" }], sameSet);
     const cards = [...ctx.document.querySelectorAll("#matching-faces-grid .face-match-item")];
     indexes.forEach((i) => click(ctx.window, cards[i], { ctrlKey: true }));
-    await new Promise((r) => ctx.window.setTimeout(r, 40));
+    await advance(ctx.window, 40);
     ctx.input = () => ctx.document.getElementById("input-reassign-name");
     ctx.button = () => ctx.document.getElementById("btn-reassign-selected");
     return ctx;
@@ -487,7 +489,7 @@ describe("a selection that agrees who it is", () => {
     const ctx = await pick(t, [0, 1, 2]);
     ctx.window.confirm = () => true;
     ctx.button().click();
-    await new Promise((r) => ctx.window.setTimeout(r, 80));
+    await advance(ctx.window, 80);
 
     const sent = ctx.server.calls
       .filter((c) => c.url.includes("/api/faces/match-bulk") && c.body);
@@ -507,7 +509,7 @@ describe("a selection that agrees who it is", () => {
     assert.equal(ctx.input().value, "Rory Olwen");
     const cards = [...ctx.document.querySelectorAll("#matching-faces-grid .face-match-item")];
     click(ctx.window, cards[3]);
-    await new Promise((r) => ctx.window.setTimeout(r, 40));
+    await advance(ctx.window, 40);
     assert.equal(ctx.input().value, "Kira Bao", "it kept the previous face's name");
   });
 
@@ -516,11 +518,11 @@ describe("a selection that agrees who it is", () => {
     const input = ctx.input();
     input.value = "Someone Else";
     input.dispatchEvent(new ctx.window.Event("input", { bubbles: true }));
-    await new Promise((r) => ctx.window.setTimeout(r, 30));
+    await advance(ctx.window, 30);
 
     const cards = [...ctx.document.querySelectorAll("#matching-faces-grid .face-match-item")];
     click(ctx.window, cards[1], { ctrlKey: true });
-    await new Promise((r) => ctx.window.setTimeout(r, 40));
+    await advance(ctx.window, 40);
     assert.equal(input.value, "Someone Else");
   });
 });
@@ -539,9 +541,9 @@ describe("saying why a face is excluded", () => {
     ctx.server.on("/api/faces/exclude", { success: true, excluded: 2 });
     const cards = [...ctx.document.querySelectorAll("#matching-faces-grid .face-match-item")];
     cards.forEach((c) => click(ctx.window, c, { ctrlKey: true }));
-    await new Promise((r) => ctx.window.setTimeout(r, 40));
+    await advance(ctx.window, 40);
     ctx.document.getElementById("btn-exclude-selected").click();
-    await new Promise((r) => ctx.window.setTimeout(r, 30));
+    await advance(ctx.window, 30);
     return ctx;
   }
 
@@ -563,9 +565,9 @@ describe("saying why a face is excluded", () => {
     ctx.server.on("/api/faces/exclude", { success: true, excluded: 2 });
     const cards = [...ctx.document.querySelectorAll("#matching-faces-grid .face-match-item")];
     cards.forEach((c) => click(ctx.window, c, { ctrlKey: true }));
-    await new Promise((r) => ctx.window.setTimeout(r, 40));
+    await advance(ctx.window, 40);
     ctx.document.getElementById("btn-exclude-selected").click();
-    await new Promise((r) => ctx.window.setTimeout(r, 30));
+    await advance(ctx.window, 30);
     assert.deepEqual(choices(ctx), ["not a person", "blurry"]);
   });
 
@@ -578,7 +580,7 @@ describe("saying why a face is excluded", () => {
   test("picking one sends it", async (t) => {
     const ctx = await startExcluding(t);
     ctx.document.querySelector('.exclude-reason-choice[data-reason="bad crop"]').click();
-    await new Promise((r) => ctx.window.setTimeout(r, 40));
+    await advance(ctx.window, 40);
     const body = ctx.server.lastBody("/api/faces/exclude");
     assert.equal(body.reason, "bad crop");
     assert.deepEqual(body.face_ids.sort(), [1, 2]);
@@ -587,7 +589,7 @@ describe("saying why a face is excluded", () => {
   test("cancelling excludes nothing", async (t) => {
     const ctx = await startExcluding(t);
     ctx.document.getElementById("btn-exclude-reason-cancel").click();
-    await new Promise((r) => ctx.window.setTimeout(r, 40));
+    await advance(ctx.window, 40);
     assert.equal(
       ctx.server.calls.filter((c) => c.url.includes("/api/faces/exclude")).length, 0);
   });
@@ -595,7 +597,7 @@ describe("saying why a face is excluded", () => {
   test("the dialog closes once answered", async (t) => {
     const ctx = await startExcluding(t);
     ctx.document.querySelector('.exclude-reason-choice[data-reason="stranger"]').click();
-    await new Promise((r) => ctx.window.setTimeout(r, 40));
+    await advance(ctx.window, 40);
     assert.ok(
       ctx.document.getElementById("exclude-reason-modal").classList.contains("hidden"));
   });

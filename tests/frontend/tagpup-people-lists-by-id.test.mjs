@@ -3,10 +3,12 @@
  * people, the library view's tally and the pill edits it starts, the navigator's people, the search's chips and the words of a view.
  * The owner's real case is one shared leaf, a pet and a friend both called Sam. Answers are the server's shapes; names are made up.
  */
-import { test, describe, afterEach } from "node:test";
+import { test, describe, beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";
-import { closeAllApps, loadApp, FakeServer, photoRecord, flush, click, openFolder, PEOPLE_ROUTE, SAVE, saved, saveCalls } from "./harness.mjs";
+import { closeAllApps, loadApp, FakeServer, photoRecord, advance, flush, click, openFolder, PEOPLE_ROUTE, SAVE, saved, saveCalls, testClock } from "./harness.mjs";
 import { loadViewPage, pageErrors } from "./view-page.mjs";
+
+beforeEach((t) => testClock(t));   // the page's timers run when a test advances them
 
 afterEach(() => {
   closeAllApps();
@@ -29,7 +31,6 @@ const TAXONOMY = [
   { id: 7, tag: "Family/Ingersoll/Wren", name: "Wren", parent_id: 6, has_face: 1 },
 ];
 
-const wait = (window, ms = 40) => new Promise((resolve) => window.setTimeout(resolve, ms));
 const chipsOf = (ctx, id) => [...ctx.document.querySelectorAll(`#${id} .suggestion-chip`)].map((chip) => chip.textContent);
 
 async function openPhoto(t, { tags = [], people = [], suggestions = {} } = {}) {
@@ -64,7 +65,7 @@ describe("Suggest's chips", () => {
     const chip = [...ctx.document.querySelectorAll("#suggested-people-container .suggestion-chip")][1];
     assert.match(chip.title, /Click to add Sam to this photo\./);
     click(ctx.window, chip);
-    await wait(ctx.window, 80);
+    await advance(ctx.window, 80);
     assert.equal(ctx.document.querySelector(".modal-overlay.active"), null, "no placement question");
     const saved = saveCalls(ctx.server);
     assert.deepEqual(saved[0].body.tags, ["Pets/Sam"]);

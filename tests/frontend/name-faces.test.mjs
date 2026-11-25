@@ -10,12 +10,14 @@
  * says which. The server is scripted: these tests are about what the person
  * sees and what the page sends.
  */
-import { test, describe, afterEach } from "node:test";
+import { test, describe, beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";
-import { loadApp, FakeServer, flush, click, closeAllApps, openFolder, pageExports, REAL, realLibrary, until } from "./harness.mjs";
+import { loadApp, FakeServer, flush, click, closeAllApps, openFolder, pageExports, REAL, realLibrary, until, testClock } from "./harness.mjs";
 import { loadViewPage } from "./view-page.mjs";
 import { OPEN_DIALOG } from "../../web/common/dialog.js";
 import { questionText, folderText, scopeLabel } from "../../web/common/name-faces.js";
+
+beforeEach((t) => testClock(t));   // the page's timers run when a test advances them
 
 afterEach(() => closeAllApps());
 

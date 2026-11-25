@@ -3,12 +3,14 @@
  * sidebar to Organize; one floating header for a view; Sort by in it, a menu of the field and the direction.
  * Fictional names only: the real library is photographs of real people, many of them minors.
  */
-import { test, describe, afterEach } from "node:test";
+import { test, describe, beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
-import { REPO_ROOT, closeAllApps, click, openFolder, photoRecord } from "./harness.mjs";
+import { REPO_ROOT, closeAllApps, click, openFolder, photoRecord, testClock } from "./harness.mjs";
 import { GRID_TOP, STRIDE, loadViewPage, pageErrors } from "./view-page.mjs";
+
+beforeEach((t) => testClock(t));   // the page's timers run when a test advances them
 
 afterEach(() => {
   closeAllApps();

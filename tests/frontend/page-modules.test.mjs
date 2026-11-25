@@ -13,7 +13,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { JSDOM } from "jsdom";
-import { REPO_ROOT, pageModules, pageScript, entryModule, flush } from "./harness.mjs";
+import { REPO_ROOT, pageModules, pageScript, entryModule, flush, testClock, until } from "./harness.mjs";
 
 const made = [];
 after(() => made.forEach((folder) => fs.rmSync(folder, { recursive: true, force: true })));
@@ -217,5 +217,13 @@ describe("a test's flush lets the page's work run, and sleeps no timer tick (#33
       globalThis.setTimeout = real;
     }
     assert.equal(started, 0);
+  });
+
+  test("a wait that never comes true gives up in real seconds while the test holds the clock, and does not hang", async (t) => {
+    testClock(t);
+    const ctx = { window: null, server: { nextReply: () => new Promise(() => {}) } };
+    const began = Date.now();
+    await assert.rejects(until(ctx, () => false, "a reply that never comes", 0.05), /gave up waiting for a reply that never comes/);
+    assert.ok(Date.now() - began < 5000);
   });
 });

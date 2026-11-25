@@ -10,9 +10,11 @@
  * recognise. The page bucketed candidates into >= 0.9 and >= 0.8 and let everything
  * else fall off the end of the chain, which is all of them when nothing clustered.
  */
-import { test, describe, afterEach } from "node:test";
+import { test, describe, beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";
-import { loadApp, FakeServer, closeAllApps } from "./harness.mjs";
+import { advance, loadApp, FakeServer, closeAllApps, testClock } from "./harness.mjs";
+
+beforeEach((t) => testClock(t));   // the page's timers run when a test advances them
 
 const NAME = "Lena Zorina";
 
@@ -69,7 +71,7 @@ async function openPerson(t, faces) {
     url: `http://localhost:8080/kr-track/?mode=unmatched-faces&person=${encodeURIComponent(NAME)}`,
     t,
   });
-  await new Promise((r) => window.setTimeout(r, 120));
+  await advance(window, 120);
   return { window, document, server };
 }
 
@@ -147,7 +149,7 @@ describe("candidates that did cluster", () => {
   test("switching to Unclustered shows the unclustered one", async (t) => {
     const { document, window } = await openPerson(t, mixed);
     document.getElementById("tab-low-conf").click();
-    await new Promise((r) => window.setTimeout(r, 30));
+    await advance(window, 30);
     assert.equal(cards(document).length, 1);
   });
 });
@@ -192,7 +194,7 @@ describe("ignoring a cluster", () => {
       window.localStorage.clear();
     } catch (e) { /* no storage in this environment */ }
     ignoreButton(document).click();
-    await new Promise((r) => window.setTimeout(r, 20));
+    await advance(window, 20);
 
     if (!dialog(document).classList.contains("hidden")) {
       if (dontAskAgain) document.getElementById("ignore-confirm-dont-ask").checked = true;
@@ -200,7 +202,7 @@ describe("ignoring a cluster", () => {
         confirmIt ? "btn-ignore-confirm-ok" : "btn-ignore-confirm-cancel"
       ).click();
     }
-    await new Promise((r) => window.setTimeout(r, 40));
+    await advance(window, 40);
     return { document, window, server };
   }
 
@@ -212,7 +214,7 @@ describe("ignoring a cluster", () => {
   test("it asks before excluding anything", async (t) => {
     const { document, window, server } = await openPerson(t, cluster);
     ignoreButton(document).click();
-    await new Promise((r) => window.setTimeout(r, 20));
+    await advance(window, 20);
 
     assert.ok(!dialog(document).classList.contains("hidden"), "it did not ask");
     assert.equal(server.lastBody("/api/faces/exclude"), undefined,
@@ -222,7 +224,7 @@ describe("ignoring a cluster", () => {
   test("the question says how much it covers", async (t) => {
     const { document, window } = await openPerson(t, cluster);
     ignoreButton(document).click();
-    await new Promise((r) => window.setTimeout(r, 20));
+    await advance(window, 20);
     assert.match(document.getElementById("ignore-confirm-text").textContent,
                  /3 faces from 2 photos/);
   });
@@ -239,9 +241,9 @@ describe("ignoring a cluster", () => {
     let prompted = false;
     window.prompt = () => { prompted = true; return "x"; };
     ignoreButton(document).click();
-    await new Promise((r) => window.setTimeout(r, 20));
+    await advance(window, 20);
     document.getElementById("btn-ignore-confirm-ok").click();
-    await new Promise((r) => window.setTimeout(r, 40));
+    await advance(window, 40);
 
     assert.equal(prompted, false, "a second modal appeared for the same decision");
     assert.ok(server.lastBody("/api/faces/exclude"));
@@ -269,7 +271,7 @@ describe("ignoring a cluster", () => {
     window.localStorage.setItem("tagtuner.confirmIgnoreCluster", "never");
 
     ignoreButton(document).click();
-    await new Promise((r) => window.setTimeout(r, 40));
+    await advance(window, 40);
 
     assert.ok(dialog(document).classList.contains("hidden"), "it asked anyway");
     assert.deepEqual(server.lastBody("/api/faces/exclude").face_ids, [10, 11, 12]);
@@ -281,7 +283,7 @@ describe("ignoring a cluster", () => {
     window.localStorage.setItem("tagtuner.confirmIgnoreCluster", "never");
 
     ignoreButton(document).click();
-    await new Promise((r) => window.setTimeout(r, 40));
+    await advance(window, 40);
 
     assert.ok(!document.getElementById("assign-undo-bar").classList.contains("hidden"));
   });
@@ -297,7 +299,7 @@ describe("face crop details", () => {
     const { document, window, server } = await openPerson(t, faces);
     const card = document.querySelector("#matching-faces-grid .face-match-item");
     card.click();
-    await new Promise((r) => window.setTimeout(r, 60));
+    await advance(window, 60);
     return { document, window, server };
   }
 
@@ -332,7 +334,7 @@ describe("face crop details", () => {
     const big = [{ ...face(30, 0.95, 0), box: [0, 0, 120, 120] }];
     const { document, window } = await openPerson(t, big);
     document.querySelector("#matching-faces-grid .face-match-item").click();
-    await new Promise((r) => window.setTimeout(r, 60));
+    await advance(window, 60);
 
     const size = document.getElementById("matching-detail-crop-size");
     assert.equal(size.textContent, "120 x 120 px");
@@ -343,7 +345,7 @@ describe("face crop details", () => {
     const { document, window } = await selectFirstFace(t);
     const cards = document.querySelectorAll("#matching-faces-grid .face-match-item");
     cards[1].click();
-    await new Promise((r) => window.setTimeout(r, 60));
+    await advance(window, 60);
     assert.match(
       document.getElementById("matching-detail-crop").getAttribute("src"),
       /id=22/
@@ -435,7 +437,7 @@ describe("suggesting who an unknown cluster is", () => {
     // Assigning is a separate, deliberate act: a suggestion at 93% is still a guess.
     const { document, window, server } = await openPerson(t, cluster);
     suggestionButton(document).click();
-    await new Promise((r) => window.setTimeout(r, 30));
+    await advance(window, 30);
 
     assert.equal(document.getElementById("input-reassign-name").value, "Emory Kade");
     assert.equal(server.lastBody("/api/faces/match-bulk"), undefined, "it assigned on its own");
@@ -466,7 +468,7 @@ describe("accepting a suggestion in one click", () => {
   async function accept(t) {
     const { document, window, server } = await openPerson(t, cluster);
     document.querySelector(".cluster-suggestion-assign").click();
-    await new Promise((r) => window.setTimeout(r, 40));
+    await advance(window, 40);
     return { document, window, server };
   }
 
@@ -484,7 +486,7 @@ describe("accepting a suggestion in one click", () => {
     let asked = false;
     window.confirm = () => { asked = true; return true; };
     document.querySelector(".cluster-suggestion-assign").click();
-    await new Promise((r) => window.setTimeout(r, 40));
+    await advance(window, 40);
 
     assert.equal(asked, false, "it put a confirmation in the way");
     assert.ok(server.lastBody("/api/faces/match-bulk"), "nothing was assigned");
@@ -501,7 +503,7 @@ describe("accepting a suggestion in one click", () => {
   test("undo is the journal's undo of the change that assigned them, and unmatches nobody", async (t) => {
     const { document, window, server } = await accept(t);
     document.getElementById("btn-assign-undo").click();
-    await new Promise((r) => window.setTimeout(r, 40));
+    await advance(window, 40);
 
     assert.deepEqual(server.lastBody("/api/history/31/undo"), { apply: true });
     assert.equal(server.lastBody("/api/faces/unmatch-bulk"), undefined, "faces were called nobody");
@@ -510,14 +512,14 @@ describe("accepting a suggestion in one click", () => {
   test("undoing clears the offer, so it cannot be applied twice", async (t) => {
     const { document, window } = await accept(t);
     document.getElementById("btn-assign-undo").click();
-    await new Promise((r) => window.setTimeout(r, 40));
+    await advance(window, 40);
     assert.ok(document.getElementById("assign-undo-bar").classList.contains("hidden"));
   });
 
   test("it can be dismissed without undoing", async (t) => {
     const { document, window, server } = await accept(t);
     document.getElementById("btn-assign-undo-dismiss").click();
-    await new Promise((r) => window.setTimeout(r, 20));
+    await advance(window, 20);
 
     assert.ok(document.getElementById("assign-undo-bar").classList.contains("hidden"));
     assert.equal(server.lastBody("/api/faces/unmatch-bulk"), undefined);
@@ -526,7 +528,7 @@ describe("accepting a suggestion in one click", () => {
   test("the label still only fills the box, assigning nothing", async (t) => {
     const { document, window, server } = await openPerson(t, cluster);
     document.querySelector(".cluster-suggestion-label").click();
-    await new Promise((r) => window.setTimeout(r, 30));
+    await advance(window, 30);
 
     assert.equal(document.getElementById("input-reassign-name").value, "Emory Kade");
     assert.equal(server.lastBody("/api/faces/match-bulk"), undefined);
@@ -638,7 +640,7 @@ describe("weaker guesses, and what comes first", () => {
   test("a weaker guess can still be accepted in one click", async (t) => {
     const { document, window, server } = await openPerson(t, cluster(200, 0.72, "possible"));
     document.querySelector(".cluster-suggestion-assign").click();
-    await new Promise((r) => window.setTimeout(r, 40));
+    await advance(window, 40);
     assert.equal(server.lastBody("/api/faces/match-bulk").person_name, "Person 200");
   });
 
@@ -804,7 +806,7 @@ describe("ranking a person's candidates against that person", () => {
     // badge of 0% would read as a face shown to be someone else.
     const { document, window } = await openPerson(t, [candidate(1035, 0.31), candidate(1036, 0.0)]);
     document.getElementById("tab-low-conf").click();
-    await new Promise((r) => window.setTimeout(r, 30));
+    await advance(window, 30);
     assert.equal(cards(document).length, 2);
     const badges = [...document.querySelectorAll(".face-resemblance")].map(b => b.textContent);
     assert.deepEqual(badges, ["31%"]);
@@ -820,7 +822,7 @@ describe("ranking a person's candidates against that person", () => {
     // comes to promise a number it then does not show.
     const { document, window } = await openPerson(t, crowd);
     document.getElementById("tab-outliers").click();
-    await new Promise((r) => window.setTimeout(r, 30));
+    await advance(window, 30);
     assert.equal(document.querySelectorAll(".face-match-item").length, 1);
   });
 });
@@ -875,13 +877,13 @@ describe("ordering the people list", () => {
     const { window, document } = await loadApp("tagtuner", {
       server, url: "http://localhost:8080/kr-track/?mode=unmatched-faces", t,
     });
-    await new Promise((r) => window.setTimeout(r, 60));
+    await advance(window, 60);
 
     if (order) {
       const select = document.getElementById("people-sort");
       select.value = order;
       select.dispatchEvent(new window.Event("change"));
-      await new Promise((r) => window.setTimeout(r, 30));
+      await advance(window, 30);
     }
     return { document, window };
   }
@@ -948,7 +950,7 @@ describe("working through Unknown Faces", () => {
       url: `http://localhost:8080/kr-track/?mode=unmatched-faces&person=${encodeURIComponent(NAME_BUCKET)}`,
       t,
     });
-    await new Promise((r) => window.setTimeout(r, 120));
+    await advance(window, 120);
     return { window, document, server };
   }
 
@@ -964,7 +966,7 @@ describe("working through Unknown Faces", () => {
   test("Select All takes the faces on show", async (t) => {
     const { document, window } = await openBucket(t, strangers);
     document.getElementById("btn-matching-select-all").click();
-    await new Promise((r) => window.setTimeout(r, 30));
+    await advance(window, 30);
     assert.match(document.getElementById("btn-exclude-selected").textContent, /\(3\)/);
   });
 
@@ -976,9 +978,9 @@ describe("working through Unknown Faces", () => {
     nameBox.value = "Jasper Keel";
     // The button enables on input, not on the value changing behind its back.
     nameBox.dispatchEvent(new window.Event("input"));
-    await new Promise((r) => window.setTimeout(r, 20));
+    await advance(window, 20);
     document.getElementById("btn-reassign-selected").click();
-    await new Promise((r) => window.setTimeout(r, 40));
+    await advance(window, 40);
 
     const body = server.lastBody("/api/faces/match-bulk");
     assert.equal(body.person_name, "Jasper Keel");
@@ -988,15 +990,15 @@ describe("working through Unknown Faces", () => {
   test("and the rest excluded", async (t) => {
     const { document, window, server } = await openBucket(t, strangers);
     document.getElementById("btn-matching-select-all").click();
-    await new Promise((r) => window.setTimeout(r, 30));
+    await advance(window, 30);
     document.getElementById("btn-exclude-selected").click();
-    await new Promise((r) => window.setTimeout(r, 30));
+    await advance(window, 30);
 
     // The reason is picked from buttons now, not typed into a prompt.
     const choice = document.querySelector('.exclude-reason-choice[data-reason="stranger"]');
     assert.ok(choice, "the reason picker did not open");
     choice.click();
-    await new Promise((r) => window.setTimeout(r, 40));
+    await advance(window, 40);
 
     assert.deepEqual(server.lastBody("/api/faces/exclude").face_ids, [1201, 1202, 1203]);
     assert.equal(server.lastBody("/api/faces/exclude").reason, "stranger");
@@ -1068,7 +1070,7 @@ describe("a face's own suggestion", () => {
     const { document, window, server } = await openPerson(t, mixed);
     [...document.querySelectorAll(".face-guess")]
       .find((b) => /Kelsey Nordin/.test(b.textContent)).click();
-    await new Promise((r) => window.setTimeout(r, 30));
+    await advance(window, 30);
 
     assert.equal(document.getElementById("input-reassign-name").value, "Kelsey Nordin");
     assert.match(document.getElementById("btn-reassign-selected").textContent, /Assign/);
@@ -1081,7 +1083,7 @@ describe("a face's own suggestion", () => {
     const card = [...document.querySelectorAll(".face-match-item")]
       .find((c) => /Kelsey Nordin/.test(c.textContent));
     card.querySelector(".face-guess").click();
-    await new Promise((r) => window.setTimeout(r, 30));
+    await advance(window, 30);
     assert.ok(card.classList.contains("selected"), "the badge click bubbled and deselected it");
   });
 });

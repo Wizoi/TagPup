@@ -24,13 +24,15 @@
  *
  * Every name is made up; the real library is photographs of real people, many of them minors.
  */
-import { test, describe, afterEach } from "node:test";
+import { test, describe, beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { loadApp, FakeServer, click, closeAllApps, pageExports, answer, intersect, observed } from "./harness.mjs";
+import { loadApp, FakeServer, click, closeAllApps, pageExports, answer, intersect, observed, testClock } from "./harness.mjs";
 import { PHONE_PAGE, el, shown, pageState, settle, phoneCard, phoneLayout, tab } from "./phone-page.mjs";
+
+beforeEach((t) => testClock(t));   // the page's timers run when a test advances them
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const BETA_PAGE = "http://localhost:8090/beta/mobile.html";

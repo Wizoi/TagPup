@@ -10,9 +10,11 @@
  * own fetch is still in flight. These tests drive that against a server that holds the
  * grid back until the test lets it go.
  */
-import { test, describe, afterEach } from "node:test";
+import { test, describe, beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";
-import { loadApp, FakeServer, closeAllApps } from "./harness.mjs";
+import { advance, loadApp, FakeServer, closeAllApps, testClock } from "./harness.mjs";
+
+beforeEach((t) => testClock(t));   // the page's timers run when a test advances them
 
 const NAME = "Unknown Faces";
 
@@ -105,7 +107,6 @@ async function openGrid(t, statuses) {
   return { window, document, server };
 }
 
-const wait = (window, ms) => new Promise((r) => window.setTimeout(r, ms));
 
 describe("the grid says how far along it is", () => {
   afterEach(() => closeAllApps());
@@ -116,7 +117,7 @@ describe("the grid says how far along it is", () => {
       building(48, "Grouping 102,483 faces that look alike"),
     ]);
 
-    await wait(window, 1000);
+    await advance(window, 1000);
 
     const bar = document.getElementById("grid-build-progress");
     assert.ok(bar, "there is no progress element in the page");
@@ -135,7 +136,7 @@ describe("the grid says how far along it is", () => {
     );
 
     server.release();
-    await wait(window, 150);
+    await advance(window, 150);
   });
 
   test("the bar tracks the percentage the server reports", async (t) => {
@@ -145,9 +146,9 @@ describe("the grid says how far along it is", () => {
       building(90, "Grouping"),
     ]);
 
-    await wait(window, 900);
+    await advance(window, 900);
     const first = document.getElementById("grid-build-bar").style.width;
-    await wait(window, 1500);
+    await advance(window, 1500);
     const later = document.getElementById("grid-build-bar").style.width;
 
     assert.equal(first, "12%", `expected the first reading, got ${first}`);
@@ -157,16 +158,16 @@ describe("the grid says how far along it is", () => {
     );
 
     server.release();
-    await wait(window, 150);
+    await advance(window, 150);
   });
 
   test("it goes away when the grid arrives", async (t) => {
     const { window, document, server } = await openGrid(t, [building(30, "Grouping")]);
-    await wait(window, 900);
+    await advance(window, 900);
     assert.ok(!document.getElementById("grid-build-progress").classList.contains("hidden"));
 
     server.release();
-    await wait(window, 250);
+    await advance(window, 250);
 
     assert.ok(
       document.getElementById("grid-build-progress").classList.contains("hidden"),
@@ -181,12 +182,12 @@ describe("the grid says how far along it is", () => {
 
   test("it stops asking once the grid has arrived", async (t) => {
     const { window, document, server } = await openGrid(t, [building(30, "Grouping")]);
-    await wait(window, 900);
+    await advance(window, 900);
 
     server.release();
-    await wait(window, 200);
+    await advance(window, 200);
     const asked = server.statusCalls;
-    await wait(window, 1600);
+    await advance(window, 1600);
 
     assert.equal(
       server.statusCalls,
@@ -203,7 +204,7 @@ describe("the grid says how far along it is", () => {
     ]);
 
     server.release();
-    await wait(window, 1200);
+    await advance(window, 1200);
 
     assert.ok(
       document.getElementById("grid-build-progress").classList.contains("hidden"),

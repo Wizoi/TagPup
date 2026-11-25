@@ -12,9 +12,11 @@
  * Now the panel knows when it holds something the photo does not. The header has a
  * Save button that says so, Ctrl+S saves, and every way off the photo asks first.
  */
-import { test, describe, afterEach } from "node:test";
+import { test, describe, beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";
-import { loadApp, FakeServer, closeAllApps, openFolder, click, peopleRecordsOf, PEOPLE_ROUTE, PHOTO_WRITES, SAVE, saved, saveCalls, notSaved } from "./harness.mjs";
+import { advance, loadApp, FakeServer, closeAllApps, openFolder, click, peopleRecordsOf, PEOPLE_ROUTE, PHOTO_WRITES, SAVE, saved, saveCalls, notSaved, testClock } from "./harness.mjs";
+
+beforeEach((t) => testClock(t));   // the page's timers run when a test advances them
 
 const PHOTOS = [
   { path: "D:\\p\\a.jpg", filename: "a.jpg", tags: ["People/Tamsin Ashgrove"], people: ["Tamsin Ashgrove"], captions: [], title: "", writes: PHOTO_WRITES },
@@ -40,7 +42,7 @@ function server({ save = saved(), people = peopleRecordsOf(TREE), tags = [] } = 
     .on("/api/folder/suggest-status", { status: "idle" });
 }
 
-const settle = (window, ms = 40) => new Promise((r) => window.setTimeout(r, ms));
+const settle = (window, ms = 40) => advance(window, ms);
 
 /** Open the folder and stand on the first photo. */
 async function onFirstPhoto(t, s = server()) {

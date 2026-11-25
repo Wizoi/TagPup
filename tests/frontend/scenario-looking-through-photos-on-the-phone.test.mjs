@@ -15,10 +15,12 @@
  *
  * Names hold spaces and apostrophes, as the live libraries' do. Every name here is made up.
  */
-import { test, describe, afterEach } from "node:test";
+import { test, describe, beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";
-import { loadApp, FakeServer, click, closeAllApps } from "./harness.mjs";
+import { loadApp, FakeServer, click, closeAllApps, testClock } from "./harness.mjs";
 import { PHONE_PAGE, el, shown, pageState, settle, phoneLayout, tab } from "./phone-page.mjs";
+
+beforeEach((t) => testClock(t));   // the page's timers run when a test advances them
 
 const KEYWORDS = { keywords: [{ tag: "Events", name: "Events", parent: null, count: 40000 }], untagged: 0 };
 const VIEW = 40000;

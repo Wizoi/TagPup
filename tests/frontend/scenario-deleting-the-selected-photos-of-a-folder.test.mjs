@@ -14,11 +14,13 @@
  * The replies of the delete come from tests/frontend/fixtures/batches.json, written from the real routes
  * (tests/test_batch_strip_replies.py). The folder is invented; the real library is photographs of real people, many of them minors.
  */
-import { test, describe, afterEach } from "node:test";
+import { test, describe, beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
-import { closeAllApps, click, openFolder, photoRecord, SAVE, saved, saveCalls, deletedAs } from "./harness.mjs";
+import { closeAllApps, click, openFolder, photoRecord, SAVE, saved, saveCalls, deletedAs, testClock } from "./harness.mjs";
 import { loadViewPage, pageErrors, speedUp } from "./view-page.mjs";
+
+beforeEach((t) => testClock(t));   // the page's timers run when a test advances them
 
 afterEach(() => {
   closeAllApps();

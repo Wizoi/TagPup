@@ -4,10 +4,12 @@
  * its write controls inert); a CHANGED photo, opened, was read from its file, and its badge clears. The server side is
  * tests/test_library_views_scenarios.py. Fictional names only.
  */
-import { test, describe, afterEach } from "node:test";
+import { test, describe, beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";
-import { closeAllApps, click } from "./harness.mjs";
+import { closeAllApps, click, testClock } from "./harness.mjs";
 import { loadViewPage, pageErrors, recordOf, GRID_TOP, STRIDE } from "./view-page.mjs";
+
+beforeEach((t) => testClock(t));   // the page's timers run when a test advances them
 
 afterEach(() => {
   closeAllApps();

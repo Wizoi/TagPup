@@ -6,11 +6,13 @@
  * (5,000 photos) is said in a sentence before any request; a refused question sends nothing; the selection edited meanwhile changes
  * nothing that was asked; an answer that does not come is not retried. Fictional names only.
  */
-import { test, describe, afterEach } from "node:test";
+import { test, describe, beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";
-import { closeAllApps, click } from "./harness.mjs";
+import { closeAllApps, click, testClock } from "./harness.mjs";
 import { loadViewPage, pageErrors } from "./view-page.mjs";
 import fs from "node:fs";
+
+beforeEach((t) => testClock(t));   // the page's timers run when a test advances them
 
 afterEach(() => {
   closeAllApps();

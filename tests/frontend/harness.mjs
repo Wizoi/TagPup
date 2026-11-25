@@ -767,11 +767,16 @@ export async function realLibrary(seed, appName = "tagpup") {
   return { ...facts, server: new RealServer(REAL[kind]), url: `http://localhost:8090/${facts.library}/` };
 }
 
+/** The real timers, taken before any test mocks them: a test's clock must not stop a deadline (`until` gives up after
+ *  real seconds, not mocked ones, or a condition that never comes true would hang the file instead of failing). */
+const REAL_SET_TIMEOUT = globalThis.setTimeout;
+const REAL_CLEAR_TIMEOUT = globalThis.clearTimeout;
+
 /** Wait on replies, not on time, until `done()` holds; after `seconds` it fails saying what it waited for (`what`, or a function of it). */
 export async function until(ctx, done, what, seconds = 30) {
   let timer;
   const gaveUp = new Promise((_, reject) => {
-    timer = setTimeout(() => reject(new Error(`gave up waiting for ${typeof what === "function" ? what() : what}`)), seconds * 1000);
+    timer = REAL_SET_TIMEOUT(() => reject(new Error(`gave up waiting for ${typeof what === "function" ? what() : what}`)), seconds * 1000);
   });
   gaveUp.catch(() => {});
   try {
@@ -781,7 +786,7 @@ export async function until(ctx, done, what, seconds = 30) {
       await Promise.race([ctx.server.nextReply(), gaveUp]);
     }
   } finally {
-    clearTimeout(timer);
+    REAL_CLEAR_TIMEOUT(timer);
   }
 }
 
@@ -1033,24 +1038,28 @@ export function testClock(t) {
 
 /**
  * The page's timers of the next `ms` run, and what each started settles, as on a browser: on the test's clock (testClock)
- * one millisecond at a time, the loop turning after each, so a reply that lands between two timers is seen by the second;
- * otherwise `ms` of real time on the page's own timer.
+ * one millisecond at a time, the loop turning after each, so a reply that lands between two timers is seen by the second.
+ * Only on the test's clock: a test that has not taken it is told so, rather than waiting real time (work row #3375).
  */
 export async function advance(window, ms) {
-  if (clockIsTheTests) await tickBy(ms);
-  else await new Promise((resolve) => window.setTimeout(resolve, ms));
+  holdsTheClock("advance");
+  await tickBy(ms);
 }
 
-/** The next animation frame has run: one of jsdom's frames (1000/60 ms) on the test's clock, else the page's next frame. */
+/** The next animation frame has run: one of jsdom's frames (1000/60 ms) on the test's clock. */
 export async function frame(window) {
+  holdsTheClock("frame");
   let ran = false;
-  const done = new Promise((resolve) => window.requestAnimationFrame(() => {
+  window.requestAnimationFrame(() => {
     ran = true;
-    resolve();
-  }));
-  if (!clockIsTheTests) return done;
+  });
   for (let ms = 0; !ran && ms < 100; ms++) await tickBy(1);
   if (!ran) throw new Error("no animation frame in 100 ms of the test's clock");
+}
+
+/** `what` moves the test's clock: a test that calls it takes the clock first (beforeEach((t) => testClock(t))). */
+function holdsTheClock(what) {
+  if (!clockIsTheTests) throw new Error(`${what} moves the test's clock: take it first, beforeEach((t) => testClock(t))`);
 }
 
 /** The test's clock moves on `ms`, a millisecond at a time, the event loop turning after each (setImmediate: not mocked). */

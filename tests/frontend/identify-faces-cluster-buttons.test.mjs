@@ -14,9 +14,11 @@
  * so a batch the server refused still said "Assigned 5" and offered to unmatch faces
  * that had never been assigned.
  */
-import { test, describe, afterEach } from "node:test";
+import { test, describe, beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";
-import { loadApp, FakeServer, closeAllApps, PEOPLE_ROUTE } from "./harness.mjs";
+import { advance, loadApp, FakeServer, closeAllApps, PEOPLE_ROUTE, testClock } from "./harness.mjs";
+
+beforeEach((t) => testClock(t));   // the page's timers run when a test advances them
 
 const NAME = "Unknown Faces";
 const GUESS = "Imogen Vale";
@@ -76,11 +78,10 @@ async function openGrid(t, { clusterSize = 6, matchReply, matchStatus = 200,
   });
   window.confirm = () => true;
   window.alert = () => {};
-  await wait(window, 150);
+  await advance(window, 150);
   return { window, document, server };
 }
 
-const wait = (window, ms) => new Promise((r) => window.setTimeout(r, ms));
 const clickOn = (window, el, opts = {}) =>
   el.dispatchEvent(new window.MouseEvent("click", { bubbles: true, ...opts }));
 const cardFor = (document, id) =>
@@ -102,33 +103,33 @@ function buttonIn(section, text) {
 /** Select these faces and assign them by hand, with Assign Selected. */
 async function assignByHand(window, document, ids) {
   ids.forEach((id, i) => clickOn(window, cardFor(document, id), { ctrlKey: i > 0 }));
-  await wait(window, 30);
+  await advance(window, 30);
   document.getElementById("input-reassign-name").value = GUESS;
   clickOn(window, document.getElementById("btn-reassign-selected"));
-  await wait(window, 150);
+  await advance(window, 150);
 }
 
 /** Select these faces and exclude them, with Exclude Selected. */
 async function excludeByHand(window, document, ids) {
   ids.forEach((id, i) => clickOn(window, cardFor(document, id), { ctrlKey: i > 0 }));
-  await wait(window, 30);
+  await advance(window, 30);
   clickOn(window, document.getElementById("btn-exclude-selected"));
-  await wait(window, 100);
+  await advance(window, 100);
   const modal = document.getElementById("exclude-reason-modal");
   if (modal && !modal.classList.contains("hidden")) {
     const choice = modal.querySelector("#exclude-reason-choices button");
     if (choice) clickOn(window, choice);
-    await wait(window, 150);
+    await advance(window, 150);
   }
 }
 
 async function pressIgnoreCluster(window, document, section) {
   clickOn(window, buttonIn(section, "Ignore Cluster"));
-  await wait(window, 60);
+  await advance(window, 60);
   const confirm = document.getElementById("ignore-confirm-modal");
   if (confirm && !confirm.classList.contains("hidden")) {
     clickOn(window, document.getElementById("btn-ignore-confirm-ok"));
-    await wait(window, 150);
+    await advance(window, 150);
   }
 }
 
@@ -184,7 +185,7 @@ describe("cluster buttons act on the faces still in the cluster", () => {
       `the button still counts the excluded face: ${accept.textContent}`);
 
     clickOn(window, accept);
-    await wait(window, 150);
+    await advance(window, 150);
     assert.deepEqual(idsIn(server.lastBody("/api/faces/match-bulk")), [1, 2, 3, 4, 5]);
   });
 
@@ -194,7 +195,7 @@ describe("cluster buttons act on the faces still in the cluster", () => {
     await excludeByHand(window, document, [2]);
 
     clickOn(window, buttonIn(section, "Assign Cluster"));
-    await wait(window, 80);
+    await advance(window, 80);
     const popup = document.querySelector(".assign-cluster-modal");
     assert.ok(popup, "the name popup did not open");
     const input = popup.querySelector("input");
@@ -202,7 +203,7 @@ describe("cluster buttons act on the faces still in the cluster", () => {
     assert.ok(title.textContent.includes("Assign 5 "), `popup counts: ${title.textContent}`);
     input.value = GUESS;
     clickOn(window, buttonIn(popup, "Assign"));
-    await wait(window, 150);
+    await advance(window, 150);
 
     assert.deepEqual(idsIn(server.lastBody("/api/faces/match-bulk")), [1, 3, 4, 5, 6]);
   });
@@ -242,7 +243,7 @@ describe("Undo is offered for what the server confirmed", () => {
     const section = clusterSection(document, "Cluster 5");
     const accept = section.querySelector(".cluster-suggestion-assign");
     clickOn(window, accept);
-    await wait(window, 150);
+    await advance(window, 150);
 
     assert.ok(undoBar(document).classList.contains("hidden"),
       `Undo offered for a batch the server refused: ${document.getElementById("assign-undo-text").textContent}`);
@@ -254,7 +255,7 @@ describe("Undo is offered for what the server confirmed", () => {
     const { window, document } = await openGrid(t, { clusterSize: 4 });
     const section = clusterSection(document, "Cluster 5");
     clickOn(window, section.querySelector(".cluster-suggestion-assign"));
-    await wait(window, 150);
+    await advance(window, 150);
     assert.ok(!undoBar(document).classList.contains("hidden"));
     assert.ok(document.getElementById("assign-undo-text").textContent.includes("Assigned 4"));
   });
@@ -266,12 +267,12 @@ describe("Undo is offered for what the server confirmed", () => {
     });
     const section = clusterSection(document, "Cluster 5");
     clickOn(window, section.querySelector(".cluster-suggestion-assign"));
-    await wait(window, 150);
+    await advance(window, 150);
 
     assert.ok(document.getElementById("assign-undo-text").textContent.includes("Assigned 3"),
       document.getElementById("assign-undo-text").textContent);
     clickOn(window, document.getElementById("btn-assign-undo"));
-    await wait(window, 100);
+    await advance(window, 100);
     assert.deepEqual(server.lastBody("/api/history/31/undo"), { apply: true }, "the change that named them is undone");
     assert.deepEqual([1, 2, 3, 4].map((id) => cardFor(document, id) !== null), [true, true, true, true],
       "the faces the server named came back; the one left out never left");

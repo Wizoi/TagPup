@@ -4,17 +4,18 @@
  * that fails says it cannot tell and never claims the write finished; another library's rows and a library left mid-run are not this
  * page's; Cancel of a batch that has finished says the server's sentence; polling stops when nothing is going. Fictional names only.
  */
-import { test, describe, afterEach } from "node:test";
+import { test, describe, beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
-import { loadApp, FakeServer, closeAllApps, click, pageExports, REPO_ROOT } from "./harness.mjs";
+import { advance, loadApp, FakeServer, closeAllApps, click, pageExports, REPO_ROOT, testClock } from "./harness.mjs";
+
+beforeEach((t) => testClock(t));   // the page's timers run when a test advances them
 
 afterEach(() => closeAllApps());
 
 const served = JSON.parse(fs.readFileSync(path.join(REPO_ROOT, "tests", "frontend", "fixtures", "batches.json"), "utf8"));
 const [RUNNING, QUEUED] = served.running_and_queued;
-const wait = (ms = 150) => new Promise((resolve) => setTimeout(resolve, ms));
 /** A batch 30 s old with 10 of its 60 photos handled. */
 const going = (extra = {}) => ({ ...RUNNING, done: 10, planned: 50, started: Date.now() / 1000 - 30, ...extra });
 
@@ -39,7 +40,7 @@ async function open(t, world, { url = "http://localhost:8090/library/", app = "t
     window.setTimeout = (fn, ms, ...rest) => real(fn, ms >= 1000 ? ms / 100 : ms, ...rest);
   };
   const ctx = await loadApp(app, { t, url, server, before });
-  await wait(40);
+  await advance(ctx.window, 40);
   return ctx;
 }
 
@@ -59,10 +60,10 @@ describe("a batch the page did not start", () => {
     assert.match(strip(ctx).textContent, /10 of 60, about 3 minutes left/);
     assert.ok(button(ctx, "Cancel"));
     world.batches = [];
-    await wait();
+    await advance(ctx.window, 150);
     assert.deepEqual(sentences(ctx), ["bulk tags has ended (10 of 60 photos handled when last seen)."]);
     const calls = asked(ctx);
-    await wait();
+    await advance(ctx.window, 150);
     assert.equal(asked(ctx), calls, "nothing is going: nothing is asked");
     click(ctx.window, button(ctx, "Dismiss"));
     assert.equal(strip(ctx).hidden, true);
@@ -70,7 +71,7 @@ describe("a batch the page did not start", () => {
 
   test("with nothing going the page asks once, when it opens, and never again", async (t) => {
     const ctx = await open(t, { batches: [] });
-    await wait();
+    await advance(ctx.window, 150);
     assert.equal(asked(ctx), 1);
     assert.equal(strip(ctx).hidden, true);
   });
@@ -83,7 +84,7 @@ describe("a batch the page did not start", () => {
     assert.match(rows[1].textContent, /Waiting, 1 ahead: writing 60 photos/);
     assert.equal(rows[1].querySelector("progress"), null);
     click(ctx.window, button(ctx, "Cancel", 1));
-    await wait(40);
+    await advance(ctx.window, 40);
     const sent = ctx.server.calls.find((call) => call.url.endsWith("/api/activity/batches/cancel"));
     assert.deepEqual(sent.body, { library: "library", ticket: 2 });
   });
@@ -92,7 +93,7 @@ describe("a batch the page did not start", () => {
     const world = { batches: [going()], cancel: served.cancel_of_a_batch_that_is_gone.body };
     const ctx = await open(t, world);
     click(ctx.window, button(ctx, "Cancel"));
-    await wait(40);
+    await advance(ctx.window, 40);
     assert.ok(strip(ctx).textContent.includes(served.cancel_of_a_batch_that_is_gone.body.error));
     assert.deepEqual(sentences(ctx), []);
   });
@@ -104,7 +105,7 @@ describe("a batch the page did not start", () => {
     const ctx = await open(t, world, { server });
     assert.match(strip(ctx).textContent, /84 of 86/);
     world.batches = [];
-    await wait();
+    await advance(ctx.window, 150);
     assert.deepEqual(sentences(ctx), ["bulk tags has ended (86 of 86 photos handled)."]);
   });
 
@@ -114,7 +115,7 @@ describe("a batch the page did not start", () => {
     assert.match(strip(ctx).textContent, /Stopping after this chunk/);
     assert.equal(button(ctx, "Cancel"), undefined, "asked already");
     world.batches = [];
-    await wait();
+    await advance(ctx.window, 150);
     assert.deepEqual(sentences(ctx), ["bulk tags was stopped as asked (25 of 60 photos handled when last seen)."]);
   });
 
@@ -122,7 +123,7 @@ describe("a batch the page did not start", () => {
     const world = { batches: [going({ operation: "convert", photos: 1, done: 0, planned: 1 })] };
     const ctx = await open(t, world);
     world.batches = [];
-    await wait();
+    await advance(ctx.window, 150);
     assert.deepEqual(sentences(ctx), ["convert has ended. History has the change."]);
   });
 
@@ -130,12 +131,12 @@ describe("a batch the page did not start", () => {
     const world = { batches: [going({ operation: "convert", photos: 1, done: 0, planned: 1, state: "stopping" })] };
     const ctx = await open(t, world);
     world.batches = [];
-    await wait();
+    await advance(ctx.window, 150);
     assert.deepEqual(sentences(ctx), ["convert was stopped as asked."]);
     const other = { batches: [going()] };
     const bulk = await open(t, other);
     other.batches = [];
-    await wait();
+    await advance(ctx.window, 150);
     assert.deepEqual(sentences(bulk), ["bulk tags has ended (10 of 60 photos handled when last seen)."]);
   });
 
@@ -151,9 +152,9 @@ describe("a batch the page did not start", () => {
     for (const ctx of [one, two]) assert.match(strip(ctx).textContent, /10 of 60/);
     world.cancel = { success: true };
     click(two.window, button(two, "Cancel"));
-    await wait(40);
+    await advance(two.window, 40);   // both pages are on the one test clock
     world.batches = [];
-    await wait();
+    await advance(two.window, 150);
     for (const ctx of [one, two]) assert.equal(sentences(ctx).length, 1);
   });
 
@@ -169,15 +170,15 @@ describe("when the list cannot be read", () => {
       const world = { batches: [going()] };
       const ctx = await open(t, world);
       world.fail = fail === "network" ? "network" : fail;
-      await wait();
+      await advance(ctx.window, 150);
       assert.match(strip(ctx).textContent, /cannot tell how far the write has got/);
       assert.match(strip(ctx).textContent, /10 of 60/);
       assert.deepEqual(sentences(ctx), []);
       world.fail = null;
-      await wait();
+      await advance(ctx.window, 150);
       assert.doesNotMatch(strip(ctx).textContent, /cannot tell/);
       world.batches = [];       // a server restarted in between lists nothing: the strip does not say it finished
-      await wait();
+      await advance(ctx.window, 150);
       assert.match(sentences(ctx)[0], /has ended \(10 of 60 photos handled when last seen\)/);
     });
   }
@@ -199,7 +200,7 @@ describe("which library", () => {
     const ctx = await open(t, world);
     assert.equal(strip(ctx).hidden, false);
     ctx.window.history.pushState({}, "", "/other/");
-    await wait();
+    await advance(ctx.window, 150);
     assert.equal(strip(ctx).hidden, true);
     assert.deepEqual(sentences(ctx), []);
   });
@@ -211,13 +212,13 @@ describe("while the page writes", () => {
     let answer;
     ctx.server.first("/api/save-something", () => new Promise((resolve) => { answer = resolve; }));
     const sending = pageExports(ctx.window, "web/common/api.js").api.fetch("/api/save-something", { method: "POST" });
-    await wait();
+    await advance(ctx.window, 150);
     assert.ok(asked(ctx) >= 3, "asked again and again while the write was out");
     answer({ success: true });
     await sending;
-    await wait();
+    await advance(ctx.window, 150);
     const after = asked(ctx);
-    await wait();
+    await advance(ctx.window, 150);
     assert.equal(asked(ctx), after);
   });
 
@@ -226,7 +227,7 @@ describe("while the page writes", () => {
     const ctx = await open(t, world);
     pageExports(ctx.window, "web/common/batch-strip.js").showEnded({ text: "Added Trips/Coast to 60 photos; 0 errors." });
     world.batches = [];
-    await wait();
+    await advance(ctx.window, 150);
     assert.deepEqual(sentences(ctx), ["Added Trips/Coast to 60 photos; 0 errors."]);
   });
 });

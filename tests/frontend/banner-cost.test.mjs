@@ -5,10 +5,12 @@
  * photos; a larger view is asked by Refresh view (the owner, 2026-11-13: the quiet link "Check this folder on disk for new
  * photos" that asked it is gone). Fictional names only.
  */
-import { test, describe, afterEach } from "node:test";
+import { test, describe, beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";
-import { closeAllApps } from "./harness.mjs";
+import { closeAllApps, testClock } from "./harness.mjs";
 import { loadViewPage, pageErrors } from "./view-page.mjs";
+
+beforeEach((t) => testClock(t));   // the page's timers run when a test advances them
 
 afterEach(() => {
   closeAllApps();
