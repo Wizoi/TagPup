@@ -13,10 +13,12 @@
  * Make smaller, which keeps the name, a record with an older stamp is left as it was (the stamp says it is not the file's).
  * Fictional names only.
  */
-import { test, describe, afterEach } from "node:test";
+import { test, describe, beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";
-import { closeAllApps, CLIP_WRITES, pageExports, scanned, convertedAs } from "./harness.mjs";
+import { closeAllApps, CLIP_WRITES, pageExports, scanned, convertedAs, testClock } from "./harness.mjs";
 import { loadViewPage, pageErrors, recordOf, speedUp } from "./view-page.mjs";
+
+beforeEach((t) => testClock(t));   // the page's timers run when a test advances them
 
 afterEach(() => {
   closeAllApps();
