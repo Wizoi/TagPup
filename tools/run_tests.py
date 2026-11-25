@@ -32,7 +32,7 @@ tests/frontend/<file>`), so a file sees nothing of another's state -- and with a
 of its own, an empty temporary folder, so that anything a test does not give a home of
 its own (tests/own_home.py) still lands there and not in the checkout's data/ folder or
 config.ini. Each file's process is given ExifTool's answers kept on this machine, running and keeping only the commands
-not kept before; --real-exiftool runs every command and keeps its answer, the gate run before a release, with the
+not kept before; --real-exiftool runs every command and keeps its answer, the run for an ExifTool version change or a change to code that shapes its commands, never every sweep, with the
 product's own DocumentID mint and ExifTool start (tests/exiftool_replay.py; a file in its STAYS_REAL always runs ExifTool). The run ends with the counts of each, and the
 kept answers trimmed to their cap.
 Every file's process is also given the run's corpus folder (TAGPUP_TEST_CORPUS, tests/corpus.py):

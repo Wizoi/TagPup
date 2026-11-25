@@ -26,6 +26,7 @@ name (`tests/test_layers.py`).
 ```
 .venv/Scripts/python.exe tools/run_tests.py --fast      # the fast tier, the loop while editing
 .venv/Scripts/python.exe tools/run_tests.py             # every tier: the commit gate (about 5 minutes)
+# add --real-exiftool only after an ExifTool version change or a change to code that shapes its commands (owner, 2026-11-24)
 .venv/Scripts/python.exe tools/affected_tests.py        # the test files a change reaches
 .venv/Scripts/python.exe -m unittest discover -s tests -p "test_*.py"
 node --test tests/frontend/*.test.mjs                   # the glob: `node --test tests/frontend/` fails on harness.mjs

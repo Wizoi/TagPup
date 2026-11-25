@@ -100,8 +100,10 @@ arguments, config and ExifTool is answered from what it kept (its output, and th
 ExifTool started; a command it has not runs the real ExifTool and is kept, unless ExifTool failed it (a file held
 open fails a write once, and that is no answer to replay). The kept answers are the machine's, shared by
 every worktree, in `%LOCALAPPDATA%\TagPupTestCache\exiftool` (one folder per ExifTool installed), trimmed after each run
-to 1 GB, the entries used longest ago first. `--real-exiftool` runs every command for real and keeps each answer: **the
-final gate run before a release uses it**, and so refreshes what is kept. It runs the product's own DocumentID
+to 1 GB, the entries used longest ago first. `--real-exiftool` runs every command for real and keeps each answer: **run it only when the ExifTool installed changes
+(a new version also misses every key, so replay re-records by itself) or when code that directly shapes what ExifTool is
+asked or how it answers changes (`exiftool_session.py`, `field_values.py`, `file_changes.py`, `identity.py`, the XMP/IPTC
+readers and writers); never as part of every full sweep** (owner, 2026-11-24), and it refreshes what is kept. It runs the product's own DocumentID
 mint and starts ExifTool at `with`, as the product does (a replay run mints from a seeded generator and starts ExifTool
 only for a command it cannot answer). A file run alone with plain
 `python -m unittest tests.<file>` is never given a keeper: every command is ExifTool's (set `TAGPUP_TEST_EXIFTOOL=replay`
