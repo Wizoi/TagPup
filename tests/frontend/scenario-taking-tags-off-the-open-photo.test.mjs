@@ -17,14 +17,16 @@
  * Every write is held until the test answers it, oldest first, as the routes answer it: the server keeps a model of each
  * file's tags, and a photos/write reply's `written` (a save's, op `set`: its `base`) is what the file holds after it.
  */
-import { test, describe, afterEach } from "node:test";
+import { test, describe, beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";
 import {
   loadApp, FakeServer, answer, photoRecord, flush, openFolder, closeAllApps, pageExports, PEOPLE_ROUTE, peopleRecordsOf,
   SAVE, saveCalls,
-  saved, notSaved, savedPhoto, taggedAs,
+  saved, notSaved, savedPhoto, taggedAs, testClock,
 } from "./harness.mjs";
 import { loadViewPage, recordOf } from "./view-page.mjs";
+
+beforeEach((t) => testClock(t));   // the page's timers run when a test advances them
 
 const TAXONOMY = [
   { id: 1, tag: "People", name: "People", parent_id: null, has_face: 1 },
