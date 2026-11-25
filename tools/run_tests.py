@@ -28,8 +28,8 @@ tests/frontend/<file>`), so a file sees nothing of another's state -- and with a
 of its own, an empty temporary folder, so that anything a test does not give a home of
 its own (tests/own_home.py) still lands there and not in the checkout's data/ folder or
 config.ini. Each file's process is given ExifTool's answers kept on this machine, running and keeping only the commands
-not kept before; --real-exiftool runs every command and keeps its answer, the gate run before a release
-(tests/exiftool_replay.py; a file in its STAYS_REAL always runs ExifTool). The run ends with the counts of each, and the
+not kept before; --real-exiftool runs every command and keeps its answer, the gate run before a release, with the
+product's own DocumentID mint and ExifTool start (tests/exiftool_replay.py; a file in its STAYS_REAL always runs ExifTool). The run ends with the counts of each, and the
 kept answers trimmed to their cap.
 Every file's process is also given the run's corpus folder (TAGPUP_TEST_CORPUS, tests/corpus.py):
 each photo, clip and library a test asks of it is made there once and copied. The tests' libraries were in data/ under fixed names, so the files that used
@@ -495,7 +495,8 @@ def main(argv=None):
     parser.add_argument("--accept-fewer", action="store_true",
                         help="record the count of a file that ran fewer tests than last time (tests removed on purpose)")
     parser.add_argument("--real-exiftool", action="store_true",
-                        help="run the real ExifTool for every command and keep each answer (the gate before a release); "
+                        help="run the real ExifTool for every command and keep each answer, with the product's own "
+                             "DocumentID mint and ExifTool start (the gate before a release); "
                              "without it, a command kept before is answered from this machine's kept answers")
     parser.add_argument("--slowest", type=int, metavar="N",
                         help="print the N slowest files and tests of the recorded runs, and run nothing")
