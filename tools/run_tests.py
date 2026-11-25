@@ -7,6 +7,7 @@
     .venv/Scripts/python.exe tools/run_tests.py --no-slow       # fast and scenario; --all is every tier
     .venv/Scripts/python.exe tools/run_tests.py --owner people  # every Python file of a domain owner (tests/owners.py)
     .venv/Scripts/python.exe tools/run_tests.py --scenarios files   # only that owner's scenario files
+    .venv/Scripts/python.exe tools/run_tests.py --owner people --size sqlite   # its files that start no process
     .venv/Scripts/python.exe tools/run_tests.py --slowest 20    # the 20 slowest files and tests recorded; runs nothing
 
 The whole suite is the default and is what a commit and a merge run; --all says so. Each
@@ -15,6 +16,9 @@ file is in one of four tiers (tests/tiers.py): fast, scenario, slow and page, th
 --fast and --no-slow leave tiers out for the loop, never for the gate. The report ends with each tier's files,
 tests and seconds, and each owner's (tests/owners.py gives every test file one owner). --owner and --scenarios
 run one owner's Python files, and print the `node --test` command for that owner's page tests, which they leave out.
+--size runs the files of that size or smaller (tests/owners.py SIZES: pure, then sqlite, subprocess, browser; a
+page test is browser): `--size sqlite` is the pure and sqlite files, a loop of seconds; it goes with --owner,
+--scenarios, --fast and file names.
 
 A file that fails is run once more, alone, after the others have ended: a file that passes
 then is reported "flaky: passed alone" with the first run's output kept in the log, and does
@@ -490,6 +494,8 @@ def main(argv=None):
     parser.add_argument("--no-slow", action="store_true", help="the fast and scenario tiers (no slow, no page)")
     parser.add_argument("--owner", choices=owners.OWNERS, help="every Python test file of this domain owner")
     parser.add_argument("--scenarios", choices=owners.OWNERS, help="only this owner's scenario files")
+    parser.add_argument("--size", choices=owners.SIZE_ORDER,
+                        help="only the files of this size or smaller (tests/owners.py SIZES): sqlite is pure and sqlite")
     parser.add_argument("--no-retry", action="store_true",
                         help="do not run a failed file again alone")
     parser.add_argument("--accept-fewer", action="store_true",
@@ -512,13 +518,15 @@ def main(argv=None):
     if chosen and args.files:
         parser.error("--owner and --scenarios take the place of file names")
     modules = owners.files_of(chosen, "scenario" if args.scenarios else None) if chosen else test_files(args.files)
-    node = node_command(chosen, bool(args.scenarios)) if chosen else None
+    node = node_command(chosen, bool(args.scenarios)) if chosen and args.size in (None, "browser") else None
     left_out = ()
     if not args.files and (args.fast or args.no_slow):
         # The page tier is about 2,550 file-seconds (about 320 s across 8 processes, 2026-11-24): twice the fast
         # tier's wall, so the loop leaves it out, and the gate runs it.
         left_out = ("scenario", "slow", "page") if args.fast else ("slow", "page")
         modules = [m for m in modules if tiers.tier_of(m) not in left_out]
+    if args.size:
+        modules = [m for m in modules if owners.within(m, args.size)]
     started = time.time()
     EXIFTOOL["mode"] = exiftool_replay.RECORD if args.real_exiftool else exiftool_replay.REPLAY
     counted = tempfile.mkdtemp(prefix="tagpup_exiftool_counts_")
@@ -538,6 +546,9 @@ def main(argv=None):
         report.append(output.rstrip())
     report.append("\n%d file(s), %d test(s), %d file(s) failed, in %.0fs with %d processes" % (
         len(results), sum(r[2] for r in results), len(failed), time.time() - started, args.jobs))
+    if args.size:
+        report.append("Sizes run (tests/owners.py SIZES): %s" % ", ".join(
+            owners.SIZE_ORDER[: owners.SIZE_ORDER.index(args.size) + 1]))
     report.append("Tiers run (tests/tiers.py)%s:" % (", without " + " and ".join(left_out) if left_out else ""))
     report.extend(tier_lines(results, args.jobs))
     report.append("Owners run (tests/owners.py):")
