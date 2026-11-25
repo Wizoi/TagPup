@@ -21,13 +21,15 @@
  * one of its replies by name where the test reads the stamps it wrote (harness.mjs taggedAs); a save of one photo (op
  * `set`) is answered at once.
  */
-import { test, describe, afterEach } from "node:test";
+import { test, describe, beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";
 import {
   loadApp, FakeServer, photoRecord, flush, click, openFolder, closeAllApps, pageExports, SAVE, saved, saveCalls, taggedAs,
-  TAGS_REPLIES, tagFiles,
+  TAGS_REPLIES, tagFiles, testClock,
 } from "./harness.mjs";
 import { loadViewPage, recordOf } from "./view-page.mjs";
+
+beforeEach((t) => testClock(t));   // the page's timers run when a test advances them
 
 const FOLDER = "D:\\Library\\2020";
 const pathOf = (i) => `${FOLDER}\\IMG_${String(i).padStart(4, "0")}.JPG`;

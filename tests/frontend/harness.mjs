@@ -11,7 +11,7 @@
  */
 import fs from "node:fs";
 import path from "node:path";
-import { after } from "node:test";
+import { after, mock } from "node:test";
 import { fileURLToPath } from "node:url";
 import { JSDOM, VirtualConsole } from "jsdom";
 import { unmadeReply } from "./write-replies.mjs";
@@ -910,6 +910,7 @@ export async function loadApp(appName, { url, server = new FakeServer(), t, befo
     });
   }
   server.install(window);
+  if (clockIsTheTests) dateOnTheTestsClock(window);
   if (before) before(window);
 
   // Record image loads instead of attempting them, and keep the src rewriting
@@ -972,7 +973,7 @@ export async function intersect(window, elements, near = true) {
  * 15.6 ms, and the page tests' flushes slept about a third of the page tier's time (work row #3375, cut 7).
  */
 export async function flush(window, times = 3) {
-  for (let i = 0; i < times; i++) await turnFor(FLUSH_STEP_MS);
+  for (let i = 0; i < times; i++) await (clockIsTheTests ? tickBy(FLUSH_STEP_MS) : turnFor(FLUSH_STEP_MS));
 }
 
 /** How long one step of `flush` lets the page run: past the 1 ms a zero-delay timer waits. */
@@ -985,6 +986,80 @@ function turnFor(ms) {
     const turn = () => (performance.now() >= end ? resolve() : setImmediate(turn));
     setImmediate(turn);
   });
+}
+
+/** Whether the test holds the clock (testClock): flush and advance move it themselves. */
+let clockIsTheTests = false;
+/** The real time the test took the clock at, and how far it has moved it since, in ms: the page's Date.now(). */
+let clockStarted = 0;
+let clockMoved = 0;
+
+/** The page's Date reads the test's clock: Date.now() and new Date() are when the test took it plus how far it moved. */
+function dateOnTheTestsClock(window) {
+  const PageDate = window.Date;
+  window.Date = class extends PageDate {
+    constructor(...given) {
+      if (given.length) super(...given);
+      else super(clockStarted + clockMoved);
+    }
+
+    static now() {
+      return clockStarted + clockMoved;
+    }
+  };
+}
+
+/**
+ * The page's clock is the test's from here to the test's end (node:test's mock timers: the page's setTimeout and
+ * setInterval, and jsdom's animation frames, which run on an interval): time passes only when the test says so, through
+ * `advance` and `flush`. Call it before loadApp: a timer set before stays on the real clock. Nothing runs by itself, so a
+ * check that a debounce or the 5 s undo has NOT fired yet holds however busy the machine is, and costs no real time.
+ * The page's Date follows it too (the grid asks for a card's picture once it has been in view 120 ms by Date.now); the
+ * test's own Date keeps real time. A test's own node timers are on it as well: a reply that waits on node's setTimeout
+ * waits for `advance`. A second page in the test is on the same clock.
+ */
+export function testClock(t) {
+  if (clockIsTheTests) return;
+  mock.timers.enable({ apis: ["setTimeout", "setInterval"] });
+  clockIsTheTests = true;
+  clockStarted = Date.now();
+  clockMoved = 0;
+  t.after(async () => {
+    await closeAllApps();   // the page's timers cleared on the test's clock, before it goes
+    mock.timers.reset();
+    clockIsTheTests = false;
+  });
+}
+
+/**
+ * The page's timers of the next `ms` run, and what each started settles, as on a browser: on the test's clock (testClock)
+ * one millisecond at a time, the loop turning after each, so a reply that lands between two timers is seen by the second;
+ * otherwise `ms` of real time on the page's own timer.
+ */
+export async function advance(window, ms) {
+  if (clockIsTheTests) await tickBy(ms);
+  else await new Promise((resolve) => window.setTimeout(resolve, ms));
+}
+
+/** The next animation frame has run: one of jsdom's frames (1000/60 ms) on the test's clock, else the page's next frame. */
+export async function frame(window) {
+  let ran = false;
+  const done = new Promise((resolve) => window.requestAnimationFrame(() => {
+    ran = true;
+    resolve();
+  }));
+  if (!clockIsTheTests) return done;
+  for (let ms = 0; !ran && ms < 100; ms++) await tickBy(1);
+  if (!ran) throw new Error("no animation frame in 100 ms of the test's clock");
+}
+
+/** The test's clock moves on `ms`, a millisecond at a time, the event loop turning after each (setImmediate: not mocked). */
+async function tickBy(ms) {
+  for (let i = 0; i < ms; i++) {
+    mock.timers.tick(1);
+    clockMoved += 1;
+    await new Promise((resolve) => setImmediate(resolve));
+  }
 }
 
 /** Fire a click, optionally with modifiers, the way a browser would. */

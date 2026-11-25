@@ -7,13 +7,14 @@
  * jsdom has no layout, so the page is given one, as grid-window.test.mjs does: a 600 px view, four
  * columns of 200 px cards, a 16 px gap. The network is the harness's FakeServer, which can hold a reply
  * back, so a request that is still out when the view moves on is a thing a test can look at. The library
- * is 68,000 photos of invented ids; no name is a real one.
+ * is 68,000 photos of invented ids; no name is a real one. The page's clock is the test's (harness testClock): its timers
+ * and jsdom's frames run when a test advances it.
  */
-import { test, describe, afterEach, mock } from "node:test";
+import { test, describe, afterEach } from "node:test";
 import assert from "node:assert/strict";
 import {
   loadApp, FakeServer, photoRecord, flush, click, openFolder, closeAllApps, pageExports,
-  SAVE, saved, lastSave, deletedAs,
+  SAVE, saved, lastSave, deletedAs, testClock, advance, frame,
 } from "./harness.mjs";
 
 afterEach(() => closeAllApps());
@@ -33,8 +34,6 @@ const recordOf = (id) => photoRecord({
   id, filename: `IMG_${id}.jpg`, path: `D:\\Library\\Photos\\IMG_${id}.jpg`, tags: ["Trips/Coast"], people: [],
   taken: "2020:01:01 10:00:00",
 });
-const wait = (window, ms) => new Promise((resolve) => window.setTimeout(resolve, ms));
-const frame = (window) => new Promise((resolve) => window.requestAnimationFrame(() => resolve()));
 
 /** The page on a library, a view named by its address, a layout for the grid, and a server that holds what it is told. */
 async function load(t, { search = "?view=all", ids = IDS, total, onIds, onCards, onPhoto, scan, layout = true, rootsProblem, migrating } = {}) {
@@ -89,6 +88,7 @@ async function load(t, { search = "?view=all", ids = IDS, total, onIds, onCards,
     ctx.photosAsked.push(id);
     return onPhoto ? onPhoto(id) : { photo: recordOf(id) };
   });
+  testClock(t);
   const loaded = await loadApp("tagpup", { t, url: `http://localhost:8090/photo_index/${search}`, server });
   Object.assign(ctx, loaded);
   ctx.window.alert = () => {};
@@ -135,7 +135,7 @@ async function load(t, { search = "?view=all", ids = IDS, total, onIds, onCards,
       waiting.forEach((go) => go());
       await flush(ctx.window, 6);
     },
-    settle: async (ms = 160) => { await wait(ctx.window, ms); await flush(ctx.window, 6); },
+    settle: async (ms = 160) => { await advance(ctx.window, ms); await flush(ctx.window, 6); },
     folderCalls: () => server.urls().filter((u) => u.includes("/api/folder/")),
   });
   await ctx.settle();
@@ -284,25 +284,14 @@ describe("the order and the cards, scrolled", () => {
   test("a fast scroll through the middle asks for nothing it has left behind", async (t) => {
     const ctx = await load(t);
     ctx.cardsAsked.length = 0;
-    // Thirty windows, a frame (17 ms) apiece, on the test's clock (node:test's mock timers: the page's setTimeout and
-    // jsdom's frames). On the real one a frame took as long as the machine was busy, and under load the scroll paused
-    // long enough to be answered (#721).
-    mock.timers.enable({ apis: ["setTimeout", "setInterval"] });
-    try {
-      const turn = () => new Promise((resolve) => setImmediate(resolve));
-      for (let i = 1; i <= 30; i++) {
-        ctx.here.scrollTop = GRID_TOP + Math.floor((2000 * i) / COLUMNS) * STRIDE;
-        ctx.scroller.dispatchEvent(new ctx.window.Event("scroll"));
-        mock.timers.tick(17);
-        await turn();
-      }
-      for (let n = 0; n < 40; n++) {   // then it stands still
-        mock.timers.tick(20);
-        await turn();
-      }
-    } finally {
-      mock.timers.reset();
+    // Thirty windows, a frame (17 ms) apiece, on the test's clock (the page's setTimeout and jsdom's frames). On the real
+    // one a frame took as long as the machine was busy, and under load the scroll paused long enough to be answered (#721).
+    for (let i = 1; i <= 30; i++) {
+      ctx.here.scrollTop = GRID_TOP + Math.floor((2000 * i) / COLUMNS) * STRIDE;
+      ctx.scroller.dispatchEvent(new ctx.window.Event("scroll"));
+      await advance(ctx.window, 17);
     }
+    await advance(ctx.window, 800);   // then it stands still
     await flush(ctx.window, 6);
     const asked = ctx.cardsAsked.flat();
     assert.ok(ctx.cardsAsked.length <= 3, `${ctx.cardsAsked.length} requests for thirty windows`);

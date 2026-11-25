@@ -6,11 +6,13 @@
  * bookmark's tag that is gone, an address too long, a list of 1,000, words of punctuation only, the server's 400, a
  * later search overtaking an earlier one. Every name is fictional; the real library is photographs of real people.
  */
-import { test, describe, afterEach } from "node:test";
+import { test, describe, beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { closeAllApps, click, flush, pageExports } from "./harness.mjs";
+import { closeAllApps, click, flush, pageExports, testClock } from "./harness.mjs";
 import { loadViewPage, pageErrors, personRow } from "./view-page.mjs";
+
+beforeEach((t) => testClock(t));   // the page's timers run when a test advances them
 
 afterEach(() => {
   closeAllApps();

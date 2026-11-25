@@ -4,7 +4,7 @@
  *
  * Every name is made up; the real library is photographs of real people, many of them minors.
  */
-import { flush, pageExports } from "./harness.mjs";
+import { advance, flush, pageExports } from "./harness.mjs";
 
 /** The phone's page on the library alpha. */
 export const PHONE_PAGE = "http://localhost:8090/alpha/mobile.html";
@@ -19,9 +19,9 @@ export const shown = (ctx) =>
 export const pageState = (ctx) => pageExports(ctx.window, "web/tagpup/mobile-state.js").state;
 export const wait = (window, ms) => new Promise((resolve) => window.setTimeout(resolve, ms));
 
-/** The page's timers of `ms` run, and what they started answered. */
+/** The page's timers of `ms` run, and what they started answered (on the test's clock when it holds it: harness testClock). */
 export async function settle(ctx, ms = 50) {
-  await wait(ctx.window, ms);
+  await advance(ctx.window, ms);
   await flush(ctx.window, 6);
 }
 
