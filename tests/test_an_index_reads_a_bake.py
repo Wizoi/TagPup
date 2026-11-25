@@ -223,6 +223,10 @@ class AnIndexReadsABake(unittest.TestCase):
         with Image.open(path) as held:
             xmp = held.info["xmp"]
         Image.new("RGB", SIZE, colour).save(path, "JPEG", xmp=xmp)
+        # A solid colour of one size always compresses to the same bytes, so a save the same instant as the bake leaves
+        # nothing to tell it by: an editor's save is later (docs/work/3375.md, #3388).
+        later = os.stat(path).st_mtime + 2
+        os.utime(path, (later, later))
 
     def crop(self, path):
         """An editor's crop of the picture, saved over the file."""
