@@ -3,11 +3,13 @@
  * header, the strip, the toolbar, the selection details and Delete -- #671-#673, the navigator's, are tested beside it).
  * Fictional names only: the real library is photographs of real people, many of them minors.
  */
-import { test, describe, afterEach } from "node:test";
+import { test, describe, beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";
-import { closeAllApps, click, openFolder, photoRecord, CLIP_WRITES } from "./harness.mjs";
+import { closeAllApps, click, openFolder, photoRecord, CLIP_WRITES, testClock } from "./harness.mjs";
 import { loadViewPage, pageErrors, speedUp, recordOf } from "./view-page.mjs";
 import fs from "node:fs";
+
+beforeEach((t) => testClock(t));   // the page's timers run when a test advances them
 
 afterEach(() => {
   closeAllApps();
