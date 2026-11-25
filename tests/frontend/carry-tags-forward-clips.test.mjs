@@ -4,10 +4,12 @@
  * In a library view (a search of videos) the page holds only the open record, so the one before it is read from the library.
  * Fictional names only.
  */
-import { test, describe, afterEach } from "node:test";
+import { test, describe, beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";
 import { loadViewPage, recordOf } from "./view-page.mjs";
-import { loadApp, FakeServer, closeAllApps, openFolder, until, PHOTO_WRITES, CLIP_WRITES, SAVE, saved, saveCalls } from "./harness.mjs";
+import { loadApp, FakeServer, advance, closeAllApps, openFolder, until, PHOTO_WRITES, CLIP_WRITES, SAVE, saved, saveCalls, testClock } from "./harness.mjs";
+
+beforeEach((t) => testClock(t));   // the page's timers run when a test advances them
 
 const FOLDER = "D:\\Pictures\\Lighthouse";
 const record = (name, extra = {}) => ({
@@ -30,7 +32,7 @@ async function folder(t, scan) {
   ctx.window.HTMLMediaElement.prototype.pause = () => {};
   ctx.window.HTMLMediaElement.prototype.load = () => {};
   await openFolder(ctx, FOLDER);
-  await new Promise((r) => ctx.window.setTimeout(r, 60));
+  await advance(ctx.window, 60);
   ctx.server = server;
   return ctx;
 }
