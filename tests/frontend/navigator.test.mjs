@@ -6,10 +6,12 @@
  * an edit that changes counts. The library is invented at photo_index's size (2,746 folders, 895 keyword nodes, 413 people,
  * 61 years) and every name in it is fictional.
  */
-import { test, describe, afterEach } from "node:test";
+import { test, describe, beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";
-import { closeAllApps, click } from "./harness.mjs";
+import { closeAllApps, click, testClock } from "./harness.mjs";
 import { loadViewPage, pageErrors, personRow, syntheticFolders, syntheticKeywords, syntheticPeople, syntheticDates } from "./view-page.mjs";
+
+beforeEach((t) => testClock(t));   // the page's timers run when a test advances them
 
 afterEach(() => {
   closeAllApps();
