@@ -15,9 +15,11 @@
  * and the headings and counts still tell the truth. Far down a grid of thousands the
  * banner with the actions floats, and a removal leaves the owner where they were.
  */
-import { test, describe, afterEach } from "node:test";
+import { test, describe, beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";
-import { loadApp, FakeServer, closeAllApps } from "./harness.mjs";
+import { advance, loadApp, FakeServer, closeAllApps, testClock } from "./harness.mjs";
+
+beforeEach((t) => testClock(t));   // the page's timers run when a test advances them
 
 const NAME = "Unknown Faces";
 
@@ -73,7 +75,7 @@ async function openGrid(t) {
     url: `http://localhost:8080/photo_index/?mode=unmatched-faces&person=${encodeURIComponent(NAME)}`,
     t,
   });
-  await new Promise((r) => window.setTimeout(r, 150));
+  await advance(window, 150);
   return { window, document, server };
 }
 
@@ -96,7 +98,7 @@ async function ignoreCluster(window, document, clusterLabel) {
     b.textContent.includes("Ignore Cluster"));
   assert.ok(button, "the cluster has no Ignore Cluster button");
   button.dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
-  await new Promise((r) => window.setTimeout(r, 120));
+  await advance(window, 120);
 
   // Ignoring a whole cluster asks first.
   const confirm = document.getElementById("ignore-confirm-modal");
@@ -104,7 +106,7 @@ async function ignoreCluster(window, document, clusterLabel) {
     document
       .getElementById("btn-ignore-confirm-ok")
       .dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
-    await new Promise((r) => window.setTimeout(r, 120));
+    await advance(window, 120);
   }
 
   // The reason picker, when it appears.
@@ -112,7 +114,7 @@ async function ignoreCluster(window, document, clusterLabel) {
   if (modal && !modal.classList.contains("hidden")) {
     const choice = modal.querySelector("#exclude-reason-choices button");
     if (choice) choice.dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
-    await new Promise((r) => window.setTimeout(r, 150));
+    await advance(window, 150);
   }
   return section;
 }
@@ -172,17 +174,17 @@ describe("ignoring a cluster leaves the rest of the grid alone", () => {
     // Select one face of Cluster 9 and exclude just that one.
     const card = cardFor(document, 13);
     card.dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
-    await new Promise((r) => window.setTimeout(r, 60));
+    await advance(window, 60);
 
     const excludeBtn = document.getElementById("btn-exclude-selected");
     assert.ok(excludeBtn, "no exclude button");
     excludeBtn.dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
-    await new Promise((r) => window.setTimeout(r, 120));
+    await advance(window, 120);
     const modal = document.getElementById("exclude-reason-modal");
     if (modal && !modal.classList.contains("hidden")) {
       const choice = modal.querySelector("#exclude-reason-choices button");
       if (choice) choice.dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
-      await new Promise((r) => window.setTimeout(r, 150));
+      await advance(window, 150);
     }
 
     const heading = headingTexts(document).find((h) => h.startsWith("Cluster 9"));
@@ -216,7 +218,7 @@ describe("ignoring a cluster leaves the rest of the grid alone", () => {
     await ignoreCluster(window, document, "Cluster 5");
     assert.match(document.getElementById("ignore-confirm-text").textContent, /Undo.*names.*tags/s);
     document.getElementById("btn-assign-undo").dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
-    await new Promise((r) => window.setTimeout(r, 150));
+    await advance(window, 150);
     assert.deepEqual(server.lastBody("/api/history/9/undo"), { apply: true });
     assert.deepEqual(server.lastBody("/api/faces/restore").face_ids.length, 3, "the faces that carried no name are restored beside it");
     assert.equal(cards(document).length, 7, "the faces did not come back to the grid");
@@ -233,7 +235,7 @@ describe("ignoring a cluster leaves the rest of the grid alone", () => {
     button.dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
     assert.equal(document.getElementById("assign-undo-text").textContent, "Undoing...");
     assert.equal(button.disabled, true, "pressed twice while it runs");
-    await new Promise((r) => window.setTimeout(r, 200));
+    await advance(window, 200);
     assert.match(said.join(" "), /1 photo\(s\) and 1 face\(s\) could not be put back/);
     assert.deepEqual(server.lastBody("/api/faces/restore").face_ids, [3], "faces whose undo was refused were restored all the same");
     assert.equal(document.getElementById("assign-undo-bar").classList.contains("hidden"), true, "an undone change is not offered again");
@@ -272,7 +274,7 @@ describe("far down a long grid: the banner floats, and a removal keeps the place
       url: `http://localhost:8080/photo_index/?mode=unmatched-faces&person=${encodeURIComponent(NAME)}`,
       t,
     });
-    await new Promise((r) => window.setTimeout(r, 150));
+    await advance(window, 150);
     // jsdom lays nothing out: the panel's scroll offset is held here, as a browser holds it.
     const panel = document.getElementById("details-panel");
     let top = 0;
@@ -309,11 +311,11 @@ describe("far down a long grid: the banner floats, and a removal keeps the place
 
     // Then the two selected, from the banner.
     click(window, exclude);
-    await new Promise((r) => window.setTimeout(r, 120));
+    await advance(window, 120);
     const modal = document.getElementById("exclude-reason-modal");
     if (modal && !modal.classList.contains("hidden")) {
       click(window, modal.querySelector("#exclude-reason-choices button"));
-      await new Promise((r) => window.setTimeout(r, 150));
+      await advance(window, 150);
     }
     assert.equal(panel.scrollTop, 5000, "the grid went back to the top");
     assert.deepEqual(cards(document).map((c) => Number(c.dataset.faceId)), [12, 13]);
