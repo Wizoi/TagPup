@@ -13,9 +13,14 @@ goes.
 
 These tests are the structural fix: a connection opened outside db.py gets none of the
 settings, so the rule is that there are no such connections.
+
+A bulk write holds one connection for its writes and one for its reads on its own thread (db.connections_held,
+docs/plans/bulk-write-connections.md): another thread writing beside it, a scope inside another, and a read between
+two writes are the scenarios below.
 """
 import os
 import re
+import sqlite3
 import sys
 import threading
 import unittest
@@ -24,7 +29,10 @@ WORKSPACE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, WORKSPACE_DIR)
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
+import corpus  # noqa: E402
+import own_home  # noqa: E402
 from tagpup.store import db as tagpup_db  # noqa: E402
+from tagpup.store import file_journal  # noqa: E402
 from shipped_sources import python_sources  # noqa: E402
 
 OWNER = os.path.join("tagpup", "store", "db.py")
@@ -117,6 +125,21 @@ class TestNobodyConnectsDirectly(unittest.TestCase):
         checked = {os.path.relpath(p, WORKSPACE_DIR) for p in source_files()}
         for launcher in ("tagpup_cli.py", "tagpup_web.py"):
             self.assertIn(launcher, checked)
+
+    def test_the_connections_a_thread_holds_are_named_nowhere_but_db(self):
+        """A held connection lent outside db.py would be one more connection with a life of its own, shared by whoever
+        found it: the scope (connections_held) lends it through write_with_connection and read_with_connection only."""
+        name = "_held_by_" + "this_thread"
+        offenders = []
+        for path in list(source_files()) + list(test_sources()):
+            if os.path.abspath(path) == os.path.abspath(__file__):
+                continue
+            with open(path, encoding="utf-8") as f:
+                if name in f.read():
+                    offenders.append(os.path.relpath(path, WORKSPACE_DIR))
+        self.assertEqual([], offenders, "go through tagpup.store.db.connections_held")
+        with open(os.path.join(WORKSPACE_DIR, OWNER), encoding="utf-8") as f:
+            self.assertIn(name, f.read(), "the check matches nothing, not even db's")
 
 
 class TestConnectionsAreConfigured(unittest.TestCase):
@@ -354,6 +377,88 @@ class TestAWriterGetsAConnectionToItself(unittest.TestCase):
         self.addCleanup(conn.close)
         self.assertEqual(conn.execute("SELECT COUNT(*) FROM t").fetchone()[0], 0,
                          "a failed write was left committed")
+
+    def recorded(self, used, who):
+        """A write of one row by `who`, the connection it ran on kept in `used`."""
+        def work(conn):
+            used.append((who, conn))
+            conn.execute("INSERT INTO t (who) VALUES (?)", (who,))
+        return work
+
+    def test_a_save_beside_a_bulk_write_gets_a_connection_of_its_own_and_both_commit(self):
+        """A bulk write holds its connection on its thread; the owner's save of one photo, on a request's thread, arrives
+        between two of its writes. Lent across threads, one connection would interleave the two transactions."""
+        used, inside, saved = [], threading.Event(), threading.Event()
+
+        def bulk():
+            with tagpup_db.connections_held(self.path):
+                tagpup_db.write_with_connection(self.path, self.recorded(used, "bulk"))
+                inside.set()
+                saved.wait(10)
+                tagpup_db.write_with_connection(self.path, self.recorded(used, "bulk"))
+
+        thread = threading.Thread(target=bulk)
+        thread.start()
+        try:
+            self.assertTrue(inside.wait(10), "the bulk write never began")
+            tagpup_db.write_with_connection(self.path, self.recorded(used, "save"))
+        finally:
+            saved.set()
+            thread.join(10)
+        bulk_conns = [conn for who, conn in used if who == "bulk"]
+        save_conns = [conn for who, conn in used if who == "save"]
+        self.assertEqual((2, 1), (len(bulk_conns), len(save_conns)))
+        self.assertIs(bulk_conns[0], bulk_conns[1], "the bulk write's two writes share its held connection")
+        self.assertIsNot(bulk_conns[0], save_conns[0], "the save is not lent the bulk write's connection")
+        conn = tagpup_db.connect(self.path)
+        self.addCleanup(conn.close)
+        self.assertEqual([("bulk", 2), ("save", 1)],
+                         conn.execute("SELECT who, COUNT(*) FROM t GROUP BY who ORDER BY who").fetchall())
+
+    def test_a_scope_inside_another_shares_its_connections_and_only_the_outer_closes_them(self):
+        """A bulk write settles what an earlier one left before its own loop, each in a scope: the inner one, for the same
+        database however it is spelled, lends the outer's connections and closes neither."""
+        used, reads = [], []
+
+        def write_and_read(target):
+            tagpup_db.write_with_connection(target, self.recorded(used, "bulk"))
+            reads.append(tagpup_db.read_with_connection(target, lambda cursor: cursor.connection))
+
+        with tagpup_db.connections_held(self.path):
+            write_and_read(self.path)
+            with tagpup_db.connections_held(self.path.replace("\\", "/").upper()):
+                write_and_read(self.path)
+            write_and_read(self.path)
+            writers = {id(conn) for _who, conn in used}
+            self.assertEqual((1, 1), (len(writers), len({id(conn) for conn in reads})), "one writer and one reader, shared")
+            for conn in (used[0][1], reads[0]):
+                conn.execute("SELECT 1")        # the inner scope closed neither
+        for conn in (used[0][1], reads[0]):
+            with self.assertRaises(sqlite3.ProgrammingError, msg="the outer scope closes both"):
+                conn.execute("SELECT 1")
+
+
+class TestAReadInABulkWriteSeesWhatItWrote(unittest.TestCase):
+    """A patch's record is committed on the held writer and read back on the held reader (file_journal.patch_of, before
+    the patched file is checked): a statement left open on the reader would keep it reading the journal as it was."""
+
+    def setUp(self):
+        self.home = own_home.for_test(self, prefix="db_access_")
+        self.library = corpus.library(self.home.library("held.db"))
+
+    def test_a_read_that_leaves_rows_unread_does_not_hide_the_next_write(self):
+        photos = [os.path.join(self.home.root, "Photos", name) for name in ("a.jpg", "b.jpg")]
+        with tagpup_db.connections_held(self.library):
+            _change, rows = file_journal.plan(self.library, "tags", [
+                {"path": path, "before": {"XMP:Subject": []}, "after": {"XMP:Subject": ["Trips/Coast"]}} for path in photos])
+            file_journal.writing(self.library, rows[0].id, None)
+            # Read and left: the second row is never fetched.
+            unread = tagpup_db.read_with_connection(self.library, lambda cursor: cursor.execute(
+                "SELECT id FROM change_files ORDER BY id"))
+            file_journal.save_patch(self.library, rows[0].id, {"ranges": [[0, 3]]}, b"old")
+            self.assertEqual(({"ranges": [[0, 3]]}, b"old"), file_journal.patch_of(self.library, rows[0].id),
+                             "the held reader read the journal as it was before the record was saved")
+            del unread
 
 if __name__ == "__main__":
     unittest.main()
