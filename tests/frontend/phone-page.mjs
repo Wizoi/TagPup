@@ -17,7 +17,6 @@ export const shown = (ctx) =>
   [...ctx.document.querySelectorAll("[data-screen]")].filter((s) => !s.classList.contains("hidden")).map((s) => s.dataset.screen);
 /** The page's own state (mobile-state.js). */
 export const pageState = (ctx) => pageExports(ctx.window, "web/tagpup/mobile-state.js").state;
-export const wait = (window, ms) => new Promise((resolve) => window.setTimeout(resolve, ms));
 
 /** The page's timers of `ms` run, and what they started answered (on the test's clock when it holds it: harness testClock). */
 export async function settle(ctx, ms = 50) {
