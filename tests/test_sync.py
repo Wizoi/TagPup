@@ -31,7 +31,7 @@ from tagpup.core.library import Library  # noqa: E402
 from tagpup.core.paths import key as paths_key  # noqa: E402
 from tagpup.core.result import Result  # noqa: E402
 from tagpup.files import images, shares  # noqa: E402
-from tagpup.files.metadata import MetadataExtractor  # noqa: E402
+from tagpup.files import metadata  # noqa: E402
 from tagpup.jobs import watching  # noqa: E402
 from tagpup.services import libraries as library_actions  # noqa: E402
 from tagpup.services import sync  # noqa: E402
@@ -49,10 +49,10 @@ class Reads:
         self.truth = truth
         self.read, self.sessions = [], 0
 
-    def batch_read(self, extractor, file_paths, people=None):
+    def whole(self, reader, file_paths, people=None, bakes=False):
         self.read.extend(file_paths)
-        return [MetadataExtractor._structure(extractor, path, dict(self.truth.get(os.path.basename(path), {})),
-                                             people, MetadataExtractor._stamp(path)) for path in file_paths]
+        return [metadata.structure(path, dict(self.truth.get(os.path.basename(path), {})), people,
+                                   metadata.stamp_before_read(path)) for path in file_paths]
 
     def session(self, *args, **kwargs):
         reads = self
@@ -108,8 +108,8 @@ class SyncTestCase(unittest.TestCase):
 
     def run_sync(self, apply=False, folder=None, queue=None, roots=(), ignored=(), **more):
         self.reads = Reads(self.truth)
-        with mock.patch("tagpup.files.metadata.MetadataExtractor.batch_read", autospec=True,
-                        side_effect=self.reads.batch_read), \
+        with mock.patch("tagpup.files.field_values.Fields.whole", autospec=True,
+                        side_effect=self.reads.whole), \
                 mock.patch("tagpup.files.exiftool_session.ExifToolSession", side_effect=self.reads.session):
             return sync.sync(self.library, folder=folder, apply=apply, exiftool_path="exiftool", queue=queue,
                              roots=roots, ignored=ignored, **more)
@@ -434,8 +434,8 @@ class ChangedFiles(SyncTestCase):
         before = self.rows()
         reads = Reads(self.truth)
 
-        def read_then_the_app_saves(extractor, file_paths, people=None):
-            records = reads.batch_read(extractor, file_paths, people)
+        def read_then_the_app_saves(reader, file_paths, people=None):
+            records = reads.whole(reader, file_paths, people)
             conn = db.connect(self.db_path)
             try:
                 conn.execute("UPDATE photos SET tags = ?, mtime = ? WHERE id = ?",
@@ -445,7 +445,7 @@ class ChangedFiles(SyncTestCase):
                 conn.close()
             return records
 
-        with mock.patch("tagpup.files.metadata.MetadataExtractor.batch_read", autospec=True,
+        with mock.patch("tagpup.files.field_values.Fields.whole", autospec=True,
                         side_effect=read_then_the_app_saves), \
                 mock.patch("tagpup.files.exiftool_session.ExifToolSession", side_effect=reads.session):
             result = sync.sync(self.library, apply=True, exiftool_path="exiftool")
@@ -701,8 +701,8 @@ class APictureToCheck(SyncTestCase):
         # The owner is told, in counts.
         from click.testing import CliRunner
         from tagpup_cli import cli
-        with mock.patch("tagpup.files.metadata.MetadataExtractor.batch_read", autospec=True,
-                        side_effect=Reads(self.truth).batch_read), \
+        with mock.patch("tagpup.files.field_values.Fields.whole", autospec=True,
+                        side_effect=Reads(self.truth).whole), \
                 mock.patch("tagpup.files.exiftool_session.ExifToolSession", side_effect=Reads(self.truth).session):
             said = CliRunner().invoke(cli, ["--db", self.db_path, "sync"])
         from tagpup_cli import OWED_LINE
@@ -712,8 +712,8 @@ class APictureToCheck(SyncTestCase):
         """What the CLI's `sync` (a dry run) tells the owner."""
         from click.testing import CliRunner
         from tagpup_cli import cli
-        with mock.patch("tagpup.files.metadata.MetadataExtractor.batch_read", autospec=True,
-                        side_effect=Reads(self.truth).batch_read), \
+        with mock.patch("tagpup.files.field_values.Fields.whole", autospec=True,
+                        side_effect=Reads(self.truth).whole), \
                 mock.patch("tagpup.files.exiftool_session.ExifToolSession", side_effect=Reads(self.truth).session):
             return CliRunner().invoke(cli, ["--db", self.db_path, "sync"]).output
 
@@ -1241,8 +1241,8 @@ class MissingFiles(SyncTestCase):
         os.remove(gone)
 
         def said(*arguments):
-            with mock.patch("tagpup.files.metadata.MetadataExtractor.batch_read", autospec=True,
-                            side_effect=Reads(self.truth).batch_read), \
+            with mock.patch("tagpup.files.field_values.Fields.whole", autospec=True,
+                            side_effect=Reads(self.truth).whole), \
                     mock.patch("tagpup.files.exiftool_session.ExifToolSession", side_effect=Reads(self.truth).session):
                 return CliRunner().invoke(cli, ["--db", self.db_path, "sync"] + list(arguments)).output
 

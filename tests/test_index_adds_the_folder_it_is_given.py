@@ -38,7 +38,7 @@ class IndexAddsItsFolder(unittest.TestCase):
         try:
             # Stopped where the files would be read: what is under test is the adding.
             with mock.patch.object(tagpup_cli, "get_runtime", return_value=runtime), \
-                    mock.patch.object(tagpup_cli, "MetadataExtractor", side_effect=SystemExit(0)):
+                    mock.patch("tagpup.files.field_values.Fields.whole", side_effect=SystemExit(0)):
                 result = CliRunner().invoke(tagpup_cli.cli, ["--db", db_path, "index", "."])
         finally:
             os.chdir(here)

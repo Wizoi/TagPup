@@ -46,7 +46,7 @@ from view_library import ViewLibrary  # noqa: E402
 
 from tagpup.core import fields, paths  # noqa: E402
 from tagpup.core.result import Result  # noqa: E402
-from tagpup.files import (clip_convert, containers, field_values, in_place, metadata, recycle_bin,  # noqa: E402
+from tagpup.files import (clip_convert, containers, field_values, in_place, recycle_bin,  # noqa: E402
                           shares, video_frames)
 from tagpup.services import batches, convert, file_changes, sync, tagging  # noqa: E402
 from tagpup.services import photos as photo_actions  # noqa: E402
@@ -646,7 +646,7 @@ class TwoLibrariesHoldingTheFolder(AnOldClipInTheLibrary):
 
     def held_there(self, path):
         """The id of the second library's row of `path`, recorded as its indexer reads it."""
-        (record,) = metadata.MetadataExtractor(EXIFTOOL).batch_read([path])
+        (record,) = photo_rows.read_whole(EXIFTOOL, [path])
         photo_rows.added(self.other.conn, record["path"])   # the index adds the folder it is given first
         photos.record_indexed(self.other.conn, record["path"], record)
         photo_id = photos.ensure_row(self.other.conn, record["path"])

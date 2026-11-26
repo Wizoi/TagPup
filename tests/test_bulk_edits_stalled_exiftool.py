@@ -15,6 +15,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import test_bulk_edits as T  # noqa: E402
 
 import page_writes  # noqa: E402
+import photo_rows  # noqa: E402
 from tagpup.files import exiftool_session, field_values, metadata, shares  # noqa: E402
 from tagpup.core import paths  # noqa: E402
 from tagpup.services import batches, file_changes, journal, relink_photos, tagging  # noqa: E402
@@ -55,8 +56,8 @@ class TheIndexAndSyncReadAShareThatStopsAnswering(unittest.TestCase):
         StalledSession.calls = []
 
     def test_the_indexers_read_waits_one_deadline_and_leaves_every_photo_unread(self):
-        with mock.patch.object(metadata, "ExifToolSession", StalledSession):
-            records = metadata.MetadataExtractor().batch_read(self.photos)
+        with mock.patch.object(exiftool_session, "ExifToolSession", StalledSession):
+            records = photo_rows.read_whole(None, self.photos)
         self.assertEqual(1, len(StalledSession.calls), "one command for the three photos, not one more for each")
         self.assertEqual(self.photos, [record["path"] for record in records])
         # A record with no stamp is one nobody read: the indexer leaves its row as it was and reads it next time.
@@ -72,11 +73,44 @@ class TheIndexAndSyncReadAShareThatStopsAnswering(unittest.TestCase):
                 if len(batch) > 1:
                     raise RuntimeError("Error: one of them is no file")
                 raise exiftool_session.ExifToolTimeout("ExifTool did not answer within 300s (a read); its process was killed.")
-        with mock.patch.object(metadata, "ExifToolSession", RefusesThenStalls):
-            records = metadata.MetadataExtractor().batch_read(self.photos)
+        with mock.patch.object(exiftool_session, "ExifToolSession", RefusesThenStalls):
+            records = photo_rows.read_whole(None, self.photos)
         self.assertEqual(2, len(StalledSession.calls), "the batch, then one photo: no deadline more")
         self.assertEqual([(None, None, [], metadata.NOT_ANSWERED)] * 3,
                          [(r["mtime"], r["size"], r["tags"], r["unread"]) for r in records])
+
+    def test_one_reader_left_open_answers_again_after_the_share_comes_back(self):
+        """The index reads its batches through one Fields (runtime.fields): the share stops answering at the second photo
+        of a batch, so that photo and the one after it are left unread with one deadline waited, the first recorded; the
+        next batch, the share back, is read in full by the same reader, its ExifTool started again (ExifToolHelper's
+        auto-start after the kill), never left dead for the rest of the run."""
+        starts = []
+
+        class ShareAwayOnce(StalledSession):
+            away = [self.photos[1]]
+
+            def __enter__(self):
+                starts.append(1)
+                return self
+
+            def get_tags(self, batch, tags=None, params=None):
+                StalledSession.calls.append(list(batch))
+                if len(batch) > 1 and ShareAwayOnce.away:
+                    raise RuntimeError("Error: one of them is no file")
+                if ShareAwayOnce.away and batch == ShareAwayOnce.away:
+                    ShareAwayOnce.away = []
+                    raise exiftool_session.ExifToolTimeout(STALLED)
+                return [{"SourceFile": path, "File:MIMEType": "image/jpeg", "XMP:Subject": ["Harbour"]}
+                        for path in batch]
+        with mock.patch.object(exiftool_session, "ExifToolSession", ShareAwayOnce), \
+                field_values.opened("exiftool") as reader:
+            first, second = reader.whole(self.photos), reader.whole(self.photos)
+        self.assertEqual([None, metadata.NOT_ANSWERED, metadata.NOT_ANSWERED], [r.get("unread") for r in first])
+        self.assertEqual(["Harbour"], first[0]["tags"])
+        self.assertEqual([[self.photos[0]], [self.photos[1]]], StalledSession.calls[1:3], "the photo after it not asked")
+        self.assertEqual([["Harbour"]] * 3, [r["tags"] for r in second], "the next call answers")
+        self.assertTrue(all(r["mtime"] is not None for r in second))
+        self.assertEqual(1, len(starts), "one session for the reader's life")
 
     def test_syncs_pairing_read_waits_one_deadline_and_pairs_nothing(self):
         with mock.patch.object(exiftool_session, "ExifToolSession", StalledSession):

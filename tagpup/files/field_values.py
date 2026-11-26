@@ -48,6 +48,7 @@ headers too, in the same patch (fields.CLIP_HEADER_DATES; DECISIONS 2026-11-13),
 read by TagPup's own walk of the clip, every box of each kind (_read_headers): ExifTool answers one box of each, and a
 write's before, its verify and its undo are of every box (#3004).
 """
+import contextlib
 import logging
 import os
 
@@ -55,8 +56,8 @@ from exiftool.exceptions import ExifToolNotRunning
 
 from tagpup.core import dates, fields, paths
 from tagpup.core.result import Refused
-from tagpup.files import (bake, clip_patch, containers, exiftool_session, identity, images, in_place, segment_edits,
-                          shares)
+from tagpup.files import (bake, clip_patch, containers, exiftool_session, identity, images, in_place, metadata,
+                          segment_edits, shares)
 
 logger = logging.getLogger(__name__)
 
@@ -72,6 +73,13 @@ MIME_TYPE = "File:MIMEType"
 
 #: Photos read in one ExifTool command.
 READ_BATCH = 200
+
+#: What a whole read for the index asks beside METADATA_FIELDS (Fields.whole's `bakes`): a bake's fields, kept out of the
+#: record's raw_metadata (the turn of its regions is the decode's: tagpup.services.bake_reading), and the options they are
+#: read under -- `-struct`, without which the regions are answered as flattened lists (tagpup.files.bake); no field of
+#: METADATA_FIELDS is a structure, and each is answered alike under it (tests/test_an_index_reads_a_bake.py).
+BAKE_FIELDS = tuple(bake.FIELDS)
+BAKE_PARAMS = ("-struct",)
 
 #: The options of every write: ExifTool told that an objection it calls minor does not stop the write (#2009). A photo
 #: whose XMP holds descriptions under two rdf:about attributes (a phone's Extended XMP beside another program's packet)
@@ -160,12 +168,12 @@ def read(et, photo_paths, wanted, also=(), records=None, stop=None, params=()):
     read (NotAnswered, of a photo ExifTool did not answer for). Read in batches; a batch ExifTool refuses is read again a
     photo at a time, so one bad file does not cost the others. A command ExifTool does not answer in its deadline (a share
     gone away) ends the read: that photo, and every photo not read yet, is NotAnswered, so one read waits one deadline. The one batch reader: the indexer's
-    (tagpup.files.metadata.MetadataExtractor) and sync's pairing (tagpup.services.relink_photos) read through it. `also` are fields asked as well, answered only
+    (Fields.whole) and sync's pairing (tagpup.services.relink_photos) read through it. `also` are fields asked as well, answered only
     in `records`, when given: {paths.key(path): ExifTool's record} of each photo read.
 
     `stop`, a threading.Event: once it is set no more batches are read, and the photos not reached are left out of the
     answer (a batch asked to stop while it plans, tagpup.services.file_changes). `params`, options of each read command
-    (-struct, for the bake's region fields: tagpup.files.metadata).
+    (-struct, for the bake's region fields: Fields.whole).
     A struct field in `wanted` is read with -struct, which answers a list of one as a list: `also` beside one is refused,
     since its records would not be in the indexer's shape.
 
@@ -231,6 +239,92 @@ def read(et, photo_paths, wanted, also=(), records=None, stop=None, params=()):
             except Exception as e:
                 found[paths.key(one)] = e if isinstance(e, Unreadable) else Unreadable(str(e))
     return _read_headers(found, photo_paths, wanted)
+
+
+def opened(exiftool_path):
+    """The face for one operation's reads (a batch of the index, a refresh, a page's look): use it in a `with` block, or
+    close() it. Its ExifTool, which knows TagPup's namespace (session(): every read gains the bake's configuration), is
+    started at the first call that needs one, never here: opening never raises. One process for the whole operation; a
+    test standing in for ExifToolSession reaches it (session looks the class up when it starts)."""
+    return Fields(exiftool_path)
+
+
+class Fields:
+    """The reads of one operation, over one ExifTool started at its first call (opened). Dead for good after a timeout
+    for ONE call: a call whose command is not answered in its deadline leaves that file and every later file of the call
+    unread (read), and the next call starts ExifTool again (ExifToolHelper's auto-start) and answers: a long-lived Fields
+    never leaves every later photo unread after one share hiccup."""
+
+    def __init__(self, exiftool_path):
+        self.exiftool_path = exiftool_path
+        self._stack = contextlib.ExitStack()
+        self._et = None
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *problem):
+        self.close()
+        return False
+
+    def close(self):
+        self._et = None
+        self._stack.close()
+
+    def _session(self):
+        """The started session, started now when none is; raises what the start raised (the next call tries again)."""
+        if self._et is None:
+            self._et = self._stack.enter_context(session(self.exiftool_path))
+        return self._et
+
+    def whole(self, photo_paths, *, people=None, bakes=False):
+        """A record of each of `photo_paths`, in order, as the index records it (tagpup.files.metadata.structure), read
+        through the one batch reader (read: a batch ExifTool refuses is read again a photo at a time, one it does not
+        answer is not retried).
+
+        A photo ExifTool refuses (or that is not a photo) is recorded holding nothing, with `read_error`, stamped: a file
+        that cannot be read is not read again every run. A photo ExifTool did not answer for (a share gone away), or whose
+        stat failed, or that no ExifTool could be started to read, is left UNREAD: its record has no stamp (mtime and size
+        None) and says why in `unread` (metadata.NOT_ANSWERED, NO_STAT, NOT_STARTED), so nothing records it as read; a
+        start that fails is never an exception out of here. `people` is what the library's tag tree says about people, read
+        once for the batch; without it, only the usual face roots name anybody.
+
+        `bakes` (the indexer's read) asks BAKE_FIELDS as well, in the same command, and puts what the file answers of them
+        in the record's "baked" ({} for a file holding none), never in its raw_metadata."""
+        photo_paths = list(photo_paths)
+        if not photo_paths:
+            return []
+        # Each file's stamp before the read.
+        stamps = [metadata.stamp_before_read(path) for path in photo_paths]
+        try:
+            et = self._session()
+        except Exception as e:
+            logger.error("Could not start ExifTool to read %d file(s): %s", len(photo_paths), e)
+            why = str(e) or type(e).__name__
+            return [dict(metadata.empty(path, why, (None, None)), unread=metadata.NOT_STARTED) for path in photo_paths]
+        records = {}
+        found = read(et, photo_paths, [], list(fields.METADATA_FIELDS) + list(BAKE_FIELDS if bakes else ()), records,
+                     params=BAKE_PARAMS if bakes else ())
+        results = []
+        for path, stamp in zip(photo_paths, stamps):
+            held, record = found.get(paths.key(path)), records.get(paths.key(path))
+            if isinstance(held, NotAnswered):
+                results.append(dict(metadata.empty(path, held, (None, None)), unread=metadata.NOT_ANSWERED))
+            elif stamp == (None, None):
+                results.append(dict(metadata.empty(path, held or "its stat failed", stamp), unread=metadata.NO_STAT))
+            elif isinstance(held, Exception) or not record:
+                logger.error("Unreadable metadata, indexing without it: %s (%s)", path, held or "no answer")
+                results.append(metadata.empty(path, held or "ExifTool answered nothing for it", stamp))
+            else:
+                # What the reader asked to tell a photo from another kind of file is not the photo's metadata, nor is a
+                # bake.
+                baked = {key: record[key] for key in BAKE_FIELDS if key in record} if bakes else {}
+                record = {key: value for key, value in record.items()
+                          if key != MIME_TYPE and not (bakes and key in BAKE_FIELDS)}
+                results.append(metadata.structure(path, record, people, stamp))
+                if bakes:
+                    results[-1]["baked"] = baked
+        return results
 
 
 def _read_headers(found, photo_paths, wanted):
@@ -630,3 +724,81 @@ def ensure_document_id(et, path, metadata=None):
         return None
     logger.debug("Minted %s for %s", minted, path)
     return minted
+
+
+class IdentityWriter:
+    """Gives photos that have none an identity (tagpup.files.identity), one at a time, as
+    the indexer reads them -- the one writer of a minted identity at index time.
+
+    A path is a bad name for a photo: rename it and the index describes something that
+    no longer exists, while the photo looks unindexed. DocumentID is the XMP standard's
+    per-document identifier and most photos already carry one, so this writes to few
+    files. Only the indexer mints, because it records the identity in the index; opening a
+    folder once wrote into its photos and the rows then looked out of date.
+
+    Never into a photo whose picture did not decode in full (`decoded`: the caller's to
+    say, and false for a file that may be an incomplete copy, tagpup.files.images.
+    ZERO_TAIL), nor one ExifTool reported an error reading (`read_error`): a truncated file
+    took an identity, which changed its modified time, which the folder watcher saw,
+    which queued the indexer for it again (docs/findings.md, #407). Minting used to
+    happen as the batch was read, before any picture was decoded.
+
+    Failures are per-file and logged, never raised: an identity is an improvement on
+    knowing only the path, and a photo that cannot take one indexes without it. The
+    ExifTool session is started for the first photo that needs one; close() ends it.
+
+    `around(path, write)` makes each write, `write()`, and returns what it returned: the indexer's carries the fingerprint
+    of a file a rename gave its name over the write (tagpup.services.file_changes.OutsideWrites, #1957); by default the
+    write alone.
+    """
+
+    def __init__(self, exiftool_path=None, around=None):
+        self.around = around or (lambda _path, write: write())
+        executable = exiftool_path
+        if executable and not os.path.isabs(executable):
+            executable = os.path.abspath(executable)
+        self.executable = executable
+        self._et = None
+        self._failed = False
+        #: Photos given an identity.
+        self.minted = 0
+
+    def give(self, record, decoded):
+        """Write an identity into the photo of `record` (Fields.whole's) if it has
+        none, it `decoded`, and ExifTool read it without an error, and put it in the record.
+        The record keeps the stamp from before its read: stamped after the write, the row
+        claimed a keyword saved into the file since its batch was read (contract 5), and the
+        next index skipped the file as unchanged. The indexer reads a photo given its identity
+        again before recording it (tagpup_cli._read_again). The identity minted, or None."""
+        if record.get("document_id") or not decoded or record.get("read_error"):
+            return None
+        et = self._session()
+        if et is None:
+            return None
+        minted = self.around(record["path"],
+                             lambda: ensure_document_id(et, record["path"], record.get("raw_metadata")))
+        if not minted:
+            return None
+        self.minted += 1
+        record["document_id"] = minted
+        record.setdefault("raw_metadata", {})["XMP:DocumentID"] = minted
+        return minted
+
+    def _session(self):
+        if self._et is None and not self._failed:
+            try:
+                et = exiftool_session.ExifToolSession(executable=self.executable)
+                et.run()
+                self._et = et
+            except Exception as e:
+                self._failed = True
+                logger.error(f"Could not start ExifTool to give photos an identity: {e}")
+        return self._et
+
+    def close(self):
+        et, self._et = self._et, None
+        if et is not None:
+            try:
+                et.terminate()
+            except Exception:
+                pass

@@ -15,7 +15,7 @@ import json
 from collections import Counter
 
 from tagpup.core.vocabulary import people_in_photo
-from tagpup.files.metadata import MetadataExtractor
+from tagpup.files import field_values
 from tagpup.store import journal
 from tagpup.store import faces as store_faces
 from tagpup.store import photos as store_photos
@@ -33,17 +33,18 @@ def read_files(conn, photo_paths, exiftool_path):
     ExifTool is not there every file read as unreadable and nothing was refreshed. The
     library's people are read once for the run; they were read again for every photo.
     """
-    extractor = MetadataExtractor(exiftool_path=exiftool_path)
     known = store_taxonomy.people_vocabulary(conn=conn)
     records = {}
-    for start in range(0, len(photo_paths), BATCH):
-        batch = photo_paths[start:start + BATCH]
-        for record in extractor.batch_read(batch, people=known):
-            # People from the keywords AND the photo's named faces, as every writer
-            # of the column now records them; the extractor alone knows only the
-            # keywords, and would take off everyone identified by face.
-            record["people"] = people_in_photo(record["tags"], store_faces.face_refs(record["path"], conn=conn), known)
-            records[record["path"]] = record
+    with field_values.opened(exiftool_path) as reader:
+        for start in range(0, len(photo_paths), BATCH):
+            batch = photo_paths[start:start + BATCH]
+            for record in reader.whole(batch, people=known):
+                # People from the keywords AND the photo's named faces, as every writer
+                # of the column now records them; the read alone knows only the
+                # keywords, and would take off everyone identified by face.
+                record["people"] = people_in_photo(record["tags"], store_faces.face_refs(record["path"], conn=conn),
+                                                   known)
+                records[record["path"]] = record
     return records
 
 

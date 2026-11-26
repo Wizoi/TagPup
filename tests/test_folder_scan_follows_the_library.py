@@ -85,7 +85,7 @@ class AFolderOfPhotosAndAClip(unittest.TestCase):
         self.client = self.app.test_client()
         self.db_path = self.home.library("library.db")
         files = fake_exiftool.Files()       # the reader of the files the index does not describe
-        patcher = mock.patch("tagpup.files.metadata.ExifToolSession", files.session)
+        patcher = mock.patch("tagpup.files.exiftool_session.ExifToolSession", files.session)
         patcher.start()
         self.addCleanup(patcher.stop)
         self.folder = os.path.join(self.home.root, "Photos", "Lighthouse")
@@ -211,8 +211,8 @@ class ALooseFolderWhenTheTreeChanges(unittest.TestCase):
     def test_the_next_open_shows_the_people_the_tree_now_names(self):
         app, home = web_client.app_for(self, "tagpup")
         client = app.test_client()
-        files = fake_exiftool.Files()       # the reader imports ExifToolSession by name: patched where it is used
-        patcher = mock.patch("tagpup.files.metadata.ExifToolSession", files.session)
+        files = fake_exiftool.Files()       # field_values.session looks ExifToolSession up when it starts
+        patcher = mock.patch("tagpup.files.exiftool_session.ExifToolSession", files.session)
         patcher.start()
         self.addCleanup(patcher.stop)
         folder = os.path.join(home.root, "Loose")

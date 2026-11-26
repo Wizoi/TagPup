@@ -491,7 +491,7 @@ class PhotoIndex:
 
     def _record(self, metas, blobs):
         """Record each of `metas` with its vector's bytes in `blobs` (None: no vector), in one transaction."""
-        # A row is stamped with the read it records: MetadataExtractor gives every record its mtime and size.
+        # A row is stamped with the read it records: field_values.Fields.whole gives every record its mtime and size.
         try:
             # Who each photo's keywords name depends on this library's tree, read once;
             # the store rebuilds each photo's people from it and the photo's faces.

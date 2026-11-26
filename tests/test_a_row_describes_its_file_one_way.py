@@ -5,7 +5,7 @@ by less than the tolerance -- a copy on a drive that rounds times, a share that 
 milliseconds -- is current for all three; one that differs by more is not.
 
 A file another program changes while TagPup reads it leaves a row older than its file, which the next scan reads again:
-the stamp is taken before the read, by the indexer's read (MetadataExtractor), a save's whole read back
+the stamp is taken before the read, by the indexer's read (field_values.Fields.whole), a save's whole read back
 (file_changes._carry) and the settling of a file a crash left written (file_changes._record_held, #1462). Taken after, it
 stamped content read before the change as the newer file.
 """
@@ -24,7 +24,7 @@ from test_a_file_holds_what_exiftool_kept import ReadFilesCase  # noqa: E402
 from test_file_journal import EXIFTOOL, Crash, crash_at  # noqa: E402
 from test_one_photo_whatever_its_spelling import CliDatabaseCase, expected_dim, make_jpeg  # noqa: E402
 
-from tagpup.files import field_values, metadata  # noqa: E402
+from tagpup.files import exiftool_session, field_values  # noqa: E402
 import page_writes  # noqa: E402
 from tagpup.services import file_changes, refresh_rows, settings, tagging, thumbnails  # noqa: E402
 from tagpup.services.search import PhotoEmbeddings, PhotoIndex  # noqa: E402
@@ -42,7 +42,7 @@ class SubSecondRounding(CliDatabaseCase):
     @patch("tagpup.ml.clip.ClipModel._init_model")
     @patch("tagpup.ml.clip.ClipModel.picture_input")
     @patch("tagpup.ml.clip.ClipModel.embed_input")
-    @patch("tagpup_cli.MetadataExtractor.batch_read")
+    @patch("tagpup.files.field_values.Fields.whole")
     def index(self, batch_read, embed_input, _picture_input, _init_model):
         embed_input.return_value = [0.1] * expected_dim()
         batch_read.side_effect = lambda files, *a, **k: [
@@ -88,7 +88,7 @@ class AFileChangedWhileItIsRead(ReadFilesCase):
         a = self.make("a.jpg", ("Beach",), row=False)
 
         class Session:
-            def __init__(self, executable=None):
+            def __init__(self, executable=None, config_file=None):
                 pass
 
             def __enter__(self):
@@ -101,8 +101,8 @@ class AFileChangedWhileItIsRead(ReadFilesCase):
                 for path in files:
                     touched_by_another_program(path)
                 return [{"SourceFile": path, "XMP:Subject": ["Beach"]} for path in files]
-        with mock.patch.object(metadata, "ExifToolSession", Session):
-            (record,) = metadata.MetadataExtractor().batch_read([a])
+        with mock.patch.object(exiftool_session, "ExifToolSession", Session), field_values.opened(None) as reader:
+            (record,) = reader.whole([a])
         self.assertFalse(describes_its_file((record["mtime"], record["size"]), a),
                          "a change made during the read was stamped as read")
 

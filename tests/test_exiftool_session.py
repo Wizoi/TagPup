@@ -215,13 +215,13 @@ class TestTheBatchReadersUseIt(unittest.TestCase):
             self.assertNotIn("ExifToolHelper(", source, name)
             self.assertIn("ExifToolSession(", source, name)
 
-        # The reader itself; its callers hand it the library's people.
-        with open(os.path.join(WORKSPACE_DIR, "tagpup", "files", "metadata.py"), encoding="utf-8") as f:
+        # The index's whole read (Fields.whole) and its mint (IdentityWriter): the one face's sessions.
+        with open(os.path.join(WORKSPACE_DIR, "tagpup", "files", "field_values.py"), encoding="utf-8") as f:
             source = f.read()
-        for method in ("batch_read",):
-            body = source.split("def %s(" % method, 1)[1].split("\n    def ", 1)[0]
-            self.assertNotIn("ExifToolHelper(", body, method)
-            self.assertIn("ExifToolSession(", body, method)
+        self.assertNotIn("ExifToolHelper(", source)
+        for start in ("def session(", "class IdentityWriter"):
+            body = source.split(start, 1)[1].split("\nclass ", 1)[0]
+            self.assertIn("ExifToolSession(", body, start)
 
 
 if __name__ == "__main__":

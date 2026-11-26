@@ -38,7 +38,7 @@ import tagpup_cli  # noqa: E402
 from tagpup import runtime as runtimes  # noqa: E402
 from tagpup.core import paths  # noqa: E402
 from tagpup.core.library import Library  # noqa: E402
-from tagpup.files.metadata import MetadataExtractor  # noqa: E402
+from tagpup.files import metadata  # noqa: E402
 from tagpup.ml import clip  # noqa: E402
 from tagpup.runtime import Runtime  # noqa: E402
 from tagpup.services import bake_after_index, baking, photos, sync, tagging  # noqa: E402
@@ -83,9 +83,9 @@ class Reads:
     def __init__(self, truth):
         self.truth = truth
 
-    def batch_read(self, extractor, file_paths, people=None):
-        return [MetadataExtractor._structure(extractor, path, dict(self.truth.get(os.path.basename(path), {})),
-                                             people, MetadataExtractor._stamp(path)) for path in file_paths]
+    def whole(self, reader, file_paths, people=None, bakes=False):
+        return [metadata.structure(path, dict(self.truth.get(os.path.basename(path), {})), people,
+                                   metadata.stamp_before_read(path)) for path in file_paths]
 
     def session(self, *args, **kwargs):
         reads = self
@@ -157,8 +157,8 @@ class SharedFolderTwoLibraries(unittest.TestCase):
 
     def run_sync(self, library, **kwargs):
         reads = Reads(self.truth)
-        with mock.patch("tagpup.files.metadata.MetadataExtractor.batch_read", autospec=True,
-                        side_effect=reads.batch_read), \
+        with mock.patch("tagpup.files.field_values.Fields.whole", autospec=True,
+                        side_effect=reads.whole), \
                 mock.patch("tagpup.files.exiftool_session.ExifToolSession", side_effect=reads.session):
             return sync.sync(library, apply=True, exiftool_path="exiftool", **kwargs)
 

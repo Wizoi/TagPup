@@ -126,7 +126,7 @@ class TheCli(CliDatabaseCase):
 
     @unittest.skipUnless(paths.CASE_INSENSITIVE, "two case spellings are two files here")
     @patch("tagpup.ml.clip.ClipModel._init_model")
-    @patch("tagpup_cli.MetadataExtractor.batch_read")
+    @patch("tagpup.files.field_values.Fields.whole")
     def test_a_folder_indexed_under_another_case_is_not_read_again(self, batch_read, _init_model):
         library = os.path.join(self.tmp.name, "Garden Party")
         photo = os.path.join(library, "lanterns.jpg")
@@ -192,13 +192,11 @@ def fake_exiftool(answer):
     return helper
 
 
-def fake_extractor():
-    """MetadataExtractor stand-in that reports each file it is asked about."""
-    cls = MagicMock()
-    cls.return_value.batch_read.side_effect = lambda file_paths, db_path=None, people=None: [
+def fake_whole():
+    """A stand-in for field_values.Fields.whole that reports each file it is asked about."""
+    return MagicMock(side_effect=lambda file_paths, people=None, bakes=False: [
         {"path": p, "mtime": 0.0, "size": 0, "tags": [], "people": [], "captions": [], "raw_metadata": {}}
-        for p in file_paths]
-    return cls
+        for p in file_paths])
 
 
 class HandlerCase(unittest.TestCase):
@@ -314,11 +312,11 @@ class TheRoutes(HandlerCase):
             conn.commit()
         finally:
             conn.close()
-        extractor = fake_extractor()
-        with patch("tagpup.files.metadata.MetadataExtractor", extractor):
+        whole = fake_whole()
+        with patch("tagpup.files.field_values.Fields.whole", whole):
             listed = self.call("GET", "/api/folder/scan", query={"path": forward(self.folder), "force": "true"})
-        extractor.return_value.batch_read.assert_called_once()
-        self.assertEqual([os.path.abspath(unread)], list(extractor.return_value.batch_read.call_args.args[0]))
+        whole.assert_called_once()
+        self.assertEqual([os.path.abspath(unread)], list(whole.call_args.args[0]))
         self.assertEqual(sorted(os.path.abspath(p) for p in known + [unread]), sorted(p["path"] for p in listed))
 
     def test_smart_rename_numbers_by_date_taken_and_answers_in_the_stored_form(self):
@@ -336,7 +334,7 @@ class TheRoutes(HandlerCase):
             for name, path in files.items()})
         # As ExifTool answers it: under XMP, not the group it is written in.
         with patch("tagpup.files.exiftool_session.ExifToolSession", fake_exiftool([{"XMP:PreservedFileName": "original.jpg"}])), \
-                patch("tagpup.files.metadata.MetadataExtractor", fake_extractor()):
+                patch("tagpup.files.field_values.Fields.whole", fake_whole()):
             result = self.call("POST", "/api/folder/rename-photos", {
                 "folder_path": forward(self.folder), "photo_paths": [forward(files[n]) for n in ("c.jpg", "b.jpg", "a.jpg")],
                 "grouping": "Parade"})
@@ -357,7 +355,7 @@ class TheRoutes(HandlerCase):
         ghost = os.path.join(os.path.abspath(self.folder), "Parade - 1.jpg")   # a row alone: its file is gone
         self.seed(ghost, faces=["Tamsin Okafor"])
         with patch("tagpup.files.exiftool_session.ExifToolSession", fake_exiftool([{"XMP:PreservedFileName": "original.jpg"}])), \
-                patch("tagpup.files.metadata.MetadataExtractor", fake_extractor()):
+                patch("tagpup.files.field_values.Fields.whole", fake_whole()):
             result = self.call("POST", "/api/folder/rename-photos", {
                 "folder_path": forward(self.folder), "photo_paths": [forward(photo)], "grouping": "Parade"})
         self.assertEqual(([ghost], 0), (result["index_skipped"], result["index_rows_moved"]))

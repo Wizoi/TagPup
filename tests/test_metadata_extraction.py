@@ -416,8 +416,6 @@ class TestBatchReadSurvivesOneBadFile(unittest.TestCase):
     """
 
     def setUp(self):
-        from tagpup.files.metadata import MetadataExtractor
-
         self.tmpdir = tempfile.mkdtemp(prefix="meta_batch_")
         self.addCleanup(shutil.rmtree, self.tmpdir, True)
         self.paths = []
@@ -427,7 +425,6 @@ class TestBatchReadSurvivesOneBadFile(unittest.TestCase):
                 fh.write(b"x" * (100 + i))
             self.paths.append(p)
         self.bad = self.paths[1]
-        self.extractor = MetadataExtractor()
 
     def _tags_for(self, path):
         return {"SourceFile": path, "XMP:Subject": ["Beach", "Sunset"]}
@@ -437,7 +434,7 @@ class TestBatchReadSurvivesOneBadFile(unittest.TestCase):
         outer = self
 
         class FakeHelper:
-            def __init__(self, executable=None):
+            def __init__(self, executable=None, config_file=None):
                 self.running = False
 
             def run(self):
@@ -462,8 +459,8 @@ class TestBatchReadSurvivesOneBadFile(unittest.TestCase):
         return FakeHelper
 
     def test_the_good_files_keep_their_metadata(self):
-        with mock.patch("tagpup.files.metadata.ExifToolSession", self._fake_helper()):
-            results = self.extractor.batch_read(self.paths)
+        with mock.patch("tagpup.files.exiftool_session.ExifToolSession", self._fake_helper()):
+            results = photo_rows.read_whole(None, self.paths)
 
         self.assertEqual([r["path"] for r in results], self.paths)
         by_path = {r["path"]: r for r in results}
@@ -474,8 +471,8 @@ class TestBatchReadSurvivesOneBadFile(unittest.TestCase):
             )
 
     def test_the_bad_file_is_the_only_one_blanked(self):
-        with mock.patch("tagpup.files.metadata.ExifToolSession", self._fake_helper()):
-            results = self.extractor.batch_read(self.paths)
+        with mock.patch("tagpup.files.exiftool_session.ExifToolSession", self._fake_helper()):
+            results = photo_rows.read_whole(None, self.paths)
 
         bad = next(r for r in results if r["path"] == self.bad)
         self.assertEqual(bad["tags"], [])
@@ -483,8 +480,8 @@ class TestBatchReadSurvivesOneBadFile(unittest.TestCase):
         self.assertEqual(bad["captions"], [])
 
     def test_every_file_keeps_its_stats_so_it_is_not_re_indexed_forever(self):
-        with mock.patch("tagpup.files.metadata.ExifToolSession", self._fake_helper()):
-            results = self.extractor.batch_read(self.paths)
+        with mock.patch("tagpup.files.exiftool_session.ExifToolSession", self._fake_helper()):
+            results = photo_rows.read_whole(None, self.paths)
 
         for r in results:
             stat = os.stat(r["path"])
@@ -493,7 +490,6 @@ class TestBatchReadSurvivesOneBadFile(unittest.TestCase):
 
     def test_a_clean_batch_still_reads_in_one_call(self):
         """The retry is the exception; a healthy batch must not pay for it."""
-        from tagpup.files import metadata
 
         calls = []
         fake = self._fake_helper()
@@ -505,20 +501,19 @@ class TestBatchReadSurvivesOneBadFile(unittest.TestCase):
 
         fake.get_tags = counting
         good_only = [self.paths[0], self.paths[2]]
-        reader = metadata.MetadataExtractor()
-        with mock.patch("tagpup.files.metadata.ExifToolSession", fake):
-            results = reader.batch_read(good_only)
+        with mock.patch("tagpup.files.exiftool_session.ExifToolSession", fake):
+            results = photo_rows.read_whole(None, good_only)
 
         self.assertEqual(len(calls), 1, f"took {len(calls)} ExifTool calls for a clean batch")
         self.assertEqual([r["tags"] for r in results], [["Beach", "Sunset"]] * 2)
 
     def test_exiftool_failing_to_start_at_all_still_returns_a_row_per_file(self):
         class DeadHelper:
-            def __init__(self, executable=None):
+            def __init__(self, executable=None, config_file=None):
                 raise OSError("exiftool not found")
 
-        with mock.patch("tagpup.files.metadata.ExifToolSession", DeadHelper):
-            results = self.extractor.batch_read(self.paths)
+        with mock.patch("tagpup.files.exiftool_session.ExifToolSession", DeadHelper):
+            results = photo_rows.read_whole(None, self.paths)
 
         self.assertEqual([r["path"] for r in results], self.paths)
         self.assertTrue(all(r["tags"] == [] for r in results))
@@ -528,9 +523,9 @@ class TestBatchReadSurvivesOneBadFile(unittest.TestCase):
 
     def test_a_file_whose_stat_fails_is_left_unread_and_says_so(self):
         from tagpup.files import metadata
-        with mock.patch("tagpup.files.metadata.ExifToolSession", self._fake_helper()), \
-                mock.patch.object(metadata.MetadataExtractor, "_stamp", return_value=(None, None)):
-            results = self.extractor.batch_read([self.paths[0]])
+        with mock.patch("tagpup.files.exiftool_session.ExifToolSession", self._fake_helper()), \
+                mock.patch.object(metadata, "stamp_before_read", return_value=(None, None)):
+            results = photo_rows.read_whole(None, [self.paths[0]])
         self.assertEqual([(None, metadata.NO_STAT)], [(r["mtime"], r["unread"]) for r in results])
 
 
@@ -557,16 +552,15 @@ class TestABatchReadsTheLibrarysPeopleOnce(unittest.TestCase):
             self.paths.append(path)
 
     def test_once_and_for_every_photo(self):
-        from tagpup.files import metadata
         from tagpup.store import taxonomy
 
         session = mock.MagicMock()
         session.return_value.__enter__.return_value.get_tags.side_effect = lambda files, tags=None, params=None: [
             {"SourceFile": f, "XMP:Subject": ["Crew/Tamsin Oakes"]} for f in files]
-        with mock.patch("tagpup.files.metadata.ExifToolSession", session), \
+        with mock.patch("tagpup.files.exiftool_session.ExifToolSession", session), \
                 mock.patch.object(taxonomy, "people_vocabulary",
                                   wraps=taxonomy.people_vocabulary) as read_people:
-            results = metadata.MetadataExtractor().batch_read(
+            results = photo_rows.read_whole(None, 
                 self.paths, people=taxonomy.people_vocabulary(self.db_path))
 
         self.assertEqual(read_people.call_count, 1)

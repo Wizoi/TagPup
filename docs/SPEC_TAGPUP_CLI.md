@@ -16,7 +16,7 @@ The tool is built as a modular Python application with script wrappers. It relie
 [Untagged Image] ---> [ClipEmbedder (SigLIP 2)] ---> 1152-dim Vector
                                                               |
                                                               v
-[Tagged Library] ---> [MetadataExtractor]       ---> [PhotoIndex (SQLite + FAISS)]
+[Tagged Library] ---> [field_values.Fields]     ---> [PhotoIndex (SQLite + FAISS)]
                                |                              | (Query k-NN)
                                v                              v
                        [TagTaxonomy]             ---> [TagSuggester] (Face Match)
@@ -26,7 +26,7 @@ The tool is built as a modular Python application with script wrappers. It relie
 ```
 
 - **`tagpup_cli.py` (CLI entry point)**: Unified Command Line Interface using `click` and `rich`.
-- **`tagpup/files/metadata.py` (Metadata Extraction)**: Interfaces with `exiftool` to read standard metadata fields in batches of 500. Handles bare and namespaced tag keys. What the fields mean -- tags, people, captions -- is `tagpup/core/vocabulary.py`; the library's people are read by `tagpup/store/taxonomy.py` and handed to each batch.
+- **`tagpup/files/field_values.py` (`Fields.whole`) and `tagpup/files/metadata.py` (the record)**: one ExifTool, opened through `runtime.fields`, reads standard metadata fields in batches of 500, and metadata.py builds each record. Handles bare and namespaced tag keys. What the fields mean -- tags, people, captions -- is `tagpup/core/vocabulary.py`; the library's people are read by `tagpup/store/taxonomy.py` and handed to each batch.
 - **`tagpup/runtime.py` (The models)**: Builds the CLIP model and the face models once for each set of settings, from the settings of the library the command is given (`--db`; `tagpup.services.settings`), and hands them to what needs them. Nothing else builds a model.
 - **`tagpup/ml/clip.py` (Visual Embeddings)**: The photo model (SigLIP 2 SO400M, `ViT-SO400M-14-SigLIP2` / `webli`, at its native 224 pixels, every library's) using PyTorch (supporting GPU/CUDA acceleration if available with FP16 half-precision, or falling back to CPU). Generates normalized embeddings. `tagpup/services/search.py` (`PhotoEmbeddings`) keeps each photo's in the library, so an unchanged file is not embedded again.
 - **`tagpup/services/search.py` (SQLite & FAISS Vector Index)**: `PhotoIndex` loads a library's photo records and their vectors from the store (`tagpup/store/`) and builds an in-memory `faiss.IndexFlatIP` flat index (`tagpup/ml/vector_index.py`) for rapid cosine similarity queries.

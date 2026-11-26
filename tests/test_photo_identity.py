@@ -106,10 +106,9 @@ class TestEnsuring(unittest.TestCase):
 
 class TestTheExtractorCarriesIt(unittest.TestCase):
     def test_a_structured_record_reports_the_identity(self):
-        from tagpup.files.metadata import MetadataExtractor
+        from tagpup.files import metadata
 
-        extractor = MetadataExtractor()
-        record = extractor._structure(
+        record = metadata.structure(
             "D:/a.jpg", {"XMP:DocumentID": "xmp.did:abc", "XMP:Subject": ["Beach"]}, None, (1.0, 1))
         self.assertEqual(record["document_id"], "xmp.did:abc")
 
@@ -119,7 +118,7 @@ class TestTheExtractorCarriesIt(unittest.TestCase):
         Reading a folder to show it used to write an identity into every photo that had
         none, and nothing told the index -- whose rows then looked out of date. Without
         minting at index time renames still strand rows, so the indexer makes the one
-        writer, IdentityWriter (MetadataExtractor only reads). Every other reader -- the
+        writer, IdentityWriter (Fields.whole only reads). Every other reader -- the
         folder scans, suggest, inspect -- must not.
         """
         import ast
@@ -146,7 +145,7 @@ class TestTheExtractorCarriesIt(unittest.TestCase):
             self.assertEqual([], minting_calls(reader), reader)
 
     def test_a_photo_that_already_has_one_is_left_alone(self):
-        from tagpup.files.metadata import IdentityWriter
+        from tagpup.files.field_values import IdentityWriter
 
         et = FakeExifTool()
         records = [

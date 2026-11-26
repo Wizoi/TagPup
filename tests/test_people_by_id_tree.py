@@ -121,7 +121,7 @@ class Operations(TwoSams, unittest.TestCase):
         """The photos' files are rewritten BEFORE the tree (tags._retag): a photo that could not be is reported, the tree and the
         faces keep the old name, and running the rename again, the file writable, rewrites the rest and moves the tree."""
         carrying = os.path.join(os.path.dirname(self.path), "Pictures", "regatta_003.jpg")
-        write(self.path, lambda conn: __import__("photo_rows").add_read(conn, carrying, {"XMP:Subject": [SAM_I]}))
+        write(self.path, lambda conn: photo_rows.add_read(conn, carrying, {"XMP:Subject": [SAM_I]}))
         self.unwritable.add(carrying)
         result = self.rename(self.sam_i, "Samuel")
         self.assertFalse(result.ok)

@@ -69,7 +69,7 @@ Paths are checked by `tests/test_the_test_map.py`; a moved module is changed her
 6. Does it say what it changed (read-back) and what it skipped? Does a dry run write nothing?
 7. Real data: how many rows does it touch, counted from the libraries (most rows carry no DocumentID; the folders are many)? Is the fixture made by `add_read` / `add_unread`, not the helper under test?
 8. Does it follow a file or folder? Then it uses the one pairing (point 4 above), checks the destination, never follows a ghost, and is one journaled change. Is it another way to ask "which file is this row"?
-9. Does it re-read metadata? Through `refresh_rows.read_files` / `MetadataExtractor` (one record shape), one ExifTool session per run, not one per item.
+9. Does it re-read metadata? Through `refresh_rows.read_files` / `field_values.Fields.whole` (one record shape), one ExifTool session per run, not one per item.
 10. Walks: one `images.photo_entries` walk, no junctions, stamps from the directory listing (`images.stamps_under`), no per-file `stat` over a share?
 11. Does anything touch a photo file outside `file_changes`? If so, name it among the exceptions with its reason.
 12. Does a read connection stay open while files are read (it pins the WAL)? Is a per-item query hoisted?

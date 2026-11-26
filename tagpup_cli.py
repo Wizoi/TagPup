@@ -63,7 +63,7 @@ warnings.filterwarnings("ignore", category=UserWarning, module="huggingface_hub"
 os.environ["HF_HUB_DISABLE_SYMLINKS_WARNING"] = "1"
 
 # Load components
-from tagpup.files.metadata import IdentityWriter, MetadataExtractor
+from tagpup.files.field_values import IdentityWriter
 from tagpup.store.taxonomy import TagTaxonomy
 from tagpup.core import gpu_turns
 from tagpup.core import paths
@@ -140,7 +140,7 @@ def read_ahead_bytes(width, height, clip=None, faces=None):
 
 
 def _kept_with_no_model(metas, embeddings, unexamined):
-    """What the index keeps of each of `metas` [records of MetadataExtractor.batch_read] with no model, asked before any
+    """What the index keeps of each of `metas` [records of field_values.Fields.whole] with no model, asked before any
     model is built or the graphics card's turn taken: (looked, complete). `looked` is {paths.key: {"vector", "stale",
     "decoded"}}: the vector kept by its stamp, or the Stale one (PhotoEmbeddings.kept), and of a stale one its decode,
     (stamp, fingerprint, zero tail, picture size) -- or what the decode raised -- which the index's read uses and never decodes again.
@@ -531,23 +531,24 @@ def index(ctx, directories, force_reembed: bool, reset: bool, skip_faces: bool, 
 
     # Extract metadata in batches of 500
     console.print(f"[bold cyan]Reading metadata in batches for {len(images_to_process)} image(s)...[/bold cyan]")
-    # Read only: a photo is given its identity below, once its picture has decoded.
-    extractor = MetadataExtractor(exiftool_path=exiftool_path)
-
+    # Read only: a photo is given its identity below, once its picture has decoded. One ExifTool for every batch
+    # (runtime.fields): a batch a share stopped answering in leaves the rest of that batch unread, and the next batch
+    # answers again.
     batch_size = 500
     all_metadata = []
-    
+
     from tqdm import tqdm
     # The bar for a person; the server is told the photos read, a batch at a time (tagpup.core.progress_line).
     _say(indexing_service.phase_fact("metadata", 0, len(images_to_process)))
-    for i in tqdm(range(0, len(images_to_process), batch_size), desc=indexing_service.READING_METADATA,
-                  disable=progress_line.asked()):
-        batch = images_to_process[i:i+batch_size]
-        # The bakes in the files are read in the same command (bake_reading).
-        batch_meta = extractor.batch_read(batch, people=store_taxonomy.people_vocabulary(db_path), bakes=True)
-        all_metadata.extend(batch_meta)
-        _say(indexing_service.phase_fact("metadata", min(i + batch_size, len(images_to_process)),
-                                         len(images_to_process)))
+    with runtimes.fields(Library(db_path), settings) as reader:
+        for i in tqdm(range(0, len(images_to_process), batch_size), desc=indexing_service.READING_METADATA,
+                      disable=progress_line.asked()):
+            batch = images_to_process[i:i+batch_size]
+            # The bakes in the files are read in the same command (bake_reading).
+            batch_meta = reader.whole(batch, people=store_taxonomy.people_vocabulary(db_path), bakes=True)
+            all_metadata.extend(batch_meta)
+            _say(indexing_service.phase_fact("metadata", min(i + batch_size, len(images_to_process)),
+                                             len(images_to_process)))
 
     # Every scanned photo is indexed, tagged or not.
     #
@@ -563,7 +564,7 @@ def index(ctx, directories, force_reembed: bool, reset: bool, skip_faces: bool, 
     # and the scoring denominator counts only neighbours that do contribute, so they
     # cannot dilute a suggestion.
     # A photo ExifTool did not answer for (a share gone away) is left as it was, unread: its record has no stamp
-    # (MetadataExtractor.batch_read), and the next index reads it again.
+    # (field_values.Fields.whole), and the next index reads it again.
     left_unread = Counter(m["unread"] for m in all_metadata if m["mtime"] is None)
     to_index_meta = [m for m in all_metadata if m["mtime"] is not None]
     for why, count in sorted(left_unread.items()):
@@ -1045,7 +1046,7 @@ CLIPS_UNREAD = ("%d video(s) could not be read by ffmpeg: they are in the index 
 
 
 def _index_clips(clips, embeddings, locker, photo_index, force_reembed, locked_out, failed, step):
-    """Each of `clips` [records of MetadataExtractor.batch_read, kind 'video'] recorded with the vectors of its frames
+    """Each of `clips` [records of field_values.Fields.whole, kind 'video'] recorded with the vectors of its frames
     (PhotoEmbeddings.prepared, vectors): frame 0's is its vector, frames 1 to 4 go beside it, CLIP_CHUNK clips a
     transaction, so a stop leaves each clip with all of them or none, owed still. Run on the thread that has the
     graphics card, after the photos; ffmpeg reads the next clips' frames on the read-ahead's threads, never loading the
@@ -1230,7 +1231,7 @@ def _read_again(conn, metas, given, exiftool_path):
     finds it current and reads nothing, and its vector and faces are kept. The batch read was up to 500 photos
     earlier, and a keyword saved into the file since then is read here (docs/findings.md, #1599). A photo left unread
     now (no stamp: a share gone away mid-run, tests/test_a_share_asleep.py) keeps the record of the batch read, stamped
-    before that read: the next index reads it once more. One ExifTool refuses is recorded as batch_read records it."""
+    before that read: the next index reads it once more. One ExifTool refuses is recorded as Fields.whole records it."""
     again = [meta["path"] for meta in metas if meta["path"] in given]
     if not again:
         return

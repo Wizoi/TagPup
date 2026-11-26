@@ -370,11 +370,11 @@ class TheIndexerWaitsBeforeItsFirstPhoto(_Library):
             raise gpu_turns.Cancelled("stopped")
         runtime.gpu_turn.side_effect = gpu_turn
         extractor = mock.Mock()
-        extractor.return_value.batch_read.side_effect = lambda batch, people=None, bakes=False: [
+        extractor.side_effect = lambda batch, people=None, bakes=False: [
             {"path": path, "mtime": 1.0, "size": 1, "tags": [], "people": [], "captions": []} for path in batch]
         writer = mock.Mock()
         with mock.patch.object(tagpup_cli, "get_runtime", return_value=runtime), \
-                mock.patch.object(tagpup_cli, "MetadataExtractor", extractor), \
+                mock.patch("tagpup.files.field_values.Fields.whole", extractor), \
                 mock.patch.object(tagpup_cli, "IdentityWriter", writer), \
                 mock.patch.dict(os.environ, {indexing_service.STOP_FILE: stop}):
             result = CliRunner().invoke(tagpup_cli.cli, ["--db", self.db_path, "index", self.folder])

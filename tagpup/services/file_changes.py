@@ -1372,7 +1372,7 @@ def _follow_rename(conn, path, before, after):
 
 class OutsideWrites:
     """The writes of photo files a process makes outside the journal's file-change path: the indexer's identity mint
-    (tagpup.files.metadata.IdentityWriter over field_values.ensure_document_id; the charter's named exception, #1355). Each
+    (tagpup.files.field_values.IdentityWriter over field_values.ensure_document_id; the charter's named exception, #1355). Each
     is carried over the journal's renames as the journal's own writes are (_follow_rename), so that a rename's undo still finds the
     file it renamed (#1957). Forward only: a file minted before this was made is not looked for (no backfill), and a file
     another program rewrites stays as it is: History reads no file. Nothing else of the journal knows of the write: it is

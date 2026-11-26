@@ -342,10 +342,10 @@ rename it and the index row describes something that no longer exists, while the
 looks unindexed. `tagpup/files/identity.py` reads `XMP-xmpMM:DocumentID`, which most photos
 already carry (1,075 of 1,129 sampled here), and mints `xmp.did:<uuid>` into the few
 that do not. That means a normal index pass *writes* to some files: only the indexer
-does, through `IdentityWriter` (`tagpup/files/metadata.py`), and only into a photo whose
+does, through `IdentityWriter` (`tagpup/files/field_values.py`), and only into a photo whose
 picture has decoded in full and whose metadata ExifTool read without an error -- a
 truncated file took an identity, which changed its modified time, which queued it for
-indexing again (#407). `MetadataExtractor` only reads. A photo given an identity keeps
+indexing again (#407). `Fields.whole` only reads. A photo given an identity keeps
 the stamp from before its read, and the index reads the photo again before recording it
 (`tagpup_cli._read_again`), so its row holds the file as the write left it and the next
 pass finds it current (#1599).
