@@ -49,6 +49,7 @@ read by TagPup's own walk of the clip, every box of each kind (_read_headers): E
 write's before, its verify and its undo are of every box (#3004).
 """
 import contextlib
+import json
 import logging
 import os
 
@@ -342,6 +343,62 @@ class Fields:
                     results[-1]["baked"] = baked
         return results
 
+
+#: The oracle's whole read of a file (its warnings are READER_READ's). The session's own common -G
+#: (exiftool_session.DEFAULT_COMMON_ARGS) is given after each command's and wins over a -G0:1 in it, naming IFD0's and
+#: IFD1's Orientation alike, so the oracle has a session of its own whose common arguments are -n alone. Keys read so
+#: (ExifTool 13.59): "EXIF:IFD0:Orientation", "XMP:XMP-dc:Subject"; a group whose family 1 is its family 0 is named once,
+#: "IPTC:Keywords", and a second APP13's "IPTC:IPTC2:Keywords".
+WHOLE_READ = ("-j", "-G0:1", "-a", "-all:all")
+#: What ExifTool says of a file as it reads it, every warning and error of its validation: by their copy numbers (family
+#: 4), as one key holds one ("ExifTool:Warning", "ExifTool:Copy1:Warning"); -G0:1 answers the first warning alone.
+READER_READ = ("-j", "-G0:4", "-a", "-ExifTool:Warning", "-ExifTool:Error", "-validate")
+#: The group of what ExifTool says of a file as it reads it, as ExifTool 13.59 names it: "ExifTool:Warning" (a warning,
+#: "Value for IFD0 tag 0x011a XResolution overlaps IFD"), "ExifTool:Error", and "ExifTool:Validate" (the counts of errors,
+#: warnings and minor warnings, "0 14 0").
+READER_SAYS = "ExifTool"
+
+
+def oracle(exiftool_path):
+    """ExifTool's independent read of whole files (Oracle.whole), what the shadow comparison of the two writers judges
+    their copies by (tagpup.services.metadata_check). Use it in a `with` block: its ExifTool, which knows TagPup's
+    namespace, is started as the block is entered, and a start that fails raises there, before any file is compared."""
+    return Oracle(exiftool_path)
+
+
+class Oracle:
+    """ExifTool's whole read of files, every tag of every group (WHOLE_READ) under -n, in a session of its own."""
+
+    def __init__(self, exiftool_path):
+        self.exiftool_path = exiftool_path
+        self._stack = contextlib.ExitStack()
+        self._et = None
+
+    def __enter__(self):
+        self._et = self._stack.enter_context(exiftool_session.ExifToolSession(
+            executable=self.exiftool_path, config_file=bake.config_path(), common_args=["-n"]))
+        return self
+
+    def __exit__(self, *problem):
+        self._et = None
+        self._stack.close()
+        return False
+
+    def whole(self, photo_paths):
+        """{paths.key(path): {tag: value}} of ExifTool's whole read of each (WHOLE_READ), with what it says of each
+        (READER_READ's READER_SAYS tags). A file the second read leaves out (held a moment by another program) is raised,
+        never read as one that says nothing."""
+        rows = {paths.key(row.get("SourceFile", "")): row
+                for row in json.loads(self._et.execute(*WHOLE_READ, *photo_paths) or "[]")}
+        answered = set()
+        for said in json.loads(self._et.execute(*READER_READ, *photo_paths) or "[]"):
+            key = paths.key(said.get("SourceFile", ""))
+            answered.add(key)
+            row = rows.setdefault(key, {})
+            row.update((tag, value) for tag, value in said.items() if tag.split(":")[0] == READER_SAYS)
+        if set(rows) - answered:
+            raise OSError("ExifTool answered the whole read of a copy and not the read of what it says of it")
+        return rows
 
 def _read_headers(found, photo_paths, wanted):
     """`found`, read's answer, each clip's QuickTime header dates of `wanted` (fields.CLIP_HEADER_DATES) put in place of
