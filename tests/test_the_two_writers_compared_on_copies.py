@@ -153,12 +153,12 @@ class TheTwoWritersComparedOnCopies(FilesCase):
             et.execute("-ThumbnailImage<=" + thumb, "-IFD0:Orientation#=1", "-XMP-tiff:Orientation#=1",
                        "-overwrite_original", a)
             et.execute("-IFD1:Orientation#=1", "-overwrite_original", a)
-        real, reads = metadata_check._whole, []
+        real, reads = field_values.Oracle.whole, []
 
         def whole(*args):
             reads.append(real(*args))
             return reads[-1]
-        with mock.patch.object(metadata_check, "_whole", whole):
+        with mock.patch.object(field_values.Oracle, "whole", whole):
             found = self.check()
         # The whole read tells IFD0's Orientation from IFD1's, so a side that turned one and not the other differs.
         original = next(iter(reads[0].values()))
@@ -371,7 +371,7 @@ class TheTwoWritersComparedOnCopies(FilesCase):
         def leaving_out(left):
             def execute(session, *params, **kwargs):
                 answer = real(session, *params, **kwargs)
-                if metadata_check.READER_READ[:5] != tuple(params[:5]):
+                if field_values.READER_READ[:5] != tuple(params[:5]):
                     return answer
                 rows = json.loads(answer or "[]")
                 return json.dumps([row for row in rows if left not in os.path.basename(row["SourceFile"])])

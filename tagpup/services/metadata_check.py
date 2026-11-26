@@ -17,11 +17,11 @@ refuses falls to it), once as a journaled write is (given a `saving` that saves 
 it fits, else the same rewrite). Then compared, a difference each:
 - every segment but the EXIF, XMP and IPTC ones, in order, and the picture (its first scan to its end): the copy's own;
 - the fields written, as each side reads back (fields.reads_same of fields.as_patched: a copy the own writer left stale
-  holds what it held), and ExifTool's whole read of the two, tag for tag (WHOLE_READ: every copy of a tag, each by its
+  holds what it held), and ExifTool's whole read of the two, tag for tag (field_values.oracle: every copy of a tag, each by its
   family 0 and 1 groups, what SET_ASIDE names aside), a tag held empty as one not held (fields.field_values: an empty
   caption ExifTool's rewrite drops and the own writer's patch leaves): a copy the own writer left stale holds the
   original's value, and KNOWN tags may differ;
-- what ExifTool says of each copy as it reads it (each warning and error of its validation, by its text: READER_SAYS),
+- what ExifTool says of each copy as it reads it (each warning and error of its validation, by its text: field_values.READER_SAYS),
   where the own writer's copy says a thing neither ExifTool's copy nor the original says (one ExifTool heals as it reads
   still reads the same tags, and another reader may refuse it; a warning the original held already is not the writer's,
   and a copy saying fewer of the original's is no worse: its validation's counts are not compared);
@@ -44,7 +44,7 @@ from contextlib import closing, contextmanager
 
 from tagpup.core import byte_lock, dates, fields, paths, vocabulary
 from tagpup.core.result import Refused
-from tagpup.files import bake, containers, exiftool_session, field_values, shares
+from tagpup.files import containers, field_values, shares
 from tagpup.services import photos as photo_actions, roots as roots_service, segment_census, tagging
 from tagpup.store import db, inspection
 
@@ -59,24 +59,12 @@ MARGIN = 1 << 30
 COPIES = 4
 #: Segments of a JPEG the writers edit (containers' kinds); every other is the photo's own.
 METADATA = frozenset({"exif", "xmp", "xmp-extension", "iptc"})
-#: ExifTool's whole read of a copy (its warnings are READER_READ's). The session's own common -G (exiftool_session.DEFAULT_COMMON_ARGS) is given after
-#: each command's and wins over a -G0:1 in it, naming IFD0's and IFD1's Orientation alike, so the whole read has a
-#: session of its own whose common arguments are -n alone. Keys read so (ExifTool 13.59): "EXIF:IFD0:Orientation",
-#: "XMP:XMP-dc:Subject"; a group whose family 1 is its family 0 is named once, "IPTC:Keywords", and a second APP13's
-#: "IPTC:IPTC2:Keywords".
-WHOLE_READ = ("-j", "-G0:1", "-a", "-all:all")
-#: What ExifTool says of a copy as it reads it, every warning and error of its validation: by their copy numbers (family
-#: 4), as one key holds one ("ExifTool:Warning", "ExifTool:Copy1:Warning"); -G0:1 answers the first warning alone.
-READER_READ = ("-j", "-G0:4", "-a", "-ExifTool:Warning", "-ExifTool:Error", "-validate")
-#: The tags of READER_SAYS compared, by their name: its validation's counts ("0 14 0") are not.
+#: The tags of what ExifTool says of a file (field_values.READER_SAYS) compared, by their name: its validation's counts
+#: ("0 14 0") are not.
 SAID = frozenset({"Warning", "Error"})
 #: Groups and tags of ExifTool's read that are no field of the file: the file system's, those derived from others, the
 #: version of the ExifTool that read it.
 SET_ASIDE = frozenset({"SourceFile", "File", "Composite", "ExifTool:ExifToolVersion"})
-#: The group of what ExifTool says of a file as it reads it, as ExifTool 13.59 names it: "ExifTool:Warning" (a warning,
-#: "Value for IFD0 tag 0x011a XResolution overlaps IFD"), "ExifTool:Error", and "ExifTool:Validate" (the counts of errors,
-#: warnings and minor warnings, "0 14 0").
-READER_SAYS = "ExifTool"
 #: Tags the two writers leave differently by design, as ExifTool 13.59 reads them (each seen in its output,
 #: tests/test_the_two_writers_compared_on_copies.py): the XMP toolkit names the program that wrote the packet last, which
 #: ExifTool's rewrite makes itself and the own writer's patch leaves; where the thumbnail lies in the EXIF block, which a
@@ -187,44 +175,28 @@ def _written(et, path, values, own):
     return (how[0] if how else "unchanged"), tuple(stale), None
 
 
-def _whole(whole_et, photo_paths):
-    """{paths.key(path): {tag: value}} of ExifTool's whole read of each (WHOLE_READ), with what it says of each
-    (READER_READ's READER_SAYS tags). A copy the second read leaves out (held a moment by another program) is raised,
-    never read as one that says nothing."""
-    rows = {paths.key(row.get("SourceFile", "")): row
-            for row in json.loads(whole_et.execute(*WHOLE_READ, *photo_paths) or "[]")}
-    answered = set()
-    for said in json.loads(whole_et.execute(*READER_READ, *photo_paths) or "[]"):
-        key = paths.key(said.get("SourceFile", ""))
-        answered.add(key)
-        row = rows.setdefault(key, {})
-        row.update((tag, value) for tag, value in said.items() if tag.split(":")[0] == READER_SAYS)
-    if set(rows) - answered:
-        raise OSError("ExifTool answered the whole read of a copy and not the read of what it says of it")
-    return rows
-
-
 def _same(a, b):
     """Do two values of ExifTool's read hold the same, in any order, one held empty as one not held?"""
     return sorted(fields.field_values(a)) == sorted(fields.field_values(b))
 
 
 def _said(row):
-    """{(name, text)} of what ExifTool says of a file as it reads it (READER_SAYS's SAID tags, every copy)."""
+    """{(name, text)} of what ExifTool says of a file as it reads it (field_values.READER_SAYS's SAID tags, every
+    copy)."""
     return {(tag.rsplit(":", 1)[-1], str(value)) for tag, value in row.items()
-            if tag.split(":")[0] == READER_SAYS and tag.rsplit(":", 1)[-1] in SAID}
+            if tag.split(":")[0] == field_values.READER_SAYS and tag.rsplit(":", 1)[-1] in SAID}
 
 
 def _tags_differing(original, theirs, own, stale):
     """The tags of ExifTool's whole read on which the two sides differ (a field the own writer left stale: own's holds
-    other than the original's; what ExifTool says of the copy, READER_SAYS, named "ExifTool:Warning" or
+    other than the original's; what ExifTool says of the copy, field_values.READER_SAYS, named "ExifTool:Warning" or
     "ExifTool:Error": own's says a thing neither ExifTool's copy nor the original says). A tag's field is its family 0
-    group and its name (WHOLE_READ's keys)."""
-    found = ["%s:%s" % (READER_SAYS, name) for name in
+    group and its name (field_values.WHOLE_READ's keys)."""
+    found = ["%s:%s" % (field_values.READER_SAYS, name) for name in
              sorted({name for name, _text in _said(own) - _said(theirs) - _said(original)})]
     for tag in sorted(set(theirs) | set(own)):
         group = tag.split(":")[0]
-        if group in SET_ASIDE or tag in SET_ASIDE or tag in KNOWN or group == READER_SAYS:
+        if group in SET_ASIDE or tag in SET_ASIDE or tag in KNOWN or group == field_values.READER_SAYS:
             continue
         if group == "MakerNotes" or "%s:%s" % (group, tag.rsplit(":", 1)[-1]) in stale:
             # A maker note ExifTool cannot parse (bad offsets) is dropped by its rewrite and kept byte for byte by the
@@ -240,8 +212,8 @@ def _tags_differing(original, theirs, own, stale):
 
 
 class _Run:
-    def __init__(self, library, et, whole_et, reveal):
-        self.library, self.et, self.whole_et, self.reveal = library, et, whole_et, reveal
+    def __init__(self, library, et, oracle, reveal):
+        self.library, self.et, self.oracle, self.reveal = library, et, oracle, reveal
         self.looked, self.skipped = collections.Counter(), collections.Counter()
         self.how, self.differences = collections.defaultdict(collections.Counter), collections.Counter()
         self.revealed = []
@@ -271,7 +243,7 @@ class _Run:
             return None
         self.looked["read"] += 1
         try:
-            whole = _whole(self.whole_et, [original]).get(paths.key(original), {})
+            whole = self.oracle.whole([original]).get(paths.key(original), {})
         except OSError as error:
             self.differ(path, "the original", "a copy could not be compared", str(error))
             return None
@@ -319,7 +291,7 @@ class _Run:
             held = read_back.get(paths.key(copy))
             if not isinstance(held, dict) or not fields.reads_same(held, fields.as_patched(was, after, left)):
                 self.differ(path, operation, "%s's fields read back other than written" % name, held)
-        found = _whole(self.whole_et, copies)
+        found = self.oracle.whole(copies)
         for tag in _tags_differing(whole, found.get(paths.key(copies[0]), {}), found.get(paths.key(copies[1]), {}),
                                    set(stale)):
             self.differ(path, operation, "the sides differ in %s" % tag,
@@ -348,10 +320,8 @@ def check(library, exiftool_path, sample=SAMPLE, seed=segment_census.SEED, revea
         jpegs = [path for _photo_id, path in inspection.photo_files(conn) if segment_census.is_jpeg(path)]
     chosen = segment_census.drawn(jpegs, sample, seed)
     stopped = None
-    with sandbox() as root, field_values.session(exiftool_path) as et, \
-            exiftool_session.ExifToolSession(executable=exiftool_path, config_file=bake.config_path(),
-                                             common_args=["-n"]) as whole_et:
-        run = _Run(library, et, whole_et, reveal)
+    with sandbox() as root, field_values.session(exiftool_path) as et, field_values.oracle(exiftool_path) as oracle:
+        run = _Run(library, et, oracle, reveal)
         try:
             for done, path in enumerate(chosen, 1):
                 folder = tempfile.mkdtemp(prefix="%d-" % done, dir=root)

@@ -1,6 +1,8 @@
 """ExifTool stalls (a share gone away): an edit of a selection (tests/test_bulk_edits.py is the edit's own), the indexer's read
 and sync's pairing read each cost one deadline and are never retried photo by photo, whatever the count; what the indexer did not
-hear about is left unread, never stamped (docs/findings.md, #1473). Fictional names only.
+hear about is left unread, never stamped (docs/findings.md, #1473). An ExifTool that will not start: a read that decides
+from its answer (sync's pairing, Smart Rename's captions) raises, never reads every photo as holding nothing, and the index's
+read leaves every photo unread. Fictional names only.
 """
 import os
 import shutil
@@ -16,7 +18,7 @@ import test_bulk_edits as T  # noqa: E402
 
 import page_writes  # noqa: E402
 import photo_rows  # noqa: E402
-from tagpup.files import exiftool_session, field_values, metadata, shares  # noqa: E402
+from tagpup.files import exiftool_session, field_values, metadata, names, shares  # noqa: E402
 from tagpup.core import paths  # noqa: E402
 from tagpup.services import batches, file_changes, journal, relink_photos, tagging  # noqa: E402
 
@@ -114,11 +116,82 @@ class TheIndexAndSyncReadAShareThatStopsAnswering(unittest.TestCase):
         self.assertTrue(all(r["mtime"] is not None for r in second))
         self.assertEqual(1, len(starts), "one session for the reader's life")
 
+    def test_one_reader_left_open_reads_fields_again_after_the_share_comes_back(self):
+        """The same at the reads that answer by field (Fields.read): a stall answers that photo and every later one of
+        the call NotAnswered, and the next call of the same reader answers them all."""
+        starts, away = [], [self.photos[1]]
+
+        class ShareAwayOnce(StalledSession):
+            def __enter__(self):
+                starts.append(1)
+                return self
+
+            def get_tags(self, batch, tags=None, params=None):
+                StalledSession.calls.append(list(batch))
+                if len(batch) > 1 and away:
+                    raise RuntimeError("Error: one of them is no file")
+                if away and batch == away:
+                    away.clear()
+                    raise exiftool_session.ExifToolTimeout(STALLED)
+                return [{"SourceFile": path, "File:MIMEType": "image/jpeg", "XMP:Subject": ["Harbour"]} for path in batch]
+        with mock.patch.object(exiftool_session, "ExifToolSession", ShareAwayOnce), \
+                field_values.opened("exiftool") as reader:
+            first = reader.read(self.photos, ["XMP:Subject"])
+            second = reader.read(self.photos, ["XMP:Subject"])
+        answers = [first[paths.key(path)] for path in self.photos]
+        self.assertEqual({"XMP:Subject": ["Harbour"]}, answers[0])
+        self.assertEqual([field_values.NotAnswered] * 2, [type(answer) for answer in answers[1:]])
+        self.assertEqual([{"XMP:Subject": ["Harbour"]}] * 3, [second[paths.key(path)] for path in self.photos])
+        self.assertEqual(1, len(starts), "one session for the reader's life")
+
     def test_syncs_pairing_read_waits_one_deadline_and_pairs_nothing(self):
         with mock.patch.object(exiftool_session, "ExifToolSession", StalledSession):
             by_original, by_identity = relink_photos.claims_of(self.photos)
         self.assertEqual(1, len(StalledSession.calls))
         self.assertEqual(({}, {}), (by_original, by_identity))
+
+
+class WillNotStart:
+    """An ExifTool that cannot be started: its program missing, or refused by the machine."""
+    starts = 0
+
+    def __init__(self, *args, **kwargs):
+        WillNotStart.starts += 1
+        raise FileNotFoundError("[WinError 2] The system cannot find the file specified")
+
+
+class AnExifToolThatWillNotStart(unittest.TestCase):
+    def setUp(self):
+        folder = tempfile.mkdtemp(prefix="no_exiftool_")
+        self.addCleanup(shutil.rmtree, folder, True)
+        self.photos = []
+        for name in ("Quay.jpg", "Slipway.jpg"):
+            self.photos.append(os.path.join(folder, name))
+            with open(self.photos[-1], "wb") as handle:
+                handle.write(b"x")
+        WillNotStart.starts = 0
+        patcher = mock.patch.object(exiftool_session, "ExifToolSession", WillNotStart)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def test_syncs_pairing_read_raises_rather_than_pairing_nothing(self):
+        # Pairing nothing would leave a whole sync to remove the rows a DocumentID could have relinked.
+        with self.assertRaises(FileNotFoundError):
+            relink_photos.claims_of(self.photos)
+
+    def test_smart_renames_read_raises_rather_than_reading_no_caption(self):
+        with self.assertRaises(FileNotFoundError):
+            names.read_for_renaming("exiftool", self.photos)
+
+    def test_one_reader_raises_on_a_read_leaves_the_index_read_unread_and_tries_the_start_again(self):
+        with field_values.opened("exiftool") as reader:
+            self.assertEqual({}, reader.read([], ["XMP:Subject"]), "nothing asked: nothing started")
+            self.assertEqual(0, WillNotStart.starts)
+            with self.assertRaises(FileNotFoundError):
+                reader.read(self.photos, ["XMP:Subject"])
+            records = reader.whole(self.photos)
+        self.assertEqual([(None, metadata.NOT_STARTED)] * 2, [(r["mtime"], r["unread"]) for r in records])
+        self.assertEqual(2, WillNotStart.starts, "each call tries the start again")
 
 
 class AStalledExifTool(T.Bulk):
