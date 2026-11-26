@@ -135,11 +135,7 @@ const NOTHING_TO_SAY = 'Ready';
 export function checkIndexingStatus(queued = []) {
     const follow = state.indexFollow;
     forgetAnotherLibrary(follow);
-    for (const folder of queued || []) {
-        if (!folder) continue;
-        follow.known.set(pathKey(folder), folder);
-        follow.counted.add(pathKey(folder));
-    }
+    followFolders((queued || []).filter(Boolean));
     follow.failures = 0;
     if (follow.asking) {
         follow.again = true;
@@ -148,6 +144,23 @@ export function checkIndexingStatus(queued = []) {
     clearTimeout(follow.timer);
     follow.timer = null;
     askIndexes();
+}
+
+/**
+ * Folders the queue holds, followed to their end. One the page did not know of yet (queued by Manage folders, Add,
+ * TagTuner or the watcher) is named at once in the Library pane's Folders tab, marked queued (cut F): its counts are read
+ * again.
+ */
+function followFolders(folders) {
+    const follow = state.indexFollow;
+    let fresh = false;
+    for (const folder of folders) {
+        const key = pathKey(folder);
+        if (!follow.known.has(key)) fresh = true;
+        follow.known.set(key, folder);
+        follow.counted.add(key);
+    }
+    if (fresh) upper.navigatorCountsChanged();
 }
 
 /** What the page followed of another library is not this one's (a page is one library; its address moved on). */
@@ -212,10 +225,7 @@ function heardIndexes(data, library) {
     const waiting = (Array.isArray(data.queued) ? data.queued : []).filter(job => job && job.folder);
     const listed = new Map([...running, ...waiting].map(job => [pathKey(job.folder), job.folder]));
     const gone = [...follow.known].filter(([key]) => !listed.has(key));
-    for (const [key, folder] of listed) {
-        follow.known.set(key, folder);
-        follow.counted.add(key);
-    }
+    followFolders([...listed.values()]);
     showIndexing(running, waiting);
     return Promise.all(gone.map(([key, folder]) => api.json(`/api/folder/index-status?path=${encodeURIComponent(folder)}`)
         .then(status => ({ key, folder, status }), () => ({ key, folder, status: null }))))

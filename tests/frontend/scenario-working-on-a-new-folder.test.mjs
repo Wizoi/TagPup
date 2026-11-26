@@ -138,6 +138,22 @@ async function addFromOrganize(ctx, folder) {
 }
 
 describe("V32: a folder added, worked on in Organize, a view and back, and its index ends", () => {
+  test("a folder added while the Library pane's folders are read: they are read again when it is shown (cut F)", async (t) => {
+    const q = queueOf();
+    const ctx = await page(t, q);
+    click(ctx.window, ctx.$("sidebar-tab-library"));
+    await ctx.tick(200);
+    const reads = ctx.folderReads();
+    assert.ok(reads >= 1, "fixture: the Library pane did not read its folders");
+    click(ctx.window, ctx.$("sidebar-tab-folder"));
+    await ctx.tick(200);
+    await addFromOrganize(ctx, HEAT_1);
+    await ctx.tick();
+    click(ctx.window, ctx.$("sidebar-tab-library"));
+    await ctx.tick(200);
+    assert.equal(ctx.folderReads(), reads + 1, "the folder just queued is not in the Folders tab until its index ends");
+  });
+
   test("the page follows the index throughout, reads again what it wrote, and keeps its closing sentence", async (t) => {
     let suggesting = false;
     const q = queueOf();
