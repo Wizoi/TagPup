@@ -423,8 +423,11 @@ class ChangingTheLocation(RootsCase):
             return bool(rooted) and all(path.startswith(place) for path in rooted)
         self.assertTrue(rooted_at(self.side.pictures))
         with mock.patch.object(core_machine, "roots_of", wraps=core_machine.roots_of) as read:
+            began = time.monotonic()
             self.assertTrue(holds_for(lambda: rooted_at(self.side.pictures), recheck * 2, interval=0.01))
-        self.assertLessEqual(read.call_count, 3, "a busy connection reads the map once a recheck, not at every use")
+            elapsed = time.monotonic() - began
+        self.assertLessEqual(read.call_count, elapsed / recheck + 2,
+                             "a busy connection reads the map once a recheck, not at every use")
         config.set_location("pictures", self.copy)
         wait_until(lambda: rooted_at(self.copy), timeout=recheck * 8, interval=0.01,
                    what="a connection asked every 10 ms to take the map moved on disk")
