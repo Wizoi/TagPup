@@ -362,7 +362,7 @@ function buildDialog() {
  * Open the dialog on the page's library: its folders read now, nothing browsed yet. `queued(reply)` is called once
  * folders are queued, `removed(folder, reply)` once one is removed -- each after the write, even if the dialog closed.
  */
-export function openFolderManager({ queued, removed } = {}) {
+export function openFolderManager({ queued, removed, welcome } = {}) {
     if (!manager.modal) buildDialog();
     manager.queued = queued || null;
     manager.removed = removed || null;
@@ -373,7 +373,7 @@ export function openFolderManager({ queued, removed } = {}) {
     Object.assign(manager.remove, { folders: [], chosen: null, states: new Map() });
     manager.add.parent.textContent = '';
     manager.remove.filter.value = '';
-    note(manager.add.list, 'Browse to the folder that holds the ones to add.');
+    note(manager.add.list, (welcome ? welcome + ' ' : '') + 'Browse to the folder that holds the ones to add.');
     note(manager.remove.list, "Reading the library's folders...");
     say('');
     showAddSelection();

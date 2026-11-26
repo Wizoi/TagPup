@@ -6,6 +6,7 @@
 // TagTuner on this library.
 import { openFolderManager } from './common/folder-manager.js';
 import { wireGear } from './common/gear.js';
+import { NEW_LIBRARY_LINE, takeNewLibraryWelcome } from './common/library.js';
 import { wireTagEditor } from './common/tag-editor.js';
 import { openSettings } from './common/settings-dialog.js';
 import { openHistory } from './common/history-dialog.js';
@@ -44,7 +45,26 @@ export function wireTagPupGear() {
     const menu = document.getElementById('gear-menu');
     // The menu's library views: the whole library, or the folder that is open (library-view.js).
     if (button) button.addEventListener('click', () => syncLibraryMenu(menu));
-    return wireGear(button, menu, {
+    // Folders queued: the open folder is asked again whether it is the library's (membership.js). A folder
+    // removed: the navigator's counts and the view that is open are read again.
+    const manageFolders = (welcome) => openFolderManager({
+        welcome,
+        queued: (data) => {
+            if (!state.scannedFolder) return;
+            upper.checkFolderMembership(state.scannedFolder);
+            // The open folder is among those queued, or under one: follow its index to the end (rescan).
+            const open = pathKey(state.scannedFolder);
+            if ((data.queued || []).some(q => open === pathKey(q) || open.startsWith(pathKey(q) + '\\'))) {
+                checkIndexingStatus(state.scannedFolder);
+            }
+        },
+        removed: () => {
+            upper.navigatorCountsChanged();
+            if (state.library) refreshLibraryView();
+            else if (state.scannedFolder) scanFolder(true);
+        },
+    });
+    const gear = wireGear(button, menu, {
         'browse-library': browseWholeLibrary,
         'library-of-folder': libraryViewOfFolder,
         'tag-editor': editor.open,
@@ -57,23 +77,9 @@ export function wireTagPupGear() {
                 if (state.scannedFolder) scanFolder(true);
             },
         }),
-        // Folders queued: the open folder is asked again whether it is the library's (membership.js). A folder
-        // removed: the navigator's counts and the view that is open are read again.
-        'manage-folders': () => openFolderManager({
-            queued: (data) => {
-                if (!state.scannedFolder) return;
-                upper.checkFolderMembership(state.scannedFolder);
-                // The open folder is among those queued, or under one: follow its index to the end (rescan).
-                const open = pathKey(state.scannedFolder);
-                if ((data.queued || []).some(q => open === pathKey(q) || open.startsWith(pathKey(q) + '\\'))) {
-                    checkIndexingStatus(state.scannedFolder);
-                }
-            },
-            removed: () => {
-                upper.navigatorCountsChanged();
-                if (state.library) refreshLibraryView();
-                else if (state.scannedFolder) scanFolder(true);
-            },
-        }),
+        'manage-folders': () => manageFolders(),
     });
+    // A library made a moment ago opens on Manage folders, once (library.js).
+    if (takeNewLibraryWelcome()) manageFolders(NEW_LIBRARY_LINE);
+    return gear;
 }

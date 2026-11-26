@@ -27,6 +27,25 @@ export function rememberLibrary(name) {
     } catch (e) { /* a browser that keeps nothing: the picker asks each time */ }
 }
 
+// The library this browser just made, kept for the one page load that follows: that load opens Manage folders.
+const WELCOME_KEY = 'tagpup.new-library';
+
+/** What Manage folders says when it opens on a library just made. */
+export const NEW_LIBRARY_LINE = 'Add the folders this library holds.';
+
+/**
+ * True once, on the first load of a library made just now (and only if this page is that library); the mark is
+ * taken whatever the answer, so a later reload, or another library, does not open Manage folders.
+ */
+export function takeNewLibraryWelcome() {
+    let made = null;
+    try {
+        made = sessionStorage.getItem(WELCOME_KEY);
+        sessionStorage.removeItem(WELCOME_KEY);
+    } catch (e) { return false; }
+    return !!made && made === libraryIn(window.location.pathname);
+}
+
 /**
  * The parameters of an address that name a view of a library (web/tagpup/library-source.js): its source, its order and what it
  * shows (`media`). The one list: leaving a view, and going to another library, take all of them away (findings #697).
@@ -120,7 +139,7 @@ export function initDatabaseSelector(select, createButton, { beforeLeaving = (go
 
     if (createButton) {
         createButton.addEventListener('click', () => {
-            const dbName = prompt('Enter a name for the new database (alphanumeric characters, e.g. "vacation_2026"):');
+            const dbName = prompt('Enter a name for the new library (alphanumeric characters, e.g. "vacation_2026"):');
             if (!dbName) return;
             
             let cleanName = dbName.trim();
@@ -143,12 +162,14 @@ export function initDatabaseSelector(select, createButton, { beforeLeaving = (go
             })
             .then(data => {
                 if (data.success) {
+                    // Only a library made just now opens Manage folders on arrival (takeNewLibraryWelcome).
+                    try { sessionStorage.setItem(WELCOME_KEY, cleanName); } catch (e) { /* no welcome, nothing lost */ }
                     window.location.href = '/' + cleanName + '/';
                 } else {
-                    alert('Error creating database: ' + (data.error || 'Unknown error'));
+                    alert('Error creating library: ' + (data.error || 'Unknown error'));
                 }
             })
-            .catch(err => alert('Error creating database: ' + err));
+            .catch(err => alert('Error creating library: ' + err));
         });
     }
 }

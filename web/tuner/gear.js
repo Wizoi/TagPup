@@ -5,6 +5,7 @@
 // (web/common/folder-manager.js), and TagPup on this library.
 import { openFolderManager } from './common/folder-manager.js';
 import { wireGear } from './common/gear.js';
+import { NEW_LIBRARY_LINE, takeNewLibraryWelcome } from './common/library.js';
 import { openHistory } from './common/history-dialog.js';
 import { openSettings } from './common/settings-dialog.js';
 import { wireTagEditor } from './common/tag-editor.js';
@@ -28,14 +29,15 @@ export function wireTunerGear() {
             if (photosChanged) refreshSidebarQuietly();
         },
     });
-    return wireGear(document.getElementById('btn-gear'), document.getElementById('gear-menu'), {
+    const manageFolders = (welcome) => openFolderManager({ welcome, queued: indexingQueued, removed: () => fetchPhotos() });
+    const gear = wireGear(document.getElementById('btn-gear'), document.getElementById('gear-menu'), {
         'tag-editor': editor.open,
         'library-settings': openSettings,
         'folders-review': openReview,
         'name-faces': startNamingFaces,
         'library-roots': openRoots,
         // Queued folders show in the header's progress bar; a removal is read again in the list beside the photo.
-        'manage-folders': () => openFolderManager({ queued: indexingQueued, removed: () => fetchPhotos() }),
+        'manage-folders': () => manageFolders(),
         // An undo may have put back names and tags: the list beside the photo is read again.
         'library-history': () => openHistory({
             undone: () => {
@@ -44,4 +46,7 @@ export function wireTunerGear() {
             },
         }),
     });
+    // A library made a moment ago opens on Manage folders, once (library.js).
+    if (takeNewLibraryWelcome()) manageFolders(NEW_LIBRARY_LINE);
+    return gear;
 }
