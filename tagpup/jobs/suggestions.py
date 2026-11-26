@@ -291,6 +291,20 @@ def _unread(entries):
     return {"notes": notes, "unread": len(failed)}
 
 
+def _lacks(model):
+    """What the library had too little of to compare the run's photos with: the model's sentences
+    (tagpup.services.suggester.SuggestionModel.what_it_lacks, their one owner), said first by a finished run of
+    either kind -- a new library's Suggest offers nothing, and the page is told why (#3409). [] from a model that
+    cannot say. Read from the library: outside the lock a poll waits on."""
+    lacks = getattr(model, "what_it_lacks", None)
+    try:
+        said = lacks() if callable(lacks) else []
+        return list(said) if isinstance(said, list) else []
+    except Exception as e:
+        logger.warning("Could not tell what the library lacks: %s", e)
+        return []
+
+
 class SuggestionRuns:
     """One library's folders' suggestion runs. `statuses` maps a folder's key to its run:
     {"status", "completed", "total"[, "message"]}. Changed only under `lock`."""
@@ -554,7 +568,9 @@ class SuggestionRuns:
 
     def run(self, folder, work):
         """Suggest for each photo of a folder not yet suggested for, then take the folder's
-        consensus, then say "completed". The body of a started run; callable directly.
+        consensus, then say "completed", with what the library lacked and the photos it could
+        not read (`notes`, `unread`), as a run that only looks says them. The body of a started
+        run; callable directly.
 
         A photo whose suggestion raised is marked failed, not stored empty, so the next run
         tries it again. Consensus is taken over every photo of the folder with a suggestion
@@ -602,11 +618,12 @@ class SuggestionRuns:
                 if fresh and key in self.statuses:
                     self._take_consensus(folder, photos, model)
                 # The library is read outside the lock a poll waits on.
+                lacks = _lacks(model)
                 wanted = {paths.key(meta["path"]) for meta in photos.values()}
                 unread = _unread([found for photo, found in self._saved(folder, photos).items()
                                   if paths.key(photo) in wanted])
                 with self.lock:
-                    self.statuses[key].update(unread)
+                    self.statuses[key].update(notes=lacks + unread["notes"], unread=unread["unread"])
                     self.statuses[key]["status"] = "completed"
             finally:
                 _end(model)
@@ -726,13 +743,7 @@ class SuggestionRuns:
     def _what_was_found(self, key, photos, model, left_out):
         """What a finished looking run adds to its status: `notes`, sentences for the page, and
         `unread`, how many of this folder's photos have no suggestion for want of being read."""
-        notes = []
-        lacks = getattr(model, "what_it_lacks", None)
-        try:
-            said = lacks() if callable(lacks) else []
-            notes.extend(said if isinstance(said, list) else [])
-        except Exception as e:
-            logger.warning("Could not tell what the library lacks: %s", e)
+        notes = _lacks(model)
         wanted = {paths.key(meta["path"]) for meta in photos.values()}
         with self.lock:
             memory = dict(self.looks.get(key, {}))

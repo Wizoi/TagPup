@@ -341,6 +341,7 @@ class TheSameRunInAFolderHeldSavesAsItAlwaysDid(Base):
         found = self.status(self.regatta)
         self.assertNotIn("in_memory", found)
         self.assertEqual("completed", found["status"])
+        self.assertEqual([], found["notes"], "a library with named faces and vectors lacks nothing to say")
         self.assertEqual(0, len(suggestion_jobs.runs_for(self.library).looks))
 
 
@@ -503,6 +504,65 @@ class AFailureIsSaidAndLeavesNothingHalfRun(Base):
 
 
 class ALibraryWithNothingToCompareWith(Base):
+    def fresh_library_holding(self, folder, count):
+        """A library made here, served as /fresh, holding `folder`: `count` photos read as the indexer reads them, each
+        with its vector, and no named face (a new library whose folders are indexed, #3409)."""
+        path = self.home.library("fresh.db")
+        library_actions.create(path)
+        library = Library(path)
+        self.addCleanup(self.runtime.forget, library)
+        self.addCleanup(suggestion_jobs.forget, library)
+        self.addCleanup(tagpup_routes.folders.forget, library)
+        model = store_embeddings.model_key(**self.clip.settings)
+        conn = db.connect(library.path)
+        try:
+            for n in range(1, count + 1):
+                photo = os.path.join(folder, "rowing_0%d.jpg" % n)
+                damaged_photos.whole_jpeg(photo, seed=20 + n)
+                photo_rows.add_read(conn, photo, {"XMP:Subject": ["Trips/Rowing"]})
+                stamp = shares.read_stamp(photo)
+                store_embeddings.put(conn, photo, model, stamp[0], stamp[1],
+                                     np.array(vector_of(photo), dtype=np.float32).tobytes(), None)
+            conn.commit()
+        finally:
+            conn.close()
+        return library
+
+    def fresh_status(self, folder):
+        return self.client.get("/fresh/api/folder/suggest-status", query_string={"path": folder}).get_json()
+
+    def test_a_saved_run_says_the_library_has_no_named_faces_in_the_words_a_look_says_it(self):
+        """A saved run said nothing of what the library lacked, so a new library's Suggest only looked weak (#3409):
+        it says the look's sentence, from the one place that has it (SuggestionModel.what_it_lacks)."""
+        rowing = os.path.join(self.home.root, "Pictures", "Rowing")
+        self.fresh_library_holding(rowing, 2)
+        reply = self.client.post("/fresh/api/folder/suggest-start", json={"folder_path": rowing})
+        self.assertEqual(False, reply.get_json()["in_memory"], reply.data)
+        saved = self.fresh_status(rowing)
+        self.assertEqual(("completed", 0), (saved["status"], saved["unread"]), saved)
+        self.assertNotIn("in_memory", saved)
+        self.client.post("/fresh/api/folder/suggest-start", json={"folder_path": self.cup})
+        looked = self.fresh_status(self.cup)
+        self.assertTrue(looked["in_memory"])
+        no_names = [note for note in looked["notes"] if "no named faces" in note]
+        self.assertEqual(1, len(no_names), looked["notes"])
+        # The library holds vectors and every photo was read: the one sentence, and no other.
+        self.assertEqual(no_names, saved["notes"])
+
+    def test_a_cancelled_saved_run_says_only_that_it_was_cancelled(self):
+        rowing = os.path.join(self.home.root, "Pictures", "Rowing")
+        self.fresh_library_holding(rowing, 2)
+        with mock.patch.object(suggestion_jobs, "threading",
+                               types.SimpleNamespace(Lock=threading.Lock, Thread=Deferred)):
+            reply = self.client.post("/fresh/api/folder/suggest-start", json={"folder_path": rowing})
+            self.assertEqual("running", reply.get_json()["status"], reply.data)
+            cancel = self.client.post("/fresh/api/folder/suggest-cancel", json={"folder_path": rowing})
+            self.assertTrue(cancel.get_json()["cancelled"], cancel.data)
+            Deferred.waiting[0].run()
+        found = self.fresh_status(rowing)
+        self.assertEqual(("cancelled", suggestion_jobs.CANCELLED), (found["status"], found["message"]), found)
+        self.assertNotIn("notes", found, "a cancelled run says nothing of what the library lacks")
+
     def test_a_new_library_suggests_nothing_and_says_why(self):
         fresh = os.path.join(self.home.root, "fresh_data")
         os.makedirs(fresh)

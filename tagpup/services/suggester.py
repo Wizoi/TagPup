@@ -821,7 +821,9 @@ class SuggestionModel:
     def what_it_lacks(self):
         """What the library had too little of to compare a photo with, for the run to say
         when it is done: [sentence]. A new library holds no vectors and no named faces, and
-        its photos are then suggested nothing -- not an error, so the page is told why."""
+        its photos are then suggested nothing -- not an error, so the page is told why. The
+        sentences' one owner: a run that saves and one that only looks both say these
+        (tagpup.jobs.suggestions._lacks)."""
         notes = []
         if self.suggester.index.indexed == 0:
             notes.append("The library has no photo vectors yet, so no tags are suggested from similar photos.")
