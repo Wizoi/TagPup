@@ -19,7 +19,7 @@ the machine's: NOT_THE_FILES.
 Measured against what the files did (an audit hook on subprocess.Popen and sqlite3.connect over the pure and sqlite
 files, 2026-11-24, --real-exiftool), 226 files: 3 differ besides the Flask files (said subprocess by the rule; most
 ran none under the test client), none of them a process missed: two said pure opened a library two modules deep,
-one said sqlite opened none. Two files that started ExifTool more than one module deep are OVERRIDES, each with its
+one said sqlite opened none. Four files whose use is more than one module deep are OVERRIDES, each with its
 reason: the general cause (a test handing a service 'exiftool') said 6 files that start none were subprocess.
 """
 import ast
@@ -46,6 +46,10 @@ NOT_THE_FILES = frozenset({
 })
 #: {test file: (size, why)}: a file the rule cannot see, for a reason only it has.
 OVERRIDES = {
+    "test_background_tasks": ("sqlite", "opens a library two modules deep (counted by the audit hook, #3375; "
+                              "`--size pure` ran it and touched SQLite)"),
+    "test_jobs_indexing": ("sqlite", "opens a library two modules deep (counted by the audit hook, #3375; "
+                           "`--size pure` ran it and touched SQLite)"),
     "test_no_person_row_without_an_id": ("subprocess", "tags.delete and journal.undo, handed 'exiftool', start it "
                                          "two services deep"),
     "test_reindex_keeps_face_decisions": ("subprocess", "the CLI's `index` (CliRunner, by its name in a list) "
