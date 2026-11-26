@@ -6,7 +6,7 @@ import os
 
 from tagpup.core import dates, fields, paths, photo_meta, renaming, validation, vocabulary
 from tagpup.core.result import Conflict, NotFound, Refused, Result, Unavailable
-from tagpup.files import convertible, field_values, images, metadata, names, recycle_bin, shares, video_frames
+from tagpup.files import convertible, field_values, images, names, recycle_bin, shares, video_frames
 from tagpup.services import batches, file_changes, file_only, libraries, rotation, thumbnails
 from tagpup.services import roots as roots_service
 from tagpup.store import db, faces, file_journal, generations, photos, taxonomy
@@ -234,14 +234,14 @@ def _read(library, files, exiftool_path):
     """{paths.key: page record} of `files`, each (path, mtime, size), mtime and size the
     reader's when None, read with ExifTool in batches of READ_BATCH."""
     people = taxonomy.people_vocabulary(library.path)
-    reader = metadata.MetadataExtractor(exiftool_path=exiftool_path)
     found = {}
-    for start in range(0, len(files), READ_BATCH):
-        batch = files[start:start + READ_BATCH]
-        for (file, mtime, size), meta in zip(batch, reader.batch_read([f for f, _, _ in batch], people=people)):
-            found[paths.key(file)] = page_record(
-                file, meta, meta["mtime"] if mtime is None else mtime,
-                meta["size"] if size is None else size)
+    with field_values.opened(exiftool_path) as reader:
+        for start in range(0, len(files), READ_BATCH):
+            batch = files[start:start + READ_BATCH]
+            for (file, mtime, size), meta in zip(batch, reader.whole([f for f, _, _ in batch], people=people)):
+                found[paths.key(file)] = page_record(
+                    file, meta, meta["mtime"] if mtime is None else mtime,
+                    meta["size"] if size is None else size)
     return found
 
 
@@ -792,8 +792,9 @@ def shift_date_taken(library, photo_paths, minutes, exiftool_path, group=None):
         result.fail("time shift", e)
         return result
     # Only reading, for the page: minting a DocumentID here would write the files again.
-    result.details["records"] = [meta for meta in metadata.MetadataExtractor(exiftool_path=exiftool_path).batch_read(
-        photo_paths, people=taxonomy.people_vocabulary(library.path)) if not meta.get("read_error")]
+    with field_values.opened(exiftool_path) as reader:
+        result.details["records"] = [meta for meta in reader.whole(
+            photo_paths, people=taxonomy.people_vocabulary(library.path)) if not meta.get("read_error")]
     result.details[TAKEN_OF] = {
         paths.key(meta["path"]): dates.date_taken(meta.get("raw_metadata", {}), meta["path"], images.kind_of(meta["path"]))
         for meta in result.details["records"]}

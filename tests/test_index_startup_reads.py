@@ -89,7 +89,7 @@ class Harbour(unittest.TestCase):
         runtime.model_key.return_value = MODEL
         extractor = mock.Mock(side_effect=Reached)
         with mock.patch.object(tagpup_cli, "get_runtime", return_value=runtime), \
-                mock.patch.object(tagpup_cli, "MetadataExtractor", extractor):
+                mock.patch("tagpup.files.field_values.Fields.whole", extractor):
             result = CliRunner().invoke(tagpup_cli.cli, ["--db", self.db_path, "index", folder or self.folder])
         return result, extractor.called
 

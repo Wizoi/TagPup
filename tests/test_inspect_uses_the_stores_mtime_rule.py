@@ -38,8 +38,7 @@ class TheMtimeOfARowAndItsFile(unittest.TestCase):
     def compared(self, file_mtime):
         record = {"document_id": None, "mtime": file_mtime, "size": 1, "tags": [], "captions": [], "people": [],
                   "raw_metadata": {}}
-        with mock.patch.object(inspect, "MetadataExtractor") as extractor:
-            extractor.return_value.batch_read.return_value = [record]
+        with mock.patch("tagpup.files.field_values.Fields.whole", return_value=[record]):
             return inspect.photo_against_file(self.library, self.photo_id, exiftool_path="exiftool")
 
     def test_the_tolerance_is_the_stores(self):

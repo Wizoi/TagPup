@@ -3,7 +3,7 @@
 A row a test writes by hand agrees with the test, not with the library. #247's
 fixtures held raw_metadata no read ever makes -- grouped names without their bare
 copies -- and the tests passed on the bug. Here a row is what the indexer records of a
-read (MetadataExtractor._structure, then store.photos.record_indexed), or what Suggest
+read (metadata.structure, then store.photos.record_indexed), or what Suggest
 makes of a photo it has never read (store.photos.ensure_row, in a folder added to the library);
 what a write of the app's own leaves is what the journaled write records in the transaction that
 marks the file done (store.photos.follow_fields, move_rows_in).
@@ -15,17 +15,16 @@ import hashlib
 import os
 
 from tagpup.core import fields, paths
-from tagpup.files import images
-from tagpup.files.metadata import MetadataExtractor
+from tagpup.files import field_values, images, metadata
 from tagpup.store import added_folders, db, embeddings, faces_detected, folders, photos
 
 
 def stamp_of(photo_path):
-    """(mtime, size) of the file, as the indexer takes it before its read (MetadataExtractor._stamp); (0.0, 0) for a
+    """(mtime, size) of the file, as the indexer takes it before its read (metadata.stamp_before_read); (0.0, 0) for a
     path no file is at -- most fixtures name a photo and make no file -- so that its row is a row that was read. By design
     (#1496): a stamp of 0 describes no file on disk (store.photos.describes), so anything that compares the row with a
     file reads it again; the real reader leaves such a row unstamped instead, which only the fixtures cannot be."""
-    stamp = MetadataExtractor._stamp(photo_path)
+    stamp = metadata.stamp_before_read(photo_path)
     return (0.0, 0) if stamp == (None, None) else stamp
 
 
@@ -33,7 +32,14 @@ def as_read(photo_path, fields, people=None):
     """The record a read of `photo_path` gives when ExifTool answers `fields`
     ({"XMP:Subject": [...], "EXIF:DateTimeOriginal": "2024:07:04 10:00:00"}). The file's
     mtime and size are read from disk when it exists (stamp_of)."""
-    return MetadataExtractor()._structure(photo_path, {"SourceFile": photo_path, **fields}, people, stamp_of(photo_path))
+    return metadata.structure(photo_path, {"SourceFile": photo_path, **fields}, people, stamp_of(photo_path))
+
+
+def read_whole(exiftool_path, photo_paths, **asked):
+    """The records the index's read gives of `photo_paths` (field_values.Fields.whole, `asked` its people and bakes),
+    through one Fields opened and closed for the call, as a service opens one for its operation."""
+    with field_values.opened(exiftool_path) as reader:
+        return reader.whole(list(photo_paths), **asked)
 
 
 def add_read(conn, photo_path, fields, people=None):

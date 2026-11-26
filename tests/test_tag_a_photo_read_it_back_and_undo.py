@@ -16,7 +16,7 @@ store.photos.describes now), test_single_save_and_smart_rename_are_journaled (#2
 (#298; its failing rename is ASaveFromThePage's), test_a_save_is_one_session, test_a_saved_row_is_the_
 indexers_shape (#251) and test_a_file_undo_waits_for_newer_changes. Each was broken in a scratch copy and this file
 fails: change_tags writing the loose parts of a path (tag write), save_photo opening a second session (one session),
-MetadataExtractor._structure dropping the bare names (the indexer's shape), file_changes._undoable skipping the
+metadata.structure dropping the bare names (the indexer's shape), file_changes._undoable skipping the
 newer-change check (undo order), save_photo's rename done outside the journal (rename after a caption).
 
 Lifted: tests/test_tagpup_server_api.py's TestSaveMetadata and TestBulkTags (what a save and a tag write left on the
@@ -57,7 +57,6 @@ from test_a_file_holds_what_exiftool_kept import ReadFilesCase, flip_a_picture_b
 from test_file_journal import EXIFTOOL, ExifToolSession, field_of, keywords_of, write_outside  # noqa: E402
 
 from tagpup.files import exiftool_session, names  # noqa: E402
-from tagpup.files.metadata import MetadataExtractor  # noqa: E402
 from tagpup.services import file_changes, photos as photo_actions, sync, tagging  # noqa: E402
 from tagpup.store import db, photos as store_photos  # noqa: E402
 
@@ -306,7 +305,7 @@ class TaggingAPhoto(ReadFilesCase):
                           self.status(change), self.states(change)))
         self.assertEqual(["Beach", "Places/Quay/Pier"], keywords_of(a), "a deep tag whole, no level of it alone")
         raw = json.loads(self.rows("SELECT raw_metadata FROM photos WHERE path = ?", (a,))[0][0])
-        self.assertEqual(MetadataExtractor(exiftool_path=EXIFTOOL).batch_read([a])[0]["raw_metadata"], raw)
+        self.assertEqual(photo_rows.read_whole(EXIFTOOL, [a])[0]["raw_metadata"], raw)
         self.assertEqual("Quay at dusk", raw["Title"])
         self.assertTrue(any(":" not in key for key in raw), "a read records the bare names too")
         written = os.stat(a).st_mtime_ns
@@ -326,7 +325,7 @@ class TaggingAPhoto(ReadFilesCase):
                          "the row of a file holding the save already was not made to say what it holds")
         # The whole row as a fresh scan stores it: the bare Subject kept (the photo's empty QuickTime Subject is not its
         # copy), and a keyword field holding one keyword a text, as the scan cleans it, not a list of one.
-        self.assertEqual(MetadataExtractor(exiftool_path=EXIFTOOL).batch_read([a])[0]["raw_metadata"], followed,
+        self.assertEqual(photo_rows.read_whole(EXIFTOOL, [a])[0]["raw_metadata"], followed,
                          "the row a save that wrote nothing followed is not the row a scan makes of the file")
 
         undone = self.undo(change)
@@ -366,7 +365,7 @@ class TaggingAPhoto(ReadFilesCase):
                                base=page_writes.base(self.library, a))
 
         raw = json.loads(self.rows("SELECT raw_metadata FROM photos WHERE path = ?", (a,))[0][0])
-        self.assertEqual(MetadataExtractor(exiftool_path=EXIFTOOL).batch_read([a])[0]["raw_metadata"], raw)
+        self.assertEqual(photo_rows.read_whole(EXIFTOOL, [a])[0]["raw_metadata"], raw)
         self.assertEqual(["Beach", "Places/Quay"], self.indexed(a))
         self.assert_row_describes_file(a)
 

@@ -40,7 +40,6 @@ from tagpup.core import fields, paths  # noqa: E402
 from tagpup.core.library import Library  # noqa: E402
 from tagpup.files import exiftool_session, field_values, images  # noqa: E402
 from tagpup.files.exiftool_session import ExifToolSession  # noqa: E402
-from tagpup.files.metadata import MetadataExtractor  # noqa: E402
 from tagpup.services import file_only  # noqa: E402
 from tagpup.services import libraries as library_actions  # noqa: E402
 from tagpup.services import settings as settings_service  # noqa: E402
@@ -546,7 +545,7 @@ class TheFolderIsAddedWhileAFileOnlyWriteIsInFlight(Base):
         # The indexer, now, reads the file with what the owner wrote into it.
         conn = db.connect(self.library.path)
         try:
-            record = MetadataExtractor(exiftool_path=EXIFTOOL).batch_read([self.loose[0]])[0]
+            record = photo_rows.read_whole(EXIFTOOL, [self.loose[0]])[0]
             store_photos.record_indexed(conn, self.loose[0], record)
             conn.commit()
         finally:
@@ -573,7 +572,7 @@ class AFolderEditedWhileJustLookingIsIndexedAsEdited(Base):
         found = sorted(os.path.join(self.lighthouse, name) for name in os.listdir(self.lighthouse))
         conn = db.connect(self.library.path)
         try:
-            for record in MetadataExtractor(exiftool_path=EXIFTOOL).batch_read(found):
+            for record in photo_rows.read_whole(EXIFTOOL, found):
                 store_photos.record_indexed(conn, record["path"], record)
             conn.commit()
         finally:

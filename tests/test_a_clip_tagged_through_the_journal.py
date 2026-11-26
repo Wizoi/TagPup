@@ -34,7 +34,7 @@ from view_library import ViewLibrary, make_jpeg  # noqa: E402
 from tests import page_writes  # noqa: E402
 from tagpup.core import fields, paths  # noqa: E402
 from tagpup.core.result import Refused  # noqa: E402
-from tagpup.files import containers, field_values, images, in_place, metadata, segment_edits  # noqa: E402
+from tagpup.files import containers, field_values, images, in_place, segment_edits  # noqa: E402
 from tagpup.services import file_only  # noqa: E402
 from tagpup.store import photos  # noqa: E402
 
@@ -132,7 +132,7 @@ def with_a_quicktime_subject_that_is_not_text(path):
     assert kind == b"moov", "ffmpeg's .mp4 ends with its moov"
     with open(path, "wb") as handle:
         handle.write(data[:at] + struct.pack(">I", size + len(udta)) + data[at + 4:] + udta)
-    held = metadata.MetadataExtractor(EXIFTOOL).batch_read([path])[0]["raw_metadata"].get("QuickTime:Subject")
+    held = photo_rows.read_whole(EXIFTOOL, [path])[0]["raw_metadata"].get("QuickTime:Subject")
     assert held, "ExifTool answers the clip's QuickTime Subject"
     return held
 
@@ -140,7 +140,7 @@ def with_a_quicktime_subject_that_is_not_text(path):
 @unittest.skipIf(EXIFTOOL is None or TOOLS.problem, "ExifTool or ffmpeg is not installed on this machine")
 class ALibraryHoldingAClip(unittest.TestCase):
     """A library holding a photo and a real ffmpeg clip (made once and kept, tests/corpus.py), each row recorded by the indexer's own read
-    (metadata.MetadataExtractor.batch_read), saved through the pages (Flask's test client, a home of its own). No test of its own: the scenarios of a clip in a library are its subclasses (here, test_a_clip_tag_undone,
+    (field_values.Fields.whole), saved through the pages (Flask's test client, a home of its own). No test of its own: the scenarios of a clip in a library are its subclasses (here, test_a_clip_tag_undone,
     test_a_clip_patch_cut_short, test_a_clip_dated_through_the_journal)."""
 
     def setUp(self):
@@ -162,7 +162,7 @@ class ALibraryHoldingAClip(unittest.TestCase):
     def index(self, *photo_paths):
         """Record each of `photo_paths` as the indexer reads it now; their ids."""
         ids = []
-        for record in metadata.MetadataExtractor(EXIFTOOL).batch_read(list(photo_paths)):
+        for record in photo_rows.read_whole(EXIFTOOL, list(photo_paths)):
             photo_rows.added(self.vl.conn, record["path"])   # the index adds the folder it is given first
             photos.record_indexed(self.vl.conn, record["path"], record)
             ids.append(photos.ensure_row(self.vl.conn, record["path"]))
@@ -174,7 +174,7 @@ class ALibraryHoldingAClip(unittest.TestCase):
 
     def read_now(self, path):
         """The tags the index reads of `path` now, and its XMP:Subject."""
-        record = metadata.MetadataExtractor(EXIFTOOL).batch_read([path])[0]
+        record = photo_rows.read_whole(EXIFTOOL, [path])[0]
         return record["tags"], fields.field_values(record["raw_metadata"].get("XMP:Subject"))
 
     def post(self, route, body):
@@ -216,7 +216,7 @@ class AClipInTheLibrary(ALibraryHoldingAClip):
         reply = self.post("photos/write", page_writes.save(self.vl.library, **{"path": self.clip_path, "tags": ["Trips/Pier"], "title": "Jetty at dusk"}))
         self.assertEqual((200, True), (reply.status_code, reply.get_json()["success"]), reply.get_json())
         self.assertEqual((["Trips/Pier"], ["Trips/Pier"]), self.read_now(self.clip_path))
-        record = metadata.MetadataExtractor(EXIFTOOL).batch_read([self.clip_path])[0]["raw_metadata"]
+        record = photo_rows.read_whole(EXIFTOOL, [self.clip_path])[0]["raw_metadata"]
         self.assertEqual(("Jetty at dusk", "Jetty at dusk"), (record.get("XMP:Title"), record.get("XMP:Description")),
                          "the title saved, the Description left as it was")
         self.assertEqual(["done"], self.change_states(clip))
@@ -259,7 +259,7 @@ class AClipInTheLibrary(ALibraryHoldingAClip):
         self.assertNotEqual(size, os.path.getsize(self.clip_path), "the patch appended an XMP box")
         self.assertEqual([(os.path.getsize(self.clip_path),)], self.vl.rows("SELECT size FROM photos WHERE id = ?", clip),
                          "the row describes the file as written, so the next scan does not read it again")
-        scanned = metadata.MetadataExtractor(EXIFTOOL).batch_read([self.clip_path])[0]["raw_metadata"]
+        scanned = photo_rows.read_whole(EXIFTOOL, [self.clip_path])[0]["raw_metadata"]
         recorded = json.loads(self.vl.rows("SELECT raw_metadata FROM photos WHERE id = ?", clip)[0][0])
         self.assertEqual(scanned, recorded, "and says what a scan reads of it")
         written = self.read_bytes(self.clip_path)

@@ -83,7 +83,6 @@ from tagpup.core import fields, orientation, paths, processes, progress_line, va
 from tagpup.core.library import Library  # noqa: E402
 from tagpup.files import bake, field_values, images  # noqa: E402
 from tagpup.files.exiftool_session import ExifToolSession  # noqa: E402
-from tagpup.files.metadata import MetadataExtractor  # noqa: E402
 from tagpup.jobs import indexing as indexing_jobs  # noqa: E402
 from tagpup.ml import clip  # noqa: E402
 from tagpup.ml.clip import ClipModel  # noqa: E402
@@ -968,8 +967,8 @@ class AnIndexReadsABake(unittest.TestCase):
                       "EXIF:GPSLongitude": 1.25, "EXIF:GPSLongitudeRef": "W"})
         written = file_only.write_fields(EXIFTOOL, [path], list(after), lambda _path, _held: file_changes.Plan(after=after))
         self.assertEqual(1, written.changed, written.errors)
-        extractor = MetadataExtractor(EXIFTOOL)
-        (plain,), (struct,) = extractor.batch_read([path]), extractor.batch_read([path], bakes=True)
+        with field_values.opened(EXIFTOOL) as reader:
+            (plain,), (struct,) = reader.whole([path]), reader.whole([path], bakes=True)
         self.assertTrue(struct.pop("baked"))
         self.assertEqual(plain, struct)
         for field in ("XMP:Subject", "XMP:Title", "XMP:Rating", "Composite:GPSLatitude"):

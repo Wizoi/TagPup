@@ -50,7 +50,7 @@ from tagpup.core import library as libraries
 from tagpup.core.idle import IdleCaches
 from tagpup.core.library import Library
 from tagpup.core.per_library import PerLibrary
-from tagpup.files import images
+from tagpup.files import field_values, images
 from tagpup.ml import gpu
 from tagpup.jobs import indexing as indexing_jobs
 from tagpup.jobs import naming_faces
@@ -349,6 +349,12 @@ def exiftool(library, settings=None):
     """The ExifTool program to run for `library`: the one it names, else the machine's
     (tagpup.config.exiftool_path)."""
     return tagpup_config.exiftool_path((settings or library_settings(library)).exiftool)
+
+
+def fields(library, settings=None):
+    """The face for one operation's reads of `library`'s photo files (tagpup.files.field_values.opened), over the
+    ExifTool the library names (exiftool): an entry point's, in a `with` block, never kept."""
+    return field_values.opened(exiftool(library, settings))
 
 
 def index_folder(library, subfolders=True):

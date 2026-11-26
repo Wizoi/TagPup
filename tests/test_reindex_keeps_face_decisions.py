@@ -131,7 +131,7 @@ class FaceDecisionCase(unittest.TestCase):
 @patch("tagpup.ml.clip.ClipModel._init_model")
 @patch("tagpup.ml.clip.ClipModel.picture_input")
 @patch("tagpup.ml.clip.ClipModel.embed_input")
-@patch("tagpup_cli.MetadataExtractor.batch_read")
+@patch("tagpup.files.field_values.Fields.whole")
 class TestReindexingAChangedPhoto(FaceDecisionCase):
     def reindex(self, batch_read, embed_input):
         embed_input.return_value = [0.2] * expected_dim()

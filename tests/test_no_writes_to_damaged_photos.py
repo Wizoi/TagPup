@@ -29,10 +29,11 @@ import own_home  # noqa: E402
 from click.testing import CliRunner  # noqa: E402
 
 import tagpup_cli  # noqa: E402
-from tagpup.files import images  # noqa: E402
+from tagpup.files import field_values, images  # noqa: E402
 from tagpup.files.exiftool_session import ExifToolSession  # noqa: E402
 from tagpup.core.fields import read_document_id  # noqa: E402
-from tagpup.files.metadata import IdentityWriter, MetadataExtractor  # noqa: E402
+from tagpup.files import metadata  # noqa: E402
+from tagpup.files.field_values import IdentityWriter  # noqa: E402
 from tagpup.services import libraries as library_actions  # noqa: E402
 from tagpup.store import db  # noqa: E402
 
@@ -134,14 +135,14 @@ class TheIdentityWriter(unittest.TestCase):
 
     def test_nor_into_one_exiftool_could_not_read(self):
         et = FakeExifTool()
-        record = MetadataExtractor._empty("D:/Harbour/jetty.jpg", RuntimeError("Entire file is binary zeros"), (1.0, 1))
+        record = metadata.empty("D:/Harbour/jetty.jpg", RuntimeError("Entire file is binary zeros"), (1.0, 1))
         self.assertIsNone(self.writer(et).give(record, decoded=True))
         self.assertEqual([], et.writes)
 
     def test_an_error_in_the_read_is_carried_on_the_record(self):
-        record = MetadataExtractor()._structure("D:/Harbour/jetty.jpg",
-                                                {"SourceFile": "D:/Harbour/jetty.jpg",
-                                                 "ExifTool:Error": "File format error"}, None, (1.0, 1))
+        record = metadata.structure("D:/Harbour/jetty.jpg",
+                                    {"SourceFile": "D:/Harbour/jetty.jpg", "ExifTool:Error": "File format error"}, None,
+                                    (1.0, 1))
         self.assertEqual("File format error", record["read_error"])
 
     def test_reading_writes_nothing(self):
@@ -151,8 +152,9 @@ class TheIdentityWriter(unittest.TestCase):
         et.get_tags = lambda batch, tags=None: [{"SourceFile": path} for path in batch]
         session = mock.MagicMock()
         session.return_value.__enter__.return_value = et
-        with mock.patch("tagpup.files.metadata.ExifToolSession", session):
-            MetadataExtractor("exiftool").batch_read(["D:/Harbour/jetty.jpg"])
+        with mock.patch("tagpup.files.exiftool_session.ExifToolSession", session), \
+                field_values.opened("exiftool") as reader:
+            reader.whole(["D:/Harbour/jetty.jpg"])
         self.assertEqual([], et.writes)
 
 

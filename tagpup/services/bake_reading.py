@@ -38,7 +38,7 @@ class Taken:
 
 
 def parsed(meta):
-    """The Bake, or bake.Rejected, that a record of MetadataExtractor.batch_read(bakes=True) holds."""
+    """The Bake, or bake.Rejected, that a record of field_values.Fields.whole(bakes=True) holds."""
     return bake.parse(meta.get("baked") or {})
 
 

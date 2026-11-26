@@ -19,7 +19,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import own_home  # noqa: E402
 
 from tagpup.core.library import Library  # noqa: E402
-from tagpup.files.metadata import MetadataExtractor  # noqa: E402
+import photo_rows  # noqa: E402
 from tagpup.services import inspect, maintenance  # noqa: E402
 from tagpup.store import db, journal, schema, taxonomy  # noqa: E402
 
@@ -66,7 +66,7 @@ class APhotoAgainstItsFile(ALibrary):
             known = taxonomy.read_people_vocabulary(conn)
         finally:
             conn.close()
-        record = MetadataExtractor(exiftool).batch_read([path], people=known)[0]
+        record = photo_rows.read_whole(exiftool, [path], people=known)[0]
         # As most real rows hold it: the prefixed spelling of each field only.
         prefixed = {k: v for k, v in record["raw_metadata"].items() if ":" in k}
         photo_id = self.execute(

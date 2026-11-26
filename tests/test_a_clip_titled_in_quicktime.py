@@ -24,10 +24,11 @@ import unittest
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import corpus  # noqa: E402
+import photo_rows  # noqa: E402
 from test_a_clip_tagged_through_the_journal import EXIFTOOL, TOOLS, ALibraryHoldingAClip  # noqa: E402
 
 from tests import page_writes  # noqa: E402
-from tagpup.files import containers, metadata  # noqa: E402
+from tagpup.files import containers  # noqa: E402
 from tagpup.files.exiftool_session import ExifToolSession  # noqa: E402
 
 QUICKTIME_TITLE = "Slipway at dusk"
@@ -63,7 +64,7 @@ class AClipTitledInQuickTime(ALibraryHoldingAClip):
             "base": {"tags": record["tags"], "title": record["title"]}}))
 
     def assert_row_says_what_a_scan_reads(self):
-        scanned = metadata.MetadataExtractor(EXIFTOOL).batch_read([self.clip_path])[0]
+        scanned = photo_rows.read_whole(EXIFTOOL, [self.clip_path])[0]
         row = self.vl.rows("SELECT raw_metadata, captions FROM photos WHERE id = ?", self.clip)[0]
         self.assertEqual(scanned["raw_metadata"], json.loads(row[0]), "the row holds what a scan reads of the file")
         self.assertEqual(scanned["captions"], json.loads(row[1] or "[]"), "and the captions a scan derives")

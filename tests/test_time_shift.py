@@ -110,7 +110,7 @@ class ShiftingACamerasClock(FilesCase):
 
         def read(et, photo_paths, wanted, *args, **kwargs):
             found = real_read(et, photo_paths, wanted, *args, **kwargs)
-            if not wanted:   # the whole record of each, as the read back after the write asks it (MetadataExtractor)
+            if not wanted:   # the whole record of each, as the read back after the write asks it (Fields.whole)
                 found[paths.key(self.b)] = field_values.NotAnswered("ExifTool did not answer in 1 s")
             return found
         with mock.patch.object(field_values, "read", read):
