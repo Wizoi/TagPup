@@ -2,19 +2,21 @@
  * V33: somebody adds a folder and tags its photos at once, while the index's bake writes its own fields into each new
  * photo's file (docs/plans/working-on-a-new-folder.md, cut B; DECISIONS 2026-11-26). Every save made from the list read
  * before the bake was refused as changed on disk, and the owner was told to save again. Now a refused save is read again
- * (by its id, found by its path for a folder's photo) and, when the tags and caption it writes over are as the page read
- * them, sent once more naming the file as it is now, the status line saying so. Someone else's tags changed meanwhile, or
- * the second send refused too, is today's refusal: the sentence, nothing merged, no third send. A photo the page no
- * longer lists is not sent again; a caption that renames the file follows the rename; two refusals in a row each go once
- * more; a library view's photo, read by its own id, goes the same way.
+ * (by its id, found by its path for a folder's photo) and sent once more naming the file as it is now and, as its base,
+ * what the page read; the server says whether it may be written (the tags and caption as that base), and written, the
+ * status line says so. Someone else's tags changed meanwhile is refused the second time too: today's sentence, nothing
+ * merged, no third send. A photo the page no longer lists is not sent again; a caption that renames the file follows the
+ * rename; two refusals in a row each go once more; a library view's photo, read by its own id, goes the same way.
  *
- * The server is a fake of the files as they are now (`disk`, each with its row's id), which a save that wrote changes, as
- * the real one does: the scan gives a folder's photos without an id, as photos.scan_folder does.
+ * The server is a fake of the files as they are now (`disk`, each with its row's id), which a save that wrote changes, and
+ * which refuses a save as the real one does (tagging.py save_photo): its stamp not the file's, or its base not the file's
+ * tags (as a set) and caption. The scan gives a folder's photos without an id, as photos.scan_folder does. `ctx.replies`
+ * answers the next saves instead, for a reply the model does not make (a rename).
  */
 import { test, describe, afterEach } from "node:test";
 import assert from "node:assert/strict";
 import {
-  loadApp, FakeServer, photoRecord, flush, click, openFolder, closeAllApps, pageExports, SAVE, saveCalls, saved,
+  loadApp, FakeServer, photoRecord, flush, click, openFolder, closeAllApps, pageExports, SAVE, saveCalls, savedPhoto, saved,
   changedOnDisk,
 } from "./harness.mjs";
 
@@ -33,6 +35,14 @@ const FOLDER = "D:\\Library\\2021 Coast";
 const A = photoRecord({ filename: "a.jpg", path: `${FOLDER}\\a.jpg`, mtime: 1700000000.5, size: 2048, tags: ["Trips/Coast"] });
 const B = photoRecord({ filename: "b.jpg", path: `${FOLDER}\\b.jpg`, mtime: 1700000100.5, size: 4096, tags: ["Activity/Sailing"] });
 const IDS = { [A.path]: 31, [B.path]: 32 };
+
+/** Would the real server refuse `sent` (savedPhoto) over `file`: the stamp or the base not the file's? */
+function refused(file, sent) {
+  const held = new Set(file.tags || []);
+  const base = new Set(sent.base.tags);
+  return !file || !sent.stamp || sent.stamp.mtime !== file.mtime || sent.stamp.size !== file.size
+    || held.size !== base.size || [...base].some((tag) => !held.has(tag)) || (file.title || "") !== sent.base.title;
+}
 
 /** The page on FOLDER, its server's files in `ctx.disk` (path -> record with its id); `ctx.replies` answers the next saves. */
 async function page(t, { view = false } = {}) {
@@ -58,7 +68,9 @@ async function page(t, { view = false } = {}) {
       return new Promise((resolve) => { ctx.held = () => resolve(read()); });
     })
     .on(SAVE, (url, body) => {
-      const reply = (ctx.replies.length ? ctx.replies.shift() : saved())(url, body);
+      const answer = ctx.replies.length ? ctx.replies.shift()
+        : refused(disk.get(savedPhoto(body).path), savedPhoto(body)) ? changedOnDisk() : saved();
+      const reply = answer(url, body);
       if (reply.success) {
         // The file holds what the save wrote, at the stamp the reply gives.
         Object.entries(reply.written).forEach(([path, own]) => {
@@ -112,7 +124,6 @@ describe("V33: a save refused because the index wrote to the file", () => {
     const ctx = await page(t);
     const scans = ctx.scans();
     ctx.bake(A.path);
-    ctx.replies.push(changedOnDisk());
     ctx.addTag("Trips/Lakes");
     await until(ctx, () => /^Saved/.test(ctx.status()), () => `the save (${ctx.status()})`);
     const [first, second] = ctx.saves();
@@ -131,23 +142,31 @@ describe("V33: a save refused because the index wrote to the file", () => {
     assert.match(ctx.document.getElementById("detail-tags").textContent, /Trips\/Lakes/);
   });
 
-  test("someone changed the tags meanwhile: nothing is sent again, today's sentence, the file's tags shown", async (t) => {
+  test("someone changed the tags meanwhile: the server refuses the second send too, today's sentence, no third", async (t) => {
     const ctx = await page(t);
     const file = ctx.disk.get(A.path);
     ctx.disk.set(A.path, { ...file, tags: ["Trips/Coast", "Activity/Sailing"], mtime: file.mtime + 300 });
-    ctx.replies.push(changedOnDisk());
     ctx.addTag("Trips/Lakes");
     await until(ctx, () => /changed on disk since you opened it/.test(ctx.status()), () => `the sentence (${ctx.status()})`);
-    assert.equal(ctx.saves().length, 1, "sent again over someone else's tags");
+    await flush(ctx.window, 12);
+    const saves = ctx.saves();
+    assert.equal(saves.length, 2, "sent once more, and not a third time");
+    assert.deepEqual(saves[1].base, { tags: ["Trips/Coast"], title: "" }, "the second named what the page read, not the file's tags now");
+    assert.deepEqual(saves[1].stamp, { mtime: file.mtime + 300, size: file.size }, "and the file's stamp now");
     assert.ok(ctx.alerts.some((message) => /changed on disk/.test(message)), ctx.alerts.join("|"));
     assert.deepEqual(ctx.record(A.path).tags, ["Trips/Coast", "Activity/Sailing"], "nothing merged: the record is the file's");
+    assert.deepEqual(ctx.disk.get(A.path).tags, ["Trips/Coast", "Activity/Sailing"], "nothing written over them");
   });
 
-  test("the second send is refused too: no third, today's sentence", async (t) => {
+  test("the bake writes again between the read and the second send: refused too, no third, today's sentence", async (t) => {
     const ctx = await page(t);
     ctx.bake(A.path);
-    ctx.replies.push(changedOnDisk(), changedOnDisk());
+    ctx.holdReads = true;
     ctx.addTag("Trips/Lakes");
+    await until(ctx, () => ctx.held, "the read again");
+    ctx.holdReads = false;
+    ctx.held();
+    ctx.bake(A.path);    // after the read, before the second send lands
     await until(ctx, () => /changed on disk since you opened it/.test(ctx.status()), () => `the sentence (${ctx.status()})`);
     await flush(ctx.window, 12);
     assert.equal(ctx.saves().length, 2);
@@ -157,7 +176,6 @@ describe("V33: a save refused because the index wrote to the file", () => {
   test("the page no longer lists the photo when the read lands: nothing is sent again", async (t) => {
     const ctx = await page(t);
     ctx.bake(A.path);
-    ctx.replies.push(changedOnDisk());
     ctx.holdReads = true;
     ctx.addTag("Trips/Lakes");
     await until(ctx, () => ctx.held, "the read again");
@@ -175,7 +193,7 @@ describe("V33: a save refused because the index wrote to the file", () => {
     const renamed = `${FOLDER}\\2021-05-01 Harbour run.jpg`;
     const ctx = await page(t);
     ctx.bake(A.path);
-    ctx.replies.push(changedOnDisk(), saved({ new_path: renamed }));
+    ctx.replies.push(changedOnDisk(), saved({ new_path: renamed }));    // the model makes no rename: these two say it
     ctx.document.getElementById("input-photo-title").value = "Harbour run";
     click(ctx.window, ctx.document.getElementById("btn-save-title"));
     await until(ctx, () => /^Saved/.test(ctx.status()), () => `the save (${ctx.status()})`);
@@ -190,11 +208,9 @@ describe("V33: a save refused because the index wrote to the file", () => {
   test("two refused saves of one photo in a row: each is read again and sent once more", async (t) => {
     const ctx = await page(t);
     ctx.bake(A.path);
-    ctx.replies.push(changedOnDisk());
     ctx.addTag("Trips/Lakes");
     await until(ctx, () => ctx.saves().length === 2 && /^Saved/.test(ctx.status()), "the first save");
     ctx.bake(A.path);   // the bake's next step writes the file again
-    ctx.replies.push(changedOnDisk());
     ctx.addTag("Trips/Harbour");
     await until(ctx, () => ctx.saves().length === 4 && /^Saved/.test(ctx.status()), () => `the second save (${ctx.status()})`);
     const saves = ctx.saves();
@@ -208,7 +224,6 @@ describe("V33: a save refused because the index wrote to the file", () => {
   test("a library view's photo is read again by its own id and sent once more", async (t) => {
     const ctx = await page(t, { view: true });
     ctx.bake(A.path);
-    ctx.replies.push(changedOnDisk());
     ctx.addTag("Trips/Lakes");
     await until(ctx, () => /^Saved/.test(ctx.status()), () => `the save (${ctx.status()})`);
     assert.equal(ctx.saves().length, 2);

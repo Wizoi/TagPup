@@ -182,12 +182,14 @@ describe("in a view of the library", () => {
     ctx.document.getElementById("input-add-tag").value = "Activity/Sailing";
     click(ctx.window, ctx.document.getElementById("btn-add-tag"));
     await wait(ctx.window, 120);
-    // Read again twice: once to see whether what the save writes over changed (it did: no second send, V33), once to show it.
+    // Read again twice: once to send it once more (refused again: the server compares what the page read, V33), once to show it.
     assert.equal(ctx.server.urls().filter((u) => u.includes("/api/library/photo")).length, 3, "read again");
-    assert.equal(ctx.server.calls.filter((c) => c.url.includes("/api/photos/write")).length, 1, "sent again over the file's tags");
+    const saves = saveCalls(ctx.server).map((call) => call.body);
+    assert.equal(saves.length, 2, "sent once more, never a third time");
     assert.match(ctx.document.getElementById("status-text").textContent, /changed on disk/);
     assert.match(ctx.document.getElementById("detail-tags").textContent, /Trips\/Lakes/, "the panel shows the file's tags now");
-    assert.equal(lastSave(ctx.server).stamp.size, 2048, "the refused save named the stamp it was built from");
+    assert.equal(saves[0].stamp.size, 2048, "the refused save named the stamp it was built from");
+    assert.deepEqual(saves[1].base.tags, ["Trips/Coast"], "the second named what the page read");
   });
 
 });

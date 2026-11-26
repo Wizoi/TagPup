@@ -274,15 +274,16 @@ const SENT_AGAIN = ' after reading its file again (indexing, or another program,
 
 /**
  * postPhotoMetadata for a save of the panel's title and tags, and the one place its refusal as changed on disk is taken
- * (DECISIONS 2026-11-26): the photo is read again, and when what the save writes over is as the page read it -- the base
- * it named, its tags (as a set, as the server compares them) and caption -- the file changed elsewhere (the index's bake
- * writes its own fields into a new photo's file), so the same save is sent once more, built from the record read again
- * (the file's stamp now). It resolves that reply, marked `readAgain`, with that record (`record`, holding the id the
- * page's own did: a folder's has none), which the caller carries on with as the photo's and hands to cache.js with the
- * save, so every copy the page keeps takes the file as it is now. Otherwise -- the file holds other tags or another
- * caption, the library holds no photo at its path, the page's list no longer holds it (the queue's own rule,
- * writeDetailEdits), the read fails, or the second send is refused too -- it is the refusal as before: the photo is
- * read again to be shown (photoChangedOnDisk), nothing is merged, and it rejects. It is never sent a third time.
+ * (DECISIONS 2026-11-26): the photo is read again and the same save is sent once more, naming the file as it is now (its
+ * stamp) and, as its base, what the page read before the first send. Whether it may be written is the server's to say,
+ * under its lock (tagpup/services/tagging.py _differs_from_base): the file's tags (as a set) and caption as that base,
+ * the index's bake having written its own fields only, it is written; others, someone else's edit, and it is refused
+ * again. Written, it resolves that reply, marked `readAgain`, with the record read again (`record`, holding the id and
+ * path the page's own did: a folder's has no id), which the caller carries on with as the photo's and hands to cache.js
+ * with the save, so every copy the page keeps takes the file as it is now. Not sent again -- the library holds no photo
+ * at its path, the page's list no longer holds it (the queue's own rule, writeDetailEdits), the read fails -- or refused
+ * the second time, it is the refusal as before: the photo is read again to be shown (photoChangedOnDisk), nothing is
+ * merged, and it rejects. It is never sent a third time.
  */
 export async function postOrSendAgain(photo, changes) {
     const before = { ...baseOf(photo) };
@@ -294,11 +295,11 @@ export async function postOrSendAgain(photo, changes) {
             console.error('Could not read the photo again:', why);
             return null;
         });
-        if (!now || !stillListed(photo) || !holdsBefore(now, photo, before)) {
+        if (!now || !stillListed(photo)) {
             photoChangedOnDisk(photo);
             throw err;
         }
-        const record = { ...now, id: photo.id };
+        const record = { ...now, id: photo.id, path: photo.path, base: before };
         return { ...await postPhotoMetadata(record, changes, photoChangedOnDisk), readAgain: true, record };
     }
 }
@@ -316,15 +317,6 @@ async function readAgain(photo) {
 /** Does the page's list still hold the photo -- the open folder's, or the view's one open photo? A save goes only then. */
 function stillListed(photo) {
     return state.folderPhotos.some(p => samePath(p.path, photo.path));
-}
-
-/** Does `now`, the photo read again, hold at its path what the save writes over as the page read it (`before`, its base)? */
-function holdsBefore(now, photo, before) {
-    const held = new Set(now.tags || []);
-    const read = new Set(before.tags);
-    return samePath(now.path, photo.path)
-        && held.size === read.size && [...read].every(tag => held.has(tag))
-        && (now.title || '') === before.title;
 }
 
 /**
