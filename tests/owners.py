@@ -208,7 +208,7 @@ _SCENARIO_FILES = {
         "test_bulk_delete test_delete_a_photo test_just_look_bin_and_long_names test_just_look_delete_and_rename_rules "
         "test_just_look_edits test_a_delete_cut_short test_a_bulk_delete_stopped_part_way"
     ),
-    "F9": "test_roots_old_place test_roots_pinned_runs",
+    "F9": "test_roots_old_place test_roots_pinned_runs test_a_root_moved_during_a_long_undo_or_settle",
     "F10": "test_one_photo_whatever_its_spelling",
     "F11": (
         "test_an_index_is_one_run_under_its_sync test_index_progress_end_to_end test_new_faces_are_matched_after_an_index test_an_index_reads_the_next_photos_ahead "
@@ -562,6 +562,7 @@ _SIZES = {
         "test_reexamine_folder test_reindex_keeps_face_decisions test_remove_folder_lists_the_library "
         "test_removing_a_folder_from_either_app test_renaming test_retro_metrics test_roots_ingress "
         "test_roots_ingress_keys_cover_the_routes test_roots_location test_roots_old_place test_roots_pinned_runs "
+        "test_a_root_moved_during_a_long_undo_or_settle "
         "test_roots_scenarios test_roots_store test_rotate_crash_settles_with_the_boxes test_rotate_is_journaled "
         "test_rotate_keeps_the_photo test_rows_only_in_folders_added test_run_tests_keeps_failures "
         "test_sandbox_has_all_the_code test_scenario_two_libraries_share_a_folder test_selection "

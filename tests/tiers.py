@@ -99,6 +99,7 @@ SCENARIO = frozenset({
     # Pages run against the real apps (node + jsdom, tests/page_server.py), not a hand-written fake.
     "test_pages_against_the_real_server",
     "test_roots_location",
+    "test_a_root_moved_during_a_long_undo_or_settle",
     "test_roots_ingress",
     "test_roots_store",
     # Real time and real processes, short of a hand-over.
