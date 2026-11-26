@@ -289,7 +289,7 @@ def save_photo(library, photo_path, title, tags, date_taken, exiftool_path, rena
         held = set(_tags_held(now))
         problem = (validation.first_problem("tag", (t for t in tags if t not in held))
                    or (None if files_only else refuse_under_people(library, [t for t in tags if t not in held]))
-                   or _caption_problem(et, photo_path, title))
+                   or _caption_problem(exiftool_path, photo_path, title))
         if problem:
             result.refuse(problem)
             return result
@@ -393,17 +393,19 @@ def _rename_after_caption(library, photo_path, wanted, files_only):
     return paths.stored(done.done.get(photo_path, wanted)), done.skipped or [], None
 
 
-def _caption_problem(et, photo_path, caption):
+def _caption_problem(exiftool_path, photo_path, caption):
     """Why `caption` cannot be set on the photo, or None. A caption the file holds
     already is not being set: one another program wrote is kept, as a tag is. The file
     is read for it only when the caption breaks a rule -- every field a caption is held
-    in, EXIF's too -- and the caption is compared as the reader trims the file's."""
+    in, EXIF's too -- by a read of its own (field_values.opened), and the caption is compared as the reader trims the
+    file's."""
     problem = validation.problem("caption", caption or "")
     if not problem:
         return None
     records = {}
-    field_values.read(et, [photo_path], [], also=[field for field in fields.HELD_CAPTION_FIELDS if ":" in field],
-                      records=records)
+    with field_values.opened(exiftool_path) as reader:
+        reader.read([photo_path], [], also=[field for field in fields.HELD_CAPTION_FIELDS if ":" in field],
+                    records=records)
     held = fields.captions_held(records.get(paths.key(photo_path), {}))
     return None if fields.trimmed(caption) in held else problem
 
@@ -594,8 +596,8 @@ def apply_suggestions(library, suggestions, exiftool_path):
     unfiled = set()
     if any(asked.values()):
         known = taxonomy.people_vocabulary(library.path)
-        with exiftool_session.ExifToolSession(executable=exiftool_path) as et:
-            read = field_values.read(et, [path for path, names in asked.items() if names], KEYWORD_READ)
+        with field_values.opened(exiftool_path) as reader:
+            read = reader.read([path for path, names in asked.items() if names], KEYWORD_READ)
         held = {key: ([] if isinstance(fields_, Exception) else list(_tags_held(fields_))) for key, fields_ in read.items()}
         unfiled = {name for path, names in asked.items() for name in names
                    if not file_person.names_already(held.get(paths.key(path), []), name, known)}

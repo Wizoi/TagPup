@@ -16,9 +16,7 @@ folder-wide command that used this on its own is gone (owner, 2026-10-10).
 import os
 
 from tagpup.core import fields as core_fields, paths
-# Looked up at call time, as exiftool_session.ExifToolSession, so a test standing in for
-# ExifTool there reaches this too.
-from tagpup.files import exiftool_session, field_values, identity, names
+from tagpup.files import field_values, identity, names
 from tagpup.store import db, journal
 from tagpup.store import faces as store_faces
 from tagpup.store import photos as store_photos
@@ -33,12 +31,14 @@ def stem_of(path):
 
 def _read_files(found, fields, exiftool_path):
     """ExifTool's record of each photo in `found` it read, for `fields`, through the one batch reader
-    (field_values.read). A photo it could not read, or did not answer for, is not among them. Only reads."""
+    (field_values.Fields.read). A photo it could not read, or did not answer for, is not among them. An ExifTool that
+    will not start is raised, never read as files holding no claim: pairing nothing would leave a whole sync to remove
+    rows a DocumentID could relink. Only reads."""
     if not found:
         return []
     records = {}
-    with exiftool_session.ExifToolSession(executable=exiftool_path) as et:
-        field_values.read(et, found, [], list(fields), records)
+    with field_values.opened(exiftool_path) as reader:
+        reader.read(found, [], also=list(fields), records=records)
     return list(records.values())
 
 

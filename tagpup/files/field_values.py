@@ -167,8 +167,8 @@ def read(et, photo_paths, wanted, also=(), records=None, stop=None, params=()):
     fields in `wanted`; an Unreadable in place of the fields of a photo that could not be
     read (NotAnswered, of a photo ExifTool did not answer for). Read in batches; a batch ExifTool refuses is read again a
     photo at a time, so one bad file does not cost the others. A command ExifTool does not answer in its deadline (a share
-    gone away) ends the read: that photo, and every photo not read yet, is NotAnswered, so one read waits one deadline. The one batch reader: the indexer's
-    (Fields.whole) and sync's pairing (tagpup.services.relink_photos) read through it. `also` are fields asked as well, answered only
+    gone away) ends the read: that photo, and every photo not read yet, is NotAnswered, so one read waits one deadline. The one batch reader: an
+    operation's reads (Fields.read, Fields.whole) and the write sessions' (tagpup.services.file_changes) go through it. `also` are fields asked as well, answered only
     in `records`, when given: {paths.key(path): ExifTool's record} of each photo read.
 
     `stop`, a threading.Event: once it is set no more batches are read, and the photos not reached are left out of the
@@ -276,6 +276,22 @@ class Fields:
         if self._et is None:
             self._et = self._stack.enter_context(session(self.exiftool_path))
         return self._et
+
+    def read(self, photo_paths, wanted, *, also=None, records=None):
+        """{paths.key(path): {field: its values}} of each of `photo_paths`, for the fields in `wanted`, through the one
+        batch reader (read): an Unreadable in place of a photo ExifTool refused, a NotAnswered of one it did not answer
+        for in its deadline (it and every photo after it in this call). `also`, fields asked as well, answered only in
+        `records` ({paths.key(path): ExifTool's record}) when given: kept until the reads answer by field alone
+        (docs/plans/own-metadata-library.md, L4).
+
+        A start that fails is RAISED, never answered as every photo Unreadable: a reader that took that answer would
+        decide something wrong of each (sync's pairing would pair nothing, a rename would read no caption), as each read
+        site's own `with ExifToolSession(...)` raised before. `whole` answers it, NOT_STARTED, since the index records
+        what it reads. No photos: no ExifTool started."""
+        photo_paths = list(photo_paths)
+        if not photo_paths:
+            return {}
+        return read(self._session(), photo_paths, wanted, also or (), records)
 
     def whole(self, photo_paths, *, people=None, bakes=False):
         """A record of each of `photo_paths`, in order, as the index records it (tagpup.files.metadata.structure), read
