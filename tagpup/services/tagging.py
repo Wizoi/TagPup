@@ -401,8 +401,10 @@ def _caption_problem(et, photo_path, caption):
     problem = validation.problem("caption", caption or "")
     if not problem:
         return None
-    found = et.get_tags([photo_path], tags=[field for field in fields.HELD_CAPTION_FIELDS if ":" in field])
-    held = fields.captions_held(found[0] if found else {})
+    records = {}
+    field_values.read(et, [photo_path], [], also=[field for field in fields.HELD_CAPTION_FIELDS if ":" in field],
+                      records=records)
+    held = fields.captions_held(records.get(paths.key(photo_path), {}))
     return None if fields.trimmed(caption) in held else problem
 
 

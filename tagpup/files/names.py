@@ -7,7 +7,7 @@ import time
 from tagpup.core import fields, paths
 # Looked up at call time, as exiftool_session.ExifToolSession, so a test standing in for
 # ExifTool there reaches this too.
-from tagpup.files import exiftool_session, lock_owners
+from tagpup.files import exiftool_session, field_values, lock_owners
 
 logger = logging.getLogger(__name__)
 
@@ -46,11 +46,16 @@ def read_for_renaming(exiftool_path, photo_paths):
     photo had before its first rename is written into fields.PRESERVED_NAME by the caller, as
     a change of photo files (tagpup.services.photos.preserve_names); it was written here,
     and recorded nowhere (docs/findings.md, #266)."""
-    captions = {}
+    photo_paths = list(photo_paths)
+    records = {}
     with exiftool_session.ExifToolSession(executable=exiftool_path) as et:
-        for path in photo_paths:
-            meta = et.get_tags([path], tags=RENAME_FIELDS)
-            captions[path] = caption_for_name(meta[0] if meta else {})
+        held = field_values.read(et, photo_paths, [], also=RENAME_FIELDS, records=records)
+    captions = {}
+    for path in photo_paths:
+        answer = held.get(paths.key(path))
+        if isinstance(answer, Exception):
+            raise answer
+        captions[path] = caption_for_name(records.get(paths.key(path), {}))
     return captions
 
 

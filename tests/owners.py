@@ -462,13 +462,13 @@ SIZE_ORDER = ("pure", "sqlite", "subprocess", "browser")
 _SIZES = {
     "pure": (
         "test_a_face_box_turned_upright_and_back test_a_patch_that_grows_a_file_is_settled_by_its_bytes "
-        "test_a_search_keeps_no_thread_buffers test_background_tasks test_background_work_is_waited_for "
+        "test_a_search_keeps_no_thread_buffers test_background_work_is_waited_for "
         "test_browser_opens_once test_clip_sees_photos_upright test_cluster_candidates test_code_tool test_config "
         "test_config_single_owner test_container_layout test_derived_writers "
         "test_every_change_kind_has_an_undo_check test_every_test_file_has_its_size "
         "test_exif_block_edits_what_it_owns test_face_values_have_one_owner "
         "test_face_writes_go_through_the_assignment test_gpu_single_owner test_indexing_names_a_real_control "
-        "test_iptc_block_edits_what_it_owns test_jobs_indexing test_keyword_fields test_layers "
+        "test_iptc_block_edits_what_it_owns test_keyword_fields test_layers "
         "test_library_registry_race test_local_server_socket test_models_in_use_survive_an_unload "
         "test_no_test_loads_a_model test_no_test_waits_a_fixed_time test_one_value_for_a_suggested_tag "
         "test_page_module_names test_page_record_fields test_patch_tool test_path_locker "
@@ -482,7 +482,7 @@ _SIZES = {
     "sqlite": (
         "test_a_clip_is_matched_on_its_best_frame test_a_person_count_reads_only_their_photos "
         "test_a_share_that_drops_mid_walk test_a_share_that_wakes test_automatch_references "
-        "test_automatch_writes_once test_backups_are_kept_to_five test_bulk_scripts_back_up test_camera_words "
+        "test_automatch_writes_once test_background_tasks test_backups_are_kept_to_five test_bulk_scripts_back_up test_camera_words "
         "test_census_of_jpeg_segments test_chip_keys_follow_the_server test_cluster_faces_on_a_crowded_library "
         "test_clustering_evidence test_clustering_keeps_a_name_the_tags_confirm test_clustering_meets_naming "
         "test_compact_gives_back_free_space test_dates test_db_access test_derived_batches "
@@ -493,7 +493,7 @@ _SIZES = {
         "test_group_tag_is_not_a_person test_identify_cache_sees_every_change "
         "test_index_adds_the_folder_it_is_given test_index_reload_reuses_its_connection "
         "test_index_resolves_people test_inspect_reads_only_the_photos_asked_about "
-        "test_inspect_uses_the_stores_mtime_rule test_jobs_suggestions test_journal "
+        "test_inspect_uses_the_stores_mtime_rule test_jobs_indexing test_jobs_suggestions test_journal "
         "test_journal_keys_and_cascades test_journal_through_the_services test_journal_undo_refusals test_library "
         "test_library_roots test_library_view test_library_view_plans test_lock_owners test_maintenance "
         "test_making_a_new_photo_models_vectors test_measuring_the_neighbour_cut_for_clips test_naming_faces_job "
