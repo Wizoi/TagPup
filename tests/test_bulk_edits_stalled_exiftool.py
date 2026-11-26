@@ -83,7 +83,9 @@ class TheIndexAndSyncReadAShareThatStopsAnswering(unittest.TestCase):
         """The index reads its batches through one Fields (runtime.fields): the share stops answering at the second photo
         of a batch, so that photo and the one after it are left unread with one deadline waited, the first recorded; the
         next batch, the share back, is read in full by the same reader, its ExifTool started again (ExifToolHelper's
-        auto-start after the kill), never left dead for the rest of the run."""
+        auto-start after the kill), never left dead for the rest of the run. The restart itself, a real kill and a real
+        start, is judged by test_exiftool_session ("a kill, a restart"); this test judges that one reader keeps its
+        session across calls and that the stalled call does not end the next."""
         starts = []
 
         class ShareAwayOnce(StalledSession):

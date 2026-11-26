@@ -136,9 +136,9 @@ CHANGED_TWICE = "its write changed the picture's bytes twice; the new file was d
 
 
 def session(exiftool_path):
-    """The ExifTool session of a journaled write (tagpup.services.file_changes): one that knows TagPup's namespace
-    (bake.config_path), since a write or an undo of a bake names its fields. Looked up at call time, so a test standing in
-    for ExifToolSession reaches it."""
+    """The ExifTool session of a write or a read (opened, tagpup.services.file_changes): one that knows TagPup's
+    namespace (bake.config_path), since a bake's fields are named by a write, an undo and a read alike. Looked up at call
+    time, so a test standing in for ExifToolSession reaches it."""
     return exiftool_session.ExifToolSession(executable=exiftool_path, config_file=bake.config_path())
 
 

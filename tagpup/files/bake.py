@@ -61,7 +61,7 @@ FIELDS = OWN + (REGIONS,)
 #: The field ExifTool writes each of FIELDS as: TagPup's in its own namespace, the regions MWG's.
 WRITTEN = dict({key: "%s:%s" % (NAMESPACE, key.split(":", 1)[1]) for key in OWN}, **{REGIONS: fields.REGION_INFO})
 
-#: TagPup's namespace for ExifTool to write it (config_path); reading needs none.
+#: TagPup's namespace for ExifTool to write it and read it back (config_path): every session opens with it.
 NAMESPACE_CONFIG = r"""%Image::ExifTool::UserDefined = (
     'Image::ExifTool::XMP::Main' => {
         tagpup => { SubDirectory => { TagTable => 'Image::ExifTool::UserDefined::tagpup' } },
