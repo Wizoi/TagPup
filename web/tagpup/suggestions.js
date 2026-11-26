@@ -14,7 +14,7 @@ import {
     suggestProgressContainer, suggestProgressText
 } from './elements.js';
 import { setStatus } from './status.js';
-import { photosGone, recordsWritten, saveToLocalStorageCache } from './cache.js';
+import { forgetScansHolding, photosGone, recordsWritten, saveToLocalStorageCache } from './cache.js';
 import { namesAPerson, resolveTagOrPerson } from './tags.js';
 import { shownTags } from './pending.js';
 import { photoChangedOnDisk, queuePhotoWrite, queueWriteOf, redrawIfShowing } from './edits.js';
@@ -158,7 +158,6 @@ function forgetAnotherLibrary(follow) {
     follow.known.clear();
     follow.counted.clear();
     follow.ended = 0;
-    follow.ends.clear();
     follow.failures = 0;
 }
 
@@ -223,6 +222,7 @@ function heardIndexes(data, library) {
         .then(ends => {
             if (libraryName() !== library) return false;
             let answered = true;
+            const finished = [];
             for (const { key, folder, status } of ends) {
                 if (!status || typeof status.status !== 'string') {
                     answered = false;
@@ -232,9 +232,10 @@ function heardIndexes(data, library) {
                 if (status.status === 'queued' || status.status === 'running') continue;
                 follow.known.delete(key);
                 follow.ended += 1;
-                follow.ends.set(key, { folder, at: Date.now() });
-                indexFinished(folder, status);
+                finished.push({ folder, status });
             }
+            // One answer, one refresh: a sync's batch lists each folder of it and ends them all at once.
+            indexesFinished(finished);
             if (ends.length) showIndexing(running, waiting);
             return answered;
         });
@@ -263,20 +264,29 @@ function showIndexing(running, waiting) {
 }
 
 /**
- * A folder's index ended, `status` saying how: what it wrote is read again (upper.indexEnded), then the status line keeps
- * its closing sentence (the bake, the new faces), not the "Ready" of the scan that read it again. One cancelled wrote
- * nothing: nothing is read again.
+ * Folders' indexes ended in one answer of the queue, each `{folder, status}`: what they wrote is read again once
+ * (upper.indexEnded), then the status line keeps their closing sentences (the bake, the new faces), not the "Ready" of
+ * the scan that read it again. One cancelled wrote nothing, and is not read again.
  */
-function indexFinished(folder, status) {
-    const said = status.message && status.message !== NOTHING_TO_SAY ? `${baseName(folder)}: ${status.message}` : '';
-    if (status.status === 'cancelled') {
-        if (said) setStatus('ready', said);
-        return;
+function indexesFinished(finished) {
+    const said = [];
+    let kind = 'ready';
+    const wrote = [];
+    for (const { folder, status } of finished) {
+        const sentence = status.message && status.message !== NOTHING_TO_SAY ? `${baseName(folder)}: ${status.message}` : '';
+        if (status.status === 'cancelled') {
+            if (sentence) setStatus('ready', sentence);
+            continue;
+        }
+        forgetScansHolding(folder);
+        wrote.push(folder);
+        if (status.status === 'failed') kind = 'error';
+        if (sentence) said.push(sentence);
+        else if (status.status === 'failed') said.push(`${baseName(folder)}: indexing failed`);
     }
-    const kind = status.status === 'failed' ? 'error' : 'ready';
-    Promise.resolve(upper.indexEnded(folder)).then(() => {
-        if (said) setStatus(kind, said, { transient: false });
-        else if (kind === 'error') setStatus('error', `${baseName(folder)}: indexing failed`, { transient: false });
+    if (!wrote.length) return;
+    Promise.resolve(upper.indexEnded(wrote)).then(() => {
+        if (said.length) setStatus(kind, said.join(' '), { transient: false });
     });
 }
 

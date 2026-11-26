@@ -1,7 +1,7 @@
 // TagPup's page: a folder's scan, kept in this browser for half an hour, so opening it
 // again does not scan it again. Each library's own: two libraries can hold one folder.
 import { libraryIn } from './common/api.js';
-import { isUnder, pathKey, rekeyed, renamedBy } from './common/paths.js';
+import { isUnder, pathKey, rekeyed, renamedBy, samePath } from './common/paths.js';
 import { state } from './state.js';
 
 // Browser local storage cache configuration (30 minutes timeout)
@@ -148,6 +148,33 @@ function keptScans() {
 function forgetKept(key, why) {
     console.warn('A folder kept in this browser could not be written back, and is forgotten:', why);
     localStorage.removeItem(key);
+}
+
+/**
+ * Does the scan of `open` hold photos `indexed`'s index wrote: the same folder, one above it or one below it (a folder's
+ * scan is recursive, web/common/paths.js isUnder)? What an index's end reads again (library-view.js indexEnded).
+ */
+export function scanHolds(open, indexed) {
+    return samePath(open, indexed) || isUnder(open, indexed) || isUnder(indexed, open);
+}
+
+/**
+ * An index of `folder` ended: every scan this browser kept of this library that holds its photos is from before it, with
+ * no faces and not the new photos, and is forgotten, so a folder opened later (this page load or the next: the kept scans
+ * outlive the page, #3411) is scanned. Returns how many were forgotten.
+ */
+export function forgetScansHolding(folder) {
+    let forgotten = 0;
+    try {
+        for (const [key, kept] of keptScans()) {
+            if (!scanHolds(kept, folder)) continue;
+            localStorage.removeItem(key);
+            forgotten += 1;
+        }
+    } catch (e) {
+        console.warn('Could not forget the folders kept in this browser:', e);
+    }
+    return forgotten;
 }
 
 /**

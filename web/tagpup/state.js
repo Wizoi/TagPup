@@ -219,11 +219,10 @@ export const state = {
     // The library's indexes as this page follows them (suggestions.js checkIndexingStatus): `library`, the library they are
     // of; `known`, pathKey -> folder of each queued or being indexed, as last heard (GET /api/folder/index-active) or just
     // queued here; `counted`, the keys of every folder seen since the queue was last empty, and `ended`, how many of them
-    // have ended ("Indexing N of M folders"); `ends`, pathKey -> {folder, at} of each index seen to end, when (Date.now()):
-    // a scan taken before it is out of date (folder.js). `timer`, the next ask; `asking`, one is out, and `again`, another
+    // have ended ("Indexing N of M folders"); `timer`, the next ask; `asking`, one is out, and `again`, another
     // was wanted meanwhile; `failures`, asks in a row with no answer.
     indexFollow: {
-        library: '', known: new Map(), counted: new Set(), ended: 0, ends: new Map(),
+        library: '', known: new Map(), counted: new Set(), ended: 0,
         timer: null, asking: false, again: false, failures: 0,
     },
     // How far the open folder's index has got while one runs (a percent, 0 while it waits), else null: a Suggest run waiting

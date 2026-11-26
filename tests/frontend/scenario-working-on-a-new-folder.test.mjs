@@ -73,7 +73,7 @@ const NOT_HELD = (folder) => ({ library: "photo_index", folder, photos: 2, photo
 const HELD = (folder) => ({ ...NOT_HELD(folder), photos_held: 2, photos_not_held: 0, folders_not_held: 0, first_not_held: null });
 
 /** The page on photo_index over `q`; `activeReply` answers index-active instead of the queue when given. */
-async function page(t, q, { activeReply, suggest = () => ({ status: "idle" }) } = {}) {
+async function page(t, q, { activeReply, suggest = () => ({ status: "idle" }), kept = {} } = {}) {
   const server = new FakeServer()
     .on("/api/tags", [])
     .on("/api/people", [])
@@ -101,7 +101,10 @@ async function page(t, q, { activeReply, suggest = () => ({ status: "idle" }) } 
       cards: decodeURIComponent((url.match(/ids=([^&]+)/) || [])[1] || "").split(",").filter(Boolean).map(Number)
         .map((id) => ({ id, name: `IMG_${id}.jpg`, path: `${HARBOUR}\\IMG_${id}.jpg`, taken: "2026:05:01 10:00:00" })),
     }));
-  const ctx = await loadApp("tagpup", { t, url: "http://localhost:8090/photo_index/", server });
+  const ctx = await loadApp("tagpup", {
+    t, url: "http://localhost:8090/photo_index/", server,
+    before: (window) => { for (const [key, value] of Object.entries(kept)) window.localStorage.setItem(key, value); },
+  });
   ctx.alerts = [];
   ctx.window.alert = (message) => ctx.alerts.push(message);
   ctx.window.confirm = () => true;
@@ -220,6 +223,55 @@ describe("V32: a folder added, worked on in Organize, a view and back, and its i
 });
 
 describe("V32: around it", () => {
+  test("a sync's batch ends all at once: the view is read again once, not once per folder (#3410)", async (t) => {
+    // index-active lists each folder of a `together` job as its own running entry; they leave the list in one tick.
+    const q = queueOf([REGATTA, ROOT, HEAT_1, HEAT_2]);
+    let batch = [HEAT_1, HEAT_2];
+    q.active = () => ({
+      active: batch.map((folder) => ({ folder, name: nameOf(folder), percent: 50, message: "Reading metadata: 50%" })),
+      queued: [], busy: batch.length > 0, remaining: batch.length,
+    });
+    for (const folder of batch) q.statuses[folder] = { status: "running", percent: 50, folder, message: "Reading metadata" };
+    const ctx = await page(t, q);
+    await openFolder(ctx, ROOT);
+    await ctx.tick(200);
+    assert.match(ctx.barText(), /^Indexing 1 of 2 folders/);
+    const forced = ctx.scans(ROOT, true);
+    const folderReads = ctx.folderReads();
+    batch = [];
+    for (const folder of [HEAT_1, HEAT_2]) {
+      q.statuses[folder] = { status: "completed", percent: 100, folder, message: "Folder indexed. 5 photos read, 5 new." };
+    }
+    await ctx.tick();
+    await ctx.tick(200);
+    assert.equal(ctx.scans(ROOT, true), forced + 1, "the open folder was read again once per folder of the batch");
+    click(ctx.window, ctx.$("sidebar-tab-library"));
+    await ctx.tick(200);
+    assert.equal(ctx.folderReads(), folderReads + 1, "the Library pane was read again once per folder of the batch");
+    assert.equal(ctx.status(), "Heat 1: Folder indexed. 5 photos read, 5 new. Heat 2: Folder indexed. 5 photos read, 5 new.");
+  });
+
+  test("a list kept before an index that ended is not shown after a reload (#3411)", async (t) => {
+    const q = queueOf();
+    const first = await page(t, q);
+    await addFromOrganize(first, HEAT_1);
+    q.progress(50, "Reading metadata: 50%");
+    await openFolder(first, HARBOUR);   // another folder is open when the index ends: the kept list of Heat 1 is not read again
+    await first.tick();
+    const browser = () => Object.fromEntries(Object.keys(first.window.localStorage)
+      .map((key) => [key, first.window.localStorage.getItem(key)]));
+    assert.ok(Object.keys(browser()).some((key) => key.startsWith("tagpup_cache_")), "fixture: no scan was kept");
+    q.finish();
+    await first.tick();
+    await first.tick(200);
+    // F5: the page is loaded again over the same browser storage, the queue idle, and the folder opened within 30 minutes.
+    const reloaded = await page(t, queueOf(), { kept: browser() });
+    await openFolder(reloaded, HEAT_1);
+    await reloaded.tick(200);
+    assert.equal(reloaded.scans(HEAT_1), 1, "the list kept from before the index was shown");
+    assert.doesNotMatch(reloaded.$("list-stats").textContent, /cached/);
+  });
+
   test("rapid folder switches while an index runs: one ask out at a time, and only a folder it holds is read again", async (t) => {
     const q = queueOf([REGATTA, HARBOUR, HEAT_1]);
     q.add(HEAT_1);   // queued elsewhere (TagTuner, a watcher's sync): the page learns of it from the queue

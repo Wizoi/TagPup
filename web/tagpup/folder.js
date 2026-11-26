@@ -14,7 +14,7 @@ import {
 import { flagField, setStatus } from './status.js';
 import { clearSelection, keepOnly } from './selected.js';
 import { forgetSelectionFaces } from './selection-faces.js';
-import { CACHE_TTL_MS, CACHE_VERSION, folderCacheKey, saveToLocalStorageCache } from './cache.js';
+import { CACHE_TTL_MS, CACHE_VERSION, folderCacheKey, saveToLocalStorageCache, scanHolds } from './cache.js';
 import { updatePeopleDatalist, updateTagsDatalist } from './tags.js';
 import { discardDetailEdits, hasUnsavedEdits, leavePhotoThen } from './edits.js';
 import { leaveThen, shownTags } from './pending.js';
@@ -215,22 +215,13 @@ export function updateCurrentFolderLabel() {
 }
 
 /**
- * Does the scan of `open` hold photos `indexed`'s index wrote: the same folder, one above it or one below it (a folder's
- * scan is recursive, web/common/paths.js isUnder)? What an index's end reads again (library-view.js indexEnded).
+ * Is a scan of `path` out of date because an index holding its photos is under way or waits, as this page has heard
+ * (state.indexFollow, suggestions.js checkIndexingStatus)? One that ended is forgotten by its end (cache.js
+ * forgetScansHolding), so a kept scan of it is not here to ask about. Shown, it was the list from before the index: no
+ * faces, no new photos (#3408).
  */
-export function scanHolds(open, indexed) {
-    return samePath(open, indexed) || isUnder(open, indexed) || isUnder(indexed, open);
-}
-
-/**
- * Is this browser's kept scan of `path`, kept at `taken` (Date.now()), out of date: an index holding its photos is under
- * way or waits, or ended after it was kept, as this page has heard (state.indexFollow, suggestions.js checkIndexingStatus)?
- * Shown, it was the list from before the index: no faces, no new photos (#3408).
- */
-function keptScanOutOfDate(path, taken) {
-    const follow = state.indexFollow;
-    if ([...follow.known.values()].some(folder => scanHolds(path, folder))) return true;
-    return [...follow.ends.values()].some(end => end.at > (Number(taken) || 0) && scanHolds(path, end.folder));
+function keptScanOutOfDate(path) {
+    return [...state.indexFollow.known.values()].some(folder => scanHolds(path, folder));
 }
 
 // Scans a folder
@@ -269,7 +260,7 @@ export function scanFolder(forceRefresh = false, { keepTyped = false, asked = fa
                 const cacheEntry = JSON.parse(rawCache);
                 const age = Date.now() - cacheEntry.timestamp;
                 if (age < CACHE_TTL_MS && cacheEntry.version === CACHE_VERSION
-                    && !keptScanOutOfDate(path, cacheEntry.timestamp)) {
+                    && !keptScanOutOfDate(path)) {
                     const previous = state.scannedFolder;
                     state.scannedFolder = path;
                     updateCurrentFolderLabel();

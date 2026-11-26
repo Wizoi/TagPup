@@ -30,12 +30,13 @@ import { isJustLooking } from './looking.js';
 import { hasUnsavedEdits, leavePhotoThen, openPhotoWrite } from './edits.js';
 import { leaveThen } from './pending.js';
 import {
-    openFolderView, scanFolder, scanHolds, updateCurrentFolderLabel, updateListStats, updatePhotoPosition
+    openFolderView, scanFolder, updateCurrentFolderLabel, updateListStats, updatePhotoPosition
 } from './folder.js';
 import { fetchKnownTagsAndPeople } from './tags.js';
 import { clearSelection } from './selected.js';
 import { forgetSelectionFaces } from './selection-faces.js';
 import { positionOf, pushEntry } from './history-entries.js';
+import { scanHolds } from './cache.js';
 import {
     backArrived, backToView, bestEffortScroll, forgetViewLeft, leavePhotoPlace, onPhotoPlace, photoPlaceMoved, saveScroll,
     searchPlacesBack
@@ -429,19 +430,19 @@ export function refreshLibraryView() {
 }
 
 /**
- * An index of `folder` has ended, whoever queued it (suggestions.js checkIndexingStatus, #3407): what it wrote is read
+ * The indexes of `folders` have ended together (one answer of the queue: a sync's batch ends all at once), whoever queued it (suggestions.js checkIndexingStatus, #3407): what it wrote is read
  * again -- the navigator's counts (marked stale: a new folder shows in the Folders tab), the names offered while typing,
  * the open view, or the open folder when its scan holds the folder's photos (scanHolds). A scan out for such a folder reads
  * again as it lands (folder.js); what was typed in the open photo stays. Resolves once what was read again is on screen,
  * so the index's closing sentence is said after the scan's "Ready" (unresolved when that scan fails: it says so itself).
  */
-export function indexEnded(folder) {
+export function indexEnded(folders) {
     upper.navigatorCountsChanged();
     fetchKnownTagsAndPeople();
     if (state.library) return refreshLibraryView();
     const out = state.scanning;
     const open = out ? out.path : state.scannedFolder;
-    if (!open || !scanHolds(open, folder)) return Promise.resolve(false);
+    if (!open || !folders.some(folder => scanHolds(open, folder))) return Promise.resolve(false);
     return new Promise(resolve => {
         const before = state.afterScan;
         state.afterScan = () => {
