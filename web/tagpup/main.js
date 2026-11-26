@@ -26,7 +26,8 @@ import {
 import { wireTagPupGear } from './gear.js';
 import { wireNameFaces } from './name-faces.js';
 import {
-    leaveLibraryView, libraryChanged, openLibraryView, openViewFromAddress, photosDeleted, refreshFolderOrView, wireLibraryView
+    indexEnded, leaveLibraryView, libraryChanged, openLibraryView, openViewFromAddress, photosDeleted, refreshFolderOrView,
+    wireLibraryView
 } from './library-view.js';
 import { wireSelectionPanel } from './selection-panel.js';
 import { wireDetailsPanel } from './details-panel.js';
@@ -77,8 +78,8 @@ import { wireClipConvert } from './clip-convert.js';
 
 // What a feature calls in a module above it (hooks.js).
 Object.assign(upper, {
-    addedFromView, applySuggestedTagsDirect, checkFolderMembership, checkSuggestionsStatus, choosePane,
-    facesFollowReply, filterFollows, forgetFolderSuggestions, holdForWrite, resumeAfterWrite,
+    addedFromView, applySuggestedTagsDirect, checkFolderMembership, checkIndexingStatus, checkSuggestionsStatus, choosePane,
+    facesFollowReply, filterFollows, forgetFolderSuggestions, holdForWrite, indexEnded, resumeAfterWrite,
     populateCameraModelsDropdown, recordUndo, removePhotoTags,
     renderFileList, renderPhotoFaces, renderPhotoFacesHere, renderSuggestionsPanel, renderSyncInfo, renderTags, renderThumbnails, searchFollows, searchVocabularyChanged,
     selectPhoto,
@@ -214,8 +215,8 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // ---- Start ------------------------------------------------------------
     //
-    // Last, deliberately. This opens the folder in the ?path= and picks up an index
-    // already running on it, which means it calls into most of the app: through the
+    // Last, deliberately. This opens the folder in the ?path= and picks up the indexes
+    // already under way, which means it calls into most of the app: through the
     // listeners wired above and the calls up the page that main.js fills in (hooks.js).
     // Started before those lines, it would run without them.
     //
@@ -224,10 +225,11 @@ document.addEventListener('DOMContentLoaded', () => {
     // is this block's position, and tests/frontend/tag-vocabulary.test.mjs keeps it.
     const params = new URLSearchParams(window.location.search);
     const initialPath = params.get('path');
+    // What the library indexes now, whoever started it, followed to its end (suggestions.js).
+    checkIndexingStatus();
     // A `?view` in the address names the library view to open, and wins over a `?path`.
     if (!openViewFromAddress() && initialPath) {
         folderPathInput.value = initialPath;
         scanFolder(false);
-        checkIndexingStatus(initialPath);
     }
 });

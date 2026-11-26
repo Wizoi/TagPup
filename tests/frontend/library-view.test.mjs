@@ -183,7 +183,8 @@ describe("opening a view from the address", () => {
 
   test("the folder's machinery is idle: nothing of /api/folder/ is asked, nothing is cached", async (t) => {
     const ctx = await load(t);
-    assert.deepEqual(ctx.folderCalls(), []);
+    // The library's queue is not the folder's: a view follows its indexes too (suggestions.js checkIndexingStatus).
+    assert.deepEqual(ctx.folderCalls().filter((u) => !u.includes("/api/folder/index-active")), []);
     assert.equal(ctx.state.scannedFolder, null);
     const kept = Object.keys(ctx.window.localStorage);
     assert.deepEqual(kept.filter((key) => key.startsWith("tagpup_cache_")), [], "no scan of a folder is kept for a view");
@@ -197,7 +198,7 @@ describe("opening a view from the address", () => {
 
   test("a ?view wins over the remembered ?path", async (t) => {
     const ctx = await load(t, { search: "?path=D%3A%5CLibrary%5C2020&view=year&value=2020", total: 3, ids: [1, 2, 3] });
-    assert.deepEqual(ctx.folderCalls(), []);
+    assert.deepEqual(ctx.folderCalls().filter((u) => !u.includes("/api/folder/index-active")), []);
     assert.match(ctx.idsAsked[0], /kind=year&value=2020/);
     assert.match(ctx.stripText(), /Photos of 2020/);
   });

@@ -15,7 +15,6 @@ import { state } from './state.js';
 import { statusDot, statusText } from './elements.js';
 import { fetchKnownTagsAndPeople, loadTaxonomy } from './tags.js';
 import { scanFolder } from './folder.js';
-import { pathKey } from './common/paths.js';
 import { checkIndexingStatus } from './suggestions.js';
 import { browseWholeLibrary, libraryViewOfFolder, refreshLibraryView, syncLibraryMenu } from './library-view.js';
 import { startNamingFacesInLibrary } from './name-faces.js';
@@ -45,18 +44,14 @@ export function wireTagPupGear() {
     const menu = document.getElementById('gear-menu');
     // The menu's library views: the whole library, or the folder that is open (library-view.js).
     if (button) button.addEventListener('click', () => syncLibraryMenu(menu));
-    // Folders queued: the open folder is asked again whether it is the library's (membership.js). A folder
-    // removed: the navigator's counts and the view that is open are read again.
+    // Folders queued: their indexes are followed to their end, whichever folder or view is open (suggestions.js), and the
+    // open folder is asked again whether it is the library's (membership.js). A folder removed: the navigator's counts and
+    // the view that is open are read again.
     const manageFolders = (welcome) => openFolderManager({
         welcome,
         queued: (data) => {
-            if (!state.scannedFolder) return;
-            upper.checkFolderMembership(state.scannedFolder);
-            // The open folder is among those queued, or under one: follow its index to the end (rescan).
-            const open = pathKey(state.scannedFolder);
-            if ((data.queued || []).some(q => open === pathKey(q) || open.startsWith(pathKey(q) + '\\'))) {
-                checkIndexingStatus(state.scannedFolder);
-            }
+            checkIndexingStatus(data.queued || []);
+            if (state.scannedFolder) upper.checkFolderMembership(state.scannedFolder);
         },
         removed: () => {
             upper.navigatorCountsChanged();

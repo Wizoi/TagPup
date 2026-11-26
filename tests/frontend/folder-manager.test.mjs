@@ -385,14 +385,31 @@ describe("a folder queued again after it finished", () => {
 });
 
 describe("review of cut 2", () => {
-  test("the folder open in TagPup, added from the gear: the page follows its index and scans it when done", async (t) => {
+  test("the folder open in TagPup, added from the gear: the page follows the queued folder's index, not the open one's", async (t) => {
     const server = serverFor().on("/api/folder/membership", { held: false });
     const ctx = await openManager(t, { app: "tagpup", server });
     pageExports(ctx.window, "web/tagpup/state.js").state.scannedFolder = `${NEW_MEET}\\Heat 1`;   // under a folder the dialog queues
     await browse(ctx);
     click(ctx.window, button(ctx.document, "Add"));
     await flush(ctx.window, 4);
-    assert.ok(server.urls().some((u) => u.includes("/api/folder/index-status")), "index-status was asked of the open folder");
+    // The queue no longer lists it (IDLE): its own status is asked, how it ended. A subfolder's status is the queue's READY
+    // whatever its folder's index is doing: asked of the open folder, the page took an index under way for one ended.
+    const asked = server.urls().filter((u) => u.includes("/api/folder/index-status"))
+      .map((u) => new URL(u, "http://localhost").searchParams.get("path"));
+    assert.ok(asked.includes(NEW_MEET), "the queued folder's status was not asked");
+    assert.ok(!asked.includes(`${NEW_MEET}\\Heat 1`), "the open folder's own status was asked");
+  });
+
+  test("TagPup with no folder open (a new library's first step): the folders queued are followed to their end", async (t) => {
+    const server = serverFor();
+    const ctx = await openManager(t, { app: "tagpup", server });
+    assert.ok(!pageExports(ctx.window, "web/tagpup/state.js").state.scannedFolder, "fixture: a folder is open");
+    await browse(ctx);
+    click(ctx.window, button(ctx.document, "Add"));
+    await flush(ctx.window, 4);
+    const asked = server.urls().filter((u) => u.includes("/api/folder/index-status"))
+      .map((u) => new URL(u, "http://localhost").searchParams.get("path"));
+    assert.deepEqual(asked.sort(), [NEW_MEET, SEASON].sort(), "the folders queued were not followed");
   });
 
   test("a look that fails says so in the dialog, not only in the console", async (t) => {

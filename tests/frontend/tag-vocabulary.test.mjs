@@ -137,8 +137,8 @@ describe("the app starts itself last", () => {
   test("the startup block is still where this guard expects it", () => {
     assert.ok(anchor > 0, "the startup block moved or changed shape; update this guard");
     assert.ok(
-      LINES.slice(anchor).some((l) => l.includes("checkIndexingStatus(initialPath)")),
-      "startup no longer picks up a running index; update this guard"
+      LINES.slice(anchor).some((l) => l.includes("checkIndexingStatus()")),
+      "startup no longer picks up the indexes under way; update this guard"
     );
   });
 

@@ -1,7 +1,7 @@
 // TagPup's page: the folder list -- choosing, scanning and closing a folder, the list of
 // its photos and the folder view's header, and the sidebar's width.
 import { api } from './common/api.js';
-import { baseName, pathKey, samePath } from './common/paths.js';
+import { baseName, isUnder, pathKey, samePath } from './common/paths.js';
 import { pressable } from './common/press.js';
 import { upper } from './hooks.js';
 import { state } from './state.js';
@@ -214,6 +214,25 @@ export function updateCurrentFolderLabel() {
     }
 }
 
+/**
+ * Does the scan of `open` hold photos `indexed`'s index wrote: the same folder, one above it or one below it (a folder's
+ * scan is recursive, web/common/paths.js isUnder)? What an index's end reads again (library-view.js indexEnded).
+ */
+export function scanHolds(open, indexed) {
+    return samePath(open, indexed) || isUnder(open, indexed) || isUnder(indexed, open);
+}
+
+/**
+ * Is this browser's kept scan of `path`, kept at `taken` (Date.now()), out of date: an index holding its photos is under
+ * way or waits, or ended after it was kept, as this page has heard (state.indexFollow, suggestions.js checkIndexingStatus)?
+ * Shown, it was the list from before the index: no faces, no new photos (#3408).
+ */
+function keptScanOutOfDate(path, taken) {
+    const follow = state.indexFollow;
+    if ([...follow.known.values()].some(folder => scanHolds(path, folder))) return true;
+    return [...follow.ends.values()].some(end => end.at > (Number(taken) || 0) && scanHolds(path, end.folder));
+}
+
 // Scans a folder
 export function scanFolder(forceRefresh = false, { keepTyped = false, asked = false } = {}) {
     const path = folderPathInput.value.trim();
@@ -249,7 +268,8 @@ export function scanFolder(forceRefresh = false, { keepTyped = false, asked = fa
             try {
                 const cacheEntry = JSON.parse(rawCache);
                 const age = Date.now() - cacheEntry.timestamp;
-                if (age < CACHE_TTL_MS && cacheEntry.version === CACHE_VERSION) {
+                if (age < CACHE_TTL_MS && cacheEntry.version === CACHE_VERSION
+                    && !keptScanOutOfDate(path, cacheEntry.timestamp)) {
                     const previous = state.scannedFolder;
                     state.scannedFolder = path;
                     updateCurrentFolderLabel();
@@ -281,7 +301,8 @@ export function scanFolder(forceRefresh = false, { keepTyped = false, asked = fa
                     
                     upper.checkSuggestionsStatus(path);
                     upper.checkFolderMembership(path);
-                    
+                    upper.checkIndexingStatus();
+
                     // If active photo path is set, reload its data
                     if (state.activePhotoPath) {
                         const matched = state.folderPhotos.find(p => p.path === state.activePhotoPath);
@@ -308,6 +329,7 @@ export function scanFolder(forceRefresh = false, { keepTyped = false, asked = fa
         state.scanAbortController.abort();
     }
     state.scanAbortController = new AbortController();
+    const scanning = state.scanning = { path, stale: false };
 
     statusDot.className = 'status-indicator-dot busy';
     statusText.textContent = 'Scanning...';
@@ -320,6 +342,14 @@ export function scanFolder(forceRefresh = false, { keepTyped = false, asked = fa
             return res.json();
         })
         .then(data => {
+            if (state.scanning === scanning) state.scanning = null;
+            // An index holding its photos ended while it was out (library-view.js indexEnded): what it read may be from
+            // before; read again, once for each such end.
+            if (scanning.stale) {
+                folderPathInput.value = path;
+                scanFolder(true, { asked: true });
+                return;
+            }
             // The scan asked about unsaved edits before it began; anything typed
             // while it ran has not been asked about. The photo being edited is
             // still here after a refresh, and showPhoto keeps what is being typed.
@@ -343,6 +373,7 @@ export function scanFolder(forceRefresh = false, { keepTyped = false, asked = fa
         })
         .catch(err => {
             if (err.name === 'AbortError') return;
+            if (state.scanning === scanning) state.scanning = null;
             console.error(err);
             state.afterScan = null;
             listStats.textContent = 'Scan failed';
@@ -429,6 +460,8 @@ export function showScannedFolder(path, data) {
     upper.checkSuggestionsStatus(path);
     // Does the library hold it? If not, ask before anything is added (membership.js).
     upper.checkFolderMembership(path);
+    // An index under way is followed to its end, whichever folder it is of (suggestions.js).
+    upper.checkIndexingStatus();
 
     // If active photo path is set, reload its data
     if (state.activePhotoPath) {

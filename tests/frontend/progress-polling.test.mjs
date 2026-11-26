@@ -176,13 +176,20 @@ describe("suggestion progress polling", () => {
 
 describe("indexing progress polling", () => {
   /**
-   * The index poller is no longer started by a button -- TagPup has no Index button,
-   * because adding a folder to a database is TagTuner's job. It starts when the page
-   * opens on a folder, so that an index running elsewhere still shows its progress
-   * here. That is the path these drive.
+   * The index poller is no longer started by a button -- TagPup has no Index button, because adding a folder to a
+   * database is TagTuner's job. The page follows the library's queue (GET /api/folder/index-active: web/tagpup/suggestions.js
+   * checkIndexingStatus) from its load, whoever queued the folders, so an index running elsewhere still shows its progress
+   * here; that is the path these drive. What an index's end reads again, and the owner's scenario around it, is
+   * scenario-working-on-a-new-folder.test.mjs (V32).
    */
-  async function openOnAFolder(t, sequence) {
-    const server = baseRoutes(new ScriptedServer("/api/folder/index-status", sequence));
+  const IDLE = { active: [], queued: [], busy: false, remaining: 0 };
+  const running = (percent, message) => ({ active: [{ folder: FOLDER, name: "2020", percent, message }], queued: [],
+    busy: true, remaining: 1 });
+
+  async function openOnAFolder(t, sequence, ended = { status: "completed", percent: 100, message: "Folder indexed." }) {
+    const server = baseRoutes(new ScriptedServer("/api/folder/index-active", sequence))
+      .on("/api/folder/index-status", ended)
+      .on("/api/folder/suggest-status", { status: "idle" });
     const ctx = await loadApp("tagpup", { t,
       url: "http://localhost:8090/photo_index/?path=" + encodeURIComponent(FOLDER),
       server,
@@ -191,38 +198,31 @@ describe("indexing progress polling", () => {
     return ctx;
   }
 
-  test("a folder never indexed reports ready and stops", async (t) => {
-    const ctx = await openOnAFolder(t, [
-      { status: "completed", percent: 100, message: "Ready" },
-    ]);
+  test("nothing queued: the queue is asked, and then no more", async (t) => {
+    const ctx = await openOnAFolder(t, [IDLE]);
     await advance(ctx.window, 200);
     const settled = ctx.server.statusCalls;
     assert.ok(settled > 0, "the index poller never ran");
     await advance(ctx.window, TWO_POLLS);
 
-    assert.equal(ctx.server.statusCalls, settled, "poller kept running when ready");
+    assert.equal(ctx.server.statusCalls, settled, "poller kept running with nothing queued");
   });
 
   test("a running index reports its message and percentage", async (t) => {
-    const ctx = await openOnAFolder(t, [
-      { status: "running", percent: 45, message: "Indexing photos: 50%" },
-    ]);
+    const ctx = await openOnAFolder(t, [running(45, "Indexing photos: 50%")]);
     await advance(ctx.window, 60);
 
     const container = ctx.document.getElementById("index-progress-container");
     assert.ok(!container.classList.contains("hidden"), "progress bar not shown");
-    assert.match(
-      ctx.document.getElementById("index-progress-text").textContent,
-      /Indexing/,
-      "the worker's message was not surfaced"
-    );
+    assert.match(ctx.document.getElementById("index-progress-text").textContent, /Indexing photos: 50%/,
+      "the worker's message was not surfaced");
+    assert.equal(ctx.document.getElementById("index-progress-bar").style.width, "45%");
   });
 
-  test("a failed index stops polling rather than spinning", async (t) => {
-    const ctx = await openOnAFolder(t, [
-      { status: "failed", percent: 0, message: "Indexing failed with exit code 1." },
-    ]);
-    await advance(ctx.window, 200);
+  test("a failed index stops polling rather than spinning, and says so", async (t) => {
+    const ctx = await openOnAFolder(t, [running(10, "Indexing photos: 10%"), IDLE],
+      { status: "failed", percent: 0, message: "Indexing failed with exit code 1." });
+    await advance(ctx.window, 1200);
     const settled = ctx.server.statusCalls;
     await advance(ctx.window, TWO_POLLS);
 
@@ -231,6 +231,7 @@ describe("indexing progress polling", () => {
       ctx.document.getElementById("index-progress-container").classList.contains("hidden"),
       "the progress bar was left up after a failure"
     );
+    assert.match(ctx.document.getElementById("status-text").textContent, /2020: Indexing failed with exit code 1\./);
   });
 
   test("there is no Index button to press", async (t) => {

@@ -21,7 +21,7 @@ import { rowStatesFromSpec } from './navigator-model.js';
 import {
     btnApplyRename, btnFolderAutoApply, btnLibraryRefresh, btnPhotoBack, btnRefreshList,
     btnToggleRename, btnToggleTimeshift,
-    folderPathInput, folderViewHeader, folderViewMain, folderViewStats, folderViewTitle, folderViewTop, indexProgressContainer,
+    folderPathInput, folderViewHeader, folderViewMain, folderViewStats, folderViewTitle, folderViewTop,
     libraryStrip, libraryStripSource, libraryStripStatus, libraryStripTotal,
     photoList, photoSearch, renamePanel, statusText, suggestProgressContainer, timeshiftPanel
 } from './elements.js';
@@ -30,8 +30,9 @@ import { isJustLooking } from './looking.js';
 import { hasUnsavedEdits, leavePhotoThen, openPhotoWrite } from './edits.js';
 import { leaveThen } from './pending.js';
 import {
-    openFolderView, scanFolder, updateCurrentFolderLabel, updateListStats, updatePhotoPosition
+    openFolderView, scanFolder, scanHolds, updateCurrentFolderLabel, updateListStats, updatePhotoPosition
 } from './folder.js';
+import { fetchKnownTagsAndPeople } from './tags.js';
 import { clearSelection } from './selected.js';
 import { forgetSelectionFaces } from './selection-faces.js';
 import { positionOf, pushEntry } from './history-entries.js';
@@ -60,16 +61,15 @@ function isOpen(spec) {
 /**
  * What belongs to the open folder is idle while a view of the library is open: nothing of the folder
  * is asked, polled or written. Opening the folder again (Back, or a folder to Organize) reads it as it was
- * opened the first time, from this browser's cache of the scan or the disk.
+ * opened the first time, from this browser's cache of the scan or the disk. The library's indexes are not the
+ * folder's: they are followed on (suggestions.js checkIndexingStatus), and an end refreshes the view (indexEnded).
  */
 function quietTheFolder() {
     if (state.scanAbortController) state.scanAbortController.abort();   // a scan under way would land in the folder
+    state.scanning = null;
     window.clearInterval(state.progressTimer);
-    window.clearInterval(state.indexProgressTimer);
     state.progressTimer = null;
-    state.indexProgressTimer = null;
     suggestProgressContainer.classList.add('hidden');
-    indexProgressContainer.classList.add('hidden');
     state.scannedFolder = null;
     state.folderPhotos = [];
     upper.forgetFolderSuggestions();
@@ -425,6 +425,35 @@ export function refreshLibraryView() {
         upper.navigatorCountsChanged({ now: true });   // the counts are read at each call: ask again
         upper.libraryViewPainted(lib, { refreshed: true });   // what the disk holds is asked again, whatever the view's size
         return true;
+    });
+}
+
+/**
+ * An index of `folder` has ended, whoever queued it (suggestions.js checkIndexingStatus, #3407): what it wrote is read
+ * again -- the navigator's counts (marked stale: a new folder shows in the Folders tab), the names offered while typing,
+ * the open view, or the open folder when its scan holds the folder's photos (scanHolds). A scan out for such a folder reads
+ * again as it lands (folder.js); what was typed in the open photo stays. Resolves once what was read again is on screen,
+ * so the index's closing sentence is said after the scan's "Ready" (unresolved when that scan fails: it says so itself).
+ */
+export function indexEnded(folder) {
+    upper.navigatorCountsChanged();
+    fetchKnownTagsAndPeople();
+    if (state.library) return refreshLibraryView();
+    const out = state.scanning;
+    const open = out ? out.path : state.scannedFolder;
+    if (!open || !scanHolds(open, folder)) return Promise.resolve(false);
+    return new Promise(resolve => {
+        const before = state.afterScan;
+        state.afterScan = () => {
+            if (before) before();
+            resolve(true);
+        };
+        if (out) {
+            out.stale = true;
+            return;
+        }
+        folderPathInput.value = open;
+        scanFolder(true, { keepTyped: true });
     });
 }
 

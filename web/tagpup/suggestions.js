@@ -3,8 +3,9 @@
 import { api } from './common/api.js';
 import { attachPersonFaces } from './common/person-faces.js';
 import { pressable } from './common/press.js';
-import { samePath } from './common/paths.js';
+import { baseName, isUnder, pathKey, samePath } from './common/paths.js';
 import { leafOf, peopleListHas, personLabelOf, photoAlreadyHas, sortedTags } from './common/vocabulary.js';
+import { upper } from './hooks.js';
 import { state } from './state.js';
 import {
     btnApplyAllSingleSugg, btnFolderAutoApply, btnSuggestCancel, btnSuggestTags, btnSuggestTitleWand, indexProgressBar,
@@ -14,7 +15,7 @@ import {
 } from './elements.js';
 import { setStatus } from './status.js';
 import { photosGone, recordsWritten, saveToLocalStorageCache } from './cache.js';
-import { fetchKnownTagsAndPeople, namesAPerson, resolveTagOrPerson } from './tags.js';
+import { namesAPerson, resolveTagOrPerson } from './tags.js';
 import { shownTags } from './pending.js';
 import { photoChangedOnDisk, queuePhotoWrite, queueWriteOf, redrawIfShowing } from './edits.js';
 import { postPhotoMetadata } from './common/photo-write.js';
@@ -111,66 +112,172 @@ export function cancelSuggestions() {
     });
 }
 
-// There is no Index button any more. Adding a folder to a database is TagTuner's
-// job -- it queues folders and survives a page refresh -- and the other half of
-// what this button was for, telling the index about keywords TagPup had just
-// written, is done by the writers themselves now. checkIndexingStatus stays, so
-// an index started elsewhere still shows its progress here.
+// ---- Following the library's indexes -------------------------------------------------------------------------------
+// The page follows every folder the library's queue indexes (GET /api/folder/index-active, as TagTuner's indexing.js
+// reads it), whoever queued it -- Manage folders, Add, TagTuner, the watcher's sync -- whichever folder or view is open,
+// from the first ask until the queue is empty; then it asks no more until there is a reason to: the page opening, a
+// folder opening, folders queued here. A folder that leaves the queue has ended: its own status (index-status) says how,
+// the status line keeps the index's closing sentence, and what it changed is read again (upper.indexEnded).
 
-export function checkIndexingStatus(folderPath) {
-    if (state.indexProgressTimer) clearInterval(state.indexProgressTimer);
+/** How often the queue is asked while something is queued or being indexed. */
+const INDEX_POLL_MS = 1000;
+/** Asks in a row with no answer after which the page stops asking until the next reason to: a server that is not
+ * answering is not asked once a second for ever, and nothing is said of an index whose end was not seen. */
+const INDEX_GIVE_UP = 5;
+/** What the queue says of a folder nobody has asked it about (tagpup/jobs/indexing.py READY): no index of it to speak of. */
+const NOTHING_TO_SAY = 'Ready';
 
-    function queryProgress() {
-        api.json(`/api/folder/index-status?path=${encodeURIComponent(folderPath)}`)
-            .then(data => {
-                if (state.library) return;   // a reply that came after a library view opened shows nothing
-                if (data.status === 'running') {
-                    // One bar: a Suggest run showing carries the index's progress in its own.
-                    const pct = state.indexPercent = data.percent || 0;
-                    const suggesting = !suggestProgressContainer.classList.contains('hidden');
-                    indexProgressContainer.classList.toggle('hidden', suggesting);
-                    indexProgressBar.style.width = `${pct}%`;
-                    indexProgressText.textContent = `${data.message || 'Indexing...'}`;
-                    if (suggesting && state.suggestWaiting) suggestProgressBar.style.width = `${pct}%`;
-                }
-                else if (data.status === 'completed') {
-                    state.indexPercent = null;
-                    clearInterval(state.indexProgressTimer);
-                    const wasVisible = !indexProgressContainer.classList.contains('hidden');
-                    indexProgressContainer.classList.add('hidden');
-                    
-                    
-                    if (wasVisible) {
-                        fetchKnownTagsAndPeople();
-                        scanFolder(true);
-                    }
-                    
-                    statusDot.className = 'status-indicator-dot';
-                    statusText.textContent = 'Ready';
-                }
-                else if (data.status === 'failed') {
-                    state.indexPercent = null;
-                    clearInterval(state.indexProgressTimer);
-                    const wasVisible = !indexProgressContainer.classList.contains('hidden');
-                    indexProgressContainer.classList.add('hidden');
-                    
-                    updateSuggestButtonState();
-                    
-                    if (wasVisible) {
-                        alert("Indexing failed: " + (data.message || 'Unknown error'));
-                    }
-                    
-                    statusDot.className = 'status-indicator-dot';
-                    statusText.textContent = 'Error';
-                }
-            })
-            .catch(err => {
-                console.error("Error polling indexing progress:", err);
-            });
+/**
+ * Ask what the library indexes now, and follow it to its end. `queued`: folders just queued here (Manage folders, Add),
+ * followed even when their index ends before the next answer could list them. Asked again while an ask is out, it asks
+ * once more when that one is in, never two at once: rapid folder switches send one ask after another, not a pile.
+ */
+export function checkIndexingStatus(queued = []) {
+    const follow = state.indexFollow;
+    forgetAnotherLibrary(follow);
+    for (const folder of queued || []) {
+        if (!folder) continue;
+        follow.known.set(pathKey(folder), folder);
+        follow.counted.add(pathKey(folder));
     }
+    follow.failures = 0;
+    if (follow.asking) {
+        follow.again = true;
+        return;
+    }
+    clearTimeout(follow.timer);
+    follow.timer = null;
+    askIndexes();
+}
 
-    queryProgress();
-    state.indexProgressTimer = setInterval(queryProgress, 1000);
+/** What the page followed of another library is not this one's (a page is one library; its address moved on). */
+function forgetAnotherLibrary(follow) {
+    const library = libraryName();
+    if (follow.library === library) return;
+    follow.library = library;
+    follow.known.clear();
+    follow.counted.clear();
+    follow.ended = 0;
+    follow.ends.clear();
+    follow.failures = 0;
+}
+
+function askIndexes() {
+    const follow = state.indexFollow;
+    const library = follow.library;
+    follow.asking = true;
+    api.fetch('/api/folder/index-active')
+        .then(res => (res && res.ok ? res.json() : null))
+        .then(data => {
+            if (libraryName() !== library) return false;   // another library's queue: dropped
+            if (!data || typeof data !== 'object' || Array.isArray(data)) return false;
+            return heardIndexes(data, library);
+        })
+        .catch(err => {
+            console.error('Error asking what the library indexes:', err);
+            return false;
+        })
+        .then(heard => {
+            follow.asking = false;
+            if (libraryName() !== library) return;
+            follow.failures = heard ? 0 : follow.failures + 1;
+            if (follow.again) {
+                follow.again = false;
+                askIndexes();
+                return;
+            }
+            if (follow.known.size && follow.failures < INDEX_GIVE_UP) {
+                follow.timer = setTimeout(askIndexes, INDEX_POLL_MS);
+                return;
+            }
+            // Nothing queued, or no answer for a while: no more asks, and no bar claiming an index goes on. What is still
+            // known is followed again at the next reason to ask.
+            follow.timer = null;
+            if (!follow.known.size) {
+                follow.counted.clear();
+                follow.ended = 0;
+            }
+            state.indexPercent = null;
+            indexProgressContainer.classList.add('hidden');
+        });
+}
+
+/**
+ * One answer of the queue: the folders it lists are followed; each the page knew of that it no longer lists has ended,
+ * and its status says how (asked for each, and a status that could not be read keeps it followed). True when every
+ * read answered.
+ */
+function heardIndexes(data, library) {
+    const follow = state.indexFollow;
+    const running = (Array.isArray(data.active) ? data.active : []).filter(job => job && job.folder);
+    const waiting = (Array.isArray(data.queued) ? data.queued : []).filter(job => job && job.folder);
+    const listed = new Map([...running, ...waiting].map(job => [pathKey(job.folder), job.folder]));
+    const gone = [...follow.known].filter(([key]) => !listed.has(key));
+    for (const [key, folder] of listed) {
+        follow.known.set(key, folder);
+        follow.counted.add(key);
+    }
+    showIndexing(running, waiting);
+    return Promise.all(gone.map(([key, folder]) => api.json(`/api/folder/index-status?path=${encodeURIComponent(folder)}`)
+        .then(status => ({ key, folder, status }), () => ({ key, folder, status: null }))))
+        .then(ends => {
+            if (libraryName() !== library) return false;
+            let answered = true;
+            for (const { key, folder, status } of ends) {
+                if (!status || typeof status.status !== 'string') {
+                    answered = false;
+                    continue;
+                }
+                // Queued again between the two reads (a run once more for files that arrived): still followed.
+                if (status.status === 'queued' || status.status === 'running') continue;
+                follow.known.delete(key);
+                follow.ended += 1;
+                follow.ends.set(key, { folder, at: Date.now() });
+                indexFinished(folder, status);
+            }
+            if (ends.length) showIndexing(running, waiting);
+            return answered;
+        });
+}
+
+/** The bar: "Indexing N of M folders", the folder being indexed and how far it has got; Suggest's bar, while it waits
+ * for the open folder's index, carries that index's progress (one bar, #2355). */
+function showIndexing(running, waiting) {
+    const follow = state.indexFollow;
+    const open = state.library ? null : state.scannedFolder;
+    const covers = job => Boolean(open) && (samePath(job.folder, open) || isUnder(open, job.folder));
+    const own = running.find(covers);
+    state.indexPercent = own ? (own.percent || 0) : (waiting.some(covers) ? 0 : null);
+    const suggesting = !suggestProgressContainer.classList.contains('hidden');
+    if (suggesting && state.suggestWaiting && state.indexPercent !== null) {
+        suggestProgressBar.style.width = `${state.indexPercent}%`;
+    }
+    const total = follow.counted.size;
+    indexProgressContainer.classList.toggle('hidden', !follow.known.size || suggesting);
+    if (!follow.known.size) return;
+    const of = `Indexing ${Math.min(total, follow.ended + 1)} of ${total} ${total === 1 ? 'folder' : 'folders'}`;
+    const now = running[0];
+    indexProgressBar.style.width = `${now ? now.percent || 0 : 0}%`;
+    indexProgressText.textContent = now ? `${of} (${now.name || baseName(now.folder)}): ${now.message || 'Indexing...'}`
+        : `${of}: waiting to start...`;
+}
+
+/**
+ * A folder's index ended, `status` saying how: what it wrote is read again (upper.indexEnded), then the status line keeps
+ * its closing sentence (the bake, the new faces), not the "Ready" of the scan that read it again. One cancelled wrote
+ * nothing: nothing is read again.
+ */
+function indexFinished(folder, status) {
+    const said = status.message && status.message !== NOTHING_TO_SAY ? `${baseName(folder)}: ${status.message}` : '';
+    if (status.status === 'cancelled') {
+        if (said) setStatus('ready', said);
+        return;
+    }
+    const kind = status.status === 'failed' ? 'error' : 'ready';
+    Promise.resolve(upper.indexEnded(folder)).then(() => {
+        if (said) setStatus(kind, said, { transient: false });
+        else if (kind === 'error') setStatus('error', `${baseName(folder)}: indexing failed`, { transient: false });
+    });
 }
 
 /**

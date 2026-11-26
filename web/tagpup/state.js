@@ -198,6 +198,9 @@ export const state = {
 
     // Abort controller for scan fetches
     scanAbortController: null,
+    // The scan out now (folder.js scanFolder), {path, stale}, else null: an index holding its photos that ends meanwhile marks
+    // it `stale` (library-view.js indexEnded), and it reads the folder again as it lands rather than show what it read before.
+    scanning: null,
 
     statusResetTimer: null,
     /**
@@ -213,8 +216,18 @@ export const state = {
 
     searchTimeout: null,
 
-    indexProgressTimer: null,
-    // How far the folder's index has got while one runs (a percent), else null: a Suggest run waiting for it shows it in its own bar.
+    // The library's indexes as this page follows them (suggestions.js checkIndexingStatus): `library`, the library they are
+    // of; `known`, pathKey -> folder of each queued or being indexed, as last heard (GET /api/folder/index-active) or just
+    // queued here; `counted`, the keys of every folder seen since the queue was last empty, and `ended`, how many of them
+    // have ended ("Indexing N of M folders"); `ends`, pathKey -> {folder, at} of each index seen to end, when (Date.now()):
+    // a scan taken before it is out of date (folder.js). `timer`, the next ask; `asking`, one is out, and `again`, another
+    // was wanted meanwhile; `failures`, asks in a row with no answer.
+    indexFollow: {
+        library: '', known: new Map(), counted: new Set(), ended: 0, ends: new Map(),
+        timer: null, asking: false, again: false, failures: 0,
+    },
+    // How far the open folder's index has got while one runs (a percent, 0 while it waits), else null: a Suggest run waiting
+    // for it shows it in its own bar.
     indexPercent: null,
     // Whether the Suggest run showing is waiting (for the index or the graphics card) and has no count of its own yet.
     suggestWaiting: false,

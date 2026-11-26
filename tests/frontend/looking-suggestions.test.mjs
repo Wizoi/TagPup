@@ -32,13 +32,17 @@ function server(state) {
     .on("/api/taxonomy/tree", [])
     .on("/api/databases", { databases: ["kr-track"] })
     .on("/api/folder/membership", () => (state.held ? HELD : NOT_HELD))
-    // The index of an added folder: running at first, then done (what the page polls once a second).
-    .on("/api/folder/index-status", () => {
-      if (!state.held) return { status: "completed", percent: 100, message: "Ready" };
+    // The index of an added folder: running at first, then done (the queue the page asks once a second, and the folder's
+    // status once it has left it).
+    .on("/api/folder/index-active", () => {
+      if (!state.held) return { active: [], queued: [], busy: false, remaining: 0 };
       state.indexPolls = (state.indexPolls || 0) + 1;
-      return state.indexPolls < 2 ? { status: "running", percent: 40, message: "Indexing..." }
-        : { status: "completed", percent: 100, message: "Folder indexed." };
+      return state.indexPolls < 2
+        ? { active: [{ folder: FOLDER, name: "Lighthouse Trip", percent: 40, message: "Indexing..." }], queued: [], busy: true, remaining: 1 }
+        : { active: [], queued: [], busy: false, remaining: 0 };
     })
+    .on("/api/folder/index-status", () => (state.held ? { status: "completed", percent: 100, message: "Folder indexed.", folder: FOLDER }
+      : { status: "completed", percent: 100, message: "Ready" }))
     .on("/api/folder/add", () => {
       state.held = true;
       state.look = null;   // the server drops the look when the folder is added (tagpup.jobs.suggestions.dropped_by_add)

@@ -30,6 +30,11 @@ async function pageWithStatus(t, sequence, cancelReply = { success: true, cancel
     .on("/api/folder/scan", [photoRecord({ filename: "start.jpg" })])
     .on("/api/folder/suggest-cancel", cancelReply)
     .on("/api/folder/index-status", () => indexStatus)
+    // The library's queue, as tagpup/jobs/indexing.py IndexQueue.active gives it: the folder, while its index runs.
+    .on("/api/folder/index-active", () => (indexStatus.status === "running"
+      ? { active: [{ folder: FOLDER, name: "Regatta", percent: indexStatus.percent, message: indexStatus.message }], queued: [],
+        busy: true, remaining: 1 }
+      : { active: [], queued: [], busy: false, remaining: 0 }))
     .on("/api/folder/suggest-status", () => (replies.length > 1 ? replies.shift() : replies[0]));
   const ctx = await loadApp("tagpup", { t, url: "http://localhost:8090/photo_index/?path=" + encodeURIComponent(FOLDER), server });
   await openFolder(ctx, FOLDER, { settle: 6 });

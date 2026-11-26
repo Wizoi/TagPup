@@ -270,11 +270,14 @@ describe("a bulk write refused or cancelled makes no tree node (#554)", () => {
 });
 
 describe("a late reply about the folder after a view opened", () => {
-  test("an index-status reply shows no progress over the view", async (t) => {
+  test("the queue's reply shows the library's index over the view, and nothing of the folder's", async (t) => {
+    // The library's queue is the library's, not the folder's: a view shows its indexes too (#3408), and the folder left
+    // behind gives Suggest's bar no progress to carry.
     const server = folderServer();
     let release;
-    server.first("/api/folder/index-status", () => new Promise((resolve) => {
-      release = () => resolve({ status: "running", percent: 40, message: "Indexing..." });
+    server.first("/api/folder/index-active", () => new Promise((resolve) => {
+      release = () => resolve({ active: [{ folder: "D:\\Library\\2020", name: "2020", percent: 40, message: "Indexing..." }],
+        queued: [], busy: true, remaining: 1 });
     }));
     const ctx = await loadApp("tagpup", { t, url: "http://localhost:8090/photo_index/?path=D%3A%5CLibrary%5C2020", server });
     server.on("/api/library/ids", { total: 0, ids: [], complete: true });
@@ -282,6 +285,9 @@ describe("a late reply about the folder after a view opened", () => {
     await flush(ctx.window, 6);
     release();
     await flush(ctx.window, 6);
-    assert.ok(ctx.document.getElementById("index-progress-container").classList.contains("hidden"));
+    assert.ok(!ctx.document.getElementById("index-progress-container").classList.contains("hidden"));
+    assert.match(ctx.document.getElementById("index-progress-text").textContent, /^Indexing 1 of 1 folder \(2020\)/);
+    assert.ok(ctx.document.getElementById("suggest-progress-container").classList.contains("hidden"));
+    assert.equal(pageExports(ctx.window, "web/tagpup/state.js").state.indexPercent, null);
   });
 });

@@ -134,6 +134,15 @@ SCENARIOS = {
             "a struck chip; another library is another page with no chip of the first; a section that could not be read "
             "says so with Try again; a filter at the server's cap refuses one more with its sentence and reads nothing; no "
             "cover is asked under the sheet; six chips at 320 px are one row scrolled sideways."),
+    "V32": ("views", "Somebody adds a folder from Organize and works on it at once: the page follows the library's queue "
+            "whoever queued it, saying Indexing N of M folders, a Suggest run meanwhile carrying the index's progress; it "
+            "follows on in a view of the library and back in the folder, where the list kept from before the index is not "
+            "shown; when the index ends the Library pane's folders, the open folder and the open view are read again and "
+            "the status line keeps the index's closing sentence; rapid folder switches send one ask at a time and read "
+            "again only a folder the index holds, a scan out at the end reads again as it lands, a reply for the library "
+            "left is dropped, the open folder second in line is read again at its own end only, a cancelled index reads "
+            "nothing again, a queue that does not answer says nothing wrong and is asked no more, and nothing is asked "
+            "once nothing is queued."),
     "I1": ("apps", "Switching library in the middle of a folder shows no card of the first."),
     "I2": ("apps", "A write through a server update is waited out and not repeated."),
     "I3": ("apps", "An update by a launch and by an install hands one server over to the next without killing its work."),
@@ -290,6 +299,7 @@ _SCENARIO_FILES = {
     "V29": "scenario-filtering-the-library-in-filter-mode",
     "V30": "scenario-moving-between-tabs-on-the-phone",
     "V31": "scenario-filtering-on-the-phone",
+    "V32": "scenario-working-on-a-new-folder",
 }
 
 #: owner -> kind -> the unit, migration and guard files, a .mjs without its ".test.mjs".
