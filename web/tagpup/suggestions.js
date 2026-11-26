@@ -266,14 +266,20 @@ function showIndexing(running, waiting) {
 /**
  * Folders' indexes ended in one answer of the queue, each `{folder, status}`: what they wrote is read again once
  * (upper.indexEnded), then the status line keeps their closing sentences (the bake, the new faces), not the "Ready" of
- * the scan that read it again. One cancelled wrote nothing, and is not read again.
+ * the scan that read it again. One cancelled wrote nothing, and is not read again. A batch's folders share one status
+ * (tagpup/jobs/indexing.py: one run), named by its first folder: its sentence is said once (#3417).
  */
 function indexesFinished(finished) {
     const said = [];
+    const heard = new Set();
     let kind = 'ready';
     const wrote = [];
     for (const { folder, status } of finished) {
-        const sentence = status.message && status.message !== NOTHING_TO_SAY ? `${baseName(folder)}: ${status.message}` : '';
+        const run = pathKey(status.folder || folder) + '\n' + (status.message || '');
+        const first = !heard.has(run);
+        heard.add(run);
+        const named = status.folder || folder;
+        const sentence = first && status.message && status.message !== NOTHING_TO_SAY ? `${baseName(named)}: ${status.message}` : '';
         if (status.status === 'cancelled') {
             if (sentence) setStatus('ready', sentence);
             continue;
@@ -282,7 +288,7 @@ function indexesFinished(finished) {
         wrote.push(folder);
         if (status.status === 'failed') kind = 'error';
         if (sentence) said.push(sentence);
-        else if (status.status === 'failed') said.push(`${baseName(folder)}: indexing failed`);
+        else if (first && status.status === 'failed') said.push(`${baseName(named)}: indexing failed`);
     }
     if (!wrote.length) return;
     Promise.resolve(upper.indexEnded(wrote)).then(() => {

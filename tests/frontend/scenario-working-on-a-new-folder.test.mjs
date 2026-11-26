@@ -239,16 +239,16 @@ describe("V32: around it", () => {
     const forced = ctx.scans(ROOT, true);
     const folderReads = ctx.folderReads();
     batch = [];
-    for (const folder of [HEAT_1, HEAT_2]) {
-      q.statuses[folder] = { status: "completed", percent: 100, folder, message: "Folder indexed. 5 photos read, 5 new." };
-    }
+    // One run: the server gives the batch's folders one status, named by its first folder (tagpup/jobs/indexing.py).
+    const ended = { status: "completed", percent: 100, folder: HEAT_1, message: "Folder indexed. 10 photos read, 10 new." };
+    for (const folder of [HEAT_1, HEAT_2]) q.statuses[folder] = { ...ended };
     await ctx.tick();
     await ctx.tick(200);
     assert.equal(ctx.scans(ROOT, true), forced + 1, "the open folder was read again once per folder of the batch");
     click(ctx.window, ctx.$("sidebar-tab-library"));
     await ctx.tick(200);
     assert.equal(ctx.folderReads(), folderReads + 1, "the Library pane was read again once per folder of the batch");
-    assert.equal(ctx.status(), "Heat 1: Folder indexed. 5 photos read, 5 new. Heat 2: Folder indexed. 5 photos read, 5 new.");
+    assert.equal(ctx.status(), "Heat 1: Folder indexed. 10 photos read, 10 new.", "the batch's sentence was said once per folder (#3417)");
   });
 
   test("a list kept before an index that ended is not shown after a reload (#3411)", async (t) => {

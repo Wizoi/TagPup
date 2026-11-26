@@ -1,7 +1,7 @@
 // TagPup's page: the folder list -- choosing, scanning and closing a folder, the list of
 // its photos and the folder view's header, and the sidebar's width.
 import { api } from './common/api.js';
-import { baseName, isUnder, pathKey, samePath } from './common/paths.js';
+import { baseName, pathKey, samePath } from './common/paths.js';
 import { pressable } from './common/press.js';
 import { upper } from './hooks.js';
 import { state } from './state.js';
