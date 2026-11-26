@@ -25,6 +25,10 @@ import path from "node:path";
 
 export const LIMIT = 300000;
 export const WORKER_LIMIT = 150000;
+/** A design agent (its brief carries DESIGN_MARK) writes a whole plan from many reads: a design must be complete,
+ * where code is kept concise (owner, 2026-11-26: the #3376 design agent ran out of context and left gaps). */
+export const DESIGN_LIMIT = 450000;
+export const DESIGN_MARK = "Context budget: design";
 const CHUNK = 256 * 1024;
 const MOST = 8 * 1024 * 1024;
 
@@ -83,11 +87,22 @@ export function advice(context) {
 }
 
 /** The line for a subagent whose last call carried more than WORKER_LIMIT, or null. */
-export function workerAdvice(context) {
-  if (context === null || context <= WORKER_LIMIT) return null;
+export function workerAdvice(context, limit = WORKER_LIMIT) {
+  if (context === null || context <= limit) return null;
   return `Context budget: your last call carried ${Math.round(context / 1000)}k tokens of context, over ` +
-    `${WORKER_LIMIT / 1000}k (DECISIONS 2026-10-18, the second retro). Commit what you have now and report: ` +
+    `${limit / 1000}k (DECISIONS 2026-10-18, the second retro). Commit what you have now and report: ` +
     "a fresh worker does the rest.";
+}
+
+/** Whether the subagent's brief (the head of its transcript) opens a design: it carries DESIGN_MARK. */
+export function isDesign(file) {
+  const fd = openSync(file, "r");
+  try {
+    const head = Buffer.alloc(32 * 1024);
+    return head.subarray(0, readSync(fd, head, 0, head.length, 0)).toString("utf8").includes(DESIGN_MARK);
+  } finally {
+    closeSync(fd);
+  }
 }
 
 /** The subagent's own transcript: the session's file `<id>.jsonl` has its subagents in `<id>/subagents/`. */
@@ -106,7 +121,7 @@ function main() {
     if (payload.agent_id) {
       event = "PostToolUse";
       const own = subagentTranscript(payload.transcript_path, payload.agent_id);
-      line = own && workerAdvice(lastContext(own, true));
+      line = own && workerAdvice(lastContext(own, true), isDesign(own) ? DESIGN_LIMIT : WORKER_LIMIT);
     } else {
       // The main session too is asked after a tool call (retro 2026-10-20, action 3): a session that runs many
       // calls under one prompt reached 335k and never met a prompt.

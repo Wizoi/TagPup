@@ -11,7 +11,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
-import { LIMIT, WORKER_LIMIT, lastContext } from "../../.claude/hooks/context-budget.mjs";
+import { DESIGN_LIMIT, DESIGN_MARK, LIMIT, WORKER_LIMIT, lastContext } from "../../.claude/hooks/context-budget.mjs";
 
 const HOOK = path.join(path.dirname(fileURLToPath(import.meta.url)),
                        "..", "..", ".claude", "hooks", "context-budget.mjs");
@@ -110,6 +110,28 @@ test("a worker past 150k is told after a tool call to commit and report; the mai
     assert.equal(hook(payload).stdout, "");
     assert.equal(hook({ ...payload, agent_id: "../x" }).stdout, "");
     assert.equal(hook({ ...payload, agent_id: "nosuch" }).stdout, "");
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test("a design agent is held to the design limit, not the worker's: its brief carries the mark", () => {
+  const home = mkdtempSync(path.join(tmpdir(), "context-budget-"));
+  try {
+    const session = path.join(home, "s-1.jsonl");
+    writeFileSync(session, JSON.stringify(call(2, 100000, 0)) + "\n");
+    mkdirSync(path.join(home, "s-1", "subagents"), { recursive: true });
+    const own = path.join(home, "s-1", "subagents", "agent-abc123.jsonl");
+    const brief = { type: "user", isSidechain: true, message: { role: "user", content: DESIGN_MARK + ". Write the plan." } };
+    const side = (read) => JSON.stringify(call(2, read, 0, { isSidechain: true })) + "\n";
+    const payload = { hook_event_name: "PostToolUse", transcript_path: session, agent_id: "abc123" };
+    writeFileSync(own, JSON.stringify(brief) + "\n" + side(WORKER_LIMIT + 100000));
+    assert.equal(hook(payload).stdout, "", "over the worker's limit, under the design's");
+    writeFileSync(own, JSON.stringify(brief) + "\n" + side(DESIGN_LIMIT + 1000));
+    assert.match(JSON.parse(hook(payload).stdout).hookSpecificOutput.additionalContext, /451k.*Commit what you have/);
+    writeFileSync(own, JSON.stringify({ ...brief, message: { role: "user", content: "Write the code." } }) + "\n" +
+                  side(WORKER_LIMIT + 100000));
+    assert.match(JSON.parse(hook(payload).stdout).hookSpecificOutput.additionalContext, /250k/, "no mark: a worker");
   } finally {
     rmSync(home, { recursive: true, force: true });
   }
