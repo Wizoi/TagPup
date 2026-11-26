@@ -103,7 +103,9 @@ SCENARIOS = {
     "V26": ("views", "On the phone page somebody opens a photo's Edit sheet and adds and takes off people and keywords, "
             "each one path's change with no stamp; rapid x taps each have their own Undo and an Undo in time sends "
             "nothing; a swipe, Back or the page going sends a removal still waiting, even one "
-            "behind a Save still out; the title and Date Taken save with the stamp read, a file changed on the PC is "
+            "behind a Save still out; the title and Date Taken save with the stamp read, a Save refused while the "
+            "folder indexes is read again and sent once more (not one with a Date Taken), the photo left meanwhile or "
+            "not, a file changed on the PC is "
             "never written over and the text typed is kept, a dropped connection says so, a title or date left by "
             "Back is put back when the sheet opens again, and Close with text typed asks."),
     "V28": ("views", "Somebody marks rows of the navigator's tabs in Filter mode, any of, must or not: the marks are one "
@@ -115,7 +117,7 @@ SCENARIOS = {
             "bookmark give the marks and chips, a tag deleted since struck through; a filter finding nothing keeps its chips; "
             "Clear all, the search box's Clear or the toggle clicked twice before Back arrives goes back once; a list past "
             "the server's cap is refused with a sentence; unsaved edits in the open photo ask before any mark."),
-    "V33": ("views", "Somebody tags the photos of a folder just added while the index writes its own fields into their files: a save refused as changed on disk is read again and sent once more when the tags and caption it writes over are as the page read them, the status line saying so; tags changed by someone else meanwhile, or the second send refused too, are the refusal as before, nothing merged and no third send; a photo the page no longer lists is not sent again; a caption that renames the file follows the rename; two refusals in a row each go once more; a library view's photo the same."),
+    "V33": ("views", "Somebody tags the photos of a folder just added while the index writes its own fields into their files: a save refused as changed on disk is read again and sent once more naming what the page read, the server writing it when the file's tags and caption are as that, the status line saying so; tags changed by someone else meanwhile, or the bake writing again before the second send, are refused again: the refusal as before, nothing merged and no third send; a photo the page no longer lists, or read again gone or unreadable, is not sent again; the next photo opened meanwhile waits for it; a caption that renames the file follows the rename; two refusals in a row each go once more; a library view's photo, a grid card's title, Carry forward and a suggestion taken the same."),
     "V30": ("views", "On the phone page somebody moves between its screens by the bar of tabs at the foot: a page on a "
             "library opens on Library, one on none shows the list with no bar; each tab is one step of history however "
             "fast it is pressed and none for the tab shown, Back walks back through the tabs to the page's first step, "
