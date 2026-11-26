@@ -39,7 +39,7 @@ editors) are the evidence those scenario tests cite.
    rows, and face_people's write through `file_changes.batch_exclusively`. Each names its guard test; box_shape is review
    only. face_people's own ExifTool session went (#1474).
 2. **No rule written twice.** Met.
-   - One batch reader, `field_values.read`: the indexer's `MetadataExtractor.batch_read` and sync's pairing read
+   - One batch reader, `field_values.read`: the indexer's `Fields.whole` and sync's pairing read
      through it (#1473). A timeout ends the read and leaves every photo not read unread (#1490).
    - One writer of a photo's fields, `field_values.write`; the identity mint writes through it (`ensure_document_id`).
      It writes a file one of two ways: a journaled write of a JPEG whose fields fit is patched in place
