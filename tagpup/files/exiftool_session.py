@@ -383,7 +383,7 @@ class ExifToolSession(exiftool.ExifToolHelper, _DrainingExifTool):
     """ExifToolHelper that drains stderr as it goes and gives up after `timeout`.
 
         with ExifToolSession(executable=path) as et:
-            rows = et.get_tags(batch, tags=["XMP:Subject"])
+            rows = field_values.read(et, batch, ["XMP:Subject"])
     """
 
     def __init__(self, *args, timeout=DEFAULT_TIMEOUT, encoding=ENCODING,
