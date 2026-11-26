@@ -73,7 +73,7 @@ class APhotoAgainstItsFile(ALibrary):
             "INSERT INTO photos (path, mtime, size, tags, captions, raw_metadata, document_id) VALUES (?,?,?,?,?,?,?)",
             (path, record["mtime"], record["size"], json.dumps(record["tags"]), json.dumps(record["captions"]),
              json.dumps(prefixed, default=str), record.get("document_id")))
-        answer = inspect.photo_against_file(self.library, photo_id, exiftool_path=exiftool)
+        answer = inspect.photo_against_file(self.library, photo_id, exiftool)
         self.assertFalse(answer["stale"], answer)
         self.assertEqual([], answer["raw_metadata"]["fields_differing"])
 
@@ -81,8 +81,7 @@ class APhotoAgainstItsFile(ALibrary):
         path = self.photo()
         photo_id = self.execute("INSERT INTO photos (path, mtime, size, tags, raw_metadata) VALUES (?,?,?,?,?)",
                                 (path, 1.0, 1, "[]", "{}"))
-        answer = inspect.photo_against_file(self.library, photo_id,
-                                            exiftool_path=os.path.join(self.home.root, "no-exiftool.exe"))
+        answer = inspect.photo_against_file(self.library, photo_id, os.path.join(self.home.root, "no-exiftool.exe"))
         self.assertTrue(answer["file_exists"])
         self.assertFalse(answer["file_read"])
         self.assertIsNone(answer["stale"])

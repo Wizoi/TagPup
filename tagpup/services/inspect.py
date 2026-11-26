@@ -183,9 +183,9 @@ def _by_field(raw):
     return fields
 
 
-def photo_against_file(library, photo_id, exiftool_path=None, reveal=False):
+def photo_against_file(library, photo_id, exiftool_path, reveal=False):
     """A photo's row against what its file holds now, read with ExifTool the way the
-    indexer reads it: whether the file is there; its modified time and size; its tags,
+    indexer reads it (`exiftool_path`, the library's: runtimes.exiftool): whether the file is there; its modified time and size; its tags,
     captions and the people its keywords name; its DocumentID; and which raw metadata
     fields differ (field names, not values). Counts, and the values only with `reveal`.
     The file is only read."""
