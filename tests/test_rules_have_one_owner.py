@@ -119,6 +119,10 @@ LINE_RULES = (
     # write too. Not even field_values overwrites a photo in place (OVERWRITES).
     ("an ExifTool write outside field_values", FIELD_VALUES, r"\.set_tags\(|-overwrite_original|\.execute\([^)]*[\"']-[\w:-]+<?=",
      'et.execute("-XMP:Subject=Quay", path)', ".set_tags(", ""),
+    # A photo's fields are read by one reader, field_values.read: Smart Rename read its own, a command a photo, beside it
+    # (#3377). It batches, reads a refused batch a photo at a time and gives up at a share that does not answer.
+    ("an ExifTool read outside field_values", FIELD_VALUES, r"\.get_tags\(", 'meta = et.get_tags([path], tags=FIELDS)',
+     "et.get_tags(", ""),
     # A JPEG is patched in place by field_values.write alone, which gives it the journal's `saving` and its picture
     # rules. A file opened saying what others may do while it is open (the patch's, sharing nothing; a video's piece read,
     # sharing a rename and a delete too) is lock_owners.opened, the one CreateFileW of the code.
