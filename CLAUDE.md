@@ -55,7 +55,8 @@ Each names its one owner and the guard that fails the build when it is broken.
 - **Never call `subprocess` yourself**: `tagpup/core/processes.py` (`start`, `run`, `kill_tree`, `is_alive`) gives every
   child a hidden console (`tests/test_rules_have_one_owner.py`; what the owner does: `tests/test_processes_single_owner.py`).
 - **Never construct `ExifToolHelper` or `ExifTool`**: `ExifToolSession` (`tagpup/files/exiftool_session.py`) drains both
-  pipes and gives each command a deadline (`tests/test_rules_have_one_owner.py`).
+  pipes and gives each command a deadline; and only `tagpup/files/field_values.py` constructs an `ExifToolSession`:
+  everything else opens `field_values.opened` (`runtime.fields` from an entry point) (`tests/test_rules_have_one_owner.py`).
 - **Never load a model on the GPU yourself**: `tagpup/ml/gpu.py`, one process at a time; take a turn through
   `tagpup.runtime` (`begin` for Suggest, `gpu_turn` for the indexer) (#750; `tests/test_gpu_single_owner.py`).
 - **Never spell or compare a photo path by hand**: `tagpup/core/paths.py` (`stored()`, `key()`, `sql_equals()`,
