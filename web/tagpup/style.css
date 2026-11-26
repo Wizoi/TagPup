@@ -120,6 +120,11 @@ body {
     font-weight: 500;
 }
 
+/* An index's closing sentence's Re-examine: TagTuner's, for the index's folder (web/tagpup/suggestions.js). */
+.status-reexamine {
+    color: var(--accent);
+}
+
 /* Main Split View */
 .app-content {
     display: flex;

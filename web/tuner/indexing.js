@@ -2,9 +2,12 @@
 // and removed from it in Manage Folders (web/common/folder-manager.js), opened from the gear (gear.js), which calls
 // indexingQueued once folders are queued.
 import { api } from './common/api.js';
+import { buildElement, replaceContent } from './common/dom.js';
 import { samePath } from './common/paths.js';
+import { offersReexamine, withReexamine } from './common/reexamine-offer.js';
 import { state } from './state.js';
 import { refreshSidebarQuietly } from './sidebar.js';
+import { REEXAMINE_TITLE, reexamineFolderAt } from './reexamine.js';
 
 // ---- Folder indexing ---------------------------------------------------
 // TagTuner owns identity work, so it has to be able to bring new material in
@@ -17,6 +20,42 @@ const indexProgressText = document.getElementById('index-progress-text');
 const indexQueueSummary = document.getElementById('index-queue-summary');
 const btnCancelQueue = document.getElementById('btn-cancel-queue');
 
+/**
+ * The bar's line: the server's sentence. Given the `folder` of an index that ended, a sentence that offers Re-examine (its
+ * new faces, some with a likely name: web/common/reexamine-offer.js) has the word a button that runs Re-examine on that
+ * folder here (reexamine.js; a batch's status is named by its first folder, #3417); while an index runs, its words are
+ * words: its bake still writes the folder's files. Not drawn again while it says the same of the same folder.
+ */
+function sayOnTheBar(message, folder = null) {
+    const text = message || 'Indexing...';
+    indexProgressText.title = text;
+    if (indexProgressText.textContent === text && indexProgressText.dataset.folder === (folder || '')) return;
+    indexProgressText.dataset.folder = folder || '';
+    if (!folder) {
+        indexProgressText.textContent = text;
+        return;
+    }
+    replaceContent(indexProgressText, ...withReexamine(text, () => {
+        const button = buildElement('button', {
+            className: 'btn-index-reexamine', text: 'Re-examine', title: REEXAMINE_TITLE, attrs: { type: 'button' },
+        });
+        button.addEventListener('click', () => reexamineFolderAt(folder, button));
+        return button;
+    }));
+}
+
+/** With nothing indexing: the last index's closing sentence when it offers Re-examine, else no bar. */
+function showEndOrHide() {
+    const ending = state.indexEnding;
+    if (!ending) {
+        indexProgressContainer.classList.add('hidden');
+        return;
+    }
+    indexProgressContainer.classList.remove('hidden');
+    indexProgressBar.style.width = '100%';
+    sayOnTheBar(ending.message, ending.folder);
+}
+
 // A freshly loaded page knows nothing about a job that started before it, nor
 // about anything queued behind it. Ask.
 export function restoreIndexingState() {
@@ -28,7 +67,7 @@ export function restoreIndexingState() {
             if (!job) return;
             indexProgressContainer.classList.remove('hidden');
             indexProgressBar.style.width = `${job.percent || 0}%`;
-            indexProgressText.textContent = job.message || 'Indexing...';
+            sayOnTheBar(job.message);
             pollIndexStatus(job.folder);
         })
         .catch(() => {});
@@ -77,7 +116,7 @@ function followQueue(delay) {
                     pollIndexStatus(job.folder);
                     return;
                 }
-                indexProgressContainer.classList.add('hidden');
+                showEndOrHide();
                 refreshSidebarQuietly();
             })
             .catch(() => {});
@@ -92,9 +131,11 @@ function pollIndexStatus(folderPath) {
         api.json(`/api/folder/index-status?path=${encodeURIComponent(folderPath)}`)
             .then(data => {
                 if (data.status === 'running') {
+                    // Another index under way: the last one's closing sentence is not kept past it.
+                    state.indexEnding = null;
                     indexProgressContainer.classList.remove('hidden');
                     indexProgressBar.style.width = `${data.percent || 0}%`;
-                    indexProgressText.textContent = data.message || 'Indexing...';
+                    sayOnTheBar(data.message);
                     return;
                 }
                 // Any terminal status stops the poll. Treating only 'completed' as
@@ -102,6 +143,9 @@ function pollIndexStatus(folderPath) {
                 clearInterval(state.indexPollTimer);
                 state.indexPollTimer = null;
                 state.lastFinishedFolder = folderPath;
+                // Its closing sentence stays on the bar when it offers Re-examine: the button there is the way to it.
+                state.indexEnding = data.status === 'completed' && offersReexamine(data.message)
+                    ? { message: data.message, folder: data.folder || folderPath } : null;
 
                 if (data.status === 'failed') {
                     // One bad folder must not stop the rest of the queue, so this
@@ -125,8 +169,9 @@ function pollIndexStatus(folderPath) {
 
 /** Folders were queued (Manage Folders, from the gear): show the bar and follow what the server now runs. */
 export function indexingQueued() {
+    state.indexEnding = null;
     indexProgressContainer.classList.remove('hidden');
-    indexProgressText.textContent = 'Starting...';
+    sayOnTheBar('Starting...');
     // A folder that finished earlier and has just been queued again is a new
     // job. Left set, followQueue took it for the finished one and stopped
     // following: no progress shown while it indexed.

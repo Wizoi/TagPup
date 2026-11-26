@@ -90,6 +90,9 @@ export const state = {
     lastFinishedFolder: null,
     followQueueTimer: null,
     indexPollTimer: null,
+    // The closing sentence of the index that ended last, `{ message, folder }`, kept on the bar while nothing else is
+    // indexed when it offers Re-examine (indexing.js), or null.
+    indexEnding: null,
 
     gridBuildTimer: null,
 

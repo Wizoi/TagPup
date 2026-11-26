@@ -6,7 +6,8 @@
  * list it kept from before the index, and when the index ends reads again what it wrote -- the Library pane's folders, the
  * open folder, the open view -- and keeps the index's closing sentence on the status line. Around it: rapid folder
  * switches, a reply for the library left, two folders queued with the open one second, a queue that does not answer, an
- * index cancelled, and no asking once nothing is queued.
+ * index cancelled, and no asking once nothing is queued. When some of the new faces have a likely name, the sentence's
+ * Re-examine is a link to TagTuner's Re-examine of the index's folder (cut D).
  *
  * The queue is the server's as tagpup/jobs/indexing.py IndexQueue gives it: `active` and `queued` from active(), each
  * folder's status from status() (READY for one nobody asked about). Folder names are invented.
@@ -24,6 +25,12 @@ const REGATTA = "D:\\Pictures\\Regatta";
 const HARBOUR = "D:\\Pictures\\Harbour";
 const READY = { status: "completed", percent: 100, message: "Ready" };
 const CLOSING = "Folder indexed. 12 photos read, 12 new. Baked 12 photos. 3 new faces: Re-examine to name them.";
+// The index's closing sentences as tagpup/services/indexing.py says them: some new faces with a likely name, and none.
+const LIKELY = "Folder indexed. 3 of the 5 new faces have a likely name: open Re-examine on their folder to confirm them.";
+const NONE_LIKELY = "Folder indexed. None of the 4 new faces looks enough like anyone named to be proposed: they wait in Identify Faces.";
+const TUNER = "http://localhost:8091/photo_index/";
+const APPS = { this: "tagpup", apps: { tagpup: "http://localhost:8090/photo_index/", tuner: TUNER } };
+const reexamineOf = (folder) => `${TUNER}?mode=folder-match&reexamine=${encodeURIComponent(folder)}`;
 
 const nameOf = (folder) => folder.split("\\").pop();
 const pathIn = (url) => new URL(url, "http://localhost").searchParams.get("path");
@@ -73,8 +80,9 @@ const NOT_HELD = (folder) => ({ library: "photo_index", folder, photos: 2, photo
 const HELD = (folder) => ({ ...NOT_HELD(folder), photos_held: 2, photos_not_held: 0, folders_not_held: 0, first_not_held: null });
 
 /** The page on photo_index over `q`; `activeReply` answers index-active instead of the queue when given. */
-async function page(t, q, { activeReply, suggest = () => ({ status: "idle" }), kept = {} } = {}) {
+async function page(t, q, { activeReply, suggest = () => ({ status: "idle" }), kept = {}, apps = APPS } = {}) {
   const server = new FakeServer()
+    .on("/api/apps", apps)
     .on("/api/tags", [])
     .on("/api/people", [])
     .on("/api/taxonomy/tree", [])
@@ -116,6 +124,7 @@ async function page(t, q, { activeReply, suggest = () => ({ status: "idle" }), k
     bar: () => !$("index-progress-container").classList.contains("hidden"),
     barText: () => $("index-progress-text").textContent,
     status: () => $("status-text").textContent,
+    links: () => [...$("status-text").querySelectorAll("a")].map((a) => ({ text: a.textContent, href: a.href, target: a.target })),
     asks: () => server.urls().filter((u) => u.includes("/api/folder/index-active")),
     statusAsks: () => server.urls().filter((u) => u.includes("/api/folder/index-status")).map(pathIn),
     scans: (folder, forced) => server.urls().filter((u) => u.includes("/api/folder/scan") && pathIn(u) === folder
@@ -441,5 +450,77 @@ describe("V32: around it", () => {
     assert.deepEqual(ctx.alerts, []);
     assert.equal(ctx.scans(HEAT_1), 1);
     assert.equal(ctx.state.scannedFolder, HEAT_1, "the folder is still open");
+  });
+});
+
+describe("V32: the index's new faces offer Re-examine, a link to TagTuner's", () => {
+  test("a likely name found: the sentence's Re-examine opens TagTuner's Re-examine of the folder", async (t) => {
+    const q = queueOf();
+    const ctx = await page(t, q);
+    await addFromOrganize(ctx, HEAT_1);
+    q.finish("completed", LIKELY);
+    await ctx.tick();
+    await ctx.tick(200);
+    assert.equal(ctx.status(), `Heat 1: ${LIKELY}`, "the link changed the sentence's words");
+    assert.deepEqual(ctx.links(), [{ text: "Re-examine", href: reexamineOf(HEAT_1), target: "_blank" }]);
+  });
+
+  test("no new face with a likely name: the sentence says so and links nothing", async (t) => {
+    const q = queueOf();
+    const ctx = await page(t, q);
+    await addFromOrganize(ctx, HEAT_1);
+    q.finish("completed", NONE_LIKELY);
+    await ctx.tick();
+    await ctx.tick(200);
+    assert.equal(ctx.status(), `Heat 1: ${NONE_LIKELY}`);
+    assert.deepEqual(ctx.links(), []);
+  });
+
+  test("a sync's batch, one status named by its first folder (#3417): one link, to that folder", async (t) => {
+    const q = queueOf([REGATTA, ROOT, HEAT_1, HEAT_2]);
+    let batch = [HEAT_1, HEAT_2];
+    q.active = () => ({
+      active: batch.map((folder) => ({ folder, name: nameOf(folder), percent: 50, message: "Reading metadata: 50%" })),
+      queued: [], busy: batch.length > 0, remaining: batch.length,
+    });
+    for (const folder of batch) q.statuses[folder] = { status: "running", percent: 50, folder, message: "Reading metadata" };
+    const ctx = await page(t, q);
+    await openFolder(ctx, ROOT);
+    await ctx.tick(200);
+    batch = [];
+    const ended = { status: "completed", percent: 100, folder: HEAT_1, message: LIKELY };
+    for (const folder of [HEAT_1, HEAT_2]) q.statuses[folder] = { ...ended };
+    await ctx.tick();
+    await ctx.tick(200);
+    assert.equal(ctx.status(), `Heat 1: ${LIKELY}`);
+    assert.deepEqual(ctx.links().map((link) => link.href), [reexamineOf(HEAT_1)]);
+  });
+
+  test("no TagTuner to point at: the words stay words", async (t) => {
+    const q = queueOf();
+    const ctx = await page(t, q, { apps: { this: "tagpup", apps: {} } });
+    await addFromOrganize(ctx, HEAT_1);
+    q.finish("completed", LIKELY);
+    await ctx.tick();
+    await ctx.tick(200);
+    assert.equal(ctx.status(), `Heat 1: ${LIKELY}`);
+    assert.deepEqual(ctx.links(), []);
+  });
+
+  test("a status said before TagTuner's address is known keeps its own words", async (t) => {
+    let answer = null;
+    const q = queueOf();
+    const ctx = await page(t, q, { apps: () => new Promise((resolve) => { answer = resolve; }) });
+    await addFromOrganize(ctx, HEAT_1);
+    q.finish("completed", LIKELY);
+    await ctx.tick();
+    await ctx.tick(200);
+    assert.equal(ctx.status(), `Heat 1: ${LIKELY}`);
+    assert.ok(answer, "fixture: TagTuner's address was not asked");
+    pageExports(ctx.window, "web/tagpup/status.js").setStatus("ready", "Saved 1 photo", { transient: false });
+    answer(APPS);
+    await flush(ctx.window, 6);
+    assert.equal(ctx.status(), "Saved 1 photo");
+    assert.deepEqual(ctx.links(), []);
   });
 });

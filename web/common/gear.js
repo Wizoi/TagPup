@@ -27,6 +27,7 @@
  * An item with data-app is a link to that app's page on this library. Its address comes
  * from the server (/api/apps): the ports are the process's, and a page that spelled
  * them would go on pointing at the usual port when the launcher had been told another.
+ * The same addresses are given to a page's other links to the other app (appUrls).
  *
  * Below the items, not one of them, the menu says which version of TagPup answers
  * (/api/server, asked at each opening: the server moves onto a new version
@@ -46,10 +47,9 @@ function isDisabledItem(item) {
     return item.getAttribute('aria-disabled') === 'true';
 }
 
-/** Point each data-app link at that app's page for this library, once it is known. */
-function fillAppLinks(menu) {
-    const links = menu.querySelectorAll('a[data-app]');
-    if (!links.length) return Promise.resolve();
+/** Each app's page on this library, `{ tagpup: url, tuner: url }`, asked of the server once; `{}` when it could not
+ * say (asked again next time) or names none (an app told no ports). */
+export function appUrls() {
     if (!gearAppUrls) {
         gearAppUrls = api.json('/api/apps')
             .then(data => (data && data.apps) || {})
@@ -59,7 +59,14 @@ function fillAppLinks(menu) {
                 return {};
             });
     }
-    return Promise.resolve(gearAppUrls).then(urls => {
+    return Promise.resolve(gearAppUrls);
+}
+
+/** Point each data-app link at that app's page for this library, once it is known. */
+function fillAppLinks(menu) {
+    const links = menu.querySelectorAll('a[data-app]');
+    if (!links.length) return Promise.resolve();
+    return appUrls().then(urls => {
         links.forEach(link => {
             const url = urls[link.dataset.app];
             if (url) {

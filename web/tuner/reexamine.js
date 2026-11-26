@@ -5,6 +5,7 @@
 // in between is not named, and the page says when the two differ.
 import { api } from './common/api.js';
 import { replaceContent } from './common/dom.js';
+import { upper } from './hooks.js';
 import { state } from './state.js';
 import { modeSelect, showMatchedToggle } from './elements.js';
 import { selectPhoto } from './faces-strip.js';
@@ -123,39 +124,73 @@ export function differences(plan, done) {
 }
 
 /**
- * Re-examine the folder of a group in the list. One at a time on the page: a second
+ * Re-examine the folder of a group in the list (`{name}` is all it reads of the group), its
+ * button `btn` showing that it works, when there is one. One at a time on the page: a second
  * press, here or on another folder, while one is being asked about or written does
- * nothing.
+ * nothing. What the apply answered, or null when nothing was written.
  */
-export async function reexamineFolder(folderGroup, btn) {
-    if (state.reexamining) return;
+export async function reexamineFolder(folderGroup, btn = null) {
+    if (state.reexamining) return null;
     state.reexamining = folderGroup.name;
-    btn.disabled = true;
     // What the button showed, put back as it was: its own nodes, not a copy as markup.
-    const originalContent = [...btn.childNodes];
-    btn.textContent = '⏳';
-    btn.title = 'Re-examining this folder...';
+    const originalContent = btn ? [...btn.childNodes] : [];
+    if (btn) {
+        btn.disabled = true;
+        btn.textContent = '⏳';
+        btn.title = 'Re-examining this folder...';
+    }
     try {
         const plan = await ask(folderGroup.name, true);
         if (!plan.faces) {
             alert(plan.renamed
                 ? 'No face can be named now: the people they matched were renamed. Try again.'
                 : 'No face in this folder clearly matches anybody named yet.');
-            return;
+            return null;
         }
-        if (!confirm(reexamineQuestion(plan))) return;
+        if (!confirm(reexamineQuestion(plan))) return null;
         const done = await ask(folderGroup.name, false);
         showWhatChanged(done);
         if (done.warning) alert(done.warning);
         const differs = differences(plan, done);
         if (differs) alert(differs);
+        return done;
     } catch (err) {
         console.error('Error re-examining a folder:', err);
         alert('Could not re-examine this folder: ' + err.message);
+        return null;
     } finally {
         state.reexamining = null;
-        btn.disabled = false;
-        replaceContent(btn, ...originalContent);
-        btn.title = REEXAMINE_TITLE;
+        if (btn) {
+            btn.disabled = false;
+            replaceContent(btn, ...originalContent);
+            btn.title = REEXAMINE_TITLE;
+        }
     }
+}
+
+/**
+ * Re-examine `folder`, a path rather than a group of the list: what an index's closing sentence offers (its Re-examine,
+ * web/common/reexamine-offer.js), pressed on TagTuner's index line (indexing.js) or followed from TagPup's status line
+ * (reexamineFromAddress). Once it named faces the list is read again, whichever the page shows: the folder need not be
+ * one of its groups (its photos may be in the folders under it), and the list may have been read before the names were.
+ */
+export async function reexamineFolderAt(folder, btn = null) {
+    const done = await reexamineFolder({ name: folder }, btn);
+    if (done && done.faces) upper.refreshSidebarQuietly();
+    return done;
+}
+
+/**
+ * TagTuner opened onto Re-examine of a folder, `?reexamine=<folder>` (TagPup's link in an index's closing sentence,
+ * web/tagpup/suggestions.js; with `mode=folder-match`, the list it names faces in). It asks as the button does, and
+ * nothing is written before the question's Yes. Taken once: the address loses it, so a reload does not ask again.
+ */
+export function reexamineFromAddress() {
+    const params = new URLSearchParams(window.location.search);
+    const folder = params.get('reexamine');
+    if (!folder) return;
+    params.delete('reexamine');
+    const rest = params.toString();
+    window.history.replaceState(window.history.state, '', `${window.location.pathname}${rest ? `?${rest}` : ''}`);
+    reexamineFolderAt(folder);
 }

@@ -17,7 +17,8 @@ const indexOf = (re) => LINES.findIndex((l) => re.test(l));
 const lastIndexOf = (re) => LINES.length - 1 - [...LINES].reverse().findIndex((l) => re.test(l));
 
 describe("TagTuner starts itself last", () => {
-  const STARTS = [/^ {4}fetchPhotos\(\);/, /^ {4}fetchKnownPeople\(\);/, /^ {4}restoreIndexingState\(\);/];
+  const STARTS = [/^ {4}fetchPhotos\(\);/, /^ {4}fetchKnownPeople\(\);/, /^ {4}restoreIndexingState\(\);/,
+    /^ {4}reexamineFromAddress\(\);/];
 
   test("the start-up calls are still where this guard expects them", () => {
     for (const re of STARTS) assert.ok(indexOf(re) > 0, `${re} moved or changed shape; update this guard`);

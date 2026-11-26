@@ -22,6 +22,7 @@ import {
 } from './sidebar.js';
 import { restoreIndexingState, wireIndexing } from './indexing.js';
 import { wireReview } from './review.js';
+import { reexamineFromAddress } from './reexamine.js';
 import { wireTunerGear } from './gear.js';
 import { wireNameFaces } from './name-faces.js';
 import { wireZoom } from './zoom.js';
@@ -97,4 +98,6 @@ document.addEventListener('DOMContentLoaded', () => {
     fetchPhotos();
     fetchKnownPeople();
     restoreIndexingState();
+    // Opened onto Re-examine of a folder (TagPup's link in an index's closing sentence): it asks, as the button does.
+    reexamineFromAddress();
 });

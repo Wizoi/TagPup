@@ -6,6 +6,10 @@
  * how many photos, and whose -- and names them only when they agree. The apply decides
  * again, so when it named a different number the page says so. A second press while
  * one is under way asks nothing.
+ *
+ * An index whose new faces have a likely name says "open Re-examine on their folder": on
+ * TagTuner's index line the word runs Re-examine on the index's folder, and TagPup's status
+ * line links to TagTuner opened onto it (`?reexamine=<folder>`).
  */
 import { test, describe, afterEach } from "node:test";
 import assert from "node:assert/strict";
@@ -48,7 +52,7 @@ function server({ plan = PLAN, done = DONE, hold = null } = {}) {
 
 async function open(t, options) {
   const ctx = await loadApp("tagtuner", {
-    t, url: "http://localhost:8080/kr-track/?mode=folder-match", server: server(options),
+    t, url: "http://localhost:8080/kr-track/?mode=folder-match", server: options && options.server || server(options),
   });
   ctx.questions = [];
   ctx.alerts = [];
@@ -64,6 +68,96 @@ function buttonOf(document, folder) {
     .find((h) => h.querySelector(".folder-title").title === folder);
   return { header, button: header.querySelector(".btn-folder-automatch") };
 }
+
+// The index's closing sentences as tagpup/services/indexing.py says them: some new faces with a likely name, and none.
+const LIKELY = "Folder indexed. 3 of the 5 new faces have a likely name: open Re-examine on their folder to confirm them.";
+const NONE_LIKELY = "Folder indexed. None of the 4 new faces looks enough like anyone named to be proposed: they wait in Identify Faces.";
+const photoReads = (s) => s.urls().filter((u) => u.includes("/api/photos")).length;
+
+/** A server whose index of a batch, named by its first folder MEET (#3417), is under way when the page opens on
+ * FINISH's entry and has ended with `message` by the first status read. */
+function endingIndex(message) {
+  let asked = 0;
+  return server()
+    .first("/api/folder/index-active", () => (asked++ === 0
+      ? { active: [{ folder: FINISH, name: "Finish", percent: 90, message: "Matching" }], queued: [], busy: true, remaining: 1 }
+      : { active: [], queued: [], busy: false, remaining: 0 }))
+    .first("/api/folder/index-status", { status: "completed", percent: 100, folder: MEET, message });
+}
+
+const settle = (window, ms) => new Promise((r) => window.setTimeout(r, ms));
+
+describe("Re-examine from an index's closing sentence", () => {
+  afterEach(() => closeAllApps());
+
+  test("TagTuner's index line keeps the sentence, and its Re-examine runs on the index's folder", async (t) => {
+    const ctx = await open(t, { server: endingIndex(LIKELY) });
+    await settle(ctx.window, 700);
+    const line = ctx.document.getElementById("index-progress-text");
+    assert.ok(!ctx.document.getElementById("index-progress-container").classList.contains("hidden"),
+      "the closing sentence went with the bar");
+    assert.equal(line.textContent, LIKELY);
+    const button = line.querySelector(".btn-index-reexamine");
+    assert.ok(button, "the sentence's Re-examine is not something to press");
+    const reads = photoReads(ctx.server);
+    button.click();
+    await flush(ctx.window, 8);
+    const sent = posts(ctx.server);
+    assert.deepEqual(sent.map((c) => [c.body.folder_path, c.body.dry_run]), [[MEET, true], [MEET, false]],
+      "not the batch's folder, its first (#3417)");
+    assert.equal(ctx.questions.length, 1);
+    assert.ok(photoReads(ctx.server) > reads, "the list was not read again after faces were named");
+  });
+
+  test("while the index runs its sentence is words: its bake still writes the folder's files", async (t) => {
+    const s = server()
+      .first("/api/folder/index-active", { active: [{ folder: MEET, name: "Meet", percent: 45, message: LIKELY }],
+        queued: [], busy: true, remaining: 1 })
+      .first("/api/folder/index-status", { status: "running", percent: 45, folder: MEET, message: LIKELY });
+    const ctx = await open(t, { server: s });
+    await settle(ctx.window, 50);
+    assert.equal(ctx.document.getElementById("index-progress-text").textContent, LIKELY);
+    assert.equal(ctx.document.querySelector(".btn-index-reexamine"), null);
+  });
+
+  test("no new face with a likely name: nothing to press, and the bar goes as it did", async (t) => {
+    const ctx = await open(t, { server: endingIndex(NONE_LIKELY) });
+    await settle(ctx.window, 700);
+    assert.ok(ctx.document.getElementById("index-progress-container").classList.contains("hidden"));
+    assert.equal(ctx.document.querySelector(".btn-index-reexamine"), null);
+    assert.equal(posts(ctx.server).length, 0);
+  });
+
+  function openedOnto(t, folder, answer) {
+    const ctx = { questions: [], alerts: [] };
+    return loadApp("tagtuner", {
+      t, url: `http://localhost:8080/kr-track/?mode=folder-match&reexamine=${encodeURIComponent(folder)}`, server: server(),
+      before: (window) => {
+        window.confirm = (text) => { ctx.questions.push(text); return answer; };
+        window.alert = (text) => { ctx.alerts.push(text); };
+      },
+    }).then(async (app) => {
+      await flush(app.window, 8);
+      return Object.assign(app, ctx);
+    });
+  }
+
+  test("TagTuner opened from TagPup's link asks about that folder, names on Yes, reads the list again", async (t) => {
+    const ctx = await openedOnto(t, MEET, true);
+    const sent = posts(ctx.server);
+    assert.deepEqual(sent.map((c) => [c.body.folder_path, c.body.dry_run]), [[MEET, true], [MEET, false]]);
+    assert.match(ctx.questions[0], /^Name 3 faces in 3 photos/);
+    assert.equal(photoReads(ctx.server), 2, "the list was not read again after faces were named");
+    assert.equal(ctx.window.location.search, "?mode=folder-match", "a reload would ask again");
+  });
+
+  test("TagTuner opened from the link and the question declined: nothing is written", async (t) => {
+    const ctx = await openedOnto(t, MEET, false);
+    assert.deepEqual(posts(ctx.server).map((c) => c.body.dry_run), [true]);
+    assert.equal(ctx.questions.length, 1);
+    assert.equal(photoReads(ctx.server), 1);
+  });
+});
 
 describe("Re-examine this folder", () => {
   afterEach(() => closeAllApps());
