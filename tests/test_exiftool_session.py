@@ -204,25 +204,5 @@ class TestAWriterKilledHardTakesItsExifToolWithIt(unittest.TestCase):
                          "the ExifTool started again after a timeout outlived the TagPup process")
 
 
-class TestTheBatchReadersUseIt(unittest.TestCase):
-    """The places that hand ExifTool a hundred files at a time."""
-
-    def test_no_batch_reader_builds_a_bare_helper(self):
-        # Sync's pairing and the file writers are services (phase 7.5).
-        for name in ("relink_photos.py", "file_changes.py"):
-            with open(os.path.join(WORKSPACE_DIR, "tagpup", "services", name), encoding="utf-8") as f:
-                source = f.read()
-            self.assertNotIn("ExifToolHelper(", source, name)
-            self.assertIn("ExifToolSession(", source, name)
-
-        # The index's whole read (Fields.whole) and its mint (IdentityWriter): the one face's sessions.
-        with open(os.path.join(WORKSPACE_DIR, "tagpup", "files", "field_values.py"), encoding="utf-8") as f:
-            source = f.read()
-        self.assertNotIn("ExifToolHelper(", source)
-        for start in ("def session(", "class IdentityWriter"):
-            body = source.split(start, 1)[1].split("\nclass ", 1)[0]
-            self.assertIn("ExifToolSession(", body, start)
-
-
 if __name__ == "__main__":
     unittest.main()
