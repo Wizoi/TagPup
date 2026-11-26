@@ -182,7 +182,7 @@ describe("in a view of the library", () => {
     ctx.document.getElementById("input-add-tag").value = "Activity/Sailing";
     click(ctx.window, ctx.document.getElementById("btn-add-tag"));
     await wait(ctx.window, 120);
-    // Read again twice: once to see whether what the save writes over changed (it did: no second send, V32), once to show it.
+    // Read again twice: once to see whether what the save writes over changed (it did: no second send, V33), once to show it.
     assert.equal(ctx.server.urls().filter((u) => u.includes("/api/library/photo")).length, 3, "read again");
     assert.equal(ctx.server.calls.filter((c) => c.url.includes("/api/photos/write")).length, 1, "sent again over the file's tags");
     assert.match(ctx.document.getElementById("status-text").textContent, /changed on disk/);

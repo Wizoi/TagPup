@@ -1,5 +1,5 @@
 /**
- * V32: somebody adds a folder and tags its photos at once, while the index's bake writes its own fields into each new
+ * V33: somebody adds a folder and tags its photos at once, while the index's bake writes its own fields into each new
  * photo's file (docs/plans/working-on-a-new-folder.md, cut B; DECISIONS 2026-11-26). Every save made from the list read
  * before the bake was refused as changed on disk, and the owner was told to save again. Now a refused save is read again
  * (by its id, found by its path for a folder's photo) and, when the tags and caption it writes over are as the page read
@@ -107,7 +107,7 @@ async function page(t, { view = false } = {}) {
   return ctx;
 }
 
-describe("V32: a save refused because the index wrote to the file", () => {
+describe("V33: a save refused because the index wrote to the file", () => {
   test("the bake wrote its own fields only: the save is read again and sent once more, and the status line says so", async (t) => {
     const ctx = await page(t);
     const scans = ctx.scans();
