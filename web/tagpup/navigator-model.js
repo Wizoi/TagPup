@@ -47,11 +47,12 @@ function navPlural(count, one, many) {
 // ---- Folders ---------------------------------------------------------------------------------
 
 /**
- * The folder tree of the route's flat list, [{ path, name, parent, direct, recursive }]: nodes by the key of
+ * The folder tree of the route's flat list, [{ path, name, parent, direct, recursive, queue }]: nodes by the key of
  * their path (pathKey: the same folder in any spelling), each holding its children in the list's order. A folder
  * whose parent is not in the list is a top of the tree, and a top that holds no photo itself and has one folder below it
  * is not shown: its folder is the top, so a root added from a share reads "Track and Field", beside "cross-country",
- * not under the share's own path (#2356).
+ * not under the share's own path (#2356) -- unless the library's index queue holds it (`queue`, 'queued' or 'indexing':
+ * the server's, services/library_view.py _folders), so the folder just added stays the row that says so.
  */
 export function indexFolders(list) {
     const byKey = new Map();
@@ -62,6 +63,7 @@ export function indexFolders(list) {
             id: `f:${key}`, key, path: each.path, name: each.name || baseName(each.path) || each.path,
             parentKey: each.parent ? pathKey(each.parent) : null,
             direct: Number(each.direct) || 0, recursive: Number(each.recursive) || 0, children: [],
+            queue: QUEUE_SAID[each.queue] ? each.queue : null,
         });
     }
     const tops = [];
@@ -71,18 +73,30 @@ export function indexFolders(list) {
         else tops.push(node);
     }
     return { byKey, tops: tops.map(node => {
-        while (node.direct === 0 && node.children.length === 1) node = node.children[0];
+        while (node.direct === 0 && node.children.length === 1 && !node.queue) node = node.children[0];
         return node;
     }), size: byKey.size };
 }
 
+/** A folder the library's index queue holds, by its `queue`: the word its row shows, and the line its title and label add. */
+const QUEUE_SAID = {
+    queued: { word: 'queued', line: 'waiting to be indexed' },
+    indexing: { word: 'indexing', line: 'being indexed: its count fills as its photos are' },
+};
+
+/** Is a folder of the Folders tab held by the library's index queue: its counts are still filling (navigator.js reads them again). */
+export function anyQueued(index) {
+    return Boolean(index && index.byKey) && [...index.byKey.values()].some(node => node.queue);
+}
+
 function navFolderRow(node, level, expanded) {
     const open = expanded.has(node.id);
+    const said = node.queue ? QUEUE_SAID[node.queue] : null;
     return {
         id: node.id, level, label: node.name, count: node.recursive,
-        title: `${node.path}\n${navPlural(node.direct, 'photo', 'photos')} in it, ${navPlural(node.recursive, 'photo', 'photos')} with its subfolders`,
-        aria: `${node.name}, ${navPlural(node.recursive, 'photo', 'photos')} with its subfolders`,
-        hint: '', expandable: node.children.length > 0, expanded: open && node.children.length > 0,
+        title: `${node.path}\n${navPlural(node.direct, 'photo', 'photos')} in it, ${navPlural(node.recursive, 'photo', 'photos')} with its subfolders${said ? `\n${said.line}` : ''}`,
+        aria: `${node.name}, ${navPlural(node.recursive, 'photo', 'photos')} with its subfolders${said ? `, ${said.line}` : ''}`,
+        hint: said ? said.word : '', expandable: node.children.length > 0, expanded: open && node.children.length > 0,
         spec: { kind: 'folder', value: node.path, recursive: true },
     };
 }
@@ -393,7 +407,7 @@ export function sectionRows(section, index, expanded, filter, capped = null) {
         const row = make(node, 1, new Set());
         row.expandable = false;
         row.expanded = false;
-        row.hint = section === 'folders' ? node.path : node.tag;
+        row.hint = section === 'folders' ? [row.hint, node.path].filter(Boolean).join(' · ') : node.tag;
         out.push(row);
     }
     if (untagged && navMatches(UNTAGGED.words.join(' '), needle)) {

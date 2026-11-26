@@ -1,0 +1,21 @@
+{
+  "about": "What GET /api/library/navigator?section=folders answers as a folder just added is queued, indexed and done, the folders under {pictures} alone (tests/test_queued_folders_in_the_folders_tab.py holds the server to it; tests/frontend/scenario-queued-folders-in-the-folders-tab.test.mjs draws it).",
+  "queued": [
+    {"path": "{pictures}", "name": "Pictures", "parent": null, "direct": 0, "recursive": 2, "queue": null},
+    {"path": "{pictures}\\Season", "name": "Season", "parent": "{pictures}", "direct": 0, "recursive": 2, "queue": null},
+    {"path": "{pictures}\\Season\\Meet 1", "name": "Meet 1", "parent": "{pictures}\\Season", "direct": 2, "recursive": 2, "queue": null},
+    {"path": "{pictures}\\Season\\Relay Day", "name": "Relay Day", "parent": "{pictures}\\Season", "direct": 0, "recursive": 0, "queue": "queued"}
+  ],
+  "indexing": [
+    {"path": "{pictures}", "name": "Pictures", "parent": null, "direct": 0, "recursive": 3, "queue": null},
+    {"path": "{pictures}\\Season", "name": "Season", "parent": "{pictures}", "direct": 0, "recursive": 3, "queue": null},
+    {"path": "{pictures}\\Season\\Meet 1", "name": "Meet 1", "parent": "{pictures}\\Season", "direct": 2, "recursive": 2, "queue": null},
+    {"path": "{pictures}\\Season\\Relay Day", "name": "Relay Day", "parent": "{pictures}\\Season", "direct": 1, "recursive": 1, "queue": "indexing"}
+  ],
+  "indexed": [
+    {"path": "{pictures}", "name": "Pictures", "parent": null, "direct": 0, "recursive": 5, "queue": null},
+    {"path": "{pictures}\\Season", "name": "Season", "parent": "{pictures}", "direct": 0, "recursive": 5, "queue": null},
+    {"path": "{pictures}\\Season\\Meet 1", "name": "Meet 1", "parent": "{pictures}\\Season", "direct": 2, "recursive": 2, "queue": null},
+    {"path": "{pictures}\\Season\\Relay Day", "name": "Relay Day", "parent": "{pictures}\\Season", "direct": 3, "recursive": 3, "queue": null}
+  ]
+}

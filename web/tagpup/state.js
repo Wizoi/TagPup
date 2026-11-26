@@ -38,6 +38,7 @@ export const state = {
     // `filter` is Filter mode (filter-bar.js): `on` as this browser remembers it, `leaving` while a search is being left
     // (library-view.js leaveSearch; navigatorFollows clears it, so a second click cannot go back twice), and `notice`, the
     // sentence refusing the last mark (too many rows). The marks themselves are the view open's, never kept here.
+    // `queuedTimer`: the Folders tab's next read while it names a folder the index queue holds (navigator.js followQueued).
     nav: {
         shown: 'folder',
         choice: { library: 'library', folder: 'folder' },
@@ -46,6 +47,7 @@ export const state = {
         order: 'taken',
         media: 'both',
         timer: null,
+        queuedTimer: null,
         filter: { on: false, leaving: false, notice: '' },
         sections: {
             folders: { status: 'idle', message: '', notice: '', index: null, expanded: new Set(), filter: '', filterTimer: null, currentId: null, anchor: null, rows: [], asked: 0, stale: false, reveal: false, opened: false, pending: null },

@@ -142,7 +142,10 @@ SCENARIOS = {
             "again only a folder the index holds, a scan out at the end reads again as it lands, a reply for the library "
             "left is dropped, the open folder second in line is read again at its own end only, a cancelled index reads "
             "nothing again, a queue that does not answer says nothing wrong and is asked no more, and nothing is asked "
-            "once nothing is queued."),
+            "once nothing is queued. The Folders tab names the folder at once, under the folder above it, marked queued "
+            "with 0, then indexing with its count filling while the tab is on screen, then its count alone on the same "
+            "row; a cancel takes it off, another library's queue never shows, and the filter and a click find it as any "
+            "folder."),
     "I1": ("apps", "Switching library in the middle of a folder shows no card of the first."),
     "I2": ("apps", "A write through a server update is waited out and not repeated."),
     "I3": ("apps", "An update by a launch and by an install hands one server over to the next without killing its work."),
@@ -299,7 +302,8 @@ _SCENARIO_FILES = {
     "V29": "scenario-filtering-the-library-in-filter-mode",
     "V30": "scenario-moving-between-tabs-on-the-phone",
     "V31": "scenario-filtering-on-the-phone",
-    "V32": "scenario-working-on-a-new-folder",
+    "V32": "scenario-working-on-a-new-folder test_queued_folders_in_the_folders_tab "
+           "scenario-queued-folders-in-the-folders-tab",
 }
 
 #: owner -> kind -> the unit, migration and guard files, a .mjs without its ".test.mjs".
@@ -564,6 +568,7 @@ _SIZES = {
         "test_name_faces_routes test_new_faces_are_matched_after_an_index test_new_person_reads_the_pool_once "
         "test_newer_library_guard_in_a_long_lived_process test_no_person_row_without_an_id "
         "test_no_writes_to_damaged_photos test_one_answer_to_the_librarys_folders test_one_gpu_at_a_time "
+        "test_queued_folders_in_the_folders_tab "
         "test_one_gpu_jobs test_one_library_three_programs test_one_photo_whatever_its_spelling "
         "test_organize_faces test_partial_writes_leave_rows_unread test_paths_roots test_people_by_id_at_once "
         "test_people_representative_faces test_person_face_samples test_person_filing_table "

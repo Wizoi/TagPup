@@ -6,9 +6,13 @@
 // item that is open is the one highlighted, in the tab it belongs to.
 //
 // Each section is read from GET /api/library/navigator?section= when its tab is first opened, and again -- the counts
-// are read at each call -- after an edit that changes counts (debounced), and on Refresh view. An answer that is not
-// the newest asked for its section is dropped, and a section is painted into its own panel only: a tab opened while
-// another loads, or a source followed before its section is here, paints nowhere else. A section that cannot be read
+// are read at each call -- after an edit that changes counts (debounced), on Refresh view, and at an index's end. The
+// Folders tab also names the folders the library's index queue holds, a folder just added among them before it holds a
+// photo, each marked queued or indexing (the server's: services/library_view.py _folders; DECISIONS 2026-11-26): while one
+// is marked the tab is read again every NAV_QUEUED_MS it is on screen, so its count fills and its mark goes with the
+// queue -- a cancel too, which reads nothing else again -- and a tab not on screen meanwhile is read when it is opened.
+// An answer that is not the newest asked for its section is dropped, and a section is painted into its own panel only: a
+// tab opened while another loads, or a source followed before its section is here, paints nowhere else. A section that cannot be read
 // says why in a sentence (the server's: a library at an older schema, an unplaced root); never a trace.
 //
 // What is drawn is navigator-model.js's rows through navigator-tree.js: at most 1,500 for a tree's open branches, 5,000 for a flat list.
@@ -37,7 +41,7 @@ import {
 import { openLibraryView } from './library-view.js';
 import { DEFAULT_ORDER, MAX_MEMBERS, addressTooLong } from './library-source.js';
 import {
-    compress, filterKey, filterMember, indexSection, markOf, membersOf, peopleGroupIds, rowTree, sectionOf, sectionRows, selectedRows,
+    anyQueued, compress, filterKey, filterMember, indexSection, markOf, membersOf, peopleGroupIds, rowTree, sectionOf, sectionRows, selectedRows,
     specOfMembers, withRowsUnder
 } from './navigator-model.js';
 import { filterFollows, markRow, setFilterMode, shownMarks } from './filter-bar.js';
@@ -68,6 +72,9 @@ const NAV_SECTIONS = {
 export const NAV_FILTER_MS = 120;
 /** How long after an edit the counts are read again: edits come in runs, and one read answers them all. */
 export const NAV_COUNTS_MS = 1200;
+/** How often the Folders tab is read again while it names a folder the library's index queue holds (about 30 ms of the
+ * server's on the largest live library's 2,625 folders, 2026-11-26). */
+export const NAV_QUEUED_MS = 5000;
 
 function panelOf(name) {
     return document.getElementById(`nav-panel-${name}`);
@@ -183,6 +190,7 @@ function loadSection(name, quiet) {
             sec.index = indexSection(name, body || {});
             sec.status = 'ready';
             sec.message = '';
+            if (name === 'folders') followQueued(sec);
             if (!sec.opened) {
                 // People's branches start open: the people show under their headers (#673).
                 for (const id of peopleGroupIds(name === 'people' ? sec.index : null)) sec.expanded.add(id);
@@ -204,6 +212,22 @@ function loadSection(name, quiet) {
         });
     sec.pending = asking;
     return asking;
+}
+
+/**
+ * The Folders tab names a folder the index queue holds: read it again in a while -- now if it is on screen then, else when
+ * its tab is opened. One timer: each read of the tab sets it again, or clears it once nothing is marked.
+ */
+function followQueued(sec) {
+    const nav = state.nav;
+    window.clearTimeout(nav.queuedTimer);
+    nav.queuedTimer = null;
+    if (!anyQueued(sec.index)) return;
+    nav.queuedTimer = window.setTimeout(() => {
+        nav.queuedTimer = null;
+        sec.stale = true;
+        if (onScreen('folders')) ensureLoaded('folders');
+    }, NAV_QUEUED_MS);
 }
 
 /**

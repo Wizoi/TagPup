@@ -551,10 +551,12 @@ def photo_file():
 
 @routes.get("/api/library/navigator")
 def library_navigator():
-    """The counts of one section of the navigator (tagpup.services.library_view.navigator)."""
+    """The counts of one section of the navigator (tagpup.services.library_view.navigator); the folders name those
+    this library's index queue holds (IndexQueue.active, what /api/folder/index-active answers)."""
     library = state.require()
     try:
-        return jsonify(library_view.navigator(library, request.args.get("section")))
+        return jsonify(library_view.navigator(library, request.args.get("section"),
+                                              state.runtime().index_queues.of(library).active))
     except responses.ANSWERED as why:
         return responses.of(why)
     except Exception as e:

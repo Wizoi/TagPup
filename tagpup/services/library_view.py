@@ -24,7 +24,8 @@ TOTAL; `cards` turns any list of ids into cards.
   is as the row says, is on a share that did not answer, cannot be read, or whose row was never stamped.
 * **The navigator**: `navigator(library, section)` for `folders`, `keywords`, `people` or `dates`, each one query
   (or one read of a derived table) and a pass in memory -- the keywords' with the count of the photos with no keyword
-  beside them, in the same snapshot; native paths, tag paths and names out, never ids.
+  beside them, in the same snapshot; native paths, tag paths and names out, never ids. The folders also name the
+  folders the library's index queue holds, marked, a folder just added among them before it holds a photo (_folders).
 * **A browse row's cover**: `covers(library, section, rows)`, the first photo of each row's own source, as `ids` orders it,
   and its thumbnail's URL: a handful of rows near the phone's screen at a time, ids alone in one transaction.
 * **What fails, and how it says so**: a root this machine does not place raises paths.RootsError, whose
@@ -480,10 +481,11 @@ def _rows_of(rows):
 
 # ---- The navigator ----------------------------------------------------------------------------------
 
-def navigator(library, section):
+def navigator(library, section, indexing=None):
     """The counts of one section of the navigator: `folders` {"folders": [{path, name, parent, direct,
-    recursive}]}, `keywords` {"keywords": [{tag, name, parent, count}], "untagged": the photos with no keyword} -- both read
-    in one snapshot, so a photo tagged meanwhile is counted once --, `people` {"people": [{name, count, group, person}],
+    recursive, queue}]} (_folders; `indexing`, a function answering what the library's index queue holds now,
+    IndexQueue.active, asked before the tree is read), `keywords` {"keywords": [{tag, name, parent, count}], "untagged":
+    the photos with no keyword} -- both read in one snapshot, so a photo tagged meanwhile is counted once --, `people` {"people": [{name, count, group, person}],
     "groups": [{tag, name, parent, count}], "unfiled"} -- each person under the tag of the branch they are filed in (None:
     not filed), the branches above people with the photos naming anyone under them, and the photos naming someone not
     filed (store.people_groups) --, `dates` {"years": [{year, count, months: [{month, count}], other}], "undated"}. Each
@@ -493,7 +495,10 @@ def navigator(library, section):
     conn = _open(library)
     try:
         if section == "folders":
-            return {"folders": _folders(store.folders(conn))}
+            # The queue first: a folder whose index ends between the two reads is marked once more, and the page reads
+            # the section again while one is marked; read after, it would show unmarked with its last photos uncounted.
+            held = indexing() if indexing else None
+            return {"folders": _folders(store.folders(conn), held)}
         if section == "keywords":
             db.begin(conn)
             return {"keywords": _keywords(store.keyword_counts(conn)), "untagged": store.count(conn, store.Source(store.UNTAGGED))}
@@ -516,11 +521,37 @@ def navigator(library, section):
         conn.close()
 
 
-def _folders(tree):
+#: A folder's `queue` in the Folders tab while the library's index queue holds it (DECISIONS 2026-11-26).
+QUEUED, INDEXING = "queued", "indexing"
+
+
+def _folders(tree, held=None):
+    """The Folders tab's list, parents before children: each folder of the tree with `queue` -- INDEXING or QUEUED
+    while the library's index queue (`held`, IndexQueue.active's answer) is indexing it or holds it waiting, else None --
+    and each folder the queue holds that the tree has not yet, counted 0 under the nearest folder above it that is listed
+    (paths.row_parent, the rule the tree's own parents are made by), so a folder just added is in the tab at once. As
+    its photos are indexed the tree holds it and it is the tree's row, once, its mark kept until the queue lets it go.
+    Another library's queue is its own: `held` is this library's."""
+    marks = {}
+    for mark, jobs in ((QUEUED, (held or {}).get("queued")), (INDEXING, (held or {}).get("active"))):
+        for job in jobs or ():
+            marks[paths.key(job["folder"])] = (job, mark)
     path_of = {each["id"]: each["path"] for each in tree}
-    return [{"path": each["path"], "name": each["name"], "parent": path_of.get(each["parent_id"]),
-             "direct": each["direct"], "recursive": each["recursive"]}
-            for each in sorted(tree, key=lambda each: store_roots.path_order(each["path"]))]
+    listed = {}
+    for each in tree:
+        key = paths.key(each["path"])
+        listed[key] = {"path": each["path"], "name": each["name"], "parent": path_of.get(each["parent_id"]),
+                       "direct": each["direct"], "recursive": each["recursive"], "queue": marks.pop(key, (None, None))[1]}
+    for key, (job, mark) in marks.items():
+        listed[key] = {"path": job["folder"], "name": job["name"], "parent": None, "direct": 0, "recursive": 0,
+                       "queue": mark}
+    for key, (job, _mark) in marks.items():
+        above = paths.row_parent(job["folder"])
+        while above is not None and paths.key(above) not in listed:
+            above = paths.row_parent(above)
+        if above is not None:
+            listed[key]["parent"] = listed[paths.key(above)]["path"]
+    return sorted(listed.values(), key=lambda each: store_roots.path_order(each["path"]))
 
 
 def _keywords(nodes):
