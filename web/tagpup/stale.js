@@ -23,7 +23,6 @@
 import { buildElement } from './common/dom.js';
 import { state } from './state.js';
 import { mainImage, photoMissingNote } from './elements.js';
-import { libraryName } from './looking.js';
 import { staleText } from './library-source.js';
 
 
@@ -46,6 +45,12 @@ export function markStale(card, photo) {
 // What the sentence calls each field a control's `data-writes` names, in the order it names them.
 // The turn is not among them: a record that leaves it out has its rotate controls hidden (applyPhotoStale), not explained.
 const FIELD_WORDS = { date: 'date', title: 'title', tags: 'people and keywords' };
+
+// The reply says a file is gone, not whether its folder is too: one sentence for both (the next full sync drops a photo
+// whose folder is there; one whose folder is gone stays, as an unplugged drive's does: DECISIONS 2026-10-28).
+const MISSING_SENTENCE = 'This photo’s file is not on disk, so it cannot be edited. If only the file is gone, the next full sync '
+    + 'drops the photo. If its whole folder is gone, TagPup keeps the photo in case the drive or share comes back; '
+    + 'to drop it, remove its folder in Manage folders.';
 
 /** The sentence of a photo with `waiting` tag changes not written yet. */
 function waitingSentence(waiting) {
@@ -82,6 +87,11 @@ function deletesHeld(photo) {
     return !photo || Boolean(photo.missing) || state.deleting;
 }
 
+/** The note's button: the gear's Manage folders, where a gone folder is marked "not on disk". */
+photoMissingNote.addEventListener('click', (e) => {
+    if (e.target.closest('button')) document.querySelector('#gear-menu [data-action="manage-folders"]')?.click();
+});
+
 function inertUnless(el, offered) {
     if (offered) {
         el.removeAttribute('inert');
@@ -103,11 +113,13 @@ export function offerWrites(photo, waiting) {
     const controls = [...document.querySelectorAll('[data-writes]')];
     const held = new Set(controls.map((el) => el.dataset.writes).filter((field) => !writes.includes(field)));
     const sentence = missing
-        ? `This photo’s file is not on disk. ${libraryName() || 'The library'} still holds it, and it is shown as the library holds it. `
-            + 'It cannot be edited until the file is back or the photo is removed from the library.'
+        ? MISSING_SENTENCE
         : (!photo ? '' : waiting ? waitingSentence(waiting) : heldSentence(held));
     photoMissingNote.classList.toggle('hidden', !sentence);
     photoMissingNote.textContent = sentence;
+    if (missing) photoMissingNote.append(' ', buildElement('button', {
+        className: 'link-button', text: 'Open Manage folders', attrs: { type: 'button' },
+    }));
     const deletes = [...document.querySelectorAll('[data-deletes]')];
     for (const el of controls.concat(deletes)) {
         inertUnless(el, !(el.hasAttribute('data-deletes') ? deletesHeld(photo) : held.has(el.dataset.writes)));

@@ -97,6 +97,29 @@ describe("a missing photo: shown, not editable", () => {
     }
   });
 
+  test("the notice says why the photo stays and how to drop it, and its button opens Manage folders", async (t) => {
+    const ctx = await openMissing(t);
+    const note = ctx.document.getElementById("photo-missing-note");
+    assert.match(note.textContent, /If only the file is gone, the next full sync drops the photo\./);
+    assert.match(note.textContent, /If its whole folder is gone, TagPup keeps the photo in case the drive or share comes back; to drop it, remove its folder in Manage folders\./);
+    const modal = () => ctx.document.getElementById("folder-manager-modal");
+    assert.ok(!modal() || modal().classList.contains("hidden"));
+    click(ctx.window, note.querySelector("button"));
+    await ctx.settle(100);
+    assert.ok(modal() && !modal().classList.contains("hidden"), "the folder manager is open");
+  });
+
+  test("a photo whose share did not answer is not missing: no such sentence, no button", async (t) => {
+    const ctx = await loadViewPage(t, {
+      search: "?view=all", onPhoto: (id) => ({ photo: recordOf(id) }),
+    });
+    ctx.cardById(13).querySelector(".btn-thumbnail-detail").click();
+    await ctx.settle(100);
+    const note = ctx.document.getElementById("photo-missing-note");
+    assert.doesNotMatch(note.textContent, /not on disk|Manage folders/);
+    assert.equal(note.querySelector("button"), null);
+  });
+
   test("the next photo is editable again: nothing of the missing one is carried to it", async (t) => {
     const ctx = await openMissing(t);
     ctx.key(ctx.document.body, "ArrowRight");
