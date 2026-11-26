@@ -6,7 +6,8 @@
  * what the page read; the server says whether it may be written (the tags and caption as that base), and written, the
  * status line says so. Someone else's tags changed meanwhile is refused the second time too: today's sentence, nothing
  * merged, no third send. A photo the page no longer lists is not sent again; a caption that renames the file follows the
- * rename; two refusals in a row each go once more; a library view's photo, read by its own id, goes the same way.
+ * rename; two refusals in a row each go once more; a library view's photo, read by its own id, goes the same way. A read
+ * again that finds the file gone (`missing`) or that ExifTool could not read (`unreadable`) is not sent again either.
  *
  * The server is a fake of the files as they are now (`disk`, each with its row's id), which a save that wrote changes, and
  * which refuses a save as the real one does (tagging.py save_photo): its stamp not the file's, or its base not the file's
@@ -36,11 +37,12 @@ const A = photoRecord({ filename: "a.jpg", path: `${FOLDER}\\a.jpg`, mtime: 1700
 const B = photoRecord({ filename: "b.jpg", path: `${FOLDER}\\b.jpg`, mtime: 1700000100.5, size: 4096, tags: ["Activity/Sailing"] });
 const IDS = { [A.path]: 31, [B.path]: 32 };
 
-/** Would the real server refuse `sent` (savedPhoto) over `file`: the stamp or the base not the file's? */
+/** Would the real server refuse `sent` (savedPhoto) over `file`: gone, or the stamp or the base not the file's? */
 function refused(file, sent) {
+  if (!file || file.missing) return true;
   const held = new Set(file.tags || []);
   const base = new Set(sent.base.tags);
-  return !file || !sent.stamp || sent.stamp.mtime !== file.mtime || sent.stamp.size !== file.size
+  return !sent.stamp || sent.stamp.mtime !== file.mtime || sent.stamp.size !== file.size
     || held.size !== base.size || [...base].some((tag) => !held.has(tag)) || (file.title || "") !== sent.base.title;
 }
 
@@ -220,6 +222,20 @@ describe("V33: a save refused because the index wrote to the file", () => {
     assert.deepEqual(saves[3].tags, ["Trips/Coast", "Trips/Lakes", "Trips/Harbour"]);
     assert.deepEqual(ctx.alerts, []);
   });
+
+  for (const [what, mark] of [["gone from the disk", { missing: true }], ["that ExifTool could not read", { unreadable: true }]]) {
+    test(`a read again finding the file ${what}: not sent again, today's sentence`, async (t) => {
+      const ctx = await page(t);
+      const file = ctx.disk.get(A.path);
+      ctx.disk.set(A.path, { ...file, ...mark, mtime: file.mtime + 300 });
+      ctx.addTag("Trips/Lakes");
+      await until(ctx, () => /changed on disk since you opened it/.test(ctx.status()), () => `the sentence (${ctx.status()})`);
+      await flush(ctx.window, 12);
+      assert.equal(ctx.saves().length, 1, "sent again");
+      assert.ok(ctx.alerts.some((message) => /changed on disk/.test(message)), ctx.alerts.join("|"));
+      assert.ok(!ctx.alerts.some((message) => /could not be read just now/.test(message)), ctx.alerts.join("|"));
+    });
+  }
 
   test("a library view's photo is read again by its own id and sent once more", async (t) => {
     const ctx = await page(t, { view: true });

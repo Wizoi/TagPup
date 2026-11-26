@@ -281,7 +281,8 @@ const SENT_AGAIN = ' after reading its file again (indexing, or another program,
  * again. Written, it resolves that reply, marked `readAgain`, with the record read again (`record`, holding the id and
  * path the page's own did: a folder's has no id), which the caller carries on with as the photo's and hands to cache.js
  * with the save, so every copy the page keeps takes the file as it is now. Not sent again -- the library holds no photo
- * at its path, the page's list no longer holds it (the queue's own rule, writeDetailEdits), the read fails -- or refused
+ * at its path, its file is gone (`missing`) or ExifTool could not read it (`unreadable`: a save of it is refused before it
+ * is sent, UNREADABLE_SAVE), the page's list no longer holds it (the queue's own rule, writeDetailEdits), the read fails -- or refused
  * the second time, it is the refusal as before: the photo is read again to be shown (photoChangedOnDisk), nothing is
  * merged, and it rejects. It is never sent a third time.
  */
@@ -295,7 +296,7 @@ export async function postOrSendAgain(photo, changes) {
             console.error('Could not read the photo again:', why);
             return null;
         });
-        if (!now || !stillListed(photo)) {
+        if (!now || now.missing || now.unreadable || !stillListed(photo)) {
             photoChangedOnDisk(photo);
             throw err;
         }
