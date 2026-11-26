@@ -316,7 +316,7 @@ describe("the banner: the disk holds photos the library does not", () => {
     assert.equal(adds.length, 1);
     assert.deepEqual(adds[0].body, { folder_path: FOLDER });
     assert.ok(banner(ctx).classList.contains("hidden"));
-    assert.match(ctx.stripText(), /is added to photo_index and is being indexed\. Refresh view/);
+    assert.match(ctx.stripText(), /is added to photo_index and is being indexed\. The view refreshes by itself/);
     assert.equal(ctx.state.moves.addFor, null);
     assert.equal(ctx.state.scannedFolder, null, "no folder view was made of it");
   });

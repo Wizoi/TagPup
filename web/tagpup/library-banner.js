@@ -126,7 +126,7 @@ export function addedFromView(folder) {
     forgetWhatTheDiskHeld();
     hideBanner();
     if (lib) {
-        lib.notice = `${folder} is added to ${libraryName()} and is being indexed. Refresh view when it has finished to see its photos.`;
+        lib.notice = `${folder} is added to ${libraryName()} and is being indexed. The view refreshes by itself when it has finished.`;
         upper.libraryChanged();
     }
 }
