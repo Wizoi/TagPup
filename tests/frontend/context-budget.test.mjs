@@ -87,7 +87,7 @@ test("anything wrong is a no-op: exit 0 and nothing said", () => {
   }
 });
 
-test("a worker past 150k is told after a tool call to commit and report; the main session is not, and under it nothing", () => {
+test("a worker past 250k is told after a tool call to commit and report; the main session is not, and under it nothing", () => {
   const home = mkdtempSync(path.join(tmpdir(), "context-budget-"));
   try {
     const session = path.join(home, "s-1.jsonl");
@@ -95,11 +95,11 @@ test("a worker past 150k is told after a tool call to commit and report; the mai
     mkdirSync(path.join(home, "s-1", "subagents"), { recursive: true });
     const own = path.join(home, "s-1", "subagents", "agent-abc123.jsonl");
     const side = (read) => JSON.stringify(call(2, read, 0, { isSidechain: true })) + "\n";
-    writeFileSync(own, side(160000));
+    writeFileSync(own, side(260000));
     const payload = { hook_event_name: "PostToolUse", transcript_path: session, agent_id: "abc123" };
     const told = JSON.parse(hook(payload).stdout);
     assert.equal(told.hookSpecificOutput.hookEventName, "PostToolUse");
-    assert.match(told.hookSpecificOutput.additionalContext, /160k.*Commit what you have.*report/);
+    assert.match(told.hookSpecificOutput.additionalContext, /260k.*Commit what you have.*report/);
     const main = JSON.parse(hook({ ...payload, agent_id: undefined }).stdout);   // retro 2026-10-20: after a call too
     assert.equal(main.hookSpecificOutput.hookEventName, "PostToolUse");
     assert.match(main.hookSpecificOutput.additionalContext, /900k.*memory handoff/);

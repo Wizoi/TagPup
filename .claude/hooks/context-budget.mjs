@@ -24,7 +24,7 @@ import { closeSync, fstatSync, openSync, readFileSync, readSync } from "node:fs"
 import path from "node:path";
 
 export const LIMIT = 300000;
-export const WORKER_LIMIT = 150000;
+export const WORKER_LIMIT = 250000;
 /** A design agent (its brief carries DESIGN_MARK) writes a whole plan from many reads: a design must be complete,
  * where code is kept concise (owner, 2026-11-26: the #3376 design agent ran out of context and left gaps). */
 export const DESIGN_LIMIT = 450000;

@@ -39,7 +39,7 @@ Everything below holds for every task; the brief does not repeat it.
 - docs/findings.md and docs/DECISIONS.md are refused whole and by slice: `tools/add_findings.py --open`, or Grep a number.
 - Search with Grep and its `head_limit`, not `grep -rn` or `sed -n` through Bash; docs/ARCHITECTURE.md by its section.
 - Test and lint output through `tail -n 40`. No Read after an Edit or a patch: it failed loudly or it holds.
-- Commit what you have by about 100k of context; at 150k the context hook says report.
+- Commit what you have by about 175k of context; at 250k the context hook says report.
 
 ## Before you build: how it fails
 Answer each of these in the design, not after a review asks. Most review rounds were one
@@ -121,7 +121,7 @@ reach-in), work in this order and say so in your report:
 2. **Verify each named item against the trunk first.** A finding or brief that no longer holds (the code is gone, the
    count is zero) is reported as stale, not fixed; the main session closes the row.
 3. **Do the whole sweep in the branch**, cut into commits one concern each, within the branch size rule. One cut
-   per run (design and build are two runs); at 150k of context the hook says commit what you have and report.
+   per run (design and build are two runs); at 250k of context the hook says commit what you have and report.
 4. **Check your own diff against the seven health conditions** (docs/OWNERS.md) before you report, for EVERY brief: a
    feature, a domain pass, a removal: reach-ins, a rule written twice, hidden coupling, a concept that could collapse, a
    branch with no live instance, scenario tests mapped, an open data/wrong finding. Name each as met (with the evidence)
