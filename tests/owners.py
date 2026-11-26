@@ -115,6 +115,7 @@ SCENARIOS = {
             "bookmark give the marks and chips, a tag deleted since struck through; a filter finding nothing keeps its chips; "
             "Clear all, the search box's Clear or the toggle clicked twice before Back arrives goes back once; a list past "
             "the server's cap is refused with a sentence; unsaved edits in the open photo ask before any mark."),
+    "V32": ("views", "Somebody tags the photos of a folder just added while the index writes its own fields into their files: a save refused as changed on disk is read again and sent once more when the tags and caption it writes over are as the page read them, the status line saying so; tags changed by someone else meanwhile, or the second send refused too, are the refusal as before, nothing merged and no third send; a photo the page no longer lists is not sent again; a caption that renames the file follows the rename; two refusals in a row each go once more; a library view's photo the same."),
     "V30": ("views", "On the phone page somebody moves between its screens by the bar of tabs at the foot: a page on a "
             "library opens on Library, one on none shows the list with no bar; each tab is one step of history however "
             "fast it is pressed and none for the tab shown, Back walks back through the tabs to the page's first step, "
@@ -304,6 +305,7 @@ _SCENARIO_FILES = {
     "V31": "scenario-filtering-on-the-phone",
     "V32": "scenario-working-on-a-new-folder test_queued_folders_in_the_folders_tab "
            "scenario-queued-folders-in-the-folders-tab",
+    "V32": "scenario-saving-while-the-index-writes",
 }
 
 #: owner -> kind -> the unit, migration and guard files, a .mjs without its ".test.mjs".

@@ -1,9 +1,10 @@
 // TagPup's page: Image Details' unsaved edits, saving them, and the queue every write to
 // a photo goes through.
+import { api } from './common/api.js';
 import { dialogOpen, holdFocus, releaseFocus } from './common/dialog.js';
 import { buildElement, replaceContent } from './common/dom.js';
 import { baseName, pathKey, rekeyed, renamedBy, samePath } from './common/paths.js';
-import { UNREADABLE_SAVE, inTurn, postPhotoMetadata } from './common/photo-write.js';
+import { UNREADABLE_SAVE, baseOf, inTurn, postPhotoMetadata, readById } from './common/photo-write.js';
 import { leafOf, photoAlreadyHas, tagProblem, textProblem } from './common/vocabulary.js';
 import { upper } from './hooks.js';
 import { state } from './state.js';
@@ -259,12 +260,71 @@ export function queuePhotoWrite(photos, job, label = 'Save a photo', again = () 
 /**
  * The server refused a write because the file changed since the page read it: nothing was written. The photo
  * is read again -- the panel shows what the file holds now -- and the owner is told, in the status line that stays
- * and by the caller's own message; nothing is merged and nothing is overwritten.
+ * and by the caller's own message; nothing is merged and nothing is overwritten. A save of the panel's is sent once more
+ * first when what it writes over did not change (postOrSendAgain); this is what is left when it did.
  */
 export function photoChangedOnDisk(photo) {
     return upper.reloadChangedPhoto(photo, () => setStatus('error',
         'This photo changed on disk since you opened it. It was read again: look at it, then save again.',
         { transient: false }));
+}
+
+/** What the status line says after "Saved <name>" of a save sent once more after its file was read again. */
+const SENT_AGAIN = ' after reading its file again (indexing, or another program, had written to it)';
+
+/**
+ * postPhotoMetadata for a save of the panel's title and tags, and the one place its refusal as changed on disk is taken
+ * (DECISIONS 2026-11-26): the photo is read again, and when what the save writes over is as the page read it -- the base
+ * it named, its tags (as a set, as the server compares them) and caption -- the file changed elsewhere (the index's bake
+ * writes its own fields into a new photo's file), so the same save is sent once more, built from the record read again
+ * (the file's stamp now). It resolves that reply, marked `readAgain`, with that record (`record`, holding the id the
+ * page's own did: a folder's has none), which the caller carries on with as the photo's and hands to cache.js with the
+ * save, so every copy the page keeps takes the file as it is now. Otherwise -- the file holds other tags or another
+ * caption, the library holds no photo at its path, the page's list no longer holds it (the queue's own rule,
+ * writeDetailEdits), the read fails, or the second send is refused too -- it is the refusal as before: the photo is
+ * read again to be shown (photoChangedOnDisk), nothing is merged, and it rejects. It is never sent a third time.
+ */
+export async function postOrSendAgain(photo, changes) {
+    const before = { ...baseOf(photo) };
+    try {
+        return await postPhotoMetadata(photo, changes);
+    } catch (err) {
+        if (!err.changedOnDisk) throw err;
+        const now = await readAgain(photo).catch(why => {
+            console.error('Could not read the photo again:', why);
+            return null;
+        });
+        if (!now || !stillListed(photo) || !holdsBefore(now, photo, before)) {
+            photoChangedOnDisk(photo);
+            throw err;
+        }
+        const record = { ...now, id: photo.id };
+        return { ...await postPhotoMetadata(record, changes, photoChangedOnDisk), readAgain: true, record };
+    }
+}
+
+/**
+ * The photo as the library holds it now, read by its id -- found by its path for a folder's photo, which the scan gives
+ * none -- or null when the library holds no photo there (a folder it does not hold). A read that fails rejects.
+ */
+async function readAgain(photo) {
+    const id = Number.isInteger(photo.id) ? photo.id
+        : (await api.json(`/api/library/find?path=${encodeURIComponent(photo.path)}`)).id;
+    return Number.isInteger(id) ? readById(id) : null;
+}
+
+/** Does the page's list still hold the photo -- the open folder's, or the view's one open photo? A save goes only then. */
+function stillListed(photo) {
+    return state.folderPhotos.some(p => samePath(p.path, photo.path));
+}
+
+/** Does `now`, the photo read again, hold at its path what the save writes over as the page read it (`before`, its base)? */
+function holdsBefore(now, photo, before) {
+    const held = new Set(now.tags || []);
+    const read = new Set(before.tags);
+    return samePath(now.path, photo.path)
+        && held.size === read.size && [...read].every(tag => held.has(tag))
+        && (now.title || '') === before.title;
 }
 
 /**
@@ -306,7 +366,7 @@ export function redrawIfShowing(photo, reply) {
  * earlier failed save of the photo is settled (findings #881).
  */
 export async function writeDetailEdits(fields, { intent = null, taken = null, path = state.activePhotoPath, entry = null } = {}) {
-    const photo = path && state.folderPhotos.find(p => samePath(p.path, path));
+    let photo = path && state.folderPhotos.find(p => samePath(p.path, path));
     if (!photo) {
         if (!intent) return true;
         if (entry) entry.error = 'The photo is not in the open folder any more, so the text it held was not written';
@@ -380,7 +440,7 @@ export async function writeDetailEdits(fields, { intent = null, taken = null, pa
     setStatus('busy', 'Saving...');
     let data;
     try {
-        data = await postPhotoMetadata(photo, { title: newTitle === null ? photo.title : newTitle, tags }, photoChangedOnDisk);
+        data = await postOrSendAgain(photo, { title: newTitle === null ? photo.title : newTitle, tags });
     } catch (err) {
         console.error(err);
         setStatus('error', `Not saved: ${err.message}`, { transient: false });
@@ -388,6 +448,8 @@ export async function writeDetailEdits(fields, { intent = null, taken = null, pa
         return false;
     }
 
+    // Sent again after the file was read again: the record read is the photo's now (postOrSendAgain).
+    if (data.record) photo = data.record;
     photo.tags = tags;
     if (newTitle !== null) {
         photo.title = newTitle;
@@ -420,7 +482,7 @@ export async function writeDetailEdits(fields, { intent = null, taken = null, pa
             { transient: false });
     } else {
         const said = pictureCheckSaid(data);
-        const saved = `Saved ${photo.filename || baseName(photo.path)}.${whereWritten(data)}`;
+        const saved = `Saved ${photo.filename || baseName(photo.path)}${data.readAgain ? SENT_AGAIN : ''}.${whereWritten(data)}`;
         setStatus('ready', said ? saved + said : saved.replace(/\.$/, ''));
     }
     settleFailedSaves(path, entry);
