@@ -1,6 +1,7 @@
 // Both pages' write of one photo's title, tags and Date Taken (POST /api/photos/write, op `set`), and the stamp and base it
 // names: the file as the page read it, which the server compares under its lock and refuses a write over when it
-// changed (docs/plans/phone-viewer.md, moved from web/tagpup/edits.js). What a page shows of a refusal is its own.
+// changed (docs/plans/phone-viewer.md, moved from web/tagpup/edits.js); and both pages' one rule for that refusal, read
+// again and sent once more (postOrSendAgain). What a page shows of a refusal is its own.
 import { api } from './api.js';
 
 /**
@@ -125,4 +126,60 @@ export async function postPhotoMetadata(photo, { title = photo.title, tags = pho
     const saved = { ...data, ...data.written[path] };
     takeStamp(photo, saved);
     return saved;
+}
+
+/**
+ * postPhotoMetadata, and both pages' one rule for its refusal as changed on disk (DECISIONS 2026-11-26): the photo is read
+ * again by its id (found by its path for a folder's photo, which the scan gives none) and the same save -- the title and
+ * tags it sent, resolved before the first send -- is sent once more naming the file as it is now (its stamp) and, as its
+ * base, what the page read before the first send. Whether it may be written is the server's to say, under its lock
+ * (tagpup/services/tagging.py _differs_from_base): the file's tags (as a set) and caption as that base, the index's bake
+ * having written its own fields only, it is written; others, someone else's edit, and it is refused again. Written,
+ * `photo` takes the record read again (keeping its own id and path), with the write's stamp and base, so the page goes
+ * on with the file as it is now, and the reply is marked `readAgain` for the page to say so.
+ *
+ * Not sent again, it is the refusal as before: a save that sends a Date Taken (its base holds no date, so the server could
+ * not tell another program's date from the bake's), the library holding no photo at its path, its file gone (`missing`)
+ * or one ExifTool could not read (`unreadable`), the read failing, or `stillListed(photo)` false (the page's own: does it
+ * still hold the photo?). Then, or refused the second time, `changed(photo)` -- the page's way of reading it again to
+ * show it -- and it rejects with the refusal (`changedOnDisk`); it is never sent a third time. Nothing is merged.
+ * `request` is postPhotoMetadata's.
+ */
+export async function postOrSendAgain(photo, changes = {}, { changed = () => {}, stillListed = () => true, request = {} } = {}) {
+    const asked = { title: photo.title, tags: (photo.tags || []).slice(), ...changes };
+    try {
+        return await postPhotoMetadata(photo, asked, () => {}, request);
+    } catch (err) {
+        if (!err.changedOnDisk) throw err;
+        const before = { ...baseOf(photo) };
+        const now = asked.date_taken ? null : await readAgain(photo).catch((why) => {
+            console.error('Could not read the photo again:', why);
+            return null;
+        });
+        if (!now || now.missing || now.unreadable || !stillListed(photo)) {
+            changed(photo);
+            throw err;
+        }
+        const record = { ...now, id: photo.id, path: photo.path, base: before };
+        if (photo.id === undefined) delete record.id;    // a folder's photo: the page's record has none
+        let reply;
+        try {
+            reply = await postPhotoMetadata(record, asked, () => {}, request);
+        } catch (again) {
+            if (again.changedOnDisk) changed(photo);
+            throw again;
+        }
+        Object.assign(photo, record);
+        return { ...reply, readAgain: true };
+    }
+}
+
+/**
+ * The photo as the library holds it now, read by its id -- found by its path for a folder's photo, which the scan gives
+ * none -- or null when the library holds no photo there (a folder it does not hold). A read that fails rejects.
+ */
+async function readAgain(photo) {
+    const id = Number.isInteger(photo.id) ? photo.id
+        : (await api.json(`/api/library/find?path=${encodeURIComponent(photo.path)}`)).id;
+    return Number.isInteger(id) ? readById(id) : null;
 }

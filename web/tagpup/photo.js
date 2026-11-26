@@ -28,10 +28,10 @@ import { fileSizeSaid, takenOf, takenSaid } from './format.js';
 import { namesAPerson, normalizeTag } from './tags.js';
 import { deleteWaits, pendingOf, readHeld, removePhotoTags, shownTags } from './pending.js';
 import {
-    leavePhotoThen, photoChangedOnDisk, queueWriteOf, redrawIfShowing, saveDetailEdits,
+    leavePhotoThen, onThisPage, queueWriteOf, redrawIfShowing, saidOfSave, saveDetailEdits,
     updateSaveButton
 } from './edits.js';
-import { postPhotoMetadata } from './common/photo-write.js';
+import { postOrSendAgain } from './common/photo-write.js';
 import {
     countSaid, markOpenRow, nextOf, renderFileList, scanFolder, showFolderView, updateListStats, updatePhotoPosition,
 } from './folder.js';
@@ -549,7 +549,7 @@ export function carryTagsForward() {
         setStatus('busy', `Copying ${missing.length} tag(s) from ${from}...`);
         let saved;
         try {
-            saved = await postPhotoMetadata(photo, { tags: updatedTags }, photoChangedOnDisk);
+            saved = await postOrSendAgain(photo, { tags: updatedTags }, onThisPage);
         } catch (err) {
             console.error(err);
             setStatus('error', 'Could not copy tags: ' + err.message);
@@ -564,7 +564,7 @@ export function carryTagsForward() {
         redrawIfShowing(photo, saved);
         renderFileList();
         upper.renderThumbnails();
-        setStatus('ready', `Copied ${missing.length} tag(s) from ${from}`);
+        setStatus('ready', saidOfSave(saved, `Copied ${missing.length} tag(s) from ${from}`));
         return true;
     });
 }

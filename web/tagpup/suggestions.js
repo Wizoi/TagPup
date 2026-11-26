@@ -20,8 +20,8 @@ import { setStatus } from './status.js';
 import { forgetScansHolding, photosGone, recordsWritten, saveToLocalStorageCache } from './cache.js';
 import { namesAPerson, resolveTagOrPerson } from './tags.js';
 import { shownTags } from './pending.js';
-import { photoChangedOnDisk, queuePhotoWrite, queueWriteOf, redrawIfShowing } from './edits.js';
-import { postPhotoMetadata } from './common/photo-write.js';
+import { onThisPage, queuePhotoWrite, queueWriteOf, redrawIfShowing, saidOfSave } from './edits.js';
+import { postOrSendAgain } from './common/photo-write.js';
 import { isJustLooking, libraryName } from './looking.js';
 import { countSaid, isPhotoTagged, renderFileList, scanFolder } from './folder.js';
 import { saveSingleTitle } from './photo.js';
@@ -694,7 +694,7 @@ export function applySuggestedTagsDirect(tagNames, isPerson, forPath = state.act
         setStatus('busy', 'Saving...');
         let saved;
         try {
-            saved = await postPhotoMetadata(photo, { tags: updatedTags }, photoChangedOnDisk);
+            saved = await postOrSendAgain(photo, { tags: updatedTags }, onThisPage);
         } catch (err) {
             console.error(err);
             setStatus('error', 'Error');
@@ -711,7 +711,7 @@ export function applySuggestedTagsDirect(tagNames, isPerson, forPath = state.act
         recordsWritten([photo]);
         // The suggestion has been taken, so it is no longer a suggestion.
         redrawIfShowing(photo, saved);
-        setStatus('ready', 'Ready');
+        setStatus('ready', saidOfSave(saved, 'Ready', 'Saved'));
         return true;
     });
 }
@@ -758,7 +758,7 @@ export async function applyAllSingleSuggestions() {
         setStatus('busy', 'Saving...');
         let saved;
         try {
-            saved = await postPhotoMetadata(photo, { tags: updatedTags }, photoChangedOnDisk);
+            saved = await postOrSendAgain(photo, { tags: updatedTags }, onThisPage);
         } catch (err) {
             console.error(err);
             setStatus('error', 'Error');
@@ -773,7 +773,7 @@ export async function applyAllSingleSuggestions() {
         });
         recordsWritten([photo]);
         redrawIfShowing(photo, saved);
-        setStatus('ready', 'Ready');
+        setStatus('ready', saidOfSave(saved, 'Ready', 'Saved'));
         return true;
     });
 }

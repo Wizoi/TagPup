@@ -8,6 +8,9 @@
  * merged, no third send. A photo the page no longer lists is not sent again; a caption that renames the file follows the
  * rename; two refusals in a row each go once more; a library view's photo, read by its own id, goes the same way. A read
  * again that finds the file gone (`missing`) or that ExifTool could not read (`unreadable`) is not sent again either.
+ * Every save of the page's that names a base goes by the one rule (web/common/photo-write.js postOrSendAgain): the
+ * panel's, a card's title in the grid, Carry forward, a suggestion taken one or all at once; the owner opening the next
+ * photo while one is read again waits for it. The phone's Save: scenario-editing-a-photo-on-the-phone (V26).
  *
  * The server is a fake of the files as they are now (`disk`, each with its row's id), which a save that wrote changes, and
  * which refuses a save as the real one does (tagging.py save_photo): its stamp not the file's, or its base not the file's
@@ -47,7 +50,7 @@ function refused(file, sent) {
 }
 
 /** The page on FOLDER, its server's files in `ctx.disk` (path -> record with its id); `ctx.replies` answers the next saves. */
-async function page(t, { view = false } = {}) {
+async function page(t, { view = false, open = true } = {}) {
   const ctx = { replies: [], held: null, alerts: [] };
   const disk = new Map([A, B].map((record) => [record.path, { ...record, id: IDS[record.path] }]));
   const byId = (id) => [...disk.values()].find((file) => file.id === id);
@@ -105,6 +108,10 @@ async function page(t, { view = false } = {}) {
     const file = disk.get(path);
     disk.set(path, { ...file, mtime: file.mtime + 300, size: file.size + 512 });
   };
+  ctx.open = async (path) => {
+    ctx.document.querySelector(`#photo-list li[data-path="${path.replace(/\\/g, "\\\\")}"]`).click();
+    await flush(ctx.window, 6);
+  };
   ctx.addTag = (tag) => {
     ctx.document.getElementById("input-add-tag").value = tag;
     click(ctx.window, ctx.document.getElementById("btn-add-tag"));
@@ -115,8 +122,7 @@ async function page(t, { view = false } = {}) {
     await until(ctx, () => ctx.state.activePhotoPath === A.path, "the view's photo open");
   } else {
     await openFolder(ctx, FOLDER);
-    ctx.document.querySelector(`#photo-list li[data-path="${A.path.replace(/\\/g, "\\\\")}"]`).click();
-    await flush(ctx.window, 6);
+    if (open) await ctx.open(A.path);
   }
   return ctx;
 }
@@ -148,8 +154,10 @@ describe("V33: a save refused because the index wrote to the file", () => {
     const ctx = await page(t);
     const file = ctx.disk.get(A.path);
     ctx.disk.set(A.path, { ...file, tags: ["Trips/Coast", "Activity/Sailing"], mtime: file.mtime + 300 });
+    const scans = ctx.scans();
     ctx.addTag("Trips/Lakes");
     await until(ctx, () => /changed on disk since you opened it/.test(ctx.status()), () => `the sentence (${ctx.status()})`);
+    assert.ok(ctx.scans() > scans, "the folder was read again to show the file");
     await flush(ctx.window, 12);
     const saves = ctx.saves();
     assert.equal(saves.length, 2, "sent once more, and not a third time");
@@ -157,6 +165,7 @@ describe("V33: a save refused because the index wrote to the file", () => {
     assert.deepEqual(saves[1].stamp, { mtime: file.mtime + 300, size: file.size }, "and the file's stamp now");
     assert.ok(ctx.alerts.some((message) => /changed on disk/.test(message)), ctx.alerts.join("|"));
     assert.deepEqual(ctx.record(A.path).tags, ["Trips/Coast", "Activity/Sailing"], "nothing merged: the record is the file's");
+    assert.equal(ctx.record(A.path).mtime, file.mtime + 300);
     assert.deepEqual(ctx.disk.get(A.path).tags, ["Trips/Coast", "Activity/Sailing"], "nothing written over them");
   });
 
@@ -237,6 +246,24 @@ describe("V33: a save refused because the index wrote to the file", () => {
     });
   }
 
+  test("the owner opens the next photo while the save is read again: the move waits, it is saved, then the next opens", async (t) => {
+    const ctx = await page(t);
+    ctx.bake(A.path);
+    ctx.holdReads = true;
+    ctx.addTag("Trips/Lakes");
+    await until(ctx, () => ctx.held, "the read again");
+    ctx.document.querySelector(`#photo-list li[data-path="${B.path.replace(/\\/g, "\\\\")}"]`).click();
+    await flush(ctx.window, 6);
+    assert.equal(ctx.state.activePhotoPath, A.path, "the move waits for the save");
+    ctx.holdReads = false;
+    ctx.held();
+    await until(ctx, () => ctx.state.activePhotoPath === B.path, () => `the next photo (${ctx.status()})`);
+    assert.equal(ctx.saves().length, 2);
+    assert.deepEqual(ctx.disk.get(A.path).tags, ["Trips/Coast", "Trips/Lakes"], "written");
+    assert.deepEqual(Array.from(ctx.record(A.path).tags), ["Trips/Coast", "Trips/Lakes"]);
+    assert.deepEqual(ctx.alerts, []);
+  });
+
   test("a library view's photo is read again by its own id and sent once more", async (t) => {
     const ctx = await page(t, { view: true });
     ctx.bake(A.path);
@@ -247,4 +274,56 @@ describe("V33: a save refused because the index wrote to the file", () => {
     assert.deepEqual(ctx.saves()[1].stamp, { mtime: A.mtime + 300, size: A.size + 512 });
     assert.match(ctx.status(), /after reading its file again/);
   });
+});
+
+describe("V33: the page's other saves go by the same rule", () => {
+  const sentAgain = / after reading its file again \(indexing, or another program, had written to it\)$/;
+
+  test("a card's title typed in the folder's grid", async (t) => {
+    const ctx = await page(t, { open: false });
+    ctx.bake(A.path);
+    const card = [...ctx.document.querySelectorAll("[data-path]")]
+      .find((each) => each.getAttribute("data-path") === A.path && each.querySelector(".thumbnail-filename"));
+    card.querySelector(".thumbnail-filename").dispatchEvent(new ctx.window.MouseEvent("click", { bubbles: true }));
+    const input = card.querySelector(".thumbnail-filename-input");
+    input.value = "Harbour";
+    input.dispatchEvent(new ctx.window.KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }));
+    await until(ctx, () => /^Saved/.test(ctx.status()), () => `the save (${ctx.status()})`);
+    assert.equal(ctx.saves().length, 2);
+    assert.deepEqual(ctx.saves()[1].stamp, { mtime: A.mtime + 300, size: A.size + 512 });
+    assert.match(ctx.status(), new RegExp("^Saved the title" + sentAgain.source));
+    assert.equal(ctx.disk.get(A.path).title, "Harbour");
+    assert.deepEqual(ctx.alerts, []);
+  });
+
+  test("Carry forward", async (t) => {
+    const ctx = await page(t);
+    await ctx.open(B.path);
+    ctx.bake(B.path);
+    ctx.document.getElementById("btn-carry-forward").click();
+    await until(ctx, () => /^Copied/.test(ctx.status()), () => `the carry (${ctx.status()})`);
+    assert.equal(ctx.saves().length, 2);
+    assert.match(ctx.status(), new RegExp("^Copied 1 tag\\(s\\) from a\\.jpg" + sentAgain.source));
+    assert.deepEqual(ctx.disk.get(B.path).tags, ["Activity/Sailing", "Trips/Coast"]);
+    assert.deepEqual(ctx.alerts, []);
+  });
+
+  for (const [how, take] of [
+    ["a suggestion taken", (ctx) => pageExports(ctx.window, "web/tagpup/suggestions.js").applySuggestedTagsDirect(["Trips/Lakes"], false)],
+    ["the photo's suggestions taken all at once", (ctx) => {
+      ctx.state.folderSuggestions[A.path] = { tags: [{ tag: "Trips/Lakes" }], people: [] };
+      return pageExports(ctx.window, "web/tagpup/suggestions.js").applyAllSingleSuggestions();
+    }],
+  ]) {
+    test(how, async (t) => {
+      const ctx = await page(t);
+      ctx.bake(A.path);
+      take(ctx);
+      await until(ctx, () => /^Saved/.test(ctx.status()), () => `the save (${ctx.status()})`);
+      assert.equal(ctx.saves().length, 2);
+      assert.match(ctx.status(), new RegExp("^Saved" + sentAgain.source));
+      assert.deepEqual(ctx.disk.get(A.path).tags, ["Trips/Coast", "Trips/Lakes"]);
+      assert.deepEqual(ctx.alerts, []);
+    });
+  }
 });

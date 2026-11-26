@@ -11,8 +11,11 @@
  * (POST /api/photos/write, op `tags`), the photo named by its id, against what the file holds, so no stamp; refused because
  * the photo is no longer at the path named (renamed on the PC: 409), it is read again by its id and sent once more, named
  * where it is now (photo-write.js readMoved, the PC's rule too). The title and Date Taken through the same entry point, op
- * `set` (web/common/photo-write.js postPhotoMetadata), with the stamp, which the server refuses when the file changed since it was read: nothing is written, the sheet says
- * so and reads the photo again, the text typed kept. Each write of the page waits for the one before it (state.writing).
+ * `set` (web/common/photo-write.js postPhotoMetadata), with the stamp, which the server refuses when the file changed since
+ * it was read: nothing is written, and the photo is read again and the Save sent once more, the server writing it when
+ * the file's tags and title are as the sheet read them (indexing wrote its own fields: photo-write.js postOrSendAgain, the
+ * PC's rule too; not a Save with a Date Taken, which that comparison does not hold). Refused still, the sheet says so and
+ * reads the photo again, the text typed kept. Each write of the page waits for the one before it (state.writing).
  * A title or date typed and left by Back or another screen is kept (state.drafts) and put back when the photo's sheet
  * opens again; only Close lets it go, and asks first. The page going while one is kept asks first too. The sheet is a
  * step of the history (mobile-screens.js), its one record of being open: Back closes it, the text kept and a removal
@@ -23,7 +26,7 @@
  */
 import { api } from './common/api.js';
 import { buildElement, replaceContent } from './common/dom.js';
-import { inTurn, postPhotoMetadata, readMoved, takeWritten } from './common/photo-write.js';
+import { inTurn, postOrSendAgain, readMoved, takeWritten } from './common/photo-write.js';
 import { baseName, pathKey } from './common/paths.js';
 import { leafOf, photoAlreadyHas, sortedTags } from './common/vocabulary.js';
 import { TAKEN_DIGITS } from './format.js';
@@ -35,6 +38,8 @@ const byId = (id) => document.getElementById(id);
 const UNDO_MS = 5000;
 const MATCHES = 8;
 const TYPED = ['edit-title', 'edit-date', 'edit-time'];
+// What the sheet says of a Save sent once more after its file was read again (postOrSendAgain).
+const SAVED_AGAIN = 'Saved, after reading the photo again: indexing, or another program, had written to its file.';
 
 function say(text) {
     byId('edit-problem').textContent = text;
@@ -306,7 +311,7 @@ function save() {
     }
     edit.saving = true;
     say('Saving...');
-    inTurn(state, 'writing', () => postPhotoMetadata(record, fields, undefined, { keepalive: true })).then((data) => {
+    inTurn(state, 'writing', () => postOrSendAgain(record, fields, { request: { keepalive: true } })).then((data) => {
         record.title = fields.title;
         if (data.taken) record.taken = data.taken;
         const card = state.photos && state.photos.cards.get(edit.id);
@@ -321,7 +326,7 @@ function save() {
         photoWritten(edit.id, { title: record.title, taken: record.taken, path: record.path });
         if (state.edit === edit) {
             drawRecord(record, false);
-            say('Saved.');
+            say(data.readAgain ? SAVED_AGAIN : 'Saved.');
         }
     }, (err) => {
         if (state.edit !== edit) return;

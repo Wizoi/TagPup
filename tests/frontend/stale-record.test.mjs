@@ -127,27 +127,6 @@ describe("a save names what the page read, and an undo keeps the record current 
   });
 });
 
-describe("a refusal because the file changed", () => {
-  test("a folder's photo is read again (the folder is scanned afresh), the owner is told, and nothing is merged", async (t) => {
-    const server = folderServer({}, changedOnDisk());
-    const ctx = await folderPage(t, server);
-    await openPhoto(ctx, "a.jpg");
-    const scans = server.urls().filter((u) => u.includes("/api/folder/scan")).length;
-    // another program added a keyword: the next scan shows it
-    server.scanned = [{ ...server.scanned[0], mtime: 1700009000.5, size: 3000, tags: ["Trips/Coast", "Trips/Lakes"] }, server.scanned[1]];
-    ctx.document.getElementById("input-add-tag").value = "Activity/Sailing";
-    click(ctx.window, ctx.document.getElementById("btn-add-tag"));
-    await flush(ctx.window, 12);
-    assert.ok(server.urls().filter((u) => u.includes("/api/folder/scan")).length > scans, "the folder was read again");
-    assert.match(ctx.document.getElementById("status-text").textContent, /changed on disk/);
-    const { state } = pageExports(ctx.window, "web/tagpup/state.js");
-    const record = state.folderPhotos.find((p) => p.path === `${FOLDER}\\a.jpg`);
-    assert.deepEqual(record.tags, ["Trips/Coast", "Trips/Lakes"], "the record is the file's now; the typed tag was not written into it");
-    assert.equal(record.mtime, 1700009000.5);
-    assert.ok(ctx.alerts.some((message) => /changed on disk/.test(message)), "and the owner was told in words");
-  });
-});
-
 describe("in a view of the library", () => {
   const ID = 4242;
   const record = (extra = {}) => photoRecord({

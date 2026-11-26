@@ -15,8 +15,11 @@
  * - Two chips of one leaf say their roots.
  * - Each write waits for the one before it: a tag added while the Save is out is sent after it.
  * - The title and Date Taken go through /api/photos/write too (op `set`), with the stamp and base of the file as read; a
- *   title that renames the file renames the card the page holds. A file changed on the PC is never written over: the
- *   sheet says so, reads it again and keeps the text typed.
+ *   title that renames the file renames the card the page holds. Refused because the file changed since it was read, the
+ *   photo is read again and the Save sent once more (web/common/photo-write.js postOrSendAgain, the PC's rule too): the
+ *   index having written its own fields only, it is written, said, the photo left meanwhile or not; a Save with a Date
+ *   Taken is not sent again (the comparison holds no date). A file changed on the PC is never written over: the server
+ *   refuses the second send too, and the sheet says so, reads it again and keeps the text typed.
  * - A dropped connection or a server that cannot answer says a sentence, the sheet open, the text kept; a refusal while
  *   the server is updated is waited out (web/common/api.js).
  * - Close with a title or date typed asks; Back keeps it, and the photo's Edit shows it again.
@@ -49,7 +52,8 @@ const vocabulary = (ctx) => pageExports(ctx.window, "web/common/vocabulary.js");
  * The page on a library of 20 photos, the first a file `file` that the fake server writes as the real one does: a tag
  * change through photos/write (op `tags`), the title and date through it too (op `set`), each a new stamp;
  * /api/library/photo reads it.
- * A Save naming another stamp or base than the file's is refused (409, changed_on_disk), as the server refuses it; so is
+ * A Save naming another stamp or base (its tags or title) than the file's is refused (409, changed_on_disk), as the
+ * server refuses it; so is
  * a tag change naming photo 1 at a path it is no longer at (photo_writes._moved), nothing written.
  */
 async function phone(t, file = {}) {
@@ -76,7 +80,8 @@ async function phone(t, file = {}) {
     })
     .on(SAVE, (url, sent) => {
       const body = lastSave(server);
-      if (body.stamp.mtime !== held.mtime || JSON.stringify(body.base.tags) !== JSON.stringify(held.tags)) {
+      if (body.stamp.mtime !== held.mtime || JSON.stringify(body.base.tags) !== JSON.stringify(held.tags)
+        || body.base.title !== held.title) {
         return changedOnDisk("The file changed on disk.")();
       }
       held.title = body.title;
@@ -97,7 +102,7 @@ async function phone(t, file = {}) {
   // The Undo's five seconds, shortened: every other timer as the page set it.
   const setTimer = ctx.window.setTimeout.bind(ctx.window);
   ctx.window.setTimeout = (job, ms, ...rest) => setTimer(job, ms === 5000 ? UNDO : ms, ...rest);
-  return Object.assign(ctx, { held, sent });
+  return Object.assign(ctx, { held, sent, record });
 }
 
 /** Keywords, Events, Show these photos, a tap on the first card, and Edit. */
@@ -309,17 +314,80 @@ describe("editing a photo on the phone", () => {
     await settle(ctx);
 
     assert.match(said(ctx), /changed on the PC since it was read/);
-    assert.equal(saveCalls(ctx.server).length, 1, "nothing sent again by itself");
-    assert.equal(calls(ctx, "/api/library/photo").length, reads + 1, "the photo read again");
+    const refused = saveCalls(ctx.server).map((c) => c.body);
+    assert.equal(refused.length, 2, "sent once more, refused again, and not a third time");
+    assert.equal(refused[1].base.title, "Finish line", "the second named what the sheet read, which the server compared");
+    assert.equal(calls(ctx, "/api/library/photo").length, reads + 2, "the photo read again: to send it once more, then to show it");
+    assert.equal(ctx.held.title, "Set on the PC", "not written over");
     assert.equal(el(ctx, "edit-title").value, "Wren's Last Lap", "the text typed kept");
     assert.ok(sheetOpen(ctx));
 
     click(ctx.window, el(ctx, "edit-save"));
     await settle(ctx);
-    const again = saveCalls(ctx.server)[1].body;
+    const again = saveCalls(ctx.server)[2].body;
     assert.deepEqual([again.stamp, again.base.title], [{ mtime: 1718000300, size: 204800 }, "Set on the PC"],
       "the Save the owner sends again names the file as read again");
     assert.equal(ctx.held.title, "Wren's Last Lap");
+  });
+
+  test("the folder indexed since the sheet read it (its own fields, a new stamp): the Save is read again, sent once more, and said", async (t) => {
+    const ctx = await phone(t);
+    await openSheet(ctx);
+    ctx.held.mtime += 300;                             // the index's bake: the tags and title as read
+    type(ctx, "edit-title", "Wren's Last Lap");
+    click(ctx.window, el(ctx, "edit-save"));
+    await settle(ctx);
+    const sent = saveCalls(ctx.server).map((c) => c.body);
+    assert.equal(sent.length, 2);
+    assert.deepEqual(sent[1].stamp, { mtime: 1718000300.5, size: 204800 }, "the second names the file as it is now");
+    assert.deepEqual(sent[1].base, { tags: [WREN, COAST], title: "Finish line" });
+    assert.equal(ctx.held.title, "Wren's Last Lap");
+    assert.equal(said(ctx), "Saved, after reading the photo again: indexing, or another program, had written to its file.");
+    assert.ok(sent.every((body, i) => ctx.sent.filter((s) => SAVE(s.url, s.body))[i].keepalive), "each send outlives the page");
+
+    type(ctx, "edit-title", "Wren's Lap");             // the next Save names the file as the second left it
+    click(ctx.window, el(ctx, "edit-save"));
+    await settle(ctx);
+    assert.equal(saveCalls(ctx.server).length, 3);
+    assert.equal(said(ctx), "Saved.");
+  });
+
+  test("the folder indexed since the sheet read it, and a Date Taken typed: not sent again, the sheet says so", async (t) => {
+    const ctx = await phone(t);
+    await openSheet(ctx);
+    ctx.held.mtime += 300;
+    type(ctx, "edit-date", "2024-06-02");
+    click(ctx.window, el(ctx, "edit-save"));
+    await settle(ctx);
+    assert.equal(saveCalls(ctx.server).length, 1, "a date the server does not compare is not sent again over the file");
+    assert.match(said(ctx), /changed on the PC since it was read/);
+    assert.equal(el(ctx, "edit-date").value, "2024-06-02", "the date typed kept");
+  });
+
+  test("the photo left while its refused Save is read again: it is still sent once more, and the draft let go", async (t) => {
+    const ctx = await phone(t);
+    await openSheet(ctx);
+    ctx.held.mtime += 300;
+    type(ctx, "edit-title", "Wren's Last Lap");
+    const reading = {};
+    ctx.server.first(SAVE, () => {                     // the first refused; the read again after it held
+      ctx.server.routes.shift();
+      reading.hold = holdNext(ctx, "/api/library/photo");
+      return changedOnDisk("The file changed on disk.")();
+    });
+    click(ctx.window, el(ctx, "edit-save"));
+    await settle(ctx);
+    assert.equal(typeof reading.hold.release, "function", "the read again is out");
+    ctx.window.history.back();                         // the sheet, then the photo
+    await settle(ctx);
+    ctx.window.history.back();
+    await settle(ctx);
+    assert.deepEqual(shown(ctx), ["grid"]);
+    reading.hold.release({ photo: ctx.record() });
+    await settle(ctx);
+    assert.equal(saveCalls(ctx.server).length, 2);
+    assert.equal(ctx.held.title, "Wren's Last Lap", "the Save the owner tapped is written");
+    assert.equal(pageState(ctx).drafts.has(1), false, "and its draft let go: nothing to put back");
   });
 
   test("a chip taken off, Close, and Edit again within its Undo: the chip stays off, and the next Save lands", async (t) => {

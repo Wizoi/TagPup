@@ -355,7 +355,9 @@ same transaction (`store/derived.py`, `people.tree_edit`).
   as a click: Tab reaches it, Enter or Space clicks it), `file-addresses.js` (the one spelling of a photo's file and a
   clip's address, `/api/photo-file` and `/api/video-file`, versioned by the record's or card's `mtime`), `photo-write.js`
   (both pages' write of one photo's title, tags and Date Taken through `/api/photos/write`, op `set`, named by its id,
-  and the stamp and base of the file as read), and the gear's tag editor, settings and history dialogs.
+  and the stamp and base of the file as read; and its one rule for a save refused as changed on disk, read again by id
+  and sent once more with the page's base for the server to compare, `postOrSendAgain`), and the gear's tag editor,
+  settings and history dialogs.
 - `web/activity/` is the Activity page; `web/tagpup/` and `web/tuner/` have a `main.js` that only wires the
   page, plus one module per feature, and their mutable state in one `state` object.
 - `web/common/theme.css` is the one place the dark theme's tokens live (colours, fonts and the card

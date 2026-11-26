@@ -16,8 +16,8 @@ import { recordsWritten } from './cache.js';
 import {
     formatFriendlyDateSingle, getFolderDateStats, parseExifDateToLocalDate, takenOf
 } from './format.js';
-import { photoChangedOnDisk, photoRenamed, queueWriteOf } from './edits.js';
-import { postPhotoMetadata } from './common/photo-write.js';
+import { onThisPage, photoRenamed, queueWriteOf, saidOfSave } from './edits.js';
+import { postOrSendAgain } from './common/photo-write.js';
 import { countSaid, renderFileList, visiblePhotos } from './folder.js';
 import { openLibraryPhoto, selectPhoto } from './photo.js';
 import { isVideo } from './media.js';
@@ -509,8 +509,9 @@ function buildThumbnailCard(photo) {
 
             // Queued with every other write to a photo, so the tags it sends
             // are the photo's tags when it runs, not a copy from before.
-            // A refusal rejects with the server's sentence, after photoChangedOnDisk when the file changed since it was read.
-            queueWriteOf(photo.path, () => postPhotoMetadata(photo, { title: newTitle }, photoChangedOnDisk)
+            // Refused as changed on disk, it is read again and sent once more (postOrSendAgain); refused still, it rejects with
+            // the server's sentence, after photoChangedOnDisk.
+            queueWriteOf(photo.path, () => postOrSendAgain(photo, { title: newTitle }, onThisPage)
             .then(data => {
                 const oldPath = photo.path;
                 photo.title = newTitle;
@@ -533,7 +534,7 @@ function buildThumbnailCard(photo) {
 
                 statusDot.className = data.rename_failed ? 'status-indicator-dot error' : 'status-indicator-dot';
                 statusText.textContent = data.rename_failed
-                    ? `Saved the title, but could not rename the photo: ${data.rename_failed}` : 'Ready';
+                    ? `Saved the title, but could not rename the photo: ${data.rename_failed}` : saidOfSave(data, 'Ready', 'Saved the title');
             })
             .catch(err => {
                 console.error(err);
