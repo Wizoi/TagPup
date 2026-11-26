@@ -1,8 +1,8 @@
 """A root moved, or the library's roots changed, while a long Undo or a settle of a change cut off is under way
-(tagpup.services.file_changes: undo, _settle_files; tagpup.services.roots.pinned; #3395).
+(tagpup.services.file_changes: undo, _finish; tagpup.services.roots.pinned; #3395).
 
 The owner undoes a bulk change of sixty photos (three chunks), or opens a library whose sixty-photo change a crash cut
-off, and meanwhile the place of its root on this machine is moved by hand in machine_roots.json (the old place not kept,
+off (a tagging, or a Smart Rename of the sixty), and meanwhile the place of its root on this machine is moved by hand in machine_roots.json (the old place not kept,
 as TagTuner's Roots keeps it): the run puts every file back, or settles it, where it began, and every photo's row follows
 its file, spelled by the root -- never half its rows by the old place and half by the new, where a file at the old place
 is under no root and its row is not found -- and the next run takes the new place. When another process changes the
@@ -13,7 +13,8 @@ Undo in words, nothing written, where it raised before.
 A held connection looks at the map at each use here (store.roots.RECHECK_SECONDS 0), so a move is taken at once by any
 run that does not hold its map: each test fails on the code before the pin, where undo and settle held none. Sixty real
 JPEGs written by the real ExifTool in a home of the test's own; their rows as the indexer records a read
-(tests/roots_library.py); the move is made at the thirtieth file's step (file_changes._reached).
+(tests/roots_library.py); the move is made at the thirtieth file's step (file_changes._reached), or, for a rename, as its files are renamed
+again (names.rename_all).
 """
 import json
 import os
@@ -30,6 +31,7 @@ import roots_library as rl  # noqa: E402
 from test_file_journal import Crash, crash_at  # noqa: E402
 
 from tagpup import config  # noqa: E402
+from tagpup.files import names  # noqa: E402
 from tagpup.files.exiftool_session import ExifToolSession  # noqa: E402
 from tagpup.services import file_changes, journal, tagging  # noqa: E402
 from tagpup.services import roots as roots_service  # noqa: E402
@@ -165,7 +167,6 @@ class AnUndo(ALongRun):
         self.assertEqual(0, self.holding_harbour(self.photos))
         self.assertEqual("undone", file_journal.change(self.library.path, change).status)
 
-
     def test_a_root_this_machine_does_not_place_refuses_it_in_words_and_writes_nothing(self):
         change = self.tag_them_all()
         os.remove(config.machine_roots_path())
@@ -177,12 +178,15 @@ class AnUndo(ALongRun):
 
 
 class ASettle(ALongRun):
-    def cut_off(self):
-        """The sixty-photo change killed as the third file is written, before its row: two done, one written, fifty-seven
-        never reached; its process gone. Its id."""
-        with mock.patch.object(file_changes, "_reached", side_effect=crash_at("file written", 3)):
+    def cut_off(self, run=None, step="file written", nth=3):
+        """The sixty-photo change killed at `step`'s `nth` time (by default as the third file is written, before its row:
+        two done, one written, fifty-seven never reached); its process gone. Its id."""
+        with mock.patch.object(file_changes, "_reached", side_effect=crash_at(step, nth)):
             with self.assertRaises(Crash):
-                tagging.change_tags(self.library, self.photos, ["Harbour"], [], rl.EXIFTOOL)
+                if run:
+                    run()
+                else:
+                    tagging.change_tags(self.library, self.photos, ["Harbour"], [], rl.EXIFTOOL)
         change = max(each.id for each in file_journal.unfinished(self.library.path))
         conn = db.connect(self.side.db_path)
         try:
@@ -201,6 +205,28 @@ class ASettle(ALongRun):
         self.assertEqual((60, 0), self.rows_holding_harbour(), "a row did not follow its file, by the root")
         self.assertEqual(copied, {path: self.bytes_of(path) for path in self.copies()},
                          "the settle wrote the copies at the place the root was moved to part-way")
+        self.assertEqual("applied", file_journal.change(self.library.path, change).status)
+        self.assertEqual(self.copy, self.place_seen_by_a_new_connection(), "the next run does not take the new place")
+
+    def test_a_root_moved_mid_settle_of_a_rename_is_not_taken_by_it_and_the_next_run_takes_it(self):
+        """A Smart Rename of the sixty killed once its files are marked being renamed, before any is: the settle renames
+        them again and moves their rows, and the map moved as it renames them is not taken by it, so every row follows its
+        file by the root (by the moved map the old place is under no root, and no row would be found to move)."""
+        renamed = {path: os.path.join(os.path.dirname(path), "Renamed_" + os.path.basename(path)) for path in self.photos}
+        change = self.cut_off(lambda: file_changes.rename(self.library, "smart rename", renamed, {}),
+                              step="file writing", nth=1)
+        self.copy_the_photos()
+        rename_all = names.rename_all
+
+        def moved_then_renamed(*args, **kwargs):
+            self.move_the_map()
+            return rename_all(*args, **kwargs)
+        with mock.patch.object(names, "rename_all", side_effect=moved_then_renamed):
+            self.assertEqual(1, file_changes.settle(self.library, rl.EXIFTOOL))
+        self.assertEqual(60, sum(1 for new in renamed.values() if os.path.exists(new)), "a photo was not renamed again")
+        rows = [path for (path,) in self.side.rows("SELECT path FROM photos")]
+        self.assertEqual(60, sum(1 for path in rows if path.startswith("@") and "/Renamed_" in path),
+                         "a row did not follow its renamed file, by the root")
         self.assertEqual("applied", file_journal.change(self.library.path, change).status)
         self.assertEqual(self.copy, self.place_seen_by_a_new_connection(), "the next run does not take the new place")
 

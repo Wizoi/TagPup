@@ -1691,9 +1691,10 @@ def _finish(library, change, exiftool_path):
     takes the lock (let_others_in), and a settle asked to stop (_settle_turn) stops, its files not reached left as they
     are for the next start (_put_off), the change unfinished. A settle that cannot take its turn is left whole.
 
-    Its files are settled by one map (_settle_files holds it: tagpup.services.roots.pinned), so a change of the library's
-    roots by another process part-way (RootsChanged), or a root this machine does not place (Unplaced), leaves the change
-    as a crash leaves it, released for the next settle, which converts by the map as it is then."""
+    Its files, renames and the others, are read and settled by one map (tagpup.services.roots.pinned), as a forward
+    write's are: a place moved meanwhile is taken by the next run, never half-way through this one (#3395). A change of
+    the library's roots by another process part-way (RootsChanged), or a root this machine does not place (Unplaced),
+    leaves the change as a crash leaves it, released for the next settle, which converts by the map as it is then."""
     undoing = change.undoing
     if change.operation == file_journal.CONVERT and not undoing:
         # One clip, settled by where its copy is (tagpup.services.convert); never undone (journal.UNDO_CHECKS).
@@ -1703,12 +1704,13 @@ def _finish(library, change, exiftool_path):
         # Photos sent to the Recycle Bin, settled by a look at each (tagpup.services.photos); never undone.
         from tagpup.services import photos as photo_service
         return photo_service.settle_delete(library, change)
-    renames, changed = _pending(library, change)
     try:
-        with _settle_turn(library, change, len(changed)) as stop:
-            if renames:
-                _settle_renames(library, renames, forward=not undoing, redo=True)
-            left = _settle_files(library, change, exiftool_path, changed, stop) if changed else False
+        with roots_service.pinned(library):
+            renames, changed = _pending(library, change)
+            with _settle_turn(library, change, len(changed)) as stop:
+                if renames:
+                    _settle_renames(library, renames, forward=not undoing, redo=True)
+                left = _settle_files(library, change, exiftool_path, changed, stop) if changed else False
     except (_NoTurn, roots_service.RootsChanged, roots_service.Unplaced) as why:
         logger.info("%s: change %d is left half done for the next settle: %s", library.path, change.id,
                     why if isinstance(why, _NoTurn) else roots_service.stopped(why))
@@ -1735,11 +1737,8 @@ def _pending(library, change):
 
 def _settle_files(library, change, exiftool_path, changed, stop):
     """_finish's files that are not renames, a chunk at a time. True when any is left as it is (away, not answered for,
-    unreadable now, or not reached before a stop).
-
-    Every file of it is converted by one map (tagpup.services.roots.pinned), as a forward write's are: a place moved
-    meanwhile is taken by the next run, never half-way through this one (#3395). A held connection would otherwise take
-    the moved map at its next look (roots._held), between two files of one settle."""
+    unreadable now, or not reached before a stop). Inside _finish's pin: its held connection (db.connections_held)
+    converts every file by the map the settle began with, not the one roots._held would take at its next recheck."""
     undoing, left = change.undoing, False
     # A planned file was never written by this change (it is marked writing before its write): one found holding the change's
     # after was written by another program and is taken out, as the forward loop takes it out (#1937), unless the change holds
@@ -1748,8 +1747,7 @@ def _settle_files(library, change, exiftool_path, changed, stop):
     kept = (face_batch.photos_kept(library, change.id)
             if not undoing and any(row.state == "planned" for row in changed) else set())
     put_off, mine = False, (library.key, change.id)
-    with roots_service.pinned(library), field_values.session(exiftool_path) as session, \
-            db.connections_held(library.path):
+    with field_values.session(exiftool_path) as session, db.connections_held(library.path):
         et, wrote = exiftool_session.StaysDead(session), {}
         try:
             for row in changed:
