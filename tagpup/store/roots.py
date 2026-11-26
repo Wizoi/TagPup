@@ -49,7 +49,8 @@ from tagpup.store import db
 
 TABLE = "roots"
 
-#: How long a connection trusts the map it holds before asking again (a stat).
+#: How long a connection trusts the map it holds before asking again (a stat): counted from when it read the map, not
+#: from its last use, so a connection asked more often than this still takes a moved map within this long (#3384).
 RECHECK_SECONDS = 1.0
 
 #: The settings that hold folders, one a line: converted line by line.
@@ -113,7 +114,8 @@ def delete(conn, name):
 # ---- The Roots a connection converts by ---------------------------------------------------
 
 class State:
-    """What a connection holds of the library's roots."""
+    """What a connection holds of the library's roots: `checked` is when the map its `roots` came from was read
+    (time.monotonic), by this connection or by the pin it took them from."""
     __slots__ = ("version", "rows", "roots", "checked", "file")
 
     def __init__(self, version, rows, roots, checked, file):
@@ -121,10 +123,10 @@ class State:
 
 
 class _Pin:
-    __slots__ = ("rows", "roots", "count")
+    __slots__ = ("rows", "roots", "checked", "count")
 
-    def __init__(self, rows, roots):
-        self.rows, self.roots, self.count = rows, roots, 0
+    def __init__(self, rows, roots, checked):
+        self.rows, self.roots, self.checked, self.count = rows, roots, checked, 0
 
 
 _pins = {}
@@ -187,12 +189,12 @@ def _held(conn):
             raise RootsChanged("the library's roots were changed while this run held them; it stops, since "
                                "what it would convert from here would be converted by roots the library no "
                                "longer has. Start it again.")
-        roots = pin.roots
+        roots, checked = pin.roots, pin.checked
     elif state is not None and rows == state.rows and now - state.checked < RECHECK_SECONDS:
-        roots = state.roots
+        roots, checked = state.roots, state.checked
     else:
-        roots = machine.roots_of(dict(rows))
-    conn.roots_state = State(version, rows, roots, now, file)
+        roots, checked = machine.roots_of(dict(rows)), now
+    conn.roots_state = State(version, rows, roots, checked, file)
     return roots
 
 
@@ -236,7 +238,7 @@ def pinned(db_path):
             rows = _rows(conn)
         finally:
             conn.close()
-        made = _Pin(rows, machine.roots_of(dict(rows)))
+        made = _Pin(rows, machine.roots_of(dict(rows)), time.monotonic())
         with _pins_guard:
             pin = _pins.setdefault(file, made)
     with _pins_guard:

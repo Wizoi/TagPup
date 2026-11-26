@@ -1689,7 +1689,12 @@ def _finish(library, change, exiftool_path):
     A batches.CHUNK of files at a time, as a write is carried out: each chunk's files are looked at (file_states), settled
     and read back before the next; between two chunks a line says how far it has got (counts only), a writer that waits
     takes the lock (let_others_in), and a settle asked to stop (_settle_turn) stops, its files not reached left as they
-    are for the next start (_put_off), the change unfinished. A settle that cannot take its turn is left whole."""
+    are for the next start (_put_off), the change unfinished. A settle that cannot take its turn is left whole.
+
+    Its files, renames and the others, are read and settled by one map (tagpup.services.roots.pinned), as a forward
+    write's are: a place moved meanwhile is taken by the next run, never half-way through this one (#3395). A change of
+    the library's roots by another process part-way (RootsChanged), or a root this machine does not place (Unplaced),
+    leaves the change as a crash leaves it, released for the next settle, which converts by the map as it is then."""
     undoing = change.undoing
     if change.operation == file_journal.CONVERT and not undoing:
         # One clip, settled by where its copy is (tagpup.services.convert); never undone (journal.UNDO_CHECKS).
@@ -1699,14 +1704,16 @@ def _finish(library, change, exiftool_path):
         # Photos sent to the Recycle Bin, settled by a look at each (tagpup.services.photos); never undone.
         from tagpup.services import photos as photo_service
         return photo_service.settle_delete(library, change)
-    renames, changed = _pending(library, change)
     try:
-        with _settle_turn(library, change, len(changed)) as stop:
-            if renames:
-                _settle_renames(library, renames, forward=not undoing, redo=True)
-            left = _settle_files(library, change, exiftool_path, changed, stop) if changed else False
-    except _NoTurn as why:
-        logger.info("%s: change %d is left half done for the next settle: %s", library.path, change.id, why)
+        with roots_service.pinned(library):
+            renames, changed = _pending(library, change)
+            with _settle_turn(library, change, len(changed)) as stop:
+                if renames:
+                    _settle_renames(library, renames, forward=not undoing, redo=True)
+                left = _settle_files(library, change, exiftool_path, changed, stop) if changed else False
+    except (_NoTurn, roots_service.RootsChanged, roots_service.Unplaced) as why:
+        logger.info("%s: change %d is left half done for the next settle: %s", library.path, change.id,
+                    why if isinstance(why, _NoTurn) else roots_service.stopped(why))
         return False
     if left:
         if (library.key, change.id) not in _put_off:      # a stop said so itself (_settle_files)
@@ -1730,7 +1737,8 @@ def _pending(library, change):
 
 def _settle_files(library, change, exiftool_path, changed, stop):
     """_finish's files that are not renames, a chunk at a time. True when any is left as it is (away, not answered for,
-    unreadable now, or not reached before a stop)."""
+    unreadable now, or not reached before a stop). Inside _finish's pin: its held connection (db.connections_held)
+    converts every file by the map the settle began with, not the one roots._held would take at its next recheck."""
     undoing, left = change.undoing, False
     # A planned file was never written by this change (it is marked writing before its write): one found holding the change's
     # after was written by another program and is taken out, as the forward loop takes it out (#1937), unless the change holds
@@ -1975,11 +1983,35 @@ def undo(library, change_id, exiftool_path, check, apply=False):
     file that still holds what the change left is written back to what it held, its row
     following, through the same states; each that does not is refused, named in the
     Result's errors, and never overwritten. `changed` is the files put back. `check` is
-    asked before anything is written (_undoable)."""
+    asked before anything is written (_undoable).
+
+    One map for the whole undo (tagpup.services.roots.pinned), as a forward write holds one: a place moved meanwhile is
+    taken by the next run, never between two files of this one (#3395). A change of the library's roots by another process
+    part-way (RootsChanged) stops it, left as a crash leaves an undo -- the files not yet put back are put back by the next
+    settle of the library (the next change of photo files, or the next start) -- and refused saying how many it put back;
+    a root this machine does not place (Unplaced) refuses it in words, nothing written."""
+    result = Result(details={"dry_run": not apply, "change": change_id, "files": True})
+    begun = []
+    try:
+        with roots_service.pinned(library):
+            return _undo(library, change_id, exiftool_path, check, apply, result, begun)
+    except (roots_service.RootsChanged, roots_service.Unplaced) as stop:
+        said = roots_service.stopped(stop)
+        if begun:
+            # The file under way when it stopped may be put back and not yet recorded: the settle records it.
+            said += (" Before it stopped at least %d file(s) were put back; the others are put back the next time the"
+                     " library is settled (the next change of photo files, or the next start)." % result.changed)
+        result.refuse(said)
+        return result
+
+
+def _undo(library, change_id, exiftool_path, check, apply, result, begun):
+    """undo's work, inside its pin: `result` filled as it goes, `begun` given True once the change is marked as being
+    undone (what a stop part-way says)."""
     rehearsal = rehearse_undo(library, change_id, exiftool_path, check)
     if not apply or rehearsal.refused:
         return rehearsal
-    result = Result(attempted=rehearsal.attempted, details={"dry_run": False, "change": change_id, "files": True})
+    result.attempted = rehearsal.attempted
     since = _counted_so_far()
     schema.ensure(library.path)
     change, ready, refused = _undoable(library, change_id, exiftool_path, check)
@@ -1989,6 +2021,7 @@ def undo(library, change_id, exiftool_path, check, apply=False):
     if not file_journal.begin_undo(library.path, change_id):
         result.refuse("change %d is no longer applied" % change_id)
         return result
+    begun.append(True)
     try:
         for row, why in refused:
             _conflict(library, row, "not undone: %s" % why)

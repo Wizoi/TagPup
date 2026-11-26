@@ -32,6 +32,7 @@ import photo_rows  # noqa: E402
 import roots_library as rl  # noqa: E402
 import share_waits  # noqa: E402
 from test_log_runs import Lines  # noqa: E402
+from waiting import holds_for, wait_until  # noqa: E402
 
 from tagpup import config  # noqa: E402
 from tagpup.core import runs  # noqa: E402
@@ -396,12 +397,37 @@ class ChangingTheLocation(RootsCase):
         first = sorted(path for _id, path, _m, _s in store_photos.stamps(conn))
         self.assertTrue(all(path.startswith(self.side.pictures) for path in first[:18] if "Elsewhere" not in path))
         self.move(apply=True)
-        # Not polled: each use of the connection stamps its map checked (roots._held), so a poll would put the
-        # recheck off for as long as it polls.
-        time.sleep(store_roots.RECHECK_SECONDS + 0.2)   # wait: a held connection's map, at most this old
-        again = sorted(path for _id, path, _m, _s in store_photos.stamps(conn))
-        rooted = [path for path in again if "Elsewhere" not in path]
-        self.assertTrue(rooted and all(path.startswith(self.copy) for path in rooted), rooted[:2])
+
+        def at_the_new_place():
+            rooted = [path for _id, path, _m, _s in store_photos.stamps(conn) if "Elsewhere" not in path]
+            return rooted and all(path.startswith(self.copy) for path in rooted)
+        wait_until(at_the_new_place, timeout=store_roots.RECHECK_SECONDS * 10,
+                   what="the held connection to name the rows' files at the new place")
+
+    def test_a_connection_asked_every_10_ms_takes_a_map_moved_on_disk(self):
+        """A server's connection is asked more often than once a second (a page of thumbnails, a poll): it reads the
+        map again once RECHECK_SECONDS have passed since it last read it, however busy it is kept, so a map moved on
+        disk is taken within that long; and it reads it no more often than that, not at every use (#3384)."""
+        from tagpup.core import machine as core_machine
+        from tagpup.store import photos as store_photos
+        from tagpup.store import roots as store_roots
+        recheck = 0.25      # the product's 1 s, shortened: the scenario is "asked more often than its recheck"
+        patcher = mock.patch.object(store_roots, "RECHECK_SECONDS", recheck)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        conn = db.connect(db.readonly_uri(self.side.db_path), uri=True)
+        self.addCleanup(conn.close)
+
+        def rooted_at(place):
+            rooted = [path for _id, path, _m, _s in store_photos.stamps(conn) if "Elsewhere" not in path]
+            return bool(rooted) and all(path.startswith(place) for path in rooted)
+        self.assertTrue(rooted_at(self.side.pictures))
+        with mock.patch.object(core_machine, "roots_of", wraps=core_machine.roots_of) as read:
+            self.assertTrue(holds_for(lambda: rooted_at(self.side.pictures), recheck * 2, interval=0.01))
+        self.assertLessEqual(read.call_count, 3, "a busy connection reads the map once a recheck, not at every use")
+        config.set_location("pictures", self.copy)
+        wait_until(lambda: rooted_at(self.copy), timeout=recheck * 8, interval=0.01,
+                   what="a connection asked every 10 ms to take the map moved on disk")
 
     def test_a_unc_spelling_of_a_place_is_a_place_and_the_drive_letter_one_is_kept_after_it(self):
         """The same folder by its administrative share, as a server's share is reached: another
@@ -421,11 +447,11 @@ class ChangingTheLocation(RootsCase):
         self.addCleanup(conn.close)
         before = generations.values(conn)
         self.move(apply=True)
-        # Not polled: each use of the connection stamps its map checked (roots._held), so a poll would put the
-        # recheck off for as long as it polls.
-        time.sleep(1.2)   # wait: a held connection's map, at most RECHECK_SECONDS old
-        after = generations.values(conn)
-        self.assertNotEqual(before[:2], after[:2], "a cache of this machine's paths would not be built again")
+
+        def keyed_anew():
+            now = generations.values(conn)
+            return now if now[:2] != before[:2] else None
+        after = wait_until(keyed_anew, timeout=10, what="a cache of this machine's paths to be keyed anew by the move")
         self.assertEqual(before[2], after[2], "the tag tree did not move")
 
     def test_the_count_of_a_roots_rows_is_one_range_of_the_path_index(self):
