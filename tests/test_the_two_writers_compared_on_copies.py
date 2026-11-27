@@ -52,7 +52,8 @@ import unittest
 from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from test_a_photo_patched_in_place import PRINT_FLAGS, read  # noqa: E402
+from test_a_photo_patched_in_place import read  # noqa: E402
+import corpus  # noqa: E402
 from test_file_journal import EXIFTOOL, FilesCase, field_of, requires_exiftool, write_outside  # noqa: E402
 
 from click.testing import CliRunner  # noqa: E402
@@ -111,11 +112,9 @@ class TheTwoWritersComparedOnCopies(FilesCase):
 
     def test_a_photo_with_two_app13_segments_is_rewritten_by_both(self):
         a = self.photo("a.jpg")
-        held = read(a)
-        iptc = containers.read(io.BytesIO(held)).of_kind("iptc")[0]
-        body = b"Photoshop 3.0\0" + PRINT_FLAGS
+        laid = corpus.second_app13(read(a))
         with open(a, "wb") as handle:
-            handle.write(held[:iptc.end] + b"\xff\xed" + (len(body) + 2).to_bytes(2, "big") + body + held[iptc.end:])
+            handle.write(laid)
         found = self.check()
         self.assert_agreed(found, 1)
         self.assertEqual({"rewrite, own rewrite": 1}, found["how"]["keyword added"])

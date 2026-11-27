@@ -26,6 +26,7 @@ from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import exiftool_fields  # noqa: E402
+from corpus import PRINT_FLAGS  # noqa: E402
 import photo_rows  # noqa: E402
 from test_a_crash_part_way_is_settled_at_the_next_start import start_again  # noqa: E402
 from test_file_journal import EXIFTOOL, FilesCase, field_of, keywords_of, requires_exiftool, write_outside  # noqa: E402
@@ -71,11 +72,6 @@ def open_elsewhere(path, sharing):
         yield
     finally:
         kernel.CloseHandle(handle)
-
-
-#: Photoshop's Print Flags Information resource as 7 of 300 photo_index JPEGs hold one (a reviewer's count, 2026-11-03):
-#: 8BIM 0x2710, no name, a body of 22 bytes.
-PRINT_FLAGS = b"8BIM" + (0x2710).to_bytes(2, "big") + bytes(2) + (22).to_bytes(4, "big") + bytes(range(1, 23))
 
 
 def with_print_flags(path, last):

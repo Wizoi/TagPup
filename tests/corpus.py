@@ -43,6 +43,7 @@ test that opens it for writing fails at once.
 import atexit
 import contextlib
 import hashlib
+import io
 import json
 import os
 import shutil
@@ -383,3 +384,16 @@ def exif_segment(zeros):
     artist = b"Someone\0\0\0"
     ifd = struct.pack("<H", 1) + struct.pack("<HHII", 0x013B, 2, len(artist), 8 + 2 + 12 + 4) + struct.pack("<I", 0)
     return segment(0xE1, b"Exif\0\0" + b"II*\0" + struct.pack("<I", 8) + ifd + artist + bytes(zeros))
+
+
+#: Photoshop's Print Flags Information resource as 7 of 300 photo_index JPEGs hold one (a reviewer's count, 2026-11-03):
+#: 8BIM 0x2710, no name, a body of 22 bytes.
+PRINT_FLAGS = resource(0x2710, bytes(range(1, 23)))
+
+
+def second_app13(data):
+    """The JPEG `data` given a second APP13 segment, holding PRINT_FLAGS alone, after its first: Photoshop's resources
+    split over two segments (0 / 2 / 3 / 0 photos in the census, docs/domains/files.md)."""
+    from tagpup.files import containers
+    first = containers.read(io.BytesIO(data)).of_kind("iptc")[0]
+    return data[:first.end] + iptc_segment(PRINT_FLAGS) + data[first.end:]

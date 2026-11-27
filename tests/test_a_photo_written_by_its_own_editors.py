@@ -48,7 +48,8 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import exiftool_fields  # noqa: E402
 import photo_rows  # noqa: E402
 from test_a_crash_part_way_is_settled_at_the_next_start import start_again  # noqa: E402
-from test_a_photo_patched_in_place import PRINT_FLAGS, away_at, open_elsewhere, read, saves_counted  # noqa: E402
+from test_a_photo_patched_in_place import away_at, open_elsewhere, read, saves_counted  # noqa: E402
+import corpus  # noqa: E402
 from test_file_journal import (EXIFTOOL, Crash, FilesCase, crash_at, cut_patch, field_of, keywords_of,  # noqa: E402
                                requires_exiftool, write_outside)
 
@@ -375,12 +376,9 @@ class APhotoWrittenByItsOwnEditors(FilesCase):
         # Photoshop splits its resources over two APP13 segments (0 / 2 / 3 photos in the census, docs/domains/files.md):
         # in_place._header_of refuses the photo before any writer is asked.
         a = self.make("a.jpg", row=False)
-        held = read(a)
-        iptc = containers.read(io.BytesIO(held)).of_kind("iptc")[0]
-        body = b"Photoshop 3.0\0" + PRINT_FLAGS
-        second = b"\xff\xed" + (len(body) + 2).to_bytes(2, "big") + body
+        laid = corpus.second_app13(read(a))
         with open(a, "wb") as handle:
-            handle.write(held[:iptc.end] + second + held[iptc.end:])
+            handle.write(laid)
         self.assertEqual(2, len(containers.read(io.BytesIO(read(a))).of_kind("iptc")))
         self.seed(a, {"XMP:Subject": ["Beach"], "IPTC:Keywords": ["Beach"], "EXIF:XPKeywords": "Beach"})
         with mock.patch.object(segment_edits, "new_header", wraps=segment_edits.new_header) as asked, \
