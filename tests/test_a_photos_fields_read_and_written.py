@@ -77,7 +77,7 @@ WRITES = {
     "camera": (PHOTO, R, dict.fromkeys(("Date Taken shifted", "turned right", "mirrored"), P)),
     "tagged": (PHOTO, P, dict.fromkeys(BAKES + ("a mint",), R)),
     "tagged_ii": (("Date Taken shifted", "turned right", "keyword added"), P, {}),
-    "iptc_alone": (("keyword added", "last keyword taken off"), P, {}),
+    "iptc_alone": (("keyword added", "last keyword taken off", "preserved name set"), P, {}),
     "iptc_utf8": (("caption set", "caption cleared", "keyword added"), P, {}),
     "app13_without_iptc": (("caption set", "keyword added"), P, {}),
     "two_app13": (("last keyword taken off", "caption cleared"), R, {}),
@@ -102,6 +102,14 @@ WRITES = {
     "mp4_bare": (("keyword added", "person added"), P, {}),
     "premiere_mp4": (("keyword added", "Date Taken set"), P, {}),
     **{name: (("Date Taken set",), P, {}) for name in corpus.ITEMS if name.startswith("clip_headers_")},
+}
+#: {(item, operation): why its planner plans nothing}: the item holds what the operation would write. S2 writes every
+#: other (item, operation) of WRITES, so a planner answering nothing for one more fails it.
+HOLDS_IT = "the item keeps a name already (Smart Rename's planner: metadata_check._preserved)"
+SKIPPED = {
+    ("camera", "last keyword taken off"): "the item holds no keyword",
+    ("camera", "caption cleared"): "the item holds no caption",
+    **{(name, "preserved name set"): HOLDS_IT for name in ("tagged", "png", "tiff")},
 }
 #: Items read as ExifTool reads them, written by no case of S2 (S3's).
 READ_ONLY = ("cut_short", "no_picture")
@@ -303,10 +311,12 @@ class AFilesFieldsReadAndWritten(test_file_journal.FilesCase):
     # ---- S2: each operation written, read back, written again and undone ----
 
     def test_each_operation_lands_as_the_oracle_reads_it_twice_alike_and_undone(self):
+        skipped = set()
         for name, (ops, path_today, other) in WRITES.items():
             original = self.copy(name)
             held = self.fields.read([original], metadata_check.READ)[paths.key(original)]
             planned = {op: self.planned(name, op, original, held) for op in ops}
+            skipped.update((name, op) for op, after in planned.items() if after is None)
             targets = list(dict.fromkeys(field for after in planned.values() if after for field in after))
             before = self.fields.read([original], [field for field in targets if not fields.is_struct(field)])
             before = dict(before[paths.key(original)])
@@ -321,6 +331,7 @@ class AFilesFieldsReadAndWritten(test_file_journal.FilesCase):
                     with self.subTest("S2", item=name, op=op, side=side):
                         also = ALSO.get(name, ()) + (BAKE_ALSO if op in BAKES else ())
                         self.written(original, was, before, after, other.get(op, path_today) if own else R, own, also)
+        self.assertEqual(sorted(SKIPPED), sorted(skipped), "the (item, operation) pairs planned to write nothing")
         clip = self.copy("mp4")
         with self.subTest("S2.1", item="mp4", side="outside"):
             data = bytes_of(clip)
