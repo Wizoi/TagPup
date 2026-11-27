@@ -257,3 +257,7 @@ suite. Gate: `--fast` once with `--accept-fewer`, tests/test_the_test_map.py, ru
   item would replace this one. Accept the synthetic item for T1?
 - **Q6:** the `outside` side of S2.1 for clips is always Refused (`_clip_written` :690): kept as a case (it is the rule
   that a clip is never written outside the journal) or dropped as restating `clip_refused`'s tests?
+
+## 9. Answers (main session, 2026-11-27)
+
+Q1 agreed: T1a edits the two product files (the `--System:all` oracle fix, #3464, and the public names), the suite never imports a private name. Q2: the fast tier. Q3: lift the two read-back tests in `ABakeIsWritten` too, but only where the successor case fails when the lifted test's break is made (T1c's rule); otherwise keep them; net lines are reported, not targeted. Q4: keep `ANSWERS` in the suite after J2. Q5: a synthetic `maker_note` item is enough; a captured Canon/Sony layout is J1's or J3a's. Q6: keep one outside-side clip case that asserts Refused (it is the real behaviour) and drop the rest.
