@@ -31,6 +31,7 @@ answering () with no byte written fails S2.1 (the path, and the targets as the o
 """
 import io
 import os
+import stat
 import sys
 import unittest
 from unittest import mock
@@ -44,7 +45,8 @@ import test_file_journal  # noqa: E402
 
 from tagpup import config  # noqa: E402
 from tagpup.core import fields, paths  # noqa: E402
-from tagpup.files import containers, exiftool_session, field_values, images, shares  # noqa: E402
+from tagpup.files import containers, exiftool_session, field_values, images, in_place, lock_owners, metadata  # noqa: E402
+from tagpup.files import shares  # noqa: E402
 from tagpup.files.exiftool_session import ExifToolSession  # noqa: E402
 from tagpup.services import metadata_check  # noqa: E402
 
@@ -103,13 +105,16 @@ WRITES = {
 }
 #: Items read as ExifTool reads them, written by no case of S2 (S3's).
 READ_ONLY = ("cut_short", "no_picture")
+#: The fields S1 and S3 read: every field the index reads by its group.
+GROUPED = [field for field in fields.METADATA_FIELDS if ":" in field]
+#: What a file that is not a photo is refused with by name (#46), and the clip patch's open that failed.
+NOT_A_PHOTO = "Not a photo or a video ExifTool can read"
+NOT_OPENED = "it could not be read or opened for its write"
 #: Items whose write does not land today, and why: the journal's read back finds the file holding less than it was given.
 NOT_LANDING = {"nul_xmp": "ExifTool writes no XMP into a segment of NUL bytes, saying Invalid XMP (#2349), until J3a"}
-#: {item: tags (by name) or family 1 groups ExifTool's rewrite lays out again, by its own rule}: where the picture lies
-#: (a TIFF's strips, an MPO's second frame: as KNOWN's ThumbnailOffset), an Exif IFD it makes and the tags it gives it,
-#: the tag every IFD0 it makes holds.
-ALSO = {"tiff": ("StripOffsets",), "mpf": ("MPImageStart",), "no_taken": ("ExifIFD",),
-        "png_xmp_only": ("YCbCrPositioning",)}
+#: {item: tags (by name) ExifTool's rewrite lays out again, by its own rule}: where the picture lies (a TIFF's strips,
+#: an MPO's second frame: as KNOWN's ThumbnailOffset). An EXIF IFD a rewrite makes is its own too (landed).
+ALSO = {"tiff": ("StripOffsets",), "mpf": ("MPImageStart",)}
 #: What a bake's write makes beside its fields: MWG's regions flattened (the oracle reads no structure) and, past 64 KB,
 #: the extended packet's GUID.
 BAKE_ALSO = ("XMP-mwg-rs", "XMP-xmpNote")
@@ -257,7 +262,7 @@ class AFilesFieldsReadAndWritten(test_file_journal.FilesCase):
         rows = self.whole(copies)
         alone = {}
         for name, path in zip(names, copies):
-            wanted = [field for field in fields.METADATA_FIELDS if ":" in field]
+            wanted = list(GROUPED)
             if images.is_clip(path):
                 wanted += fields.CLIP_HEADER_DATES
             held = self.read([path], wanted)[paths.key(path)]
@@ -323,14 +328,19 @@ class AFilesFieldsReadAndWritten(test_file_journal.FilesCase):
                 self.fields, clip, fields.title_fields(TITLE), False)[::2])
             self.assertEqual(data, bytes_of(clip))
 
-    def landed(self, copy, was, before, after, stale, also, how, start=None):
+    def landed(self, copy, was, before, after, stale, also, how, start=None, rewritten=False):
         """The oracle's read of `copy` once a write of `after` left `stale` as `before` held them: each target as
         fields.as_patched says, every other tag as `was` (the original's), and, written by the own patch (`how`),
         nothing said of it that was not said of the file it patched (`start`, the oracle's read of it: `was` when
-        None). ExifTool's rewrite is the oracle's own writer: what its validation says of an IFD it made is its own."""
+        None). ExifTool's rewrite is the oracle's own writer: what its validation says of an IFD it made is its own,
+        and so are the tags it gives an IFD it made, in this write or the one before (`rewritten`)."""
         row = self.whole([copy])[paths.key(copy)]
         wanted = fields.as_patched(before, after, stale)
         plain = [field for field in after if not fields.is_struct(field)]
+        if how == R or rewritten:
+            # An IFD the file held none of, made by ExifTool's rewrite, holds the tags ExifTool requires of it.
+            held = {tag.split(":")[1] for tag in was if tag.startswith("EXIF:")}
+            also = tuple(also) + tuple({tag.split(":")[1] for tag in row if tag.startswith("EXIF:")} - held)
         self.assertEqual({}, {field: (oracle_value(row, field), wanted[field]) for field in plain
                               if not lands(field, oracle_value(row, field), wanted[field])}, "the targets")
         self.assertEqual({}, changed(other_tags(was, after, also), other_tags(row, after, also)), "a tag outside it")
@@ -380,10 +390,119 @@ class AFilesFieldsReadAndWritten(test_file_journal.FilesCase):
         undo = {field: before.get(field, []) for field in after}
         how_back, stale_back, error = metadata_check.written(self.fields, copy, undo, own)
         self.assertIsNone(error)
-        self.landed(copy, was, wanted, undo, stale_back, also, how_back, row)
+        self.landed(copy, was, wanted, undo, stale_back, also, how_back, row, rewritten=how == R)
         xmp = [field for field in after if str(field).startswith("XMP")]
         if how == P == how_back and set(after) - set(stale) <= set(xmp) and all(before.get(field) for field in xmp):
             self.assertEqual(data, bytes_of(copy), "an XMP-only patch undone gives the original bytes back")
+
+    # ---- S3: a file cut short, not a photo, in a batch with one, held open, read-only, or on a share away ----
+
+    def refused(self, path, words, sides=(False, True)):
+        """A write of a keyword into `path` on each side fails saying `words`, the file as it was and nothing beside it."""
+        data, folder = bytes_of(path), os.path.dirname(path)
+        for own in sides:
+            how, _stale, error = metadata_check.written(self.fields, path, {"XMP:Subject": ["Trips/Dune"]}, own)
+            self.assertEqual(("failed", True), (how, words in (error or "")), error)
+            self.assertEqual((data, [os.path.basename(path)]), (bytes_of(path), os.listdir(folder)))
+
+    def test_a_file_cut_short_not_a_photo_or_one_bad_in_a_batch(self):
+        cut, none, zeros, text = (self.copy(name) for name in ("cut_short", "no_picture", "zeros", "text_named_jpg"))
+        with self.subTest("S3.1 cut short"):
+            row = self.whole([cut])[paths.key(cut)]
+            held = self.read([cut], metadata_check.READ)[paths.key(cut)]
+            after = self.planned("cut_short", "keyword added", cut, held)
+            before = self.read([cut], list(after))[paths.key(cut)]
+            for own in (False, True):
+                copy = self.copy("cut_short")
+                self.assertEqual((R, None), metadata_check.written(self.fields, copy, after, own)[::2])
+                self.landed(copy, row, before, after, (), (), R)
+                # DECISIONS 2026-10-15: a picture that stops short takes a write of its fields, its bytes as they were.
+                self.assertEqual(metadata_check.outside(bytes_of(cut)), metadata_check.outside(bytes_of(copy)))
+            # ExifTool refuses a JPEG with no scan in its own words before field_values' NO_PICTURE is reached.
+            self.refused(none, "")
+        with self.subTest("S3.2 not a photo"):
+            for path in (zeros, text):
+                found = self.fields.read([path], GROUPED)[paths.key(path)]
+                self.assertIsInstance(found, field_values.Unreadable)
+                (record,) = self.fields.whole([path])
+                self.assertEqual((os.stat(path).st_mtime, os.stat(path).st_size, True, None),
+                                 (record["mtime"], record["size"], bool(record.get("read_error")), record.get("unread")))
+                self.refused(path, "")
+            self.assertIn(NOT_A_PHOTO, str(self.fields.read([text], GROUPED)[paths.key(text)]))
+        with self.subTest("S3.3 one bad file in a batch"):
+            tagged, camera = self.copy("tagged"), self.copy("camera")
+            alone = {path: self.read([path], GROUPED)[paths.key(path)] for path in (tagged, camera)}
+            found = self.fields.read([tagged, zeros, camera], GROUPED)
+            self.assertEqual([alone[tagged], True, alone[camera]],
+                             [found[paths.key(tagged)], isinstance(found[paths.key(zeros)], field_values.Unreadable),
+                              found[paths.key(camera)]])
+            records = self.fields.whole([tagged, zeros, camera])
+            self.assertEqual([(os.stat(path).st_mtime, os.stat(path).st_size, bad) for path, bad in
+                              ((tagged, False), (zeros, True), (camera, False))],
+                             [(each["mtime"], each["size"], "read_error" in each) for each in records])
+            _found, commands = self.counted(lambda: self.fields.read([tagged, camera], GROUPED))
+            self.assertEqual(0 if ANSWERS[("jpeg", "read")] == OWN else 1, commands, "a batch of good files")
+
+    def test_a_file_held_open_or_read_only_is_refused_as_it_was(self):
+        tagged, clip = self.copy("tagged"), self.copy("mp4")
+        with self.subTest("S3.4 held open"):
+            for path in (tagged, clip):
+                data, sides = bytes_of(path), (True,) if images.is_clip(path) else (False, True)
+                with lock_owners.opened(path, lock_owners.NO_SHARING):
+                    (record,) = self.fields.whole([path])
+                    found = self.fields.read([path], GROUPED)[paths.key(path)]
+                    written = [metadata_check.written(self.fields, path, {"XMP:Subject": ["Trips/Dune"]}, own)
+                               for own in sides]
+                self.assertEqual((metadata.HELD, None, True), (record.get("unread"), record["mtime"],
+                                                                isinstance(found, field_values.Unreadable)))
+                self.assertEqual(["failed"] * len(sides), [how for how, _stale, _error in written])
+                if images.is_clip(path):
+                    self.assertIn(in_place.OPEN_ELSEWHERE, written[0][2])
+                self.assertEqual((data, [os.path.basename(path)]), (bytes_of(path), os.listdir(os.path.dirname(path))))
+        with self.subTest("S3.5 read-only"):
+            for path in (tagged, clip):
+                os.chmod(path, stat.S_IREAD)
+                self.addCleanup(os.chmod, path, stat.S_IREAD | stat.S_IWRITE)
+                wanted = GROUPED + (list(fields.CLIP_HEADER_DATES) if images.is_clip(path) else [])
+                row = self.whole([path])[paths.key(path)]
+                held = self.read([path], wanted)[paths.key(path)]
+                self.assertEqual({}, {field: held[field] for field in wanted
+                                      if not lands(field, oracle_value(row, field), held[field])})
+            self.refused(tagged, field_values.NOT_MOVED.split(" (")[0])
+            self.refused(clip, NOT_OPENED, sides=(True,))
+
+    def test_a_share_that_does_not_answer_leaves_that_call_unread_and_the_next_answers(self):
+        """S3.6: the stand-in's share does not answer for X, ExifTool's command naming it nor a look at it."""
+        tagged, x, camera, clip = (self.copy(name) for name in ("tagged", "trailer", "camera", "mp4"))
+        alone = {path: self.read([path], GROUPED)[paths.key(path)] for path in (tagged, camera)}
+        data = {path: bytes_of(path) for path in (x, clip)}
+        self.away = {paths.key(x), paths.key(clip)}
+        found = self.fields.read([tagged, x, camera], GROUPED)
+        self.assertEqual([True, True], [isinstance(found[paths.key(path)], field_values.NotAnswered) for path in (x, camera)])
+        # The file before X answers as alone, or is of X's command (ExifTool reads a batch in one).
+        self.assertTrue(isinstance(found[paths.key(tagged)], field_values.NotAnswered)
+                        or found[paths.key(tagged)] == alone[tagged], found[paths.key(tagged)])
+        self.assertEqual(alone[camera], self.fields.read([camera], GROUPED)[paths.key(camera)], "the next call answers")
+        with self.fields.together():
+            self.fields.read([tagged, x, camera], GROUPED)
+            self.assertIsInstance(self.fields.read([camera], GROUPED)[paths.key(camera)], field_values.NotAnswered)
+        self.assertEqual(alone[camera], self.fields.read([camera], GROUPED)[paths.key(camera)], "after the block")
+        for path in (x, clip):
+            how, _stale, error = metadata_check.written(self.fields, path, {"XMP:Subject": ["Trips/Dune"]}, True)
+            self.assertEqual(("failed", True), (how, "did not answer" in (error or "")), error)
+            self.assertEqual(data[path], bytes_of(path), "a write of X leaves it as it was")
+
+    # ---- S4: a format moved to TagPup's own writer starts no ExifTool for a write it refuses ----
+
+    def test_a_refused_clip_write_starts_no_exiftool(self):
+        clip = self.copy("mov")
+        self.read([clip], GROUPED)
+        with mock.patch.object(exiftool_session, "ExifToolSession", side_effect=AssertionError("ExifTool started")):
+            for values, own in ((fields.title_fields(TITLE), False), ({fields.ORIENTATION: ["6"]}, True)):
+                with self.subTest("S4", own=own):
+                    (how, _stale, error), commands = self.counted(
+                        lambda: metadata_check.written(self.fields, clip, values, own))
+                    self.assertEqual(("failed", images.CLIP_NOT_EDITED, 0), (how, error, commands))
 
 
 if __name__ == "__main__":
