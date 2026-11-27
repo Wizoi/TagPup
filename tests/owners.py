@@ -421,7 +421,8 @@ _FILES = {
             "test_the_runtime_keeps_models_by_settings test_the_runtime_reaches_suggest test_thumbs_cli test_vector_index "
             "test_thumbnail_routes test_zero_shot_skips_people vgrid"
         ),
-        "guard": "a-written-photos-copies-have-one-writer test_gpu_single_owner test_no_test_loads_a_model write-replies",
+        "guard": "a-written-photos-copies-have-one-writer test_gpu_single_owner test_no_test_loads_a_model the-index-queue-has-one-follower "
+                 "write-replies",
     },
     "apps": {
         "unit": (

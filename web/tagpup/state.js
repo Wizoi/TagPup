@@ -38,7 +38,6 @@ export const state = {
     // `filter` is Filter mode (filter-bar.js): `on` as this browser remembers it, `leaving` while a search is being left
     // (library-view.js leaveSearch; navigatorFollows clears it, so a second click cannot go back twice), and `notice`, the
     // sentence refusing the last mark (too many rows). The marks themselves are the view open's, never kept here.
-    // `queuedTimer`: the Folders tab's next read while it names a folder the index queue holds (navigator.js followQueued).
     nav: {
         shown: 'folder',
         choice: { library: 'library', folder: 'folder' },
@@ -47,7 +46,6 @@ export const state = {
         order: 'taken',
         media: 'both',
         timer: null,
-        queuedTimer: null,
         filter: { on: false, leaving: false, notice: '' },
         sections: {
             folders: { status: 'idle', message: '', notice: '', index: null, expanded: new Set(), filter: '', filterTimer: null, currentId: null, anchor: null, rows: [], asked: 0, stale: false, reveal: false, opened: false, pending: null },
@@ -222,10 +220,12 @@ export const state = {
     // of; `known`, pathKey -> folder of each queued or being indexed, as last heard (GET /api/folder/index-active) or just
     // queued here; `counted`, the keys of every folder seen since the queue was last empty, and `ended`, how many of them
     // have ended ("Indexing N of M folders"); `timer`, the next ask; `asking`, one is out, and `again`, another
-    // was wanted meanwhile; `failures`, asks in a row with no answer.
+    // was wanted meanwhile; `failures`, asks in a row with no answer; `held`, what the last answer held, and `foldersMarked`
+    // when the Folders tab was last marked out of date for it (foldersHeard); `sleeping`, the page is hidden and waits to be
+    // shown to ask again.
     indexFollow: {
         library: '', known: new Map(), counted: new Set(), ended: 0,
-        timer: null, asking: false, again: false, failures: 0,
+        timer: null, asking: false, again: false, failures: 0, held: '', foldersMarked: 0, sleeping: false,
     },
     // How far the open folder's index has got while one runs (a percent, 0 while it waits), else null: a Suggest run waiting
     // for it shows it in its own bar.

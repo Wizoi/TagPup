@@ -136,12 +136,14 @@ export const recordOf = (id, extra = {}) => photoRecord({
 /**
  * Load the page. `search` is the address's query; `navigator` the four sections' answers (each data, or { status, body },
  * or a function of the URL returning either, or a promise of it); `ids` the order of a view; `cardExtra(id)` extra fields
- * of a card; `membership` and `sync` the answers to those two.
+ * of a card; `membership` and `sync` the answers to those two; `queue` and `indexStatus`, functions of the URL, what the
+ * library's index queue answers (GET /api/folder/index-active, /api/folder/index-status; by default an answer the page
+ * does not read, and every folder completed).
  */
 export async function loadViewPage(t, {
   search = "", library = "photo_index", navigator = {}, ids = [11, 12, 13, 14, 15, 16, 17, 18], onIds, onCards, onPhoto,
   cardExtra, membership = { photos_not_held: 0 }, sync = { library: "photo_index", last_run: null, last_in_step: null, syncing: false },
-  find, layout = true, scan, before,
+  find, layout = true, scan, before, queue, indexStatus,
 } = {}) {
   const server = new FakeServer();
   const ctx = { server, held: [], navigatorAsked: [], idsAsked: [], cardsAsked: [], photosAsked: [], membershipAsked: [], syncAsked: [], hold: {} };
@@ -171,7 +173,8 @@ export async function loadViewPage(t, {
     .on("/api/people", [])
     .on("/api/taxonomy/tree", [])
     .on("/api/databases", { databases: ["photo_index", "other"], selected: library })
-    .on("/api/folder/index-status", { status: "completed", percent: 100, message: "Ready" })
+    .on("/api/folder/index-status", (url) => (indexStatus ? indexStatus(url) : { status: "completed", percent: 100, message: "Ready" }))
+    .on("/api/folder/index-active", (url) => (queue ? queue(url) : []))
     .on("/api/folder/suggest-status", { status: "idle" })
     .on("/api/photo-faces", { faces: [], total: 0, unmatched: 0 })
     .on(SAVE, saved())

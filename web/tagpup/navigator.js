@@ -8,9 +8,10 @@
 // Each section is read from GET /api/library/navigator?section= when its tab is first opened, and again -- the counts
 // are read at each call -- after an edit that changes counts (debounced), on Refresh view, and at an index's end. The
 // Folders tab also names the folders the library's index queue holds, a folder just added among them before it holds a
-// photo, each marked queued or indexing (the server's: services/library_view.py _folders; DECISIONS 2026-11-26): while one
-// is marked the tab is read again every NAV_QUEUED_MS it is on screen, so its count fills and its mark goes with the
-// queue -- a cancel too, which reads nothing else again -- and a tab not on screen meanwhile is read when it is opened.
+// photo, each marked queued or indexing (the server's: services/library_view.py _folders; DECISIONS 2026-11-26). The tab
+// keeps no clock of its own: the page's one follower of the queue (suggestions.js heardIndexes) marks it out of date as
+// the queue moves, so its count fills and its mark goes with the queue -- a cancel too -- and it is read again on screen,
+// or when its tab is opened; a folder it names that the follower was not following is handed to it (heardQueued).
 // An answer that is not the newest asked for its section is dropped, and a section is painted into its own panel only: a
 // tab opened while another loads, or a source followed before its section is here, paints nowhere else. A section that cannot be read
 // says why in a sentence (the server's: a library at an older schema, an unplaced root); never a trace.
@@ -41,7 +42,7 @@ import {
 import { openLibraryView } from './library-view.js';
 import { DEFAULT_ORDER, MAX_MEMBERS, addressTooLong } from './library-source.js';
 import {
-    anyQueued, compress, filterKey, filterMember, indexSection, markOf, membersOf, peopleGroupIds, rowTree, sectionOf, sectionRows, selectedRows,
+    compress, filterKey, filterMember, indexSection, markOf, membersOf, peopleGroupIds, rowTree, sectionOf, sectionRows, selectedRows,
     specOfMembers, withRowsUnder
 } from './navigator-model.js';
 import { filterFollows, markRow, setFilterMode, shownMarks } from './filter-bar.js';
@@ -72,9 +73,6 @@ const NAV_SECTIONS = {
 export const NAV_FILTER_MS = 120;
 /** How long after an edit the counts are read again: edits come in runs, and one read answers them all. */
 export const NAV_COUNTS_MS = 1200;
-/** How often the Folders tab is read again while it names a folder the library's index queue holds (about 30 ms of the
- * server's on the largest live library's 2,625 folders, 2026-11-26). */
-export const NAV_QUEUED_MS = 5000;
 
 function panelOf(name) {
     return document.getElementById(`nav-panel-${name}`);
@@ -187,10 +185,11 @@ function loadSection(name, quiet) {
                 failure.fromServer = true;
                 throw failure;
             }
+            const before = sec.index;
             sec.index = indexSection(name, body || {});
             sec.status = 'ready';
             sec.message = '';
-            if (name === 'folders') followQueued(sec);
+            if (name === 'folders') heardQueued(before, sec.index);
             if (!sec.opened) {
                 // People's branches start open: the people show under their headers (#673).
                 for (const id of peopleGroupIds(name === 'people' ? sec.index : null)) sec.expanded.add(id);
@@ -215,19 +214,15 @@ function loadSection(name, quiet) {
 }
 
 /**
- * The Folders tab names a folder the index queue holds: read it again in a while -- now if it is on screen then, else when
- * its tab is opened. One timer: each read of the tab sets it again, or clears it once nothing is marked.
+ * The folders the Folders tab marks that it did not at its last read (`before`): the library's index queue holds them, as
+ * this read heard it -- queued by TagTuner or the watcher while the page was not following the queue, perhaps. They are
+ * handed to the page's one follower of the queue (suggestions.js checkIndexingStatus), which follows them to their end and
+ * reads the tab again as they move.
  */
-function followQueued(sec) {
-    const nav = state.nav;
-    window.clearTimeout(nav.queuedTimer);
-    nav.queuedTimer = null;
-    if (!anyQueued(sec.index)) return;
-    nav.queuedTimer = window.setTimeout(() => {
-        nav.queuedTimer = null;
-        sec.stale = true;
-        if (onScreen('folders')) ensureLoaded('folders');
-    }, NAV_QUEUED_MS);
+function heardQueued(before, index) {
+    const marked = node => node.queue && !(before && before.byKey.has(node.key) && before.byKey.get(node.key).queue);
+    const fresh = [...index.byKey.values()].filter(marked).map(node => node.path);
+    if (fresh.length) upper.checkIndexingStatus(fresh);
 }
 
 /**
@@ -254,25 +249,27 @@ function ensureLoaded(name) {
 
 /**
  * Counts changed -- a write finished, or the view was refreshed: every section read is out of date, and the one
- * on screen is read again after a moment (or `now`), the others when their tab is opened.
+ * on screen is read again after a moment (or `now`), the others when their tab is opened. `section`: that one alone (the
+ * Folders tab as the index queue moves: suggestions.js foldersHeard); a read already due reads it too, and the search's
+ * picker, which offers no folder, is not read again for it.
  */
-export function navigatorCountsChanged({ now = false } = {}) {
+export function navigatorCountsChanged({ now = false, section = null } = {}) {
     const nav = state.nav;
     let any = false;
-    for (const name of NAV_ORDER) {
+    for (const name of section ? [section] : NAV_ORDER) {
         if (nav.sections[name].index) {
             nav.sections[name].stale = true;
             any = true;
         }
     }
-    if (!any) return;
+    if (!any || (section && nav.timer)) return;
     window.clearTimeout(nav.timer);
     nav.timer = window.setTimeout(() => {
         nav.timer = null;
         if (nav.shown === 'library') ensureLoaded(nav.tab);
         // The names the search's picker offers are read again if it is open: on the same pause, once for a run of writes (#768),
         // and after the tab's own read, whose answer it then shares.
-        upper.searchVocabularyChanged();
+        if (!section) upper.searchVocabularyChanged();
     }, now ? 0 : NAV_COUNTS_MS);
 }
 

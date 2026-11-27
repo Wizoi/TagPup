@@ -119,8 +119,11 @@ export function cancelSuggestions() {
 // The page follows every folder the library's queue indexes (GET /api/folder/index-active, as TagTuner's indexing.js
 // reads it), whoever queued it -- Manage folders, Add, TagTuner, the watcher's sync -- whichever folder or view is open,
 // from the first ask until the queue is empty; then it asks no more until there is a reason to: the page opening, a
-// folder opening, folders queued here. A folder that leaves the queue has ended: its own status (index-status) says how,
-// the status line keeps the index's closing sentence, and what it changed is read again (upper.indexEnded).
+// folder opening, folders queued here, the Folders tab naming one queued. A folder that leaves the queue has ended: its own
+// status (index-status) says how, the status line keeps the index's closing sentence, and what it changed is read again
+// (upper.indexEnded). It is the page's one follower of the queue (tests/frontend/the-index-queue-has-one-follower.test.mjs):
+// the Library pane's Folders tab, which marks the folders the queue holds, is read again from here (foldersHeard), and
+// keeps no clock of its own. While the page is hidden it asks nothing; shown again, it asks at once.
 
 /** How often the queue is asked while something is queued or being indexed. */
 const INDEX_POLL_MS = 1000;
@@ -129,6 +132,9 @@ const INDEX_POLL_MS = 1000;
 const INDEX_GIVE_UP = 5;
 /** What the queue says of a folder nobody has asked it about (tagpup/jobs/indexing.py READY): no index of it to speak of. */
 const NOTHING_TO_SAY = 'Ready';
+/** How often, at most, the Folders tab is read again while the queue indexes a folder and holds the same folders: its count
+ * fills as the folder's photos are (about 30 ms of the server's on the largest live library's 2,625 folders, 2026-11-26). */
+export const NAV_QUEUED_MS = 5000;
 
 /**
  * Ask what the library indexes now, and follow it to its end. `queued`: folders just queued here (Manage folders, Add),
@@ -149,21 +155,31 @@ export function checkIndexingStatus(queued = []) {
     askIndexes();
 }
 
-/**
- * Folders the queue holds, followed to their end. One the page did not know of yet (queued by Manage folders, Add,
- * TagTuner or the watcher) is named at once in the Library pane's Folders tab, marked queued (cut F): its counts are read
- * again.
- */
+/** Folders the queue holds, or was just handed, followed to their end. */
 function followFolders(folders) {
     const follow = state.indexFollow;
-    let fresh = false;
     for (const folder of folders) {
         const key = pathKey(folder);
-        if (!follow.known.has(key)) fresh = true;
         follow.known.set(key, folder);
         follow.counted.add(key);
     }
-    if (fresh) upper.navigatorCountsChanged();
+}
+
+/**
+ * One answer of the queue, for the Library pane's Folders tab, which marks each folder the queue holds (queued, indexing;
+ * a folder just added among them, cut F): when what it holds changed -- a folder queued from anywhere, started, ended,
+ * cancelled -- the tab is out of date, and so it is every NAV_QUEUED_MS while a folder is being indexed, so its count
+ * fills; it is read again when it is shown (navigator.js navigatorCountsChanged).
+ */
+function foldersHeard(running, waiting) {
+    const follow = state.indexFollow;
+    const held = [...running.map(job => `indexing ${pathKey(job.folder)}`), ...waiting.map(job => `queued ${pathKey(job.folder)}`)]
+        .sort().join('\n');
+    const now = Date.now();
+    if (held === follow.held && !(running.length && now - follow.foldersMarked >= NAV_QUEUED_MS)) return;
+    follow.held = held;
+    follow.foldersMarked = now;
+    upper.navigatorCountsChanged({ section: 'folders' });
 }
 
 /** What the page followed of another library is not this one's (a page is one library; its address moved on). */
@@ -175,6 +191,8 @@ function forgetAnotherLibrary(follow) {
     follow.counted.clear();
     follow.ended = 0;
     follow.failures = 0;
+    follow.held = '';
+    follow.foldersMarked = 0;
 }
 
 function askIndexes() {
@@ -202,7 +220,8 @@ function askIndexes() {
                 return;
             }
             if (follow.known.size && follow.failures < INDEX_GIVE_UP) {
-                follow.timer = setTimeout(askIndexes, INDEX_POLL_MS);
+                if (document.visibilityState === 'hidden') sleepUntilShown();
+                else follow.timer = setTimeout(askIndexes, INDEX_POLL_MS);
                 return;
             }
             // Nothing queued, or no answer for a while: no more asks, and no bar claiming an index goes on. What is still
@@ -218,6 +237,23 @@ function askIndexes() {
 }
 
 /**
+ * The page is hidden (another tab, the window minimised): nothing is asked until it is shown again, and then at once -- an
+ * index that ended meanwhile is seen then. One wait at a time.
+ */
+function sleepUntilShown() {
+    const follow = state.indexFollow;
+    if (follow.sleeping) return;
+    follow.sleeping = true;
+    const shown = () => {
+        if (document.visibilityState === 'hidden') return;
+        document.removeEventListener('visibilitychange', shown);
+        follow.sleeping = false;
+        checkIndexingStatus();
+    };
+    document.addEventListener('visibilitychange', shown);
+}
+
+/**
  * One answer of the queue: the folders it lists are followed; each the page knew of that it no longer lists has ended,
  * and its status says how (asked for each, and a status that could not be read keeps it followed). True when every
  * read answered.
@@ -229,6 +265,7 @@ function heardIndexes(data, library) {
     const listed = new Map([...running, ...waiting].map(job => [pathKey(job.folder), job.folder]));
     const gone = [...follow.known].filter(([key]) => !listed.has(key));
     followFolders([...listed.values()]);
+    foldersHeard(running, waiting);
     showIndexing(running, waiting);
     return Promise.all(gone.map(([key, folder]) => api.json(`/api/folder/index-status?path=${encodeURIComponent(folder)}`)
         .then(status => ({ key, folder, status }), () => ({ key, folder, status: null }))))

@@ -84,11 +84,6 @@ const QUEUE_SAID = {
     indexing: { word: 'indexing', line: 'being indexed: its count fills as its photos are' },
 };
 
-/** Is a folder of the Folders tab held by the library's index queue: its counts are still filling (navigator.js reads them again). */
-export function anyQueued(index) {
-    return Boolean(index && index.byKey) && [...index.byKey.values()].some(node => node.queue);
-}
-
 function navFolderRow(node, level, expanded) {
     const open = expanded.has(node.id);
     const said = node.queue ? QUEUE_SAID[node.queue] : null;
