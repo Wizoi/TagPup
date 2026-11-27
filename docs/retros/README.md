@@ -17,3 +17,4 @@ One file per retro, named `<date>-<scope>.md`, newest last. The process and the 
 | 2026-11-14 | [Lows built, reverted and rebuilt smaller](2026-11-14-lows-built-and-reverted.md) | phase end; 4 reverts, 7 lows built for 0 live instances |
 | 2026-11-22 | [Photos-written, the rename map, the write cuts](2026-11-22-photos-written.md) | phase end; one rename map fixed four times; a merge over budget past the hook |
 | 2026-11-23 | [Root cause against symptom, 15 days](2026-11-23-root-cause.md) | owner question; rename map fixed four times, 3 chains not stopped by the third-fix check |
+| 2026-11-26 | [The suite's speed, the metadata plan, working on a new folder](2026-11-26-suite-speed-and-new-folder.md) | phase end; cut C two review rounds, the context limit raised twice, two sessions on one trunk |
