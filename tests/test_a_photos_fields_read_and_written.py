@@ -8,7 +8,8 @@ rewrite) -- read back, written again and undone; then a file cut short, not a ph
 held open, one marked read-only and one on a share that does not answer. Every expectation is ExifTool's independent
 read of the copy (field_values.oracle, outside the counted window), a sentence or a path the item names, or TagPup's
 own rule (fields.as_patched, the segments a write's fields are held in: fields.EDITED_AS); no answer of ExifTool's is
-typed here.
+typed here but the words it refuses a write with where TagPup says none of its own (REFUSED, HELD_OPEN): the sentence
+the owner reads.
 
 The backend is observed, never chosen: ANSWERS says who answers each (format, call) today, and every call of Fields
 here counts the commands ExifTool is sent while it runs (ExifToolSession.execute, a replayed one too; a start's own
@@ -118,6 +119,14 @@ GROUPED = [field for field in fields.METADATA_FIELDS if ":" in field]
 #: What a file that is not a photo is refused with by name (#46), and the clip patch's open that failed.
 NOT_A_PHOTO = "Not a photo or a video ExifTool can read"
 NOT_OPENED = "it could not be read or opened for its write"
+#: {item: the words ExifTool refuses a write of it with, as exiftool_session.ExifToolFailed says them}: the sentence the
+#: owner reads (field_values.NO_PICTURE is not reached: ExifTool refuses a JPEG with no scan first).
+REFUSED = {"no_picture": "ExifTool: Error: Corrupted JPEG image",
+           "zeros": "ExifTool: Error: Not a valid JPG",
+           "text_named_jpg": "ExifTool: Error: Not a valid JPG (looks more like a TXT)"}
+#: What ExifTool refuses a write of a JPEG held open with no sharing with, until J3a's own (in_place.OPEN_ELSEWHERE):
+#: its words for any file it cannot open, a missing one's too (S3.4's whole read, metadata.HELD, tells the two apart).
+HELD_OPEN = "ExifTool: Error: Error opening file"
 #: Items whose write does not land today, and why: the journal's read back finds the file holding less than it was given.
 NOT_LANDING = {"nul_xmp": "ExifTool writes no XMP into a segment of NUL bytes, saying Invalid XMP (#2349), until J3a"}
 #: {item: tags (by name) ExifTool's rewrite lays out again, by its own rule}: where the picture lies (a TIFF's strips,
@@ -430,7 +439,7 @@ class AFilesFieldsReadAndWritten(test_file_journal.FilesCase):
                 # DECISIONS 2026-10-15: a picture that stops short takes a write of its fields, its bytes as they were.
                 self.assertEqual(metadata_check.outside(bytes_of(cut)), metadata_check.outside(bytes_of(copy)))
             # ExifTool refuses a JPEG with no scan in its own words before field_values' NO_PICTURE is reached.
-            self.refused(none, "")
+            self.refused(none, REFUSED["no_picture"])
         with self.subTest("S3.2 not a photo"):
             for path in (zeros, text):
                 found = self.fields.read([path], GROUPED)[paths.key(path)]
@@ -438,7 +447,7 @@ class AFilesFieldsReadAndWritten(test_file_journal.FilesCase):
                 (record,) = self.fields.whole([path])
                 self.assertEqual((os.stat(path).st_mtime, os.stat(path).st_size, True, None),
                                  (record["mtime"], record["size"], bool(record.get("read_error")), record.get("unread")))
-                self.refused(path, "")
+                self.refused(path, REFUSED[os.path.splitext(os.path.basename(path))[0]])
             self.assertIn(NOT_A_PHOTO, str(self.fields.read([text], GROUPED)[paths.key(text)]))
         with self.subTest("S3.3 one bad file in a batch"):
             tagged, camera = self.copy("tagged"), self.copy("camera")
@@ -466,9 +475,9 @@ class AFilesFieldsReadAndWritten(test_file_journal.FilesCase):
                                for own in sides]
                 self.assertEqual((metadata.HELD, None, True), (record.get("unread"), record["mtime"],
                                                                 isinstance(found, field_values.Unreadable)))
-                self.assertEqual(["failed"] * len(sides), [how for how, _stale, _error in written])
-                if images.is_clip(path):
-                    self.assertIn(in_place.OPEN_ELSEWHERE, written[0][2])
+                said_held = in_place.OPEN_ELSEWHERE if images.is_clip(path) else HELD_OPEN
+                self.assertEqual([("failed", True)] * len(sides),
+                                 [(how, said_held in (error or "")) for how, _stale, error in written], written)
                 self.assertEqual((data, [os.path.basename(path)]), (bytes_of(path), os.listdir(os.path.dirname(path))))
         with self.subTest("S3.5 read-only"):
             for path in (tagged, clip):
