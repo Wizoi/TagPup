@@ -728,8 +728,8 @@ class AnIndexReadsABake(unittest.TestCase):
         copies = {name: shutil.copyfile(path, os.path.join(server, name)) for name, path in zip(names, baked)}
         for path in copies.values():
             os.utime(path, (os.stat(path).st_atime, os.stat(path).st_mtime + 3600))
-        with field_values.session(EXIFTOOL) as et:
-            field_values.write(et, copies["boats.jpg"], {bake.WRITTEN[bake.PHOTO_MODEL]: ["ViT-B-32|openai|cropped|1.0|native"]})
+        with field_values.opened(EXIFTOOL) as et:
+            et.write(copies["boats.jpg"], {bake.WRITTEN[bake.PHOTO_MODEL]: ["ViT-B-32|openai|cropped|1.0|native"]})
         self.repaint(copies["repainted.jpg"], "purple")
 
         # The server's library, whose card would answer otherwise than the desktop's did.

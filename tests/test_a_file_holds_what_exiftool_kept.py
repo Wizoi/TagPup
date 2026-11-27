@@ -424,9 +424,9 @@ class ABakeIsWritten(BakeCase):
                                    "Area": {"X": 0.20833333333333334, "Y": 1 / 3, "W": 1e-05, "H": 0.5, "Unit": "normalized"}}]}
         text = bake.region_text(written)
         self.assertEqual(text, bake.region_text(dict(written, AppliedToDimensions={"W": 4000, "H": 3000.0, "Unit": "pixel"})))
-        with field_values.session(EXIFTOOL) as et:
-            field_values.write(et, a, {fields.REGION_INFO: [text]})
-            self.assertEqual({fields.REGION_INFO: [text]}, field_values.read_one(et, a, [fields.REGION_INFO]))
+        with field_values.opened(EXIFTOOL) as et:
+            et.write(a, {fields.REGION_INFO: [text]})
+            self.assertEqual({fields.REGION_INFO: [text]}, et.read_one(a, [fields.REGION_INFO]))
         area = self.regions_of(a)["XMP:RegionInfo"]["RegionList"][0]["Area"]
         self.assertEqual((0.20833333333333334, 1 / 3, 1e-05), tuple(bake._number(area[k], k) for k in "XYW"))
 
@@ -436,9 +436,9 @@ class ABakeIsWritten(BakeCase):
         for name in ("  Lead Space  ", "\tTabbed\t", "   "):
             with self.subTest(name=name):
                 text = bake.region_text({"RegionList": [{"Type": "Face", "Name": name}]})
-                with field_values.session(EXIFTOOL) as et:
-                    field_values.write(et, a, {fields.REGION_INFO: [text]})
-                    self.assertEqual({fields.REGION_INFO: [text]}, field_values.read_one(et, a, [fields.REGION_INFO]))
+                with field_values.opened(EXIFTOOL) as et:
+                    et.write(a, {fields.REGION_INFO: [text]})
+                    self.assertEqual({fields.REGION_INFO: [text]}, et.read_one(a, [fields.REGION_INFO]))
                 self.assertEqual(name, self.regions_of(a)["XMP:RegionInfo"]["RegionList"][0]["Name"])
 
     def test_a_region_field_exiftool_does_not_know_fails_the_write_and_writes_no_byte_of_the_photo(self):
@@ -497,7 +497,7 @@ class ABakeIsWritten(BakeCase):
         config = os.path.join(os.path.dirname(a), "bake.config")
         shutil.copy(bake.config_path(), config)
         with mock.patch.object(bake, "config_path", return_value=config):
-            with field_values.session(EXIFTOOL) as et:
+            with ExifToolSession(executable=EXIFTOOL, config_file=bake.config_path()) as et:
                 os.remove(config)
                 et.terminate()
                 field_values.read_one(et, a, [fields.REGION_INFO])

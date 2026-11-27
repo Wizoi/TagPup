@@ -1,8 +1,8 @@
 """ExifTool stalls (a share gone away): an edit of a selection (tests/test_bulk_edits.py is the edit's own), the indexer's read
 and sync's pairing read each cost one deadline and are never retried photo by photo, whatever the count; what the indexer did not
 hear about is left unread, never stamped (docs/findings.md, #1473). An ExifTool that will not start: a read that decides
-from its answer (sync's pairing, Smart Rename's captions) raises, never reads every photo as holding nothing, and the index's
-read leaves every photo unread. Fictional names only.
+from its answer (sync's pairing, Smart Rename's captions) raises, never reads every photo as holding nothing, the index's
+read leaves every photo unread, and a write is refused whole before its change is recorded. Fictional names only.
 """
 import os
 import shutil
@@ -160,15 +160,12 @@ class WillNotStart:
         raise FileNotFoundError("[WinError 2] The system cannot find the file specified")
 
 
-class AnExifToolThatWillNotStart(unittest.TestCase):
+class AnExifToolThatWillNotStart(T.Bulk):
+    PHOTOS = 2
+
     def setUp(self):
-        folder = tempfile.mkdtemp(prefix="no_exiftool_")
-        self.addCleanup(shutil.rmtree, folder, True)
-        self.photos = []
-        for name in ("Quay.jpg", "Slipway.jpg"):
-            self.photos.append(os.path.join(folder, name))
-            with open(self.photos[-1], "wb") as handle:
-                handle.write(b"x")
+        super().setUp()
+        self.photos = [self.path(photo_id) for photo_id in self.ids]
         WillNotStart.starts = 0
         patcher = mock.patch.object(exiftool_session, "ExifToolSession", WillNotStart)
         patcher.start()
@@ -192,6 +189,18 @@ class AnExifToolThatWillNotStart(unittest.TestCase):
             records = reader.whole(self.photos)
         self.assertEqual([(None, metadata.NOT_STARTED)] * 2, [(r["mtime"], r["unread"]) for r in records])
         self.assertEqual(2, WillNotStart.starts, "each call tries the start again")
+
+    def test_the_change_is_refused_before_its_record(self):
+        # A write's Fields starts ExifTool at its first command, and a save hands in its own read: that command could come
+        # after the change's record and a patch's bytes, a file left `writing` that nothing reads back. ready_to_write
+        # refuses the whole change first, one sentence (the trunk before L0b: the start's exception, a 500).
+        before, journaled = [self.tags(photo_id) for photo_id in self.ids], self.changes("%")
+        done = self.tags_edit(add=["Trips/Coast"])
+        self.assertEqual((0, self.PHOTOS), (done["changed"], done["error_count"]))
+        self.assertEqual({field_values.NOT_STARTED_TO_WRITE}, {error["why"] for error in done["errors"]})
+        self.assertEqual(journaled, self.changes("%"), "nothing journaled")
+        self.assertEqual([], self.vl.rows("SELECT id FROM change_files"))
+        self.assertEqual(before, [self.tags(photo_id) for photo_id in self.ids])
 
 
 class AStalledExifTool(T.Bulk):

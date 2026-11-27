@@ -185,7 +185,7 @@ class ATagAdded(Fresh):
         # The read back whole fails (ExifTool reports an error of the file, a read that did not answer): the patch is
         # checked by a read of its fields, as before the two reads were one, and the row records the fields written.
         path, _photo_id, record = self.held("g.jpg", 57)
-        with mock.patch.object(file_changes, "read_whole", return_value=None) as whole:
+        with mock.patch.object(file_changes, "_read_whole", return_value=None) as whole:
             counted, patched = self.counted_save(path, record, ["Trips/Coast"])
         self.assertTrue(patched)
         self.assertEqual(1, whole.call_count)

@@ -114,8 +114,8 @@ class ATextHoldingALineBreakReachesTheFileWhole(kept.BakeCase):
     refuses or whose change does not fit); the own writer's patch gives ExifTool no argument."""
 
     def held(self, path, names):
-        with field_values.session(EXIFTOOL) as et:
-            return field_values.read_one(et, path, names)
+        with field_values.opened(EXIFTOOL) as et:
+            return et.read_one(path, names)
 
     def test_a_caption_and_a_keyword_are_saved_read_back_equal_and_undone(self):
         # Both writers of a save: the own writer's patch, which writes the XMP copies alone and leaves the EXIF and

@@ -93,7 +93,6 @@ class Files:
         self.fails = set()
         self.lock = threading.Lock()
         self.starts = 0
-        self.cannot_start = None
         self.sessions = []        # the keyword arguments each session was asked for (timeout=...)
         self.read_calls = 0       # get_tags commands answered or begun
 
@@ -128,8 +127,6 @@ class Files:
             def __enter__(self):
                 with files.lock:
                     files.starts += 1
-                if files.cannot_start is not None:
-                    raise files.cannot_start
                 _check_passes_by(True)
                 return files
 

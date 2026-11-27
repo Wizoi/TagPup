@@ -67,8 +67,8 @@ def write(path, held):
         values[bake.WRITTEN[bake.REGIONS]] = [bake.region_text(held[bake.REGIONS])]
     if bake.FACE_VECTORS in held:
         values[bake.WRITTEN[bake.FACE_VECTORS]] = list(held[bake.FACE_VECTORS])
-    with field_values.session(EXIFTOOL) as et:
-        field_values.write(et, path, values)
+    with field_values.opened(EXIFTOOL) as et:
+        et.write(path, values)
     return path
 
 
@@ -85,8 +85,8 @@ def plan(library_path, path, detector, fingerprint=True):
     file read as write_fields reads it, its shape, and its upright decode's fingerprint (fingerprint False: a dry run's
     photo outside its sample)."""
     def fields_held():
-        with field_values.session(EXIFTOOL) as et:
-            return field_values.read(et, [path], list(bake.WRITTEN.values())).get(paths.key(path))
+        with field_values.opened(EXIFTOOL) as et:
+            return et.read([path], list(bake.WRITTEN.values())).get(paths.key(path))
 
     def shape():
         width, height, _oriented, turn = images.shown_shape(path)

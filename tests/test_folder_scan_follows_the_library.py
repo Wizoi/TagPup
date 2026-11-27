@@ -211,7 +211,7 @@ class ALooseFolderWhenTheTreeChanges(unittest.TestCase):
     def test_the_next_open_shows_the_people_the_tree_now_names(self):
         app, home = web_client.app_for(self, "tagpup")
         client = app.test_client()
-        files = fake_exiftool.Files()       # field_values.session looks ExifToolSession up when it starts
+        files = fake_exiftool.Files()       # field_values.opened looks ExifToolSession up when it starts
         patcher = mock.patch("tagpup.files.exiftool_session.ExifToolSession", files.session)
         patcher.start()
         self.addCleanup(patcher.stop)

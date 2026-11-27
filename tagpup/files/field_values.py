@@ -15,7 +15,7 @@ photo's identity goes in that command too (#282).
 
 A struct field (tagpup.core.fields.STRUCT_FIELDS: a bake's regions) is one text, read with -struct and made the canonical
 text of what ExifTool answers (tagpup.files.bake.region_text), written whole as that text and cleared whole. TagPup's own
-bake fields are written only by a session that knows its namespace: session(), which every journaled write opens.
+bake fields are written only by a session that knows its namespace: _new_session(), which every Fields opens (opened).
 
 **The picture check** (#2377; DECISIONS 2026-11-03). Photo files rewritten through this PC had bytes of their picture
 data changed, a few at a 64-byte stride, after an ordinary write. So ExifTool never writes over a photo: it writes the new
@@ -135,11 +135,15 @@ class PictureChanged(Exception):
 #: Why a write failed whose new file's picture differed from the photo's in both of its tries (written_once_more).
 CHANGED_TWICE = "its write changed the picture's bytes twice; the new file was discarded each time and the photo is as it was"
 
+#: Why a whole change was refused before anything of it was recorded (Fields.ready_to_write): no ExifTool could be started
+#: to read and write its files. It names no path; the log says what the start raised.
+NOT_STARTED_TO_WRITE = "ExifTool could not be started, so nothing was written; the server's log says why"
 
-def session(exiftool_path):
-    """The ExifTool session of a write or a read (opened, tagpup.services.file_changes): one that knows TagPup's
-    namespace (bake.config_path), since a bake's fields are named by a write, an undo and a read alike. Looked up at call
-    time, so a test standing in for ExifToolSession reaches it."""
+
+def _new_session(exiftool_path):
+    """The ExifTool session of an operation (opened): one that knows TagPup's namespace (bake.config_path), since a bake's
+    fields are named by a write, an undo and a read alike. Looked up at call time, so a test standing in for
+    ExifToolSession reaches it."""
     return exiftool_session.ExifToolSession(executable=exiftool_path, config_file=bake.config_path())
 
 
@@ -243,23 +247,27 @@ def read(et, photo_paths, wanted, also=(), records=None, stop=None, params=()):
 
 
 def opened(exiftool_path):
-    """The face for one operation's reads (a batch of the index, a refresh, a page's look): use it in a `with` block, or
-    close() it. Its ExifTool, which knows TagPup's namespace (session(): every read gains the bake's configuration), is
-    started at the first call that needs one, never here: opening never raises. One process for the whole operation; a
-    test standing in for ExifToolSession reaches it (session looks the class up when it starts)."""
+    """The face for one operation (a batch of the index, a refresh, a page's look, a journaled write, a bake run, a
+    settle, an undo): use it in a `with` block, or close() it. Its ExifTool, which knows TagPup's namespace (_new_session():
+    every read and write gains the bake's configuration), is started at the first call that needs one, never here:
+    opening never raises. One process for the whole operation; a test standing in for ExifToolSession reaches it
+    (_new_session looks the class up when it starts)."""
     return Fields(exiftool_path)
 
 
 class Fields:
-    """The reads of one operation, over one ExifTool started at its first call (opened). Dead for good after a timeout
-    for ONE call: a call whose command is not answered in its deadline leaves that file and every later file of the call
-    unread (read), and the next call starts ExifTool again (ExifToolHelper's auto-start) and answers: a long-lived Fields
-    never leaves every later photo unread after one share hiccup."""
+    """The reads and writes of one operation, over one ExifTool started at its first call (opened). Dead for good after a
+    timeout for ONE call: a call whose command is not answered in its deadline leaves that file and every later file of
+    the call unread (read), and the next call starts ExifTool again (ExifToolHelper's auto-start) and answers: a
+    long-lived Fields never leaves every later photo unread after one share hiccup. Inside together(), for the whole
+    block."""
 
     def __init__(self, exiftool_path):
         self.exiftool_path = exiftool_path
         self._stack = contextlib.ExitStack()
         self._et = None
+        # Inside together(): the session that stays dead after a timeout (StaysDead), made at the block's first command.
+        self._together, self._stays = False, None
 
     def __enter__(self):
         return self
@@ -273,17 +281,96 @@ class Fields:
         self._stack.close()
 
     def _session(self):
-        """The started session, started now when none is; raises what the start raised (the next call tries again)."""
+        """The started session, started now when none is; raises what the start raised (the next call tries again).
+        Inside together(), the one that stays dead from its first timeout to the block's end."""
         if self._et is None:
-            self._et = self._stack.enter_context(session(self.exiftool_path))
-        return self._et
+            self._et = self._stack.enter_context(_new_session(self.exiftool_path))
+        if not self._together:
+            return self._et
+        if self._stays is None:
+            self._stays = exiftool_session.StaysDead(self._et)
+        return self._stays
 
-    def read(self, photo_paths, wanted, *, also=None, records=None):
+    @contextlib.contextmanager
+    def together(self):
+        """One deadline across the commands of one operation: from the first command not answered in its deadline (a
+        share gone away) to the block's end, every command fails at once (NotAnswered of every file after it), so the
+        operation waits one deadline, never one a file, nor a second for the read that settles the file whose write timed
+        out (#1927). One journaled write (file_changes.write_fields), one settle, one bake run; never a span that holds
+        ffmpeg (Convert opens a Fields an operation). Inside another together(), the outer block's; after the block, the
+        next command starts ExifTool again."""
+        if self._together:
+            yield self
+            return
+        self._together = True
+        try:
+            yield self
+        finally:
+            self._together, self._stays = False, None
+
+    @property
+    def dead(self):
+        """Has a command of the together() block this is in gone unanswered in its deadline?"""
+        return self._stays is not None and self._stays.dead
+
+    def ready_to_write(self):
+        """Raise Refused(NOT_STARTED_TO_WRITE) when no ExifTool can be started for a change: called before anything of
+        the change is recorded (file_changes.write_fields), so a change whose files ExifTool cannot read or write is
+        refused whole, never planned and failed file by file, nor a patch written that nothing reads back. The ExifTool
+        it starts is the change's."""
+        try:
+            self._session()
+        except Exception as error:
+            logger.error("Could not start ExifTool to write a change of photo files: %s", error)
+            raise Refused(NOT_STARTED_TO_WRITE) from None
+
+    def read_one(self, photo_path, wanted, *, whole=False):
+        """The fields `wanted` of one file, as read gives them; raises Unreadable (NotAnswered, of one not answered in its
+        deadline). `whole`, (them, its raw_metadata in the shape the index records it, metadata.raw_metadata): the file
+        read whole beside them, Unreadable too when ExifTool reported an error reading it (metadata.READ_ERROR_KEYS)."""
+        et = self._session()
+        if not whole:
+            return read_one(et, photo_path, wanted)
+        records = {}
+        held = read(et, [photo_path], wanted, fields.METADATA_FIELDS, records).get(paths.key(photo_path))
+        record = records.get(paths.key(photo_path))
+        if isinstance(held, Exception):
+            raise held
+        if held is None or record is None:
+            raise Unreadable("ExifTool answered nothing for it")
+        said = "; ".join(str(record[key]) for key in metadata.READ_ERROR_KEYS if record.get(key))
+        if said:
+            raise Unreadable("ExifTool reported an error reading it: %s" % said)
+        return held, metadata.raw_metadata(record)
+
+    def read_back(self, photo_path, wanted, *, whole=False):
+        """What a write just made of the file (before it is done), or what a settle finds of one: read_one's answer, read
+        by a reader that did not write it, after the write path's own check of the bytes it wrote (in_place.held). Today
+        ExifTool's, whichever wrote (the own patch or ExifTool's rewrite); a format's own reader answers here once the
+        format is moved (docs/plans/own-metadata-library.md, Q10)."""
+        return self.read_one(photo_path, wanted, whole=whole)
+
+    def write(self, photo_path, values, *, saving=None, scratch_written=None, again=None):
+        """`values` into the file (write: the own patch where it fits, given `saving`, else ExifTool's rewrite beside the
+        photo, its picture checked, then moved). `again()`, given, is called before a second write when the first's new
+        file's picture differed, and that one is made (written_once_more). Returns the fields left holding what they
+        held."""
+        options = {name: value for name, value in (("saving", saving), ("scratch_written", scratch_written))
+                   if value is not None}
+        if again is None:
+            return write(self._session(), photo_path, values, **options)
+        return written_once_more(self._session(), photo_path, values, again, **options)
+
+    def left_as_they_were(self, values, photo_path):
+        """The fields of `values` a journaled write of `photo_path` leaves holding what they held (left_as_they_were)."""
+        return left_as_they_were(values, photo_path)
+
+    def read(self, photo_paths, wanted, *, also=None, records=None, stop=None):
         """{paths.key(path): {field: its values}} of each of `photo_paths`, for the fields in `wanted`, through the one
         batch reader (read): an Unreadable in place of a photo ExifTool refused, a NotAnswered of one it did not answer
         for in its deadline (it and every photo after it in this call). `also`, fields asked as well, answered only in
         `records` ({paths.key(path): ExifTool's record}) when given: kept until the reads answer by field alone
-        (docs/plans/own-metadata-library.md, L4).
+        (docs/plans/own-metadata-library.md, L4). `stop`, a threading.Event, read's (a batch asked to stop while it plans).
 
         A start that fails is RAISED, never answered as every photo Unreadable: a reader that took that answer would
         decide something wrong of each (sync's pairing would pair nothing, a rename would read no caption), as each read
@@ -292,7 +379,7 @@ class Fields:
         photo_paths = list(photo_paths)
         if not photo_paths:
             return {}
-        return read(self._session(), photo_paths, wanted, also or (), records)
+        return read(self._session(), photo_paths, wanted, also or (), records, stop=stop)
 
     def whole(self, photo_paths, *, people=None, bakes=False):
         """A record of each of `photo_paths`, in order, as the index records it (tagpup.files.metadata.structure), read
@@ -454,7 +541,7 @@ def write(et, photo_path, values, saving=None, scratch_written=None):
     old one, of a write before the picture check that failed after deleting the original, is the photo's only copy (#1410).
 
     A struct field's value is its one text (bake.region_text); an empty one clears the structure whole. TagPup's own fields
-    (bake.NAMESPACE) are written only through a session opened by session(): ExifTool would refuse them, by a warning,
+    (bake.NAMESPACE) are written only through a session opened by _new_session(): ExifTool would refuse them, by a warning,
     under any other, so another is refused here, by a ValueError, before anything is written. A write of a struct field
     or of TagPup's own that ExifTool warns left a field unwritten (NOT_WRITTEN) raises RuntimeError before the photo's
     first byte: ExifTool's new file is discarded, and the photo holds what it held (the own writer writes neither: such a
@@ -476,7 +563,7 @@ def write(et, photo_path, values, saving=None, scratch_written=None):
         return _clip_written(photo_path, values, saving)
     own = [field for field in values if str(field).startswith(bake.NAMESPACE + ":")]
     if own and getattr(et, "config_file", None) != bake.config_path():
-        raise ValueError("%s is written only by a session that knows TagPup's namespace (field_values.session); this one "
+        raise ValueError("%s is written only by a session that knows TagPup's namespace (field_values.opened); this one "
                          "does not" % own[0])
     params, clear = {}, []
     for field, value in values.items():

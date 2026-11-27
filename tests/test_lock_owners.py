@@ -23,7 +23,7 @@ from unittest import mock
 from tagpup.core.result import Refused
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from waiting import wait_until  # noqa: E402
-from tagpup.files import field_values, in_place, lock_owners, names
+from tagpup.files import in_place, lock_owners, names
 from tagpup.services import file_changes, file_only
 
 ON_WINDOWS = sys.platform == "win32"
@@ -315,9 +315,8 @@ class ARenameOfAHeldFile(unittest.TestCase):
 class AFailedWrite(Base):
     def only(self, error):
         result = mock.Mock(details={"conflicts": []})
-        with mock.patch.object(field_values, "write", side_effect=error), \
-                mock.patch.object(field_values, "read_one", return_value=FIELDS_BEFORE):
-            return file_only._write_one(object(), self.path, FIELDS_BEFORE, FIELDS_AFTER, True, result)
+        failing = mock.Mock(**{"write.side_effect": error, "read_back.return_value": FIELDS_BEFORE})
+        return file_only._write_one(failing, self.path, FIELDS_BEFORE, FIELDS_AFTER, True, result)
 
     def test_a_file_only_write_names_the_holder(self):
         with mock.patch.object(lock_owners, "holders", return_value=MSMPENG):
@@ -342,10 +341,10 @@ class AFailedWrite(Base):
         library = mock.Mock(path="library.db")
         row = mock.Mock(path=self.path, id=3, stamp=None, patched=False, stale=())
         error = RuntimeError("Permission denied: IMG_0001.jpg")
-        with mock.patch.object(field_values, "read_one", return_value=FIELDS_BEFORE), \
-                mock.patch.object(file_changes.file_journal, "withdraw") as withdraw, \
+        holding = mock.Mock(**{"read_one.return_value": FIELDS_BEFORE})
+        with mock.patch.object(file_changes.file_journal, "withdraw") as withdraw, \
                 mock.patch.object(lock_owners, "holders", return_value=MSMPENG):
-            outcome, why = file_changes._after_failure(object(), library, row, FIELDS_BEFORE, FIELDS_AFTER,
+            outcome, why = file_changes._after_failure(holding, library, row, FIELDS_BEFORE, FIELDS_AFTER,
                                                        "done", "withdraw", error)
         withdraw.assert_called_once()
         self.assertEqual("failed", outcome)
@@ -354,10 +353,10 @@ class AFailedWrite(Base):
     def test_a_write_that_turns_out_to_have_worked_asks_nobody(self):
         library = mock.Mock(path="library.db")
         row = mock.Mock(path=self.path, id=3, stamp=None, patched=False, stale=())
-        with mock.patch.object(field_values, "read_one", return_value=FIELDS_AFTER), \
-                mock.patch.object(file_changes, "_record_held"), \
+        holding = mock.Mock(**{"read_one.return_value": FIELDS_AFTER})
+        with mock.patch.object(file_changes, "_record_held"), \
                 mock.patch.object(lock_owners, "holders", side_effect=AssertionError("asked")):
-            outcome, why = file_changes._after_failure(object(), library, row, FIELDS_BEFORE, FIELDS_AFTER,
+            outcome, why = file_changes._after_failure(holding, library, row, FIELDS_BEFORE, FIELDS_AFTER,
                                                        "done", "withdraw", PermissionError(13, "Permission denied"))
         self.assertEqual(("done", None), (outcome, why))
 

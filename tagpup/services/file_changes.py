@@ -87,9 +87,7 @@ from typing import Any, Dict, Optional
 
 from tagpup.core import fields, paths
 from tagpup.core.result import Conflict, Refused, Result
-# Looked up at call time, as exiftool_session.ExifToolSession, so a test standing in for
-# ExifTool there reaches this too.
-from tagpup.files import exiftool_session, field_values, images, in_place, lock_owners, metadata, names, shares
+from tagpup.files import exiftool_session, field_values, images, in_place, lock_owners, names, shares
 from tagpup.services import baking, batches, face_batch, rotation
 from tagpup.services import roots as roots_service
 from tagpup.store import db, derived, file_journal, photos, schema
@@ -384,9 +382,9 @@ def write_fields(library, operation, exiftool_path, photo_paths, read, plan_one,
     holding what it is to hold already -- is not in the change, and its row is made to
     say what the file holds.
 
-    `et` is an ExifTool session the caller has open, used instead of one of this call's
+    `et` is the caller's Fields (field_values.opened), used instead of one of this call's
     own; `held`, {paths.key(path): {field: [texts]}}, what the caller read of each file
-    in it just now, is the plan's before, and the file is not read again before its
+    through it just now, is the plan's before, and the file is not read again before its
     write. With `whole`, each file written is read back whole (every field the scan reads)
     in that session before it is marked done, and its row records all of it, stamped, in the
     transaction that marks it done (store.photos.follow_fields): a save, whose row was written
@@ -437,11 +435,11 @@ def write_fields(library, operation, exiftool_path, photo_paths, read, plan_one,
                               unpooled=unpooled)
 
 
-def _holds_already(path, before, after):
+def _holds_already(et, path, before, after):
     """Does the file at `path` holding `before` hold what a write of `after` would leave it holding: `after`, but for the
-    fields the writer leaves as they were (fields.as_patched of field_values.left_as_they_were; `after` itself unless the
+    fields the writer leaves as they were (fields.as_patched of Fields.left_as_they_were; `after` itself unless the
     own writer patches, or a clip's)? The plan's one question of a file it need not write."""
-    return fields.reads_same(before, fields.as_patched(before, after, field_values.left_as_they_were(after, path)))
+    return fields.reads_same(before, fields.as_patched(before, after, et.left_as_they_were(after, path)))
 
 
 def _refused_whole(photo_paths, why):
@@ -460,13 +458,14 @@ def _write_session(library, operation, exiftool_path, photo_paths, read, plan_on
     since = _counted_so_far()
     with contextlib.ExitStack() as own:
         if et is None:
-            et = own.enter_context(field_values.session(exiftool_path))
-        # Dead for good after a command timed out, a caller's session (a save's) for this write too: a share that went away
-        # costs its deadline once, not once a file, nor again for the read that settles the file whose write timed out
-        # (_after_failure, #1927). The caller's session itself is untouched: its next command starts ExifTool again.
-        result = _write_fields(exiftool_session.StaysDead(et), library, operation, exiftool_path, photo_paths, read,
-                               plan_one, summary, unreadable, stop_at_first_error, held, whole, on_planned, alongside, on_chunk,
-                               patient, unpooled)
+            et = own.enter_context(field_values.opened(exiftool_path))
+        # One deadline for the write, a caller's Fields (a save's) too (Fields.together): a share that went away costs its
+        # deadline once, not once a file, nor again for the read that settles the file whose write timed out
+        # (_after_failure, #1927). Inside a caller's own block (a save's, a bake run's), the caller's.
+        with et.together():
+            result = _write_fields(et, library, operation, exiftool_path, photo_paths, read, plan_one, summary,
+                                   unreadable, stop_at_first_error, held, whole, on_planned, alongside, on_chunk, patient,
+                                   unpooled)
     return _said_removed(result, since)
 
 
@@ -499,6 +498,13 @@ def _write_fields(et, library, operation, exiftool_path, photo_paths, read, plan
     # nothing is known of their files, as against a photo it answered with its own error (#1942).
     not_answered = result.details["not_answered"] = []
     result.details.update(change=None, conflicts=[])
+    try:
+        # Before anything is recorded: the first ExifTool command may otherwise come after the plan (a save hands in its
+        # read), a change planned that no ExifTool can carry.
+        et.ready_to_write()
+    except Refused as why:
+        result.refuse(str(why))
+        return result
     settle(library, exiftool_path)
     problem = alongside.verify(library) if alongside is not None else None
     if problem:
@@ -514,8 +520,8 @@ def _write_fields(et, library, operation, exiftool_path, photo_paths, read, plan
         # now answered.
         away = away_now(stored, patient, batch.stop.is_set if batch is not None else None)
         # A batch asked to stop while it reads the files it plans from stops at the next batch of reads (#1200).
-        held = field_values.read(et, [path for path in stored if paths.key(path) not in away], read,
-                                 stop=batch.stop if batch else None)
+        held = et.read([path for path in stored if paths.key(path) not in away], read,
+                       stop=batch.stop if batch else None)
         held.update({key: field_values.Unreadable(AWAY_WHY) for key in away})
     else:
         held, away = fresh, set()
@@ -554,7 +560,7 @@ def _write_fields(et, library, operation, exiftool_path, photo_paths, read, plan
             continue
         after = {field: fields.field_values(value) for field, value in plan.after.items()}
         before = {field: now.get(field, []) for field in after}
-        if _holds_already(path, before, after) and not (alongside is not None and alongside.wants(path)):
+        if _holds_already(et, path, before, after) and not (alongside is not None and alongside.wants(path)):
             written[path] = plan.detail
             followed.append((path, now))
             continue
@@ -627,7 +633,7 @@ def _write_fields(et, library, operation, exiftool_path, photo_paths, read, plan
                     written[path] = detail      # held already, as a file found holding it at the plan is
                     continue
                 if outcome == "done":
-                    if not _holds_already(path, planned[n][1], planned[n][2]):
+                    if not _holds_already(et, path, planned[n][1], planned[n][2]):
                         result.changed += 1       # a file held what it was to hold: its rows alone were written
                     if isinstance(detail, dict) and row.followed:
                         detail["faces_turned"] = row.followed
@@ -769,7 +775,7 @@ def _share_stopped(library, internal, change_id, result, stopped, stalled):
     one (_settle_stopped): the files not reached are taken out, the change is applied with what was written, and the write
     is refused saying so. The file whose write was under way, if it was, cannot be read now: it stays `writing`, the change
     unfinished, for the next settle to decide by what it holds (as a crash leaves it); it is not read again: the write's
-    session is dead (StaysDead) and would only say so. What stopped answering is ExifTool: a share
+    Fields is dead (Fields.together) and would only say so. What stopped answering is ExifTool: a share
     gone away, a drive that stopped, or ExifTool itself exiting (exiftool_session); the sentences say no more than that."""
     _settle_stopped(library, change_id, result=result)
     left = sum(1 for row in file_journal.files_of(library.path, change_id) if row.state == "writing")
@@ -910,8 +916,7 @@ def _read_back(et, library, wrote, read=None):
     unread = [row for row, _stat in written if paths.key(row.path) not in held]
     if unread:
         try:
-            held.update(field_values.read(et, [row.path for row in unread],
-                                          sorted({field for row in unread for field in row.after})))
+            held.update(et.read([row.path for row in unread], sorted({field for row in unread for field in row.after})))
         except Exception as e:
             logger.warning("%s: could not read back %d file(s) written: %s", library.path, len(unread), e)
     for row, stat in written:
@@ -1037,17 +1042,17 @@ def _carry(et, library, row, origin, target, finished, on_failure, wrote=None, n
 
 
 def _written(et, row, target, saving=None):
-    """None when field_values.write wrote `target` into the file of `row`, the fields it left as they were in
+    """None when Fields.write wrote `target` into the file of `row`, the fields it left as they were in
     `row.stale`; else what it raised. A new file whose picture changed is written once more, logged and counted
-    (field_values.written_once_more; `pictures_refused`)."""
+    (Fields.write's `again`; `pictures_refused`)."""
     def again():
         logger.warning("%s: its write changed the picture's bytes; the new file was discarded, and it is written once more",
                        row.named())
         _running.pictures_refused = _counted_so_far()[1] + 1
     row.stale = ()
     try:
-        row.stale = tuple(field_values.written_once_more(et, row.path, target, again, saving=saving,
-                                                         scratch_written=lambda: _reached(SCRATCH_WRITTEN)))
+        row.stale = tuple(et.write(row.path, target, saving=saving, scratch_written=lambda: _reached(SCRATCH_WRITTEN),
+                                   again=again))
     except Exception as e:
         return e
     return None
@@ -1077,7 +1082,7 @@ def _verified(et, library, row, held, read_back=None):
             return RuntimeError("the patch did not leave the file as it wrote it (%s)" % found)
         now = read_back() if read_back is not None else None
         if now is None:
-            now = field_values.read_one(et, row.path, list(held))
+            now = et.read_back(row.path, list(held))
         if fields.reads_same(now, held):
             return None
         in_place.put_back(row.path, *saved)
@@ -1224,7 +1229,7 @@ def _read_now(et, row, target, stall_stops):
     that stops answering in a write: a file ExifTool did not answer for (NotAnswered) stops a forward write
     (`stall_stops`, raising _Stalled); an undo and a settle keep theirs."""
     try:
-        return field_values.read_one(et, row.path, list(target))
+        return et.read_one(row.path, list(target))
     except field_values.NotAnswered as e:
         if stall_stops:
             raise _Stalled(str(e)) from None
@@ -1232,28 +1237,17 @@ def _read_now(et, row, target, stall_stops):
 
 
 def _read_whole(et, row, read):
-    """The file `row` just wrote, read back whole (read_whole), what it holds of the change's fields put in `read` (for
-    _read_back)."""
-    return read_whole(et, row.path, list(row.after), read, row.named())
-
-
-def read_whole(et, path, fields_read=(), into=None, named="a file"):
-    """The file at `path`, read whole in the session `et`: its raw_metadata in the shape the indexer records
-    (metadata.raw_metadata), and what it holds of `fields_read` put in `into` ({paths.key(path): held}). None, and nothing
-    put in `into`, when the read fails or ExifTool reports an error reading it: the row then records the fields written,
-    stamped only where it described the file before. `named`, the file as a log line names it (never its path)."""
-    records = {}
+    """The file `row` just wrote, read back whole (Fields.read_back): its raw_metadata in the shape the indexer records,
+    and what it holds of the change's fields put in `read` (for _read_back). None, and nothing put in `read`, when the
+    read fails or ExifTool reports an error reading it: the row then records the fields written, stamped only where it
+    described the file before."""
     try:
-        held = field_values.read(et, [path], list(fields_read), fields.METADATA_FIELDS, records)
+        now, whole = et.read_back(row.path, list(row.after), whole=True)
     except Exception as e:
-        logger.warning("%s: could not read it back whole: %s", named, e)
+        logger.warning("%s: could not read it back whole: %s", row.named(), e)
         return None
-    now, record = held.get(paths.key(path)), records.get(paths.key(path))
-    if now is None or isinstance(now, Exception) or record is None or any(record.get(k) for k in metadata.READ_ERROR_KEYS):
-        return None
-    if into is not None:
-        into[paths.key(path)] = now
-    return metadata.raw_metadata(record)
+    read[paths.key(row.path)] = now
+    return whole
 
 
 def _record_held(library, row, now, target, finished, stamp, stat):
@@ -1747,8 +1741,8 @@ def _settle_files(library, change, exiftool_path, changed, stop):
     kept = (face_batch.photos_kept(library, change.id)
             if not undoing and any(row.state == "planned" for row in changed) else set())
     put_off, mine = False, (library.key, change.id)
-    with field_values.session(exiftool_path) as session, db.connections_held(library.path):
-        et, wrote = exiftool_session.StaysDead(session), {}
+    with field_values.opened(exiftool_path) as et, et.together(), db.connections_held(library.path):
+        wrote = {}
         try:
             for row in changed:
                 _unsettled[paths.key(row.path)] = mine
@@ -1935,8 +1929,8 @@ def _undoable(library, change_id, exiftool_path, check):
         if not exiftool_path:
             return None, "undoing change %d rewrites photo files, and needs ExifTool" % change_id, None
         wanted = {f for row in changed for f in row.after}
-        with exiftool_session.ExifToolSession(executable=exiftool_path) as et:
-            held = field_values.read(et, [row.path for row in changed], sorted(wanted))
+        with field_values.opened(exiftool_path) as et:
+            held = et.read([row.path for row in changed], sorted(wanted))
         for row in changed:
             now = held.get(paths.key(row.path))
             if now is None or isinstance(now, Exception):
@@ -2041,7 +2035,7 @@ def _undo(library, change_id, exiftool_path, check, apply, result, begun):
                 result.changed += len(renames)
         changed = [row for row in ready if not row.is_rename]
         if changed:
-            with field_values.session(exiftool_path) as et, db.connections_held(library.path):
+            with field_values.opened(exiftool_path) as et, db.connections_held(library.path):
                 for row in changed:
                     outcome, why = _carry(et, library, row, row.after, row.before, "undone", on_failure="conflict")
                     result.details["faces_left"] = result.details.get("faces_left", 0) + row.faces_left

@@ -4,9 +4,7 @@ import os
 
 from tagpup.core import dates, fields, paths, suggesting, validation, vocabulary
 from tagpup.core.result import CHANGED_ON_DISK, CHANGED_ON_DISK_SENTENCE, Result
-# Looked up at call time, as exiftool_session.ExifToolSession, so a test standing in for
-# ExifTool there reaches this too.
-from tagpup.files import exiftool_session, field_values, images, metadata, names
+from tagpup.files import field_values, images, metadata, names
 from tagpup.services import batches, file_changes, file_only, libraries
 from tagpup.services import photos as photo_actions
 from tagpup.services import roots as roots_service
@@ -288,12 +286,12 @@ def save_photo(library, photo_path, title, tags, date_taken, exiftool_path, rena
     if stamp is not None and photo_actions.changed_on_disk(photo_path, stamp):
         result.refuse(CHANGED_ON_DISK_SENTENCE, CHANGED_ON_DISK)
         return result
-    # One ExifTool session and one read before the write: the tags the file holds, the
-    # plan's before, and the name Smart Rename kept.
+    # One Fields and one read before the write: the tags the file holds, the plan's before, and the name Smart Rename
+    # kept; one deadline from the read to the write's end (Fields.together).
     read = list(dict.fromkeys(SAVE_READ + BASE_READ + (DATE_READ if "date_taken" in base else ()) + tuple(wanted)
                               + tuple(fields.caption_fields(""))))
-    with exiftool_session.ExifToolSession(executable=exiftool_path) as et:
-        now = field_values.read_one(et, photo_path, read)
+    with field_values.opened(exiftool_path) as et, et.together():
+        now = et.read_one(photo_path, read)
         if _differs_from_base(now, base, photo_path):
             result.refuse(CHANGED_ON_DISK_SENTENCE, CHANGED_ON_DISK)
             return result
