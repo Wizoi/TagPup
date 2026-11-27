@@ -389,6 +389,38 @@ class AShareThatStopsAnsweringMidWrite(T.Bulk):
         undone = journal.undo(self.library, change_id, apply=True, fields=field_values.opened("exiftool"))
         self.assertEqual((None, k), (undone.refused, undone.changed))
 
+    def test_a_file_left_under_way_exiftool_does_not_answer_for_does_not_fail_a_save_of_another_photo(self):
+        """The share holding the file a stopped change left under way answers a look, but ExifTool does not answer for the
+        file: the save of another photo settles the stopped change first, through an ExifTool of its own, whose deadline is
+        the settle's, never the save's; the save is written and the change left for the next settle. Break: the settle on
+        the save's own Fields, inside the save's together(): the settle's timeout fails every command of the save after it."""
+        k = batches.CHUNK + 6
+        under_way = []
+
+        def write(path, n):
+            if n == k:
+                under_way.append(paths.key(path))
+                raise exiftool_session.ExifToolTimeout(STALLED)
+        self.files.on_write = write
+        self.tags_edit(add=["Trips/Coast"])
+        ((change_id, _op, _status),) = self.changes("bulk tags%")
+        reached = {photo_id for (photo_id,) in self.vl.rows("SELECT photo_id FROM change_files WHERE change_id = ?", change_id)}
+        other_id = [photo_id for photo_id in self.ids if photo_id not in reached][0]
+        other = self.path(other_id)
+        base = page_writes.base(self.library, other, "exiftool")
+
+        def read(path, _n):
+            if paths.key(path) in under_way:
+                raise exiftool_session.ExifToolTimeout(STALLED)
+        self.files.on_write, self.files.on_read = None, read
+        with field_values.opened("exiftool") as fields:
+            saved = tagging.save_photo(self.library, other, "", ["Trips/Lakes"], None, fields, "", base=base)
+        self.assertTrue(saved.ok, saved.errors)
+        self.assertIn("Trips/Lakes", self.tags(other_id))
+        self.assertEqual([("done", k - 1), ("writing", 1)],
+                         self.vl.rows("SELECT state, COUNT(*) FROM change_files WHERE change_id = ? GROUP BY state ORDER BY state",
+                                      change_id), "the file ExifTool did not answer for is left for the next settle")
+
     def test_a_save_whose_write_the_share_stops_says_so_after_one_deadline(self):
         """A save reports a write's errors, not its refusal: the photo under way is its error. The save passes its own
         session, kept dead for the write all the same: the read that settles the file after its write timed out answers at

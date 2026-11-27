@@ -382,8 +382,8 @@ def write_fields(library, operation, fields, photo_paths, read, plan_one, summar
     holding what it is to hold already -- is not in the change, and its row is made to
     say what the file holds.
 
-    `fields` is the operation's Fields (field_values.opened), which the files are read and written through (and any
-    change left half done settled first: settle); `held`, {paths.key(path): {field: [texts]}}, what the caller read of each file
+    `fields` is the operation's Fields (field_values.opened), which the files are read and written through (a change
+    left half done is settled first, through an ExifTool of its own: settle); `held`, {paths.key(path): {field: [texts]}}, what the caller read of each file
     through it just now, is the plan's before, and the file is not read again before its
     write. With `whole`, each file written is read back whole (every field the scan reads)
     in that session before it is marked done, and its row records all of it, stamped, in the
@@ -1573,11 +1573,15 @@ def settle(library, fields):
     ExifTool does not answer for, as _finish says, or one whose settle was stopped as asked -- is logged, released and
     left as it is for the next time: it does NOT raise, so a caller that must know asks the journal afterwards
     (tagpup.store.file_journal.unfinished). A change whose settle this process was asked to stop is not taken up again
-    by this process (_put_off): the next start settles it, not the next save. Its files are read and written through
-    `fields`, the operation's that settles first (a write's: write_fields), each change in a together() of its own,
-    inside a caller's."""
-    return sum(1 for change in file_journal.unfinished(library.path)
-               if _take(library, change) and _settle_taken(library, change, fields))
+    by this process (_put_off): the next start settles it, not the next save.
+
+    Its files are read and written through an ExifTool of its own (a Fields opened over the ExifTool of `fields`, the
+    operation's that settles first: a write's, a rename's, a Delete's, a Convert's), never through `fields` itself: a file
+    it meets that ExifTool does not answer for costs the settle its own deadline, and never fails the operation's files on
+    another drive inside the operation's together() (tests/test_bulk_edits_stalled_exiftool.py)."""
+    with field_values.opened(fields.exiftool_path) as own:
+        return sum(1 for change in file_journal.unfinished(library.path)
+                   if _take(library, change) and _settle_taken(library, change, own))
 
 
 def _take(library, change):
