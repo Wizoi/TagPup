@@ -497,8 +497,8 @@ class AFilesFieldsReadAndWritten(test_file_journal.FilesCase):
     # ---- S4: a format moved to TagPup's own writer starts no ExifTool for a write it refuses ----
 
     def test_a_refused_clip_write_starts_no_exiftool(self):
+        """S4: a Fields that has started no ExifTool yet (none read with it) is given a clip's write: nothing starts one."""
         clip = self.copy("mov")
-        self.read([clip], GROUPED)
         with mock.patch.object(exiftool_session, "ExifToolSession", side_effect=AssertionError("ExifTool started")):
             for values, own in ((fields.title_fields(TITLE), False), ({fields.ORIENTATION: ["6"]}, True)):
                 with self.subTest("S4", own=own):

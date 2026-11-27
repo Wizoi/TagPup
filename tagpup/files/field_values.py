@@ -354,12 +354,13 @@ class Fields:
         """`values` into the file (write: the own patch where it fits, given `saving`, else ExifTool's rewrite beside the
         photo, its picture checked, then moved). `again()`, given, is called before a second write when the first's new
         file's picture differed, and that one is made (written_once_more). Returns the fields left holding what they
-        held."""
+        held. A clip is never ExifTool's to write (_write): its write starts no session."""
         options = {name: value for name, value in (("saving", saving), ("scratch_written", scratch_written))
                    if value is not None}
+        et = None if images.is_clip(photo_path) else self._session()
         if again is None:
-            return _write(self._session(), photo_path, values, **options)
-        return _written_once_more(self._session(), photo_path, values, again, **options)
+            return _write(et, photo_path, values, **options)
+        return _written_once_more(et, photo_path, values, again, **options)
 
     def left_as_they_were(self, values, photo_path):
         """The fields of `values` a journaled write of `photo_path` leaves holding what they held (left_as_they_were)."""
