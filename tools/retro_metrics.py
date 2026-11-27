@@ -52,6 +52,10 @@ REVIEW_WORDS = re.compile(r"\b(?:review|reviewer|owner)s?\b", re.I)
 SEVERITY = re.compile(r"^\s*(data|wrong|low)\b\s*(?:\([^)]*\))?\s*:", re.I)
 #: A call whose context (input, cache write and cache read) is above this is counted as large.
 LARGE_CONTEXT = 150000
+#: The context by which a worker commits, from the day each came in force ((first day, tokens), oldest first): 150k
+#: with the hook (DECISIONS 2026-10-18), about 175k once the hook moved to 250k (DECISIONS 2026-11-26). A run is held to
+#: the one in force the day it began; LARGE_CONTEXT stays the line every retro compares.
+COMMIT_POINTS = (("2026-10-18", 150000), ("2026-11-26", 175000))
 #: A branch adds about this many lines or fewer (CLAUDE.md, "Keeping the project small"; DECISIONS 2026-10-16: added
 #: lines, a deletion is never over budget).
 BRANCH_BUDGET = 1200
@@ -422,9 +426,20 @@ def branch_states(repo, rev, started):
     return {name: state(name) for name in started}
 
 
+def commit_point(at):
+    """The context by which a worker run that began at `at` (epoch seconds) was to commit (COMMIT_POINTS)."""
+    day = datetime.datetime.fromtimestamp(at).date().isoformat()
+    in_force = COMMIT_POINTS[0][1]   # a run from before the first: held to the first
+    for first, tokens in COMMIT_POINTS:
+        if first <= day:
+            in_force = tokens
+    return in_force
+
+
 def worker_restarts(records):
     """What the context hook cost (finding #1807). `at_the_hook`: worker runs with a call of more than LARGE_CONTEXT
-    tokens of context, the line at which the hook tells a worker to commit and report. `relaunches`: the worker runs
+    tokens of context, the line every retro compares. `past_the_commit_point`: worker runs with a call above the commit
+    point in force the day the run began (COMMIT_POINTS, #3451); `worker_runs`: all of them. `relaunches`: the worker runs
     of a branch after its first, the ones that finished what the first could not. `unattached_reviews`: review runs in
     no worker's worktree (the main checkout), whose rounds cannot be tied to a branch. Each is a tally of the runs."""
     runs = {}
@@ -440,6 +455,9 @@ def worker_restarts(records):
         later.update(name for _at, name in ordered[1:])
     return {
         "at_the_hook": tally([r for run in runs.values() if run["peak"] > LARGE_CONTEXT for r in run["records"]]),
+        "past_the_commit_point": tally([r for run in runs.values() if run["peak"] > commit_point(run["at"])
+                                        for r in run["records"]]),
+        "worker_runs": len(runs),
         "relaunches": tally([r for name in later for r in runs[name]["records"]]),
         "unattached_reviews": tally([r for r in records if r["agent_type"] in REVIEW_TYPES and not r["branch"]]),
     }
@@ -740,8 +758,11 @@ def agents_markdown(a, split, other_merges):
     out.append("\n### WORKERS AT THE CONTEXT HOOK AND THEIR RELAUNCHES\n\n"
                + table(["", "runs", "calls", "tokens", "cost USD"],
                        [[name, v["runs"], v["calls"], v["tokens"], money(v)] for name, v in (
-                           ("worker runs that passed %dk of context (the hook told them to commit and report)"
+                           ("worker runs that passed %dk of context (the line every retro compares)"
                             % (LARGE_CONTEXT // 1000), restarts["at_the_hook"]),
+                           ("worker runs past the commit point in force the day they began (%s), of %d worker runs"
+                            % (", ".join("%dk from %s" % (t // 1000, d) for d, t in COMMIT_POINTS),
+                               restarts["worker_runs"]), restarts["past_the_commit_point"]),
                            ("relaunches (a branch's worker runs after its first)", restarts["relaunches"]),
                            ("review runs in no worktree (rounds not tied to a branch)",
                             restarts["unattached_reviews"]))]))

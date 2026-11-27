@@ -262,6 +262,22 @@ class TheCountersOfAKnownWindow(unittest.TestCase):
         self.assertEqual((1, 11), (got["relaunches"]["runs"], got["relaunches"]["tokens"]))
         self.assertEqual((1, 11), (got["unattached_reviews"]["runs"], got["unattached_reviews"]["tokens"]))
 
+    def test_a_worker_run_is_held_to_the_commit_point_in_force_the_day_it_began(self):
+        # Retro 2026-11-26 (#3451): a worker commits by about 175k since the hook moved to 250k that day; the retro
+        # counted 29 of 39 runs against 150k only.
+        def run(file, day, context):
+            at = int(datetime.datetime.fromisoformat(at_noon(day)).timestamp())
+            return {"agent_type": "worker", "agent_file": file, "branch": None, "at": at, "model": "fable-test-1",
+                    "input_tokens": context, "output_tokens": 1, "cache_creation_input_tokens": 0,
+                    "cache_read_input_tokens": 0}
+        records = [run("before.jsonl", DAY(2026, 11, 25), 160000),    # past its 150k
+                   run("under.jsonl", DAY(2026, 11, 26), 160000),     # under its 175k, past the 150k line
+                   run("past.jsonl", DAY(2026, 11, 27), 180000)]      # past its 175k
+        got = retro_metrics.worker_restarts(records)
+        self.assertEqual(3, got["worker_runs"])
+        self.assertEqual(3, got["at_the_hook"]["runs"], "the 150k line every retro compares")
+        self.assertEqual((2, 340002), (got["past_the_commit_point"]["runs"], got["past_the_commit_point"]["tokens"]))
+
     def test_main_sessions_and_their_compactions(self):
         a = self.report["usage"]["agents"]
         self.assertEqual({"s-1": {"calls": 1, "average_context": 1110, "max_context": 1110, "compactions": 1,
