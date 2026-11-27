@@ -156,12 +156,15 @@ class WhatIsQueued(QueueTest):
         self.assertEqual((result.details["queued"], result.details["already_queued"]), ([], [folder]))
         self.assertEqual(len(self.queue.active()["queued"]), 1)
 
-    def test_a_folder_being_indexed_is_not_queued_behind_itself(self):
+    def test_a_folder_being_indexed_and_asked_for_again_is_not_run_twice_at_once_but_waits_once(self):
         folder = self.folders(1)[0]
         self.queue._statuses[paths.key(folder)] = {"status": "running", "folder": folder}
         result = self.start([folder])
         self.assertEqual(result.details["already_queued"], [folder])
-        self.assertEqual(self.queue.active()["queued"], [])
+        self.start([folder])
+        # Its rerun waits (_missed), once however often it is asked for, and no second run starts beside the first.
+        self.assertEqual([each["folder"] for each in self.queue.active()["queued"]], [folder])
+        self.assertEqual(self.queue._pending, [])
 
     def test_what_is_not_a_folder_is_reported_and_none_at_all_is_refused(self):
         folder = self.folders(1)[0]
@@ -225,6 +228,27 @@ class FilesArrivingDuringAnIndex(QueueTest):
         self.wait_until_idle()
         self.assertEqual(runs, [folder, folder])
         self.assertEqual(self.queue.status(folder)["status"], "completed")
+
+    def test_a_folder_asked_for_again_is_listed_queued_from_the_ask_to_its_rerun(self):
+        folder = self.folders(1)[0]
+        runs, seen = [], []
+        index, started, release = self.hold(folder, runs)
+        real = self.queue._queue_what_was_missed
+
+        def between(job, status):
+            # After the run's row is written, before the rerun is queued.
+            seen.append(self.queue.active())
+            real(job, status)
+        self.queue._queue_what_was_missed = between
+        self.queue.start([folder], index)
+        self.assertTrue(started.wait(10))
+        self.queue.start([folder], index)
+        self.assertEqual([each["folder"] for each in self.queue.active()["queued"]], [folder])
+        release.set()
+        self.wait_until_idle()
+        self.assertEqual(len(runs), 2)
+        self.assertEqual([each["folder"] for each in seen[0]["queued"]], [folder])
+        self.assertTrue(seen[0]["busy"])
 
     def test_ten_rapid_skips_make_exactly_one_rerun(self):
         folder = self.folders(1)[0]

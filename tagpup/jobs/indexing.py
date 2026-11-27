@@ -321,6 +321,9 @@ class IndexQueue:
         with self._lock:
             current = [(each, self._statuses[paths.key(each)]) for each in self._current_folders]
             waiting = [each for job in self._pending for each in _folders_of(job)]
+            # Asked for again while it was indexed: queued from that moment, not only once the run's row is written
+            # (_queue_what_was_missed), or a page following the queue saw it idle while the rerun was about to start.
+            waiting += [ask["folder"] for ask in self._missed.values()]
         # A run whose index has said how it ended is not running, though its folders are the run's until its row is.
         running = [{"folder": each, "name": os.path.basename(each), "percent": status.get("percent", 0),
                     "message": status.get("message", "")}

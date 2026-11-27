@@ -810,14 +810,15 @@ class TestFolderQueue(TunerAPITestBase):
         self.assertEqual(len(body["already_queued"]), 1)
         self.assertEqual(len(self.queue_state()), 1)
 
-    def test_a_folder_being_indexed_now_is_not_queued_behind_itself(self):
+    def test_a_folder_being_indexed_now_is_not_run_beside_itself_its_rerun_waits_once(self):
         folders = self.make_folders(1)
         self.plant_status(folders[0], status="running", percent=10, message="working")
 
         status, body = self.post_start(folders)
         self.assertEqual(status, 200, body)
         self.assertEqual(body["queued"], [])
-        self.assertEqual(self.queue_state(), [])
+        # No second run starts beside it; its rerun waits, listed once (IndexQueue.active lists what was asked again).
+        self.assertEqual([each["folder"] for each in self.queue_state()], [folders[0]])
 
     def test_a_folder_that_does_not_exist_is_reported_not_queued(self):
         folders = self.make_folders(1)
