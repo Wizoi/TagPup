@@ -14,7 +14,7 @@ as ExifTool's write of the same reads (hazard c); a save repeated, or a tag the 
 already as the patch leaves it (fields.as_patched of field_values.left_as_they_were): nothing written, nothing journaled,
 `changed` 0, and the first save's undo puts back the bytes; the writer itself, given it, writes no byte and answers the
 copies it left (hazard a). A photo holding a second XMP packet inside its EXIF (IFD0 tag 0x02BC, as Windows Live Photo Gallery wrote it;
-tests/fixtures/xmp_in_ifd0.json, captured) has a tag added, its Date Taken moved, a turn and every keyword taken off, each
+tests/fixtures/xmp_in_ifd0.json, captured; corpus.photo_with_xmp_in_ifd0) has a tag added, its Date Taken moved, a turn and every keyword taken off, each
 ExifTool's rewrite, which writes both packets, and read back as asked (#3108); the same photo with that entry under
 another tag is patched in place.
 
@@ -39,7 +39,6 @@ import io
 import json
 import os
 import shutil
-import struct
 import sys
 import unittest
 from unittest import mock
@@ -62,11 +61,7 @@ from tagpup.store import db  # noqa: E402
 
 #: The copies a keyword save patching the XMP alone leaves as they were, in the order segment_edits answers them.
 KEYWORD_COPIES_LEFT = ("IPTC:Keywords", "EXIF:XPKeywords")
-#: The header of a photo_index JPEG whose EXIF's IFD0 holds an XMP packet (0x02BC), captured, its values fictional.
-with open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "fixtures", "xmp_in_ifd0.json"),
-          encoding="utf-8") as _f:
-    XMP_IN_IFD0 = json.load(_f)
-#: Its keywords, in both packets and EXIF XPKeywords.
+#: The keywords of corpus.XMP_IN_IFD0's header, in both packets and EXIF XPKeywords.
 IFD0_KEYWORDS = sorted(["People/Classmate/Robin Lark", "Holidays/Summer", "People/Classmate/Ellis Moor",
                         "People/Wendy Harlow", "Activities/Summer Camps", "People/Classmate/Juniper Cole"])
 
@@ -88,34 +83,6 @@ def kinds_written(before, after):
     differ = [at for at in range(len(before)) if before[at] != after[at]]
     return sorted({next((each.kind for each in layout.segments if each.offset <= at < each.end), "outside")
                    for at in differ})
-
-
-def photo_with_xmp_in_ifd0(path, tag=0x02BC):
-    """A JPEG holding the captured header's EXIF, its IFD0's packet entry under `tag`, then its APP1 packet, as the photo
-    held them (its ICC profile between the two left out), before a picture PIL makes."""
-    from PIL import Image
-
-    tiff = bytearray(XMP_IN_IFD0["tiff_size"])
-    for at, hexed in XMP_IN_IFD0["tiff"]:
-        tiff[at:at + len(hexed) // 2] = bytes.fromhex(hexed)
-    packet, at = XMP_IN_IFD0["ifd0_packet"].encode("utf-8"), XMP_IN_IFD0["ifd0_packet_at"]
-    tiff[at:at + len(packet)] = packet
-    walked = containers.exif_tiff(bytes(tiff))
-    ifd0 = walked.named["ifd0"]
-    at = ifd0.offset + 2 + 12 * [entry[0] for entry in ifd0.entries].index(0x02BC)
-    tiff[at:at + 2] = struct.pack(walked.order + "H", tag)
-    xmp = XMP_IN_IFD0["xmp"].replace("<?xpacket end", " " * XMP_IN_IFD0["xmp_padding"] + "<?xpacket end", 1)
-    picture = io.BytesIO()
-    Image.new("RGB", (16, 12), (90, 110, 130)).save(picture, "JPEG")
-    picture = picture.getvalue()
-    jfif = 4 + int.from_bytes(picture[4:6], "big")
-
-    def app1(body):
-        return b"\xff\xe1" + (len(body) + 2).to_bytes(2, "big") + body
-    with open(path, "wb") as handle:
-        handle.write(picture[:jfif] + app1(containers.EXIF_HEAD + bytes(tiff))
-                     + app1(containers.XMP_HEAD + xmp.encode("utf-8")) + picture[jfif:])
-    return path
 
 
 @requires_exiftool
@@ -459,7 +426,7 @@ class APhotoWrittenByItsOwnEditors(FilesCase):
         """A photo of the captured header (its packet entry under `tag`) given a tag, its Date Taken an hour later, a turn
         right and every keyword taken off, one write at a time, each read back through ExifTool as the planners read it:
         (the patches each saved, the reads)."""
-        a = photo_with_xmp_in_ifd0(os.path.join(self.folder, "a.jpg"), tag)
+        a = corpus.photo_with_xmp_in_ifd0(os.path.join(self.folder, "a.jpg"), tag)
         with ExifToolSession(executable=EXIFTOOL) as et:
             self.seed(a, field_values._read(et, [a], metadata_check.READ)[paths.key(a)])
         writes = (lambda: self.add([a]),

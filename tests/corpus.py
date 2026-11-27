@@ -75,8 +75,11 @@ STALE = 600.0
 #: The locks the makers of a folder take turns on: one per key, folded, so their number is bounded.
 STRIPES = 64
 #: The code the makers of kept items run: a change to one makes every kept item again.
+#: The captured layouts a recipe reads (structure and fictional texts of the same length only).
+FIXTURES = os.path.join(WORKSPACE_DIR, "tests", "fixtures")
 MAKERS = (os.path.abspath(__file__), os.path.join(WORKSPACE_DIR, "tests", "damaged_photos.py"),
-          os.path.join(WORKSPACE_DIR, "tagpup", "files", "exiftool_session.py"))
+          os.path.join(WORKSPACE_DIR, "tagpup", "files", "exiftool_session.py"),
+          os.path.join(FIXTURES, "xmp_in_ifd0.json"), os.path.join(FIXTURES, "clip_headers.json"))
 
 _own = None
 _generation = None
@@ -397,3 +400,35 @@ def second_app13(data):
     from tagpup.files import containers
     first = containers.read(io.BytesIO(data)).of_kind("iptc")[0]
     return data[:first.end] + iptc_segment(PRINT_FLAGS) + data[first.end:]
+
+
+#: The header of a photo_index JPEG whose EXIF's IFD0 holds an XMP packet (0x02BC: 39 / 0 / 0 / 0, #3108), captured,
+#: its values fictional.
+with open(os.path.join(FIXTURES, "xmp_in_ifd0.json"), encoding="utf-8") as _f:
+    XMP_IN_IFD0 = json.load(_f)
+
+
+def photo_with_xmp_in_ifd0(path, tag=0x02BC):
+    """A JPEG holding the captured header's EXIF, its IFD0's packet entry under `tag`, then its APP1 packet, as the photo
+    held them (its ICC profile between the two left out), before a picture PIL makes."""
+    from PIL import Image
+    from tagpup.files import containers
+
+    tiff = bytearray(XMP_IN_IFD0["tiff_size"])
+    for at, hexed in XMP_IN_IFD0["tiff"]:
+        tiff[at:at + len(hexed) // 2] = bytes.fromhex(hexed)
+    packet, at = XMP_IN_IFD0["ifd0_packet"].encode("utf-8"), XMP_IN_IFD0["ifd0_packet_at"]
+    tiff[at:at + len(packet)] = packet
+    walked = containers.exif_tiff(bytes(tiff))
+    ifd0 = walked.named["ifd0"]
+    at = ifd0.offset + 2 + 12 * [entry[0] for entry in ifd0.entries].index(0x02BC)
+    tiff[at:at + 2] = struct.pack(walked.order + "H", tag)
+    xmp = XMP_IN_IFD0["xmp"].replace("<?xpacket end", " " * XMP_IN_IFD0["xmp_padding"] + "<?xpacket end", 1)
+    picture = io.BytesIO()
+    Image.new("RGB", (16, 12), (90, 110, 130)).save(picture, "JPEG")
+    picture = picture.getvalue()
+    jfif = 4 + int.from_bytes(picture[4:6], "big")
+    with open(path, "wb") as handle:
+        handle.write(picture[:jfif] + segment(0xE1, containers.EXIF_HEAD + bytes(tiff))
+                     + segment(0xE1, containers.XMP_HEAD + xmp.encode("utf-8")) + picture[jfif:])
+    return path
