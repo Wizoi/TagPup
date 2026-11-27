@@ -61,6 +61,7 @@ def structured(meta):
 NOT_ANSWERED = "ExifTool did not answer for them (a share gone away?)"
 NOT_STARTED = "ExifTool could not be started"
 NO_STAT = "their file could not be looked at (its modified time and size could not be read)"
+HELD = "another program held their file open (an editor?)"
 
 #: Where ExifTool puts an error about a file in what it answers.
 READ_ERROR_KEYS = ("ExifTool:Error", "Error")

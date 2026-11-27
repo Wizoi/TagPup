@@ -57,8 +57,8 @@ from exiftool.exceptions import ExifToolNotRunning
 
 from tagpup.core import dates, fields, paths
 from tagpup.core.result import Refused
-from tagpup.files import (bake, clip_patch, containers, exiftool_session, identity, images, in_place, metadata,
-                          segment_edits, shares)
+from tagpup.files import (bake, clip_patch, containers, exiftool_session, identity, images, in_place, lock_owners,
+                          metadata, segment_edits, shares)
 
 logger = logging.getLogger(__name__)
 
@@ -386,11 +386,14 @@ class Fields:
         through the one batch reader (read: a batch ExifTool refuses is read again a photo at a time, one it does not
         answer is not retried).
 
-        A photo ExifTool refuses (or that is not a photo) is recorded holding nothing, with `read_error`, stamped: a file
-        that cannot be read is not read again every run. A photo ExifTool did not answer for (a share gone away), or whose
-        stat failed, or that no ExifTool could be started to read, is left UNREAD: its record has no stamp (mtime and size
-        None) and says why in `unread` (metadata.NOT_ANSWERED, NO_STAT, NOT_STARTED), so nothing records it as read; a
-        start that fails is never an exception out of here. `people` is what the library's tag tree says about people, read
+        A photo whose read failed is opened once (_why_unread): held open by another program (an editor; ExifTool says
+        "File not found" of it) or on a share that does not answer, it is left UNREAD, as is a photo ExifTool did not
+        answer for (a share gone away), or whose stat failed, or that no ExifTool could be started to read: its record has
+        no stamp (mtime and size None) and says why in `unread` (metadata.HELD, NOT_ANSWERED, NO_STAT, NOT_STARTED), so
+        nothing records it as read and the next index reads it; a start that fails is never an exception out of here.
+        Any other photo ExifTool refuses (or that is not a photo) is a lasting failure: recorded holding nothing, with
+        `read_error`, stamped, so a file that cannot be read is not read again every run, and its row keeps the fields it
+        held (store.photos.record_indexed). `people` is what the library's tag tree says about people, read
         once for the batch; without it, only the usual face roots name anybody.
 
         `bakes` (the indexer's read) asks BAKE_FIELDS as well, in the same command, and puts what the file answers of them
@@ -417,7 +420,6 @@ class Fields:
             elif stamp == (None, None):
                 results.append(dict(metadata.empty(path, held or "its stat failed", stamp), unread=metadata.NO_STAT))
             elif isinstance(held, Exception) or not record:
-                logger.error("Unreadable metadata, indexing without it: %s (%s)", path, held or "no answer")
                 results.append(metadata.empty(path, held or "ExifTool answered nothing for it", stamp))
             else:
                 # What the reader asked to tell a photo from another kind of file is not the photo's metadata, nor is a
@@ -428,7 +430,26 @@ class Fields:
                 results.append(metadata.structure(path, record, people, stamp))
                 if bakes:
                     results[-1]["baked"] = baked
+            if "read_error" in results[-1] and "unread" not in results[-1]:
+                why = _why_unread(path, stamp)
+                if why:
+                    results[-1] = dict(metadata.empty(path, results[-1]["read_error"], (None, None)), unread=why)
+                else:
+                    logger.error("Unreadable metadata, an existing row is kept as it was: %s (%s)", path, results[-1]["read_error"])
         return results
+
+
+def _why_unread(path, stamp):
+    """Why the file at `path`, stamped `stamp`, whose read failed is left unread, from one open of it now
+    (shares.read_span: bounded on a share): metadata.HELD when another program holds it (lock_owners.looks_held),
+    NOT_ANSWERED when its share does not answer; None when it opens, or fails otherwise: a lasting failure."""
+    try:
+        shares.read_span(path, 0, 1, stamp)
+    except shares.Unavailable:
+        return metadata.NOT_ANSWERED
+    except OSError as error:
+        return metadata.HELD if lock_owners.looks_held(error) else None
+    return None
 
 
 #: The oracle's whole read of a file (its warnings are READER_READ's). The session's own common -G
