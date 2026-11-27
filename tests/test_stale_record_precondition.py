@@ -17,6 +17,7 @@ Real ExifTool and real Pillow on photos made here; rows as the indexer and Sugge
 import os
 import sys
 import unittest
+from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -30,6 +31,7 @@ import web_client  # noqa: E402
 
 from tagpup.core import fields  # noqa: E402
 from tagpup.core.library import Library  # noqa: E402
+from tagpup.files import field_values  # noqa: E402
 from tagpup.files.exiftool_session import ExifToolSession  # noqa: E402
 from tagpup.store import db  # noqa: E402
 from tagpup.web import tagpup_routes  # noqa: E402
@@ -328,6 +330,23 @@ class TheFileIsComparedWithWhatThePageRead(Fresh):
         reply = self.save(record, tags=["Trips/Coast", "Activity/Sailing"], stamp=stamp_of(path))
         self.assertSaved(reply)
         self.assertEqual(["Activity/Sailing", "Trips/Coast"], sorted(tags_in(path)))
+
+    def test_a_tag_save_reads_no_date_so_a_clips_headers_are_walked_only_for_a_save_of_its_date(self):
+        """#3425's review: the date fields join the save's read only when its base names a date. A clip's QuickTime
+        header dates are read by walking its boxes (field_values), and a walk that fails would fail a tag save."""
+        path, photo_id = self.make("a.jpg", 29, ["Trips/Coast"])
+        record = self.record(photo_id)
+        asked = []
+
+        def read_one(et, photo_path, names):
+            asked.append(set(names))
+            return real_read_one(et, photo_path, names)
+        real_read_one = field_values.read_one
+        with mock.patch.object(field_values, "read_one", side_effect=read_one):
+            self.assertSaved(self.save(record, tags=["Trips/Coast", "Activity/Sailing"], stamp=stamp_of(path)))
+            self.assertSaved(self.save(self.record(photo_id), date_taken="2021-05-06T07:08:09", stamp=stamp_of(path)))
+        headers = set(fields.CLIP_HEADER_DATES)
+        self.assertEqual([False, True], [bool(names & headers) for names in asked[:1] + asked[-1:]], asked)
 
     def test_a_date_another_program_changed_is_refused_and_one_it_left_alone_is_not(self):
         """#3425: a save of a Date Taken names the date the page read, as a save of tags names its tags."""

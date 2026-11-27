@@ -48,18 +48,19 @@ def _held_title(now):
 #: prefixed names alone, as _caption_problem asks: a read answers a field under its group's name (field_values), so a
 #: bare name holds nothing, and a bare key in what the file holds broke the recording of a file that held the save
 #: already (store.photos.follow_fields reads each key as group:name).
-#: Every date field a Date Taken is read from, by the group's name (dates.date_taken): what a save of a date compares.
+BASE_READ = tuple(dict.fromkeys(fields.TAG_SOURCE_FIELDS + tuple(name for name in fields.CAPTION_FIELDS
+                                                                 if ":" in name)))
+#: Every date field a Date Taken is read from, by the group's name (dates.date_taken): what a save of a date compares,
+#: read only for a base holding one, so a tag or title save of a clip does not walk its QuickTime headers.
 DATE_READ = tuple(name for name in dates.DATE_TAKEN_FIELDS + dates.CLIP_XMP_DATE_FIELDS + dates.CLIP_DATE_FIELDS
                   if ":" in name)
-BASE_READ = tuple(dict.fromkeys(fields.TAG_SOURCE_FIELDS + DATE_READ + tuple(name for name in fields.CAPTION_FIELDS
-                                                                              if ":" in name)))
 
 
 def _differs_from_base(now, base, path):
     """Does the file hold other tags, another title or another Date Taken than the page read (`base`, {"tags", "title"},
     and "date_taken" where the page sends a date: a save of a date)? The tags as a SET of keyword paths, the title
     trimmed, the date as the index stores it (dates.date_taken, the form of a row's `taken`; none and "" are the same):
-    what a save writes over. `now` holds BASE_READ; `path` says photo or clip (a clip's date is read as the index reads it)."""
+    what a save writes over. `now` holds BASE_READ, and DATE_READ for a base with a date; `path` says photo or clip (a clip's date is read as the index reads it)."""
     if "date_taken" in base:
         held = dates.date_taken(now, path, dates.VIDEO if images.is_clip(path) else None)
         if (held or "").strip() != (base["date_taken"] or "").strip():
@@ -289,7 +290,8 @@ def save_photo(library, photo_path, title, tags, date_taken, exiftool_path, rena
         return result
     # One ExifTool session and one read before the write: the tags the file holds, the
     # plan's before, and the name Smart Rename kept.
-    read = list(dict.fromkeys(SAVE_READ + BASE_READ + tuple(wanted) + tuple(fields.caption_fields(""))))
+    read = list(dict.fromkeys(SAVE_READ + BASE_READ + (DATE_READ if "date_taken" in base else ()) + tuple(wanted)
+                              + tuple(fields.caption_fields(""))))
     with exiftool_session.ExifToolSession(executable=exiftool_path) as et:
         now = field_values.read_one(et, photo_path, read)
         if _differs_from_base(now, base, photo_path):
