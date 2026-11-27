@@ -54,13 +54,13 @@ class AClipWrittenByTheOneWriter(patched.FfmpegClips):
         self.addCleanup(rewrite.stop)
         stack = contextlib.ExitStack()
         self.addCleanup(stack.close)
-        self.et = stack.enter_context(field_values.session(EXIFTOOL))
+        self.et = stack.enter_context(field_values.opened(EXIFTOOL))
 
     def saving(self, record, before):
         self.saved.append((record, before))
 
     def write(self, path, values, journaled=True):
-        return field_values.write(self.et, path, values, saving=self.saving if journaled else None)
+        return self.et.write(path, values, saving=self.saving if journaled else None)
 
     def bytes_of(self, path):
         with open(path, "rb") as handle:

@@ -714,10 +714,9 @@ class AJustLookWriteThatFails(unittest.TestCase):
         that failed because its share went away (WinError 64) has no use for it, and the look is unbounded."""
         gone = OSError("The specified network name is no longer available")
         gone.winerror = 64
-        with mock.patch.object(field_values, "written_once_more", side_effect=gone), \
-                mock.patch.object(field_values, "read_one", side_effect=field_values.Unreadable("away")), \
-                mock.patch("tagpup.services.file_changes.writable") as looked:
-            said = file_only._write_one(None, "x.jpg", {"A": []}, {"A": ["b"]}, True, mock.Mock())
+        away = mock.Mock(**{"write.side_effect": gone, "read_back.side_effect": field_values.Unreadable("away")})
+        with mock.patch("tagpup.services.file_changes.writable") as looked:
+            said = file_only._write_one(away, "x.jpg", {"A": []}, {"A": ["b"]}, True, mock.Mock())
         self.assertIn("no longer available", str(said))
         looked.assert_not_called()
 

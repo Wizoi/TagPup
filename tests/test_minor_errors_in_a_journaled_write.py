@@ -90,16 +90,16 @@ class APhotoWhoseXmpExifToolObjectsTo(unittest.TestCase):
         # As the owner's bake met them: no identity in the plan, so nothing was ever made again with -m.
         photo = photo_holding(self, TWO_ABOUTS)
         plan = a_bake()
-        with field_values.session(EXIFTOOL) as et:
-            field_values.write(et, photo, plan)
-            held = field_values.read_one(et, photo, list(plan))
+        with field_values.opened(EXIFTOOL) as et:
+            et.write(photo, plan)
+            held = et.read_one(photo, list(plan))
         self.assertTrue(fields.same_fields(held, plan), held)
 
     def test_two_abouts_take_a_bake_keywords_and_an_identity_in_one_command(self):
         photo = photo_holding(self, TWO_ABOUTS)
         plan = a_bake()
         plan.update({identity.DOCUMENT_ID_FIELD: "xmp.did:harbour-new", "IPTC:Keywords": ["Places/Harbour", "Quay"]})
-        with field_values.session(EXIFTOOL) as et:
+        with ExifToolSession(executable=EXIFTOOL, config_file=bake.config_path()) as et:
             with mock.patch.object(et, "execute", wraps=et.execute) as execute:
                 field_values.write(et, photo, plan)
             self.assertEqual(1, len(writes(execute)), "a write was %d commands" % len(writes(execute)))
@@ -132,9 +132,9 @@ class APhotoWhoseXmpExifToolObjectsTo(unittest.TestCase):
     def test_a_packet_with_no_closing_tag_is_refused_and_the_file_left_as_it_was(self):
         photo = photo_holding(self, NO_CLOSING_TAG)
         before = digest(photo)
-        with field_values.session(EXIFTOOL) as et:
+        with field_values.opened(EXIFTOOL) as et:
             with self.assertRaises(ExifToolFailed):
-                field_values.write(et, photo, a_bake())
+                et.write(photo, a_bake())
         self.assertEqual(before, digest(photo))
         self.assertEqual(["a.jpg"], os.listdir(os.path.dirname(photo)), "ExifTool left a file beside the photo")
 

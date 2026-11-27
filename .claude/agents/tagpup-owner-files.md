@@ -43,7 +43,7 @@ Paths are checked by `tests/test_the_test_map.py`; a moved module is changed her
 ## Invariants and their guards
 | Invariant | Guard |
 |---|---|
-| ExifTool only through `ExifToolSession`, and that only in `field_values` (the write sessions L0b moves listed, `ALLOWED`) | `tests/test_rules_have_one_owner.py`, `tests/test_exiftool_session.py` |
+| ExifTool only through `ExifToolSession`, and that only in `field_values` (`opened` -> `Fields`, `oracle`); one deadline an operation only by `Fields.together()` | `tests/test_rules_have_one_owner.py`, `tests/test_exiftool_session.py` |
 | A photo file written through the journaled path; a click three times writes once | `tests/test_file_journal.py`, `tests/test_file_changes_one_at_a_time.py` |
 | A rotation is a journaled change; its face boxes and vectors follow in the transaction that marks the file done | `tests/test_rotate_is_journaled.py` |
 | A write reports what changed | `tests/test_a_file_holds_what_exiftool_kept.py` |

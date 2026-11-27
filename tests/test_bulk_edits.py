@@ -26,7 +26,7 @@ from tagpup.core import paths  # noqa: E402
 from tagpup.files import shares  # noqa: E402
 from tagpup.services import activity, batches, bulk_edit, file_changes  # noqa: E402
 from tagpup.services import journal, selection  # noqa: E402
-from tagpup.store import db, job_runs  # noqa: E402
+from tagpup.store import db, file_journal, job_runs  # noqa: E402
 from test_file_journal import Crash as StoppedAt, crash_at  # noqa: E402
 from tagpup.web import tagpup_routes  # noqa: E402
 
@@ -227,10 +227,11 @@ class TheLimit(Bulk):
 
 class OneAtATime(Bulk):
     def test_an_edit_that_fails_leaves_the_library_free_for_the_next(self):
-        self.files.cannot_start = FileNotFoundError("ExifTool is not where the library says it is")
-        self.tags_edit(add=["Trips/Coast"], expect=500)
+        # An ExifTool that will not start is refused before the plan (tests/test_bulk_edits_stalled_exiftool.py); a library
+        # that cannot be written is an exception out of the edit.
+        with mock.patch.object(file_journal, "plan", side_effect=OSError("the library could not be written")):
+            self.tags_edit(add=["Trips/Coast"], expect=500)
         self.assertEqual(0, batches.running_here())
-        self.files.cannot_start = None
         self.tags_edit(add=["Trips/Coast"])
 
 
@@ -262,9 +263,9 @@ class Interrupted(Bulk):
 
     def test_an_error_that_is_not_one_photos_is_a_500_with_a_fixed_sentence_naming_no_path(self):
         secret = "C:\\Users\\Someone\\Pictures\\Private Folder\\clip.jpg is locked by a program"
-        self.files.cannot_start = FileNotFoundError(secret)
-        reply = self.tags_edit(add=["Trips/Coast"], expect=500)
-        self.assertIn("FileNotFoundError", reply["error"])
+        with mock.patch.object(file_journal, "plan", side_effect=PermissionError(secret)):
+            reply = self.tags_edit(add=["Trips/Coast"], expect=500)
+        self.assertIn("PermissionError", reply["error"])
         self.assertNotIn("Private Folder", reply["error"])
         self.assertEqual(0, self.files.writes)
 

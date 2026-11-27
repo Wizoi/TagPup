@@ -15,7 +15,7 @@ date, a delete -- are made here for such a photo, and write only its file:
 - what is reported is what was written: a file counted changed is one read back holding
   what was written, as the journaled write counts it;
 - a write whose new file's picture changed is made once more, as a held photo's is
-  (field_values.written_once_more), and counted in the Result's details, `pictures_refused`.
+  (Fields.write's `again`), and counted in the Result's details, `pictures_refused`.
 
 What the journal gave a write and this does not: the way back (History's Undo) and the
 settling of a write a crash cut short. The page's own one-step Undo writes the earlier
@@ -32,9 +32,7 @@ import os
 
 from tagpup.core import fields, paths
 from tagpup.core.result import Result
-# Looked up at call time, as exiftool_session.ExifToolSession, so a test standing in for
-# ExifTool there reaches this too.
-from tagpup.files import exiftool_session, field_values, lock_owners, names, recycle_bin
+from tagpup.files import field_values, lock_owners, names, recycle_bin
 from tagpup.services import file_changes
 
 logger = logging.getLogger(__name__)
@@ -82,15 +80,15 @@ def write_fields(exiftool_path, photo_paths, read, plan_one, unreadable="fail", 
                  et=None, held=None):
     """file_changes.write_fields for photos the library does not hold: the same planning
     (`read` the fields to read of each file, `plan_one(path, held)` a Plan from what it
-    holds, `unreadable`, `stop_at_first_error`, an `et` session and what the caller `held`
-    of the files in it) and the same Result -- `changed` the files written, errors the photos
+    holds, `unreadable`, `stop_at_first_error`, an `et` Fields (field_values.opened) and what the caller `held`
+    of the files through it) and the same Result -- `changed` the files written, errors the photos
     that failed, details `written` {path: detail} of each written or already holding it, `stamps` {path key: (mtime,
     size) or None} of each file written, taken just after its write (file_changes.stamp_after_write), `conflicts`,
     `pictures_refused` when a write was made once more -- but only the files are written: no
     journal change (details["change"] is None), no row, nothing after."""
     if et is None:
-        with exiftool_session.ExifToolSession(executable=exiftool_path) as session:
-            return _write_fields(session, photo_paths, read, plan_one, unreadable, stop_at_first_error, held)
+        with field_values.opened(exiftool_path) as et:
+            return _write_fields(et, photo_paths, read, plan_one, unreadable, stop_at_first_error, held)
     return _write_fields(et, photo_paths, read, plan_one, unreadable, stop_at_first_error, held)
 
 
@@ -100,7 +98,7 @@ def _write_fields(et, photo_paths, read, plan_one, unreadable, stop_at_first_err
     result.details.update(change=None, conflicts=[])
     # A clip is left out before anything is read of it, as a held photo's write leaves it out.
     stored = file_changes.leave_out_clips(result, [paths.stored(p) for p in photo_paths], unreadable)
-    held = fresh if fresh is not None else field_values.read(et, stored, read)
+    held = fresh if fresh is not None else et.read(stored, read)
     planned = []
     for path in stored:
         now = held.get(paths.key(path))
@@ -152,7 +150,7 @@ def _write_one(et, path, before, after, just_read, result):
     that changed outside since it was read is never overwritten."""
     if not just_read:
         try:
-            now = field_values.read_one(et, path, list(after))
+            now = et.read_one(path, list(after))
         except field_values.Unreadable as e:
             return "could not be read: %s" % e
         if not fields.reads_same(now, before):
@@ -164,12 +162,12 @@ def _write_one(et, path, before, after, just_read, result):
                        "written once more")
         result.details["pictures_refused"] = result.details.get("pictures_refused", 0) + 1
     try:
-        field_values.written_once_more(et, path, after, again)
+        et.write(path, after, again=again)
     except Exception as error:
         # Settled by what the file holds after it, as the journaled write settles it; after a failure only, who holds the
         # file, if it is held (access denied is a holder's only of a file there and not read-only: lock_owners.looks_held).
         try:
-            now = field_values.read_one(et, path, list(after))
+            now = et.read_back(path, list(after))
         except field_values.Unreadable:
             return lock_owners.explain(error, path, writable=_writable_if_denied(error, path))
         if fields.reads_same(now, after):
@@ -196,8 +194,7 @@ def _read_back(et, wrote, result):
     if not wrote:
         return
     try:
-        held = field_values.read(et, [path for path, _b, _a in wrote],
-                                 sorted({field for _p, _b, after in wrote for field in after}))
+        held = et.read([path for path, _b, _a in wrote], sorted({field for _p, _b, after in wrote for field in after}))
     except Exception as e:
         logger.warning("Could not read back %d file(s) written: %s", len(wrote), e)
         return

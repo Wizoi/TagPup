@@ -42,7 +42,7 @@ import os
 
 from tagpup.core import paths
 from tagpup.core import progress_line
-from tagpup.files import bake, exiftool_session, field_values, images, shares
+from tagpup.files import bake, field_values, images, shares
 from tagpup.services import baking, file_changes, settings
 from tagpup.services import snapshots as snapshot_service
 from tagpup.store import db, inspection, photo_fingerprints
@@ -146,8 +146,10 @@ def bake_folders(library, exiftool_path, detector, folders, handed, stop=None, e
     A handed photo keeps its row only when its file is written, holds the current bake or is read-only (owe_first)."""
     baked, snapshot, walk, chunk_lines = Baked(), [], baking.walk(stop), [True]
     owe_first(library, folders, handed)
-    with field_values.session(exiftool_path) as session:
-        et = exiftool_session.StaysDead(session)
+    # One deadline for the run (Fields.together): a share away ends it at that folder, the rest baked by the next index.
+    with field_values.opened(exiftool_path) as et, et.together():
+        if folders:
+            et.ready_to_write()   # an ExifTool that will not start fails the run once, not as an unreadable line per photo
         for number, folder in enumerate(folders, 1):
             if stop is not None and stop():
                 break

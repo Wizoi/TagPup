@@ -169,7 +169,7 @@ def _written(et, path, values, own):
     how = []
     saving = (lambda _record, _before: how.append("patch")) if own else None
     try:
-        stale = field_values.write(et, path, values, saving=saving, scratch_written=lambda: how.append("rewrite"))
+        stale = et.write(path, values, saving=saving, scratch_written=lambda: how.append("rewrite"))
     except Exception as error:
         return "failed", (), str(error)
     return (how[0] if how else "unchanged"), tuple(stale), None
@@ -237,7 +237,7 @@ class _Run:
         original = os.path.join(folder, "original.jpg")
         with open(original, "wb") as handle:
             handle.write(data)
-        before = field_values.read(self.et, [original], READ).get(paths.key(original))
+        before = self.et.read([original], READ).get(paths.key(original))
         if not isinstance(before, dict):
             self.looked["read, not by ExifTool"] += 1
             return None
@@ -285,7 +285,7 @@ class _Run:
                 self.differ(path, operation, "%s changed the picture" % name)
             elif now[0] != kept[0]:
                 self.differ(path, operation, "%s changed a segment outside EXIF, XMP and IPTC" % name)
-        read_back = field_values.read(self.et, copies, list(after))
+        read_back = self.et.read(copies, list(after))
         was = {field: before.get(field, []) for field in after}
         for (name, _own), copy, left in zip(SIDES, copies, ((), stale)):
             held = read_back.get(paths.key(copy))
@@ -320,7 +320,7 @@ def check(library, exiftool_path, sample=SAMPLE, seed=segment_census.SEED, revea
         jpegs = [path for _photo_id, path in inspection.photo_files(conn) if segment_census.is_jpeg(path)]
     chosen = segment_census.drawn(jpegs, sample, seed)
     stopped = None
-    with sandbox() as root, field_values.session(exiftool_path) as et, field_values.oracle(exiftool_path) as oracle:
+    with sandbox() as root, field_values.opened(exiftool_path) as et, field_values.oracle(exiftool_path) as oracle:
         run = _Run(library, et, oracle, reveal)
         try:
             for done, path in enumerate(chosen, 1):

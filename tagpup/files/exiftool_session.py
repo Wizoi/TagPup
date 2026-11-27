@@ -380,10 +380,8 @@ class _DrainingExifTool(exiftool.ExifTool):
 
 
 class ExifToolSession(exiftool.ExifToolHelper, _DrainingExifTool):
-    """ExifToolHelper that drains stderr as it goes and gives up after `timeout`.
-
-        with ExifToolSession(executable=path) as et:
-            rows = field_values.read(et, batch, ["XMP:Subject"])
+    """ExifToolHelper that drains stderr as it goes and gives up after `timeout`. Constructed only by
+    tagpup.files.field_values (opened, oracle): an operation's reads and writes go through its Fields.
     """
 
     def __init__(self, *args, timeout=DEFAULT_TIMEOUT, encoding=ENCODING,
@@ -422,7 +420,7 @@ class ExifToolSession(exiftool.ExifToolHelper, _DrainingExifTool):
 
 
 class StaysDead:
-    """A session of one batch of writes, which stays dead once a command has timed out: pyexiftool starts its process again on the
+    """A session of one operation (field_values.Fields.together, its one maker), which stays dead once a command has timed out: pyexiftool starts its process again on the
     next command, and that command would wait its own deadline for a share that is not coming back. Every command after a timeout
     answers the same ExifToolTimeout at once, so the files after it are errors in the time it takes to say so."""
 

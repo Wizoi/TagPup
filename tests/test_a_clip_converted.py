@@ -123,8 +123,8 @@ class AnOldClipInTheLibrary(ALibraryHoldingAClip):
         return convert.convert_clip(self.vl.library, EXIFTOOL, TOOLS, path, **kwargs)
 
     def held(self, path, *wanted):
-        with field_values.session(EXIFTOOL) as et:
-            return field_values.read_one(et, path, list(wanted))
+        with field_values.opened(EXIFTOOL) as et:
+            return et.read_one(path, list(wanted))
 
     def assert_dated(self, path, taken, headers):
         """The clip at `path` dated by the carry as a save dates it: `taken` in its XMP, `headers` in every QuickTime

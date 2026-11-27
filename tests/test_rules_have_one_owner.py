@@ -8,7 +8,6 @@ instead of their own (#68); a face was compared with a mean in clustering, a geo
 mean with no years in the suggester, each against a value of its own (#71, #75).
 """
 import ast
-import collections
 import inspect
 import io
 import os
@@ -117,11 +116,15 @@ LINE_RULES = (
     # stderr, a batch drawing a warning per file fills the 4 KB stderr pipe, and two scripts sat at 0% CPU for two days.
     (PYEXIFTOOL, EXIFTOOL, r"\b(?:exiftool\.)?(ExifToolHelper|ExifToolAlpha|ExifTool)\s*\(",
      "with exiftool.ExifTool(executable=path) as et:", "class ExifToolSession(exiftool.ExifToolHelper", ""),
-    # And every ExifToolSession is field_values' (session, opened, oracle), which starts it knowing TagPup's namespace:
-    # four read sites each opened their own, read a bake's fields under no configuration, and a test standing in for
-    # ExifTool had five doors to stand at (docs/plans/own-metadata-library.md, L0a). ALLOWED lists the lines left.
-    (SESSION_OUTSIDE, FIELD_VALUES, r"\bExifToolSession\(",
+    # And every ExifToolSession is field_values' (opened, oracle), which starts it knowing TagPup's namespace: four read
+    # sites and three write sites each opened their own, read a bake's fields under no configuration, and a test standing
+    # in for ExifTool had five doors to stand at (docs/plans/own-metadata-library.md, L0a and L0b).
+    (SESSION_OUTSIDE, FIELD_VALUES, r"(?<!class )\bExifToolSession\(",
      "with exiftool_session.ExifToolSession(executable=exiftool_path) as et:", "exiftool_session.ExifToolSession(", ""),
+    # A session that stays dead after a timeout is Fields.together()'s, one block an operation: three writers wrapped
+    # their own by hand, each its own span (docs/plans/own-metadata-library.md, L0b).
+    ("StaysDead outside field_values", FIELD_VALUES, r"\bStaysDead\(", "et = exiftool_session.StaysDead(session)",
+     "exiftool_session.StaysDead(", ""),
     # A photo's fields are written by one writer, field_values.write: the indexer's identity mint built its own set_tags,
     # outside the writer's clears, its minor-error rule and its guard (#1473, #1418). An execute of a "-TAG=value" is a
     # write too. Not even field_values overwrites a photo in place (OVERWRITES).
@@ -158,24 +161,6 @@ NOT_FORBIDDEN = ('execute("SELECT 1 FROM photos WHERE people LIKE ?")', 'x = tag
 #: Lines the pyexiftool rule may not match: an ExifToolSession is no pyexiftool class constructed (field_values' own is
 #: SESSION_OUTSIDE's to judge).
 NOT_PYEXIFTOOL = ("with ExifToolSession(executable=executable) as et:",)
-#: Lines a line rule leaves outside its owner, by the rule: (the file, the line as it stands, stripped), one entry a line.
-#: The list only shrinks: a line listed that its file no longer holds as often fails (test_an_allowed_line_is_still_held),
-#: so an entry leaves with its line, and a second copy of a listed line is a copy the rule finds.
-ALLOWED = {
-    SESSION_OUTSIDE: (
-        (EXIFTOOL, "class ExifToolSession(exiftool.ExifToolHelper, _DrainingExifTool):"),     # the class itself
-        (EXIFTOOL, "with ExifToolSession(executable=path) as et:"),                            # its docstring's example
-        # L0b: an undo's read before its write (docs/plans/own-metadata-library.md)
-        (os.path.join("tagpup", "services", "file_changes.py"),
-         "with exiftool_session.ExifToolSession(executable=exiftool_path) as et:"),
-        # L0b: a just-look write's session, its read and its writes
-        (os.path.join("tagpup", "services", "file_only.py"),
-         "with exiftool_session.ExifToolSession(executable=exiftool_path) as session:"),
-        # L0b: a save's session, its read before the write and the write
-        (os.path.join("tagpup", "services", "tagging.py"),
-         "with exiftool_session.ExifToolSession(executable=exiftool_path) as et:"),
-    ),
-}
 
 
 def lines_of(relative):
@@ -191,28 +176,15 @@ class OneOwnerPerLine(unittest.TestCase):
         problems = []
         for what, owner, pattern, _hit, _proof, scope in LINE_RULES:
             pattern = re.compile(pattern, re.I if "LOWER" in pattern or "LIKE" in pattern else 0)
-            allowed = collections.Counter((os.path.normcase(f), line) for f, line in ALLOWED.get(what, ()))
             for relative in sorted(set(python_sources()) | (set(everywhere) if scope == "all" else set())):
                 if os.path.normcase(relative) in map(os.path.normcase, (owner, here, BEHAVES)):
                     continue
                 for number, line in lines_of(relative):
                     if not pattern.search(line) or NOT_A_PATH in line or line.lstrip().startswith("#"):
                         continue
-                    if allowed[os.path.normcase(relative), line.strip()] > 0:
-                        allowed[os.path.normcase(relative), line.strip()] -= 1
-                        continue
                     problems.append("%s:%d  %s\n    %s" % (relative, number, what, line.strip()))
         self.assertEqual([], problems, "\n\nSay it through its owner (paths.stored / key / sql_equals, ExifToolSession, "
                          "field_values.opened, tagpup.core.processes):\n\n" + "\n".join(problems))
-
-    def test_an_allowed_line_is_still_held(self):
-        # The list shrinks as L0b moves each write session: a line gone, or spelled otherwise, leaves the list with it.
-        rules = {rule[0]: rule[2] for rule in LINE_RULES}
-        for what, entries in ALLOWED.items():
-            for (relative, line), times in collections.Counter(entries).items():
-                with self.subTest(what, file=relative, line=line):
-                    held = sum(1 for _n, each in lines_of(relative) if each.strip() == line and re.search(rules[what], each))
-                    self.assertEqual(times, held, "listed in ALLOWED %d time(s), held %d: take it off the list" % (times, held))
 
     def test_no_photo_is_overwritten_in_place(self):
         found = ["%s:%d" % (relative, number) for relative in python_sources() for number, line in lines_of(relative)

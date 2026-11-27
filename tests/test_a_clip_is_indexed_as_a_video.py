@@ -230,12 +230,12 @@ class AClipIsIndexedAsAVideo(unittest.TestCase):
                 self.assertEqual(thumbnails.OK, thumbnails.serve(Library(self.library), held[name][0],
                                                                  config.locate_ffmpeg).kind)
         saved = []
-        with field_values.session(own_home.installed_exiftool()) as et:
+        with field_values.opened(own_home.installed_exiftool()) as et:
             for name, values in (("harbour.wmv", {fields.PRESERVED_NAME: ["harbour.wmv"]}),
                                  ("launch.mpg", {**fields.title_fields("Launch day")}),
                                  ("slipway.avi", fields.date_taken_fields("2021:07:04 11:30:00", clip=True))):
                 with self.subTest(write=name), self.assertRaises(Refused) as refused:
-                    field_values.write(et, made[name], values, saving=lambda record, old: saved.append(record))
+                    et.write(made[name], values, saving=lambda record, old: saved.append(record))
                 self.assertEqual(images.CLIP_NOT_PATCHED, str(refused.exception))
         self.assertEqual(([], before), (saved, {name: digest(path) for name, path in made.items()}),
                          "nothing saved, nothing written")

@@ -340,14 +340,14 @@ def _ready(library, exiftool_path, tools, source, reason):
         conn.close()
     if found is None:
         return NO_ROW
-    read = {}
-    with field_values.session(exiftool_path) as et:
+    with field_values.opened(exiftool_path) as et:
         # Whole, in the indexer's shape: its Date Taken is the row's (dates.date_taken of what the indexer records), but
         # for a date in its name, which is not carried: the copy has the clip's name and is dated by it again.
-        whole = file_changes.read_whole(et, source, list(READ) + [fields.CLIP_CATEGORY], into=read)
-    if whole is None:
-        return UNREADABLE % "ExifTool could not read it"
-    held = read[paths.key(source)]
+        try:
+            held, whole = et.read_one(source, list(READ) + [fields.CLIP_CATEGORY], whole=True)
+        except field_values.Unreadable as e:
+            logger.warning("A clip to convert could not be read whole: %s", e)
+            return UNREADABLE % "ExifTool could not read it"
     windows = [str(text) for text in dict.fromkeys(fields.field_values(held.get(fields.CLIP_CATEGORY)))]
     carryable = _carryable(library) if windows else frozenset()
     cannot = [text for text in windows if text not in carryable]
@@ -556,8 +556,8 @@ def _short_of(library, exiftool_path, target, after):
     nothing to write) and no Windows Tags (ffmpeg carries no Xtra); else what it lacks, a phrase naming fields, never
     tags. Read after the carry and before the original, the one other holder of what it carries, is deleted for good."""
     try:
-        with field_values.session(exiftool_path) as et:
-            held = field_values.read_one(et, target, list(CARRY_READ) + [fields.CLIP_CATEGORY])
+        with field_values.opened(exiftool_path) as et:
+            held = et.read_back(target, list(CARRY_READ) + [fields.CLIP_CATEGORY])
     except (OSError, field_values.Unreadable) as e:
         return "it could not be read back: %s" % e
     if fields.field_values(held.get(fields.CLIP_CATEGORY)):
@@ -656,8 +656,12 @@ def _followed(library, exiftool_path, row, target):
     """The photo's row moved to `target` (a new name) and made to say what the copy holds, read whole, in one transaction;
     its stamp the copy's, so its vectors and frames are computed again. False when another row is at `target`."""
     stat = os.stat(target)   # unbounded: the conversion's own copy, just put in place under the lock
-    with field_values.session(exiftool_path) as et:
-        whole = file_changes.read_whole(et, target, named=row.named())
+    with field_values.opened(exiftool_path) as et:
+        try:
+            _held, whole = et.read_back(target, [], whole=True)
+        except field_values.Unreadable as e:
+            logger.warning("%s: could not read it back whole: %s", row.named(), e)
+            whole = None
 
     def work(conn):
         if row.new_path is not None:

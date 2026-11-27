@@ -447,9 +447,9 @@ class APhotoWrittenByItsOwnEditors(FilesCase):
         self.assert_patched_xmp_alone(a, ["Beach", "Harbour"], change)
         # Hazard a, at the writer: given the same values, it has no byte to write and answers the copies it left.
         flat, hierarchical = fields.expand_tag_fields(["Beach", "Harbour"])
-        with field_values.session(EXIFTOOL) as et:
-            left = field_values.write(et, a, fields.keyword_fields(flat, hierarchical),
-                                      saving=lambda *_: self.fail("a patch with no byte to write saved a record"))
+        with field_values.opened(EXIFTOOL) as et:
+            left = et.write(a, fields.keyword_fields(flat, hierarchical),
+                            saving=lambda *_: self.fail("a patch with no byte to write saved a record"))
         self.assertEqual((KEYWORD_COPIES_LEFT, held), (tuple(left), read(a)))
         # Undo after the saves that did nothing: the first save's, the bytes the photo held.
         undone = self.undo(change)
