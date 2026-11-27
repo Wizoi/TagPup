@@ -11,6 +11,11 @@ own rule (fields.as_patched, the segments a write's fields are held in: fields.E
 typed here but the words it refuses a write with where TagPup says none of its own (REFUSED, HELD_OPEN): the sentence
 the owner reads.
 
+Set aside, by design: what no write may change (metadata_check.SET_ASIDE, KNOWN), and a target the write leaves `stale`
+(segment_edits.stale_of; fields.XMP_ONLY: a keyword or caption patched into the XMP alone), judged as fields.as_patched
+says, as held. So the suite does not fail where an undo of a caption cleared leaves its copies outside XMP empty
+(IPTC:Caption-Abstract, EXIF:ImageDescription and EXIF:XPComment: DECISIONS 2026-11-03 and 2026-11-05 (1)).
+
 The backend is observed, never chosen: ANSWERS says who answers each (format, call) today, and every call of Fields
 here counts the commands ExifTool is sent while it runs (ExifToolSession.execute, a replayed one too; a start's own
 -ver is no command): OWN, none; EXIFTOOL, at least one. A stage that moves a format flips its line in the merge that

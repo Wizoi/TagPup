@@ -439,8 +439,9 @@ caller rewrites the file, nothing written. It is the one caller of the three edi
   the value would come back), a patch where they all fit, else a rewrite. XMP is given the planner's whole set
   (`tagging.keywords_planner` reads XMP and IPTC), so a photo whose keywords were in IPTC alone (151 in photo_index,
   4 of them with a packet, DECISIONS 2026-11-03) gets them all in XMP; segment_edits never infers a set.
-  Known, by this design: the undo of a caption cleared through the own writer leaves IPTC's cut copy in place (the
-  XMP copy returns, IPTC's does not: it was answered stale), pinned by
+  Known, by this design (DECISIONS 2026-11-03, 2026-11-05 (1)): the undo of a caption cleared through the own writer
+  leaves its copies outside XMP as the clear left them, empty: IPTC:Caption-Abstract, EXIF:ImageDescription and EXIF:XPComment
+  (the XMP copy returns; the others are answered stale, fields.XMP_ONLY), pinned by
   `test_a_write_records_what_the_file_holds_and_an_undo_finds_it` in `tests/test_a_file_holds_what_exiftool_kept.py`.
 - **Spelling**: a text field takes one text (two: no patch); Orientation a number; an EXIF date only
   `YYYY:MM:DD HH:MM:SS` (a zone: the editor refuses, a rewrite; a Date Taken carries no fraction: 0 rows whose `taken`
