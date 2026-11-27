@@ -401,7 +401,7 @@ _FILES = {
             "test_what_counts_as_a_photo "
             "tuner-index-progress unsaved-edits write-queue-status"
         ),
-        "guard": "test_photo_looks_have_one_owner test_the_block_editors_have_one_caller",
+        "guard": "test_photo_looks_have_one_owner test_the_block_editors_have_one_caller the-write-line-has-one-writer",
     },
     "media": {
         "unit": "test_container_layout test_frames_of_a_video video-viewer",
