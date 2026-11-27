@@ -435,7 +435,7 @@ class Fields:
                 if why:
                     results[-1] = dict(metadata.empty(path, results[-1]["read_error"], (None, None)), unread=why)
                 else:
-                    logger.error("Unreadable metadata, its row kept as it was: %s (%s)", path, results[-1]["read_error"])
+                    logger.error("Unreadable metadata, an existing row is kept as it was: %s (%s)", path, results[-1]["read_error"])
         return results
 
 
