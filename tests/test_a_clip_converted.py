@@ -687,7 +687,8 @@ class TwoLibrariesHoldingTheFolder(AnOldClipInTheLibrary):
         result = self.convert(source)
         self.assertEqual(1, result.changed, result.message())
         target = self.assert_converted(source, photo_id, TITLE)
-        synced = sync.sync(self.other.library, apply=True, exiftool_path=EXIFTOOL, roots=[self.vl.pictures])
+        with field_values.opened(EXIFTOOL) as fields:
+            synced = sync.sync(self.other.library, apply=True, fields=fields, roots=[self.vl.pictures])
         self.assertTrue(synced.ok, synced.message())
         self.assertEqual([(there, paths.key(target))],
                          [(i, paths.key(path)) for i, path in self.other.rows("SELECT id, path FROM photos")],

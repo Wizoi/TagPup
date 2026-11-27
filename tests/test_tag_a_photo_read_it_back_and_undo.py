@@ -56,7 +56,7 @@ import test_stale_record_precondition as S  # noqa: E402
 from test_a_file_holds_what_exiftool_kept import ReadFilesCase, flip_a_picture_byte, rewritten  # noqa: E402
 from test_file_journal import EXIFTOOL, ExifToolSession, field_of, keywords_of, write_outside  # noqa: E402
 
-from tagpup.files import exiftool_session, names  # noqa: E402
+from tagpup.files import exiftool_session, field_values, names  # noqa: E402
 from tagpup.services import file_changes, photos as photo_actions, sync, tagging  # noqa: E402
 from tagpup.store import db, photos as store_photos  # noqa: E402
 
@@ -385,7 +385,8 @@ class TaggingAPhoto(ReadFilesCase):
         renamed = os.path.join(self.folder, "Quay.jpg")
         os.rename(a, renamed)   # another program renames it
 
-        result = sync.sync(self.library, folder=self.folder, apply=True, exiftool_path=EXIFTOOL)
+        with field_values.opened(EXIFTOOL) as fields:
+            result = sync.sync(self.library, folder=self.folder, apply=True, fields=fields)
 
         self.assertEqual([(photo_id, renamed)], self.rows("SELECT id, path FROM photos"), result.message())
 

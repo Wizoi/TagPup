@@ -878,7 +878,7 @@ def index(ctx, directories, force_reembed: bool, reset: bool, skip_faces: bool, 
 
                 # Save progress incrementally in batches of PHOTO_CHUNK
                 if len(batch_embeddings) >= PHOTO_CHUNK:
-                    _read_again(photo_index.conn, batch_metas, given, exiftool_path)
+                    _read_again(photo_index.conn, batch_metas, given, Library(db_path), settings)
                     photo_index.build_or_update(batch_embeddings, batch_metas, dim=len(batch_embeddings[0]))
                     _recorded(batch_metas, touched, handed)
 
@@ -916,7 +916,7 @@ def index(ctx, directories, force_reembed: bool, reset: bool, skip_faces: bool, 
         # Rebuild or update the FAISS index for the final batch
         if batch_embeddings:
             # Not reloaded: nothing below searches this index, and a reload reads every vector again.
-            _read_again(photo_index.conn, batch_metas, given, exiftool_path)
+            _read_again(photo_index.conn, batch_metas, given, Library(db_path), settings)
             photo_index.build_or_update(batch_embeddings, batch_metas, dim=len(batch_embeddings[0]))
             _recorded(batch_metas, touched, handed)
 
@@ -1225,7 +1225,7 @@ def _bake_after_index(library, exiftool_path, detector, folders, handed, stop_fi
     _say(baked.fact(), baked.said())
 
 
-def _read_again(conn, metas, given, exiftool_path):
+def _read_again(conn, metas, given, library, settings):
     """The fields of each photo of `metas` that was `given` its identity, read from the file again (refresh_rows.
     read_files, stamped before its own read), so its row is recorded as the file is after the write: the next index
     finds it current and reads nothing, and its vector and faces are kept. The batch read was up to 500 photos
@@ -1235,7 +1235,8 @@ def _read_again(conn, metas, given, exiftool_path):
     again = [meta["path"] for meta in metas if meta["path"] in given]
     if not again:
         return
-    records = refresh_rows.read_files(conn, again, exiftool_path)
+    with runtimes.fields(library, settings) as fields:
+        records = refresh_rows.read_files(conn, again, fields)
     for meta in metas:
         record = records.get(meta["path"])
         if record is not None and record["mtime"] is not None:

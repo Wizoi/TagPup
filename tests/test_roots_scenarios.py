@@ -40,6 +40,7 @@ from tagpup import runtime as runtimes  # noqa: E402
 from tagpup.core import paths  # noqa: E402
 from tagpup.core.library import Library  # noqa: E402
 from tagpup.core.result import Conflict, Result  # noqa: E402
+from tagpup.files import field_values  # noqa: E402
 from tagpup.jobs import indexing as indexing_jobs  # noqa: E402
 from tagpup.mcp import server as mcp_server  # noqa: E402
 from tagpup.services import libraries as library_actions  # noqa: E402
@@ -212,7 +213,8 @@ class TheOwnersFlows(Twins):
                 asked.append(sorted(folders_to_index))
                 return Result(attempted=len(folders_to_index), changed=len(folders_to_index))
 
-            result = sync.sync(side.library, apply=True, exiftool_path=EXIFTOOL, queue=queue, roots=[side.pictures])
+            with field_values.opened(EXIFTOOL) as fields:
+                result = sync.sync(side.library, apply=True, fields=fields, queue=queue, roots=[side.pictures])
             counts = {k: v for k, v in result.details["counts"].items() if isinstance(v, int)}
             return [counts, result.changed, result.ok, asked, result.details["changed"], self.seen(side)]
         found = self.both(flow)
@@ -225,7 +227,8 @@ class TheOwnersFlows(Twins):
 
     def test_a_sync_that_finds_nothing_wrong_reads_nothing(self):
         for side in (self.plain, self.rooted):
-            result = sync.sync(side.library, apply=False, exiftool_path=EXIFTOOL, roots=[side.pictures])
+            with field_values.opened(EXIFTOOL) as fields:
+                result = sync.sync(side.library, apply=False, fields=fields, roots=[side.pictures])
             self.assertEqual(0, result.details["counts"]["moved"], side.label)
             self.assertEqual(0, result.details["counts"]["changed"], side.label)
             self.assertEqual(0, result.details["counts"]["new"], side.label)
@@ -428,7 +431,8 @@ class WhenTheMachineMovesTheRoot(Twins):
             self.rooted.norm(sorted((r["path"], r["tags"], r["size"]) for r in at_the_old_place.values())),
             self.rooted.norm(sorted((r["path"], r["tags"], r["size"]) for r in at_the_new_place.values()),
                              base=os.path.dirname(self.moved)))
-        result = sync.sync(self.rooted.library, apply=False, exiftool_path=EXIFTOOL, roots=[self.moved])
+        with field_values.opened(EXIFTOOL) as fields:
+            result = sync.sync(self.rooted.library, apply=False, fields=fields, roots=[self.moved])
         counts = result.details["counts"]
         self.assertEqual((0, 0, 0), (counts["moved"], counts["changed"], counts["new"]))
         self.assertEqual(self.before, self.rooted.dump(), "a dry run at the new place wrote to the library")

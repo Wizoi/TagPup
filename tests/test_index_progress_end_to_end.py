@@ -508,7 +508,7 @@ class TheOwnerWatchesASyncsNewFoldersIndexedAndBaked(unittest.TestCase):
                 report(message, percent)
             return indexing.index_folder(library, each, stub, told, subfolders=False)
 
-        synced = sync.sync(library, apply=True, exiftool_path="exiftool", roots=[pictures],
+        synced = sync.sync(library, apply=True, roots=[pictures],
                            queue=lambda new: queue.start(new, index, together=True))
         self.assertTrue(synced.ok, synced.message())
         self.assertEqual(3, synced.details["queued"])

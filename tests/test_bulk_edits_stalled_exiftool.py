@@ -145,8 +145,8 @@ class TheIndexAndSyncReadAShareThatStopsAnswering(unittest.TestCase):
         self.assertEqual(1, len(starts), "one session for the reader's life")
 
     def test_syncs_pairing_read_waits_one_deadline_and_pairs_nothing(self):
-        with mock.patch.object(exiftool_session, "ExifToolSession", StalledSession):
-            by_original, by_identity = relink_photos.claims_of(self.photos)
+        with mock.patch.object(exiftool_session, "ExifToolSession", StalledSession), field_values.opened(None) as fields:
+            by_original, by_identity = relink_photos.claims_of(self.photos, fields)
         self.assertEqual(1, len(StalledSession.calls))
         self.assertEqual(({}, {}), (by_original, by_identity))
 
@@ -173,8 +173,8 @@ class AnExifToolThatWillNotStart(T.Bulk):
 
     def test_syncs_pairing_read_raises_rather_than_pairing_nothing(self):
         # Pairing nothing would leave a whole sync to remove the rows a DocumentID could have relinked.
-        with self.assertRaises(FileNotFoundError):
-            relink_photos.claims_of(self.photos)
+        with self.assertRaises(FileNotFoundError), field_values.opened(None) as fields:
+            relink_photos.claims_of(self.photos, fields)
 
     def test_smart_renames_read_raises_rather_than_reading_no_caption(self):
         with self.assertRaises(FileNotFoundError):

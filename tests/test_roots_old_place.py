@@ -24,6 +24,7 @@ import roots_library as rl  # noqa: E402
 
 from tagpup import config  # noqa: E402
 from tagpup.core import paths  # noqa: E402
+from tagpup.files import field_values  # noqa: E402
 from tagpup.files.exiftool_session import ExifToolSession  # noqa: E402
 from tagpup.services import libraries as library_actions  # noqa: E402
 from tagpup.services import indexing, photos, tagging  # noqa: E402
@@ -76,7 +77,8 @@ class AfterAMove(unittest.TestCase):
                         "the row's stamp is not the first-place file's")
 
     def nothing_to_refresh(self):
-        found = sync_service.sync(self.library, apply=False, exiftool_path=rl.EXIFTOOL, roots=(self.first,))
+        with field_values.opened(rl.EXIFTOOL) as fields:
+            found = sync_service.sync(self.library, apply=False, fields=fields, roots=(self.first,))
         self.assertEqual(0, found.details["counts"]["changed"], "a sync would read the rows from the files again")
 
     def test_roots_canonical_resolves_the_old_spelling_and_leaves_everything_else(self):

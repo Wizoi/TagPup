@@ -669,8 +669,8 @@ class Runtime:
             def queue(folders):
                 return self.index_queues.of(library).start(folders, index_folder(library, subfolders=False),
                                                            together=True)
-        return sync_service.sync(library, folder, apply, exiftool(library, settings), queue,
-                                 roots=settings.roots, ignored=settings.ignored)
+        with fields(library, settings) as opened:
+            return sync_service.sync(library, folder, apply, opened, queue, roots=settings.roots, ignored=settings.ignored)
 
     def include(self, library, folder):
         """Index a folder to review, with its subfolders, on this runtime's index queue

@@ -50,7 +50,7 @@ import numpy as np  # noqa: E402
 
 from tagpup.core import paths, validation  # noqa: E402
 from tagpup.core.library import Library  # noqa: E402
-from tagpup.files import bake  # noqa: E402
+from tagpup.files import bake, field_values  # noqa: E402
 from tagpup.files.exiftool_session import ExifToolSession  # noqa: E402
 from tagpup.services import baking, file_changes, maintenance, refresh_rows, sync, tagging  # noqa: E402
 from tagpup.services import journal as journal_service  # noqa: E402
@@ -137,7 +137,8 @@ def write_outside(path, values):
 def a_sync(case, library):
     """A caption written into the fourth photo by another program, then a sync: its row re-read."""
     write_outside(case.photo[4], {"XMP:Description": "Ferry at low tide"})
-    synced = sync.sync(library, apply=True, exiftool_path=EXIFTOOL)
+    with field_values.opened(EXIFTOOL) as fields:
+        synced = sync.sync(library, apply=True, fields=fields)
     return synced.details.get("change") if synced.changed else None
 
 
@@ -145,7 +146,8 @@ def a_sync_removal(case, library):
     """The seventh photo's file deleted by another program, then a sync of the whole library: its row removed with its
     named face, the journal's (#2151; a removal the owner clicks is not journaled, DECISIONS 2026-10-30)."""
     os.remove(case.photo[7])
-    synced = sync.sync(library, apply=True, exiftool_path=EXIFTOOL)
+    with field_values.opened(EXIFTOOL) as fields:
+        synced = sync.sync(library, apply=True, fields=fields)
     if not (synced.details.get("changed") or {}).get("removed"):
         return None
     return synced.details.get("change")
@@ -162,7 +164,8 @@ def a_refresh(case, library):
         ids = inspection.ids_of_stored(conn, [path])
         tags, _people, captions, raw, mtime, size, _doc = store_photos.row_as_recorded(conn, path)
         found = {path: {"mtime": mtime, "size": size, "tags": tags, "captions": captions, "raw_metadata": raw}}
-        records, to_write, _fields, _unreadable, identities = refresh_rows.reread(conn, ids, EXIFTOOL)
+        with field_values.opened(EXIFTOOL) as fields:
+            records, to_write, _differing, _unreadable, identities = refresh_rows.reread(conn, ids, fields)
     finally:
         conn.close()
 
@@ -560,7 +563,8 @@ class UndoAfterEveryLaterKind(unittest.TestCase):
         os.makedirs(os.path.join(self.folder, "Pier"))
         moved = os.path.join(self.folder, "Pier", named)
         os.rename(os.path.join(self.folder, named), moved)
-        synced = sync.sync(library, apply=True, exiftool_path=EXIFTOOL).details.get("change")
+        with field_values.opened(EXIFTOOL) as fields:
+            synced = sync.sync(library, apply=True, fields=fields).details.get("change")
         self.assertIsNotNone(synced, "the sync followed no move")
         renamed = photo_actions.smart_rename(library, [moved], "Pier", "{grouping} - {index}", EXIFTOOL)
         self.assertTrue(renamed.changed, renamed.refused)

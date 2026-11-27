@@ -92,7 +92,7 @@ import time
 
 from tagpup.core import paths, runs, validation
 from tagpup.core.result import SHARE_AWAY, Result
-from tagpup.files import images, shares
+from tagpup.files import field_values, images, shares
 from tagpup.services import maintenance, refresh_rows, relink_photos, settings
 from tagpup.services import job_runs as recorded_runs
 from tagpup.services import roots as roots_service
@@ -391,7 +391,7 @@ def _removable(conn, candidates, by_key, on_disk, walked):
     return sorted(removable)
 
 
-def _gone_again(conn, candidates, roots, library_folders, exiftool_path):
+def _gone_again(conn, candidates, roots, library_folders, fields):
     """The `candidates` [(photo_id, path)] -- rows the first walk of a whole sync would remove -- that a second walk of
     the whole library also looked for and did not find: not on disk, not paired with a new file as a move nor held
     back as a possible copy (_pair_moves, the one pairing), and its root confirmed there by this walk (_removable). A
@@ -404,7 +404,7 @@ def _gone_again(conn, candidates, roots, library_folders, exiftool_path):
     new = {key: stamp for key, stamp in on_disk.items() if key not in by_key}
     settled = set()
     if missing and new:
-        pairs, ambiguous_rows, _files = _pair_moves(conn, by_key, missing, new, exiftool_path)
+        pairs, ambiguous_rows, _files = _pair_moves(conn, by_key, missing, new, fields)
         settled = {paths.key(old) for old, _new in pairs} | {paths.key(path) for path in ambiguous_rows}
     still = {photo_id for photo_id, path, _m, _s in missing if paths.key(path) not in settled}
     return _removable(conn, [(photo_id, path) for photo_id, path in candidates if photo_id in still],
@@ -425,7 +425,7 @@ def _missing_elsewhere(conn, by_key, new):
     return found
 
 
-def _pair_moves(conn, by_key, missing, new, exiftool_path, read=True):
+def _pair_moves(conn, by_key, missing, new, fields, read=True):
     """(pairs [(old, new)], ambiguous rows [path], ambiguous files {key}) of the missing
     rows [(photo_id, path, mtime, size)] and the new files: by name, size and time first,
     reading nothing; then, for what that left and only when `read`, by the identity read
@@ -435,7 +435,7 @@ def _pair_moves(conn, by_key, missing, new, exiftool_path, read=True):
     left_rows = [path for _id, path, _m, _s in missing if paths.key(path) not in settled]
     left_files = sorted(path for key, (path, _m, _s) in new.items() if key not in settled)
     if read and left_rows and left_files:
-        lookup, by_identity = relink_photos.claims_of(left_files, exiftool_path)
+        lookup, by_identity = relink_photos.claims_of(left_files, fields)
         live = set(by_key) - {paths.key(path) for _id, path, _m, _s in missing}
         by_id, _unmatched = relink_photos.pair(left_rows, lookup, by_identity, store_photos.identities(conn), live)
         pairs += by_id
@@ -514,7 +514,7 @@ def _sort_new(new, by_key, stops, ignored, ambiguous_files, roots, library_folde
             {spelling: count for spelling, count in review.values()}, ignored_files, held_back, outside)
 
 
-def look(library, folder=None, exiftool_path=None, roots=(), ignored=()):
+def look(library, folder, fields, roots=(), ignored=()):
     """What differs between the library and its folders (or `folder`): a Plan (maintenance)
     whose `work` holds the edits and the folders of new files. Reads the rows, walks the
     roots and the folders the library holds photos in, and reads with ExifTool only the
@@ -568,7 +568,7 @@ def look(library, folder=None, exiftool_path=None, roots=(), ignored=()):
         elsewhere = _missing_elsewhere(conn, by_key, new) if folder is not None and new else []
         moves, ambiguous_rows, ambiguous_files = [], [], set()
         if (missing or elsewhere) and new:
-            pairs, ambiguous_rows, ambiguous_files = _pair_moves(conn, by_key, missing + elsewhere, new, exiftool_path)
+            pairs, ambiguous_rows, ambiguous_files = _pair_moves(conn, by_key, missing + elsewhere, new, fields)
             moves = relink_photos.moves_with_faces(conn, pairs)
         stamp_of = {paths.key(path): (mtime, size) for _id, path, mtime, size in missing + elsewhere}
         id_of = {paths.key(path): photo_id for photo_id, path, _m, _s in missing + elsewhere}
@@ -591,7 +591,7 @@ def look(library, folder=None, exiftool_path=None, roots=(), ignored=()):
             to_remove = _removable(conn, [(photo_id, path) for photo_id, path in missing
                                           if paths.key(path) not in held_rows], by_key, on_disk, walked)
             if to_remove:
-                to_remove = _gone_again(conn, to_remove, roots, library_folders, exiftool_path)
+                to_remove = _gone_again(conn, to_remove, roots, library_folders, fields)
         removing = {photo_id: (0, 0) for photo_id, _path in to_remove}
         removing.update(store_faces.counts_by_photo(conn, list(removing)) if removing else {})
 
@@ -600,7 +600,7 @@ def look(library, folder=None, exiftool_path=None, roots=(), ignored=()):
         for path in changed:
             tags, _people, captions, raw, mtime, size, _doc = store_photos.row_as_recorded(conn, path)
             found[path] = {"mtime": mtime, "size": size, "tags": tags, "captions": captions, "raw_metadata": raw}
-        records, to_write, fields, unreadable, identities = refresh_rows.reread(conn, changed, exiftool_path)
+        records, to_write, differing, unreadable, identities = refresh_rows.reread(conn, changed, fields)
     finally:
         conn.close()
 
@@ -639,7 +639,7 @@ def look(library, folder=None, exiftool_path=None, roots=(), ignored=()):
                 "owed_no_fingerprint": owed_by[photo_fingerprints.NO_FINGERPRINT],
                 "owed_folders": len({paths.key(os.path.dirname(path)) for path in to_check}),
                 "owed_held_back": len({paths.key(os.path.dirname(path)) for path in to_check} & held),
-                "fields": dict(fields.most_common()), "unreadable": len(unreadable),
+                "fields": dict(differing.most_common()), "unreadable": len(unreadable),
                 "moved": len(moves), "moved_faces": sum(m["faces"] for m in moves),
                 "moved_named": sum(m["named"] for m in moves), "moved_changed": moved_changed,
                 "occupied": len(occupied), "ambiguous_rows": len(ambiguous_rows),
@@ -758,9 +758,9 @@ def could_not_look(result):
 
 
 @roots_service.canonical_args("folder")
-def sync(library, folder=None, apply=False, exiftool_path=None, queue=None, roots=(), ignored=()):
+def sync(library, folder=None, apply=False, fields=None, queue=None, roots=(), ignored=()):
     """Bring `library` in step with its folders (or with `folder`), reading changed files
-    with the ExifTool at `exiftool_path`; a dry run unless `apply`. A Result on the
+    through `fields` (field_values.opened; None, one of its own over the ExifTool on PATH); a dry run unless `apply`. A Result on the
     maintenance scaffold: `changed` is the rows the change changed (details["changed"]:
     re-read "from_files", "relinked", "removed", read from the writes, and "removed_faces", "removed_named": what the
     removed rows held as the plan read them, less any row skipped); details["counts"] what was
@@ -791,8 +791,9 @@ def sync(library, folder=None, apply=False, exiftool_path=None, queue=None, root
         try:
             # One map for the whole pass: a place moved meanwhile (TagTuner's Roots) changes nothing
             # until it ends, and another process changing the library's roots stops it, cleanly.
-            with roots_service.pinned(library):
-                result = _sync(library, folder, apply, exiftool_path, queue, roots, ignored, started)
+            with roots_service.pinned(library), (field_values.opened(None) if fields is None
+                                                 else contextlib.nullcontext(fields)) as fields:
+                result = _sync(library, folder, apply, fields, queue, roots, ignored, started)
         except (roots_service.RootsChanged, roots_service.Unplaced) as stop:
             result = _not_run(stop, apply)
         except Exception as e:
@@ -868,11 +869,11 @@ def not_run(why, apply, waited=False):
 GONE_BEFORE_QUEUED = "gone or away before it was queued"
 
 
-def _sync(library, folder, apply, exiftool_path, queue, roots, ignored, started):
+def _sync(library, folder, apply, fields, queue, roots, ignored, started):
     held = {}
 
     def plan(found_library):
-        held["plan"] = look(found_library, folder, exiftool_path, roots, ignored)
+        held["plan"] = look(found_library, folder, fields, roots, ignored)
         return held["plan"]
 
     result = maintenance.run(library, OPERATION, plan, lambda planned: planned.work["edits"], apply=apply, kinds=KINDS)

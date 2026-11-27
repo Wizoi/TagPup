@@ -160,7 +160,7 @@ class SharedFolderTwoLibraries(unittest.TestCase):
         with mock.patch("tagpup.files.field_values.Fields.whole", autospec=True,
                         side_effect=reads.whole), \
                 mock.patch("tagpup.files.exiftool_session.ExifToolSession", side_effect=reads.session):
-            return sync.sync(library, apply=True, exiftool_path="exiftool", **kwargs)
+            return sync.sync(library, apply=True, **kwargs)
 
     def test_a_write_through_one_library_never_reaches_the_others_tree_or_rows(self):
         meet_photo = self.photo(self.meet, "meet_01.jpg")

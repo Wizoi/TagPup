@@ -453,7 +453,8 @@ class TheIndexWritesTheBake(unittest.TestCase):
 
     def looked(self):
         """What a dry run of sync finds: (photos owed only their bake, folders owed, in step)."""
-        found = sync.sync(self.library, apply=False, exiftool_path=EXIFTOOL)
+        with field_values.opened(EXIFTOOL) as fields:
+            found = sync.sync(self.library, apply=False, fields=fields)
         counts = found.details["counts"]
         return counts.get("owed_no_fingerprint"), counts["owed_folders"], found.details["in_step"]
 
@@ -489,7 +490,8 @@ class TheIndexWritesTheBake(unittest.TestCase):
         done = processes.run([EXIFTOOL, "-overwrite_original", "-XMP-dc:Subject+=Harbour/Pier", a],
                              capture_output=True, text=True, timeout=60)
         self.assertEqual(0, done.returncode, done.stderr)
-        self.assertEqual(1, sync.sync(self.library, apply=True, exiftool_path=EXIFTOOL).details["changed"]["from_files"])
+        with field_values.opened(EXIFTOOL) as fields:
+            self.assertEqual(1, sync.sync(self.library, apply=True, fields=fields).details["changed"]["from_files"])
         self.suggest_keeps_a_vector(a)
         stamp = os.stat(a).st_mtime_ns
         said = self.index_with_no_model()

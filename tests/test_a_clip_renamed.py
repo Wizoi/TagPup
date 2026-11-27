@@ -169,7 +169,8 @@ class AClipRenamed(tagged.ALibraryHoldingAClip):
         reply = self.post("photo/smart-rename", {"path": self.clip_path, "grouping": "Harbour"})
         self.assertEqual(200, reply.status_code, reply.get_json())
         new_path = page_writes.saved(reply.get_json())["new_path"]
-        lookup, by_identity = relink_photos.claims_of([new_path], EXIFTOOL)
+        with field_values.opened(EXIFTOOL) as fields:
+            lookup, by_identity = relink_photos.claims_of([new_path], fields)
         pairs, unmatched = relink_photos.pair([paths.stored(self.clip_path)], lookup, by_identity, {}, set())
         self.assertEqual(([(paths.key(self.clip_path), paths.key(new_path))], []),
                          ([(paths.key(old), paths.key(new)) for old, new in pairs], unmatched))

@@ -268,7 +268,8 @@ class AClipInTheLibrary(unittest.TestCase):
         photo(os.path.join(self.day_two, "sail.jpg"), (30, 30, 200))
 
     def sync(self, library=None, apply=True):
-        return sync.sync(Library(library or self.library), apply=apply, exiftool_path=own_home.installed_exiftool())
+        with field_values.opened(own_home.installed_exiftool()) as fields:
+            return sync.sync(Library(library or self.library), apply=apply, fields=fields)
 
     def test_a_clip_moved_to_another_folder_or_renamed_in_its_own_is_followed_by_sync(self):
         moved, renamed = clip(self.folder, "harbour.mp4"), clip(self.folder, "jetty.mov")

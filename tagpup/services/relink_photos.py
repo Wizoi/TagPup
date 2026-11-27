@@ -16,7 +16,7 @@ folder-wide command that used this on its own is gone (owner, 2026-10-10).
 import os
 
 from tagpup.core import fields as core_fields, paths
-from tagpup.files import field_values, identity, names
+from tagpup.files import identity, names
 from tagpup.store import db, journal
 from tagpup.store import faces as store_faces
 from tagpup.store import photos as store_photos
@@ -29,16 +29,15 @@ def stem_of(path):
     return os.path.splitext(os.path.basename(str(path)))[0].strip().lower()
 
 
-def _read_files(found, fields, exiftool_path):
-    """ExifTool's record of each photo in `found` it read, for `fields`, through the one batch reader
+def _read_files(found, wanted, fields):
+    """ExifTool's record of each photo in `found` it read, for `wanted`, through the one batch reader
     (field_values.Fields.read). A photo it could not read, or did not answer for, is not among them. An ExifTool that
     will not start is raised, never read as files holding no claim: pairing nothing would leave a whole sync to remove
     rows a DocumentID could relink. Only reads."""
     if not found:
         return []
     records = {}
-    with field_values.opened(exiftool_path) as reader:
-        reader.read(found, [], also=list(fields), records=records)
+    fields.read(found, [], also=list(wanted), records=records)
     return list(records.values())
 
 
@@ -73,11 +72,11 @@ def _by_original(rows):
     return {k: v for k, v in by_original.items() if v}
 
 
-def claims_of(files, exiftool_path=None):
+def claims_of(files, fields):
     """(preserved names, identities) of `files`, as preserved_names and identities give
     them for a folder, read in one pass: what sync matches its missing rows against among
     the files it found new (tagpup.services.sync). Only reads."""
-    rows = _read_files(list(files), MATCHED_BY, exiftool_path)
+    rows = _read_files(list(files), MATCHED_BY, fields)
     return _by_original(rows), _by_identity(rows)
 
 

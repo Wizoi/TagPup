@@ -111,7 +111,7 @@ class SyncTestCase(unittest.TestCase):
         with mock.patch("tagpup.files.field_values.Fields.whole", autospec=True,
                         side_effect=self.reads.whole), \
                 mock.patch("tagpup.files.exiftool_session.ExifToolSession", side_effect=self.reads.session):
-            return sync.sync(self.library, folder=folder, apply=apply, exiftool_path="exiftool", queue=queue,
+            return sync.sync(self.library, folder=folder, apply=apply, queue=queue,
                              roots=roots, ignored=ignored, **more)
 
     def rows(self):
@@ -448,7 +448,7 @@ class ChangedFiles(SyncTestCase):
         with mock.patch("tagpup.files.field_values.Fields.whole", autospec=True,
                         side_effect=read_then_the_app_saves), \
                 mock.patch("tagpup.files.exiftool_session.ExifToolSession", side_effect=reads.session):
-            result = sync.sync(self.library, apply=True, exiftool_path="exiftool")
+            result = sync.sync(self.library, apply=True)
         self.assertEqual(sorted([saved, other]), sorted(reads.read))
         rows = self.rows()
         self.assertEqual((THEN + 120, ["Activity/Rowing"]), (rows[saved][1], rows[saved][3]),
@@ -1263,8 +1263,7 @@ class MissingFiles(SyncTestCase):
 
     def test_two_syncs_at_once_remove_a_row_once_and_the_second_skips_it(self):
         # The stand-in ExifTool of the outer run answers the inner one too.
-        first, _ids = self.taken_meanwhile(lambda: sync.sync(self.library, apply=True, exiftool_path="exiftool",
-                                                             roots=[self.pictures]))
+        first, _ids = self.taken_meanwhile(lambda: sync.sync(self.library, apply=True, roots=[self.pictures]))
         self.assertEqual((1, 2, 1), (first.details["changed"]["removed"], first.details["changed"]["removed_faces"],
                                      first.details["changed"]["removed_named"]))
 
