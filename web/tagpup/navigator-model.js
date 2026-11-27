@@ -92,7 +92,7 @@ function navFolderRow(node, level, expanded) {
         title: `${node.path}\n${navPlural(node.direct, 'photo', 'photos')} in it, ${navPlural(node.recursive, 'photo', 'photos')} with its subfolders${said ? `\n${said.line}` : ''}`,
         aria: `${node.name}, ${navPlural(node.recursive, 'photo', 'photos')} with its subfolders${said ? `, ${said.line}` : ''}`,
         hint: said ? said.word : '', expandable: node.children.length > 0, expanded: open && node.children.length > 0,
-        spec: { kind: 'folder', value: node.path, recursive: true },
+        spec: { kind: 'folder', value: node.path, recursive: true }, queue: node.queue,
     };
 }
 

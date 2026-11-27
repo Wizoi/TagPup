@@ -2,7 +2,8 @@
 // folder's file list and the library's navigator, and a switch between them; the navigator is four sections as
 // tabs -- Folders, Keywords, People, Dates -- each a tree or a list of what the library holds with the photos
 // counted, a filter box, and nothing drawn that is not on screen. A click opens the library view of the item
-// (library-view.js openLibraryView), so the address names the source and Back, Forward and a bookmark work, and the
+// (library-view.js openLibraryView) -- a folder the index queue holds that holds no indexed photo yet opens in Organize,
+// read from the disk (openFromDisk) -- so the address names the source and Back, Forward and a bookmark work, and the
 // item that is open is the one highlighted, in the tab it belongs to.
 //
 // Each section is read from GET /api/library/navigator?section= when its tab is first opened, and again -- the counts
@@ -37,8 +38,9 @@ import { buildElement } from './common/dom.js';
 import { upper } from './hooks.js';
 import { state } from './state.js';
 import {
-    sidebarPaneFolder, sidebarPaneLibrary, sidebarSwitch, sidebarTabFolder, sidebarTabLibrary
+    folderPathInput, sidebarPaneFolder, sidebarPaneLibrary, sidebarSwitch, sidebarTabFolder, sidebarTabLibrary
 } from './elements.js';
+import { openChosenFolder } from './folder.js';
 import { openLibraryView } from './library-view.js';
 import { DEFAULT_ORDER, MAX_MEMBERS, addressTooLong } from './library-source.js';
 import {
@@ -385,6 +387,11 @@ function chooseRow(name, id, { ctrl = false, shift = false } = {}) {
     const row = sec.rows.find(each => each.id === id);
     if (!tree || !row || !tree.children.has(id)) return;
     sec.currentId = id;
+    if (!ctrl && !shift && row.queue && row.count === 0) {
+        paintSection(name);
+        openFromDisk(row.spec.value);
+        return;
+    }
     const followed = state.nav.followed;
     const current = selectedRows(name, sec.index, followed).rows;
     let next;
@@ -433,6 +440,23 @@ function chooseRow(name, id, { ctrl = false, shift = false } = {}) {
     sec.notice = '';
     paintSection(name);
     openLibraryView(spec);
+}
+
+/**
+ * A folder the library's index queue holds that holds no indexed photo yet, clicked: its view would hold nothing until its
+ * index reaches its photos, so it is opened in Organize, read from the disk (owner, 2026-11-26) -- a view open closed onto
+ * it as a folder of "Folders to Organize" is (library-moves.js openInOrganize, which says in the strip when the folder
+ * cannot be read), else opened as a folder chosen in the folder box is. The sidebar goes to Organize's pane, as it does
+ * when a view closes onto a folder (#712).
+ */
+function openFromDisk(folder) {
+    if (state.library) {
+        upper.openInOrganize(folder);
+        return;
+    }
+    folderPathInput.value = folder;
+    choosePane('folder');
+    openChosenFolder();
 }
 
 /**

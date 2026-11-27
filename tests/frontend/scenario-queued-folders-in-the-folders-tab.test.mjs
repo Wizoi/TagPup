@@ -6,7 +6,9 @@
  * (web/tagpup/suggestions.js heardIndexes, the 1 s ask of GET /api/folder/index-active): a change of what the queue holds
  * reads the tab again, and while a folder is being indexed so does every NAV_QUEUED_MS; the tab keeps no clock of its own
  * (tests/frontend/the-index-queue-has-one-follower.test.mjs). Around it: two folders added and one cancelled, a folder
- * queued elsewhere while the page was not asking, the page hidden for a minute, a library switch. The tab's replies are
+ * queued elsewhere while the page was not asking, the page hidden for a minute, a library switch. A click on a marked
+ * folder that holds no indexed photo yet opens it in Organize, read from the disk (owner, 2026-11-26); one that holds some
+ * opens its view as any folder's. The tab's replies are
  * the server's own, tests/fixtures/queued_folders.json (tests/test_queued_folders_in_the_folders_tab.py holds the server to
  * them); every name is fictional.
  */
@@ -227,8 +229,31 @@ describe("a folder just added, in the Folders tab", () => {
     assert.deepEqual(ctx.rows("folders").map((row) => ctx.said(row)), [[`queued \u00b7 ${PICTURES}\\Season\\Relay Day`, "0"]]);
   });
 
-  test("a click on a queued folder opens its view as any folder's", async (t) => {
+  test("a click on a queued folder with no photo indexed yet opens it in Organize, read from the disk, not its empty view", async (t) => {
     const ctx = await openTab(t, () => "queued");
+    const views = ctx.idsAsked.length;
+    click(ctx.window, ctx.relay());
+    await ctx.settle();
+    assert.equal(ctx.idsAsked.length, views, "its library view, which holds nothing yet, was opened");
+    assert.equal(ctx.state.library, null, "the view open was not closed onto the folder");
+    assert.equal(ctx.state.scannedFolder, RELAY_DAY, "the folder was not opened in Organize");
+    assert.ok(ctx.server.urls().some((url) => url.includes("/api/folder/scan") && url.includes(encodeURIComponent(RELAY_DAY))),
+      "the folder was not read from the disk");
+  });
+
+  test("from Organize, with no view open, a click on it opens it there too", async (t) => {
+    const ctx = await pageAt(t, () => "queued", "");
+    await ctx.showLibraryPane();
+    click(ctx.window, ctx.rowByLabel("folders", "Season").querySelector(".nav-twisty"));
+    await ctx.settle(20);
+    click(ctx.window, ctx.relay());
+    await ctx.settle();
+    assert.equal(ctx.idsAsked.length, 0, "a library view was opened");
+    assert.equal(ctx.state.scannedFolder, RELAY_DAY);
+  });
+
+  test("a folder being indexed that holds photos already opens its view as any folder's", async (t) => {
+    const ctx = await openTab(t, () => "indexing");
     click(ctx.window, ctx.relay());
     await ctx.settle();
     assert.match(ctx.idsAsked.at(-1), /kind=folder&folder=D%3A%5CPictures%5CSeason%5CRelay%20Day&recursive=1$/);
