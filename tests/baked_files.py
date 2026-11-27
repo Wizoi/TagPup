@@ -34,7 +34,9 @@ def face_vector(seed):
 
 
 def area(n):
-    return (0.2 + 0.1 * n, 0.4, 0.125, 0.25)
+    """Face n's Area (X, Y, W, H; X and Y its centre), every one inside the picture, as bake.parse takes a bake: rows of
+    8 faces, a row 0.1 below the one before (a bake of 40 faces, corpus.extended_xmp's, is five rows)."""
+    return (0.2 + 0.1 * (n % 8), 0.4 + 0.1 * (n // 8), 0.125, 0.25)
 
 
 def baked(photo_vector, faces, applied=(4000, 3000), *, photo_model=PHOTO_MODEL, face_model=FACE_MODEL,

@@ -338,10 +338,10 @@ class AFilesFieldsReadAndWritten(test_file_journal.FilesCase):
                                  {field: fields.field_values(record["raw_metadata"].get(fields.read_key(field)))
                                   for field in wanted if field in fields.METADATA_FIELDS})
                 if name == "extended_xmp":
-                    # The bake read is the bake written (its values as a write of it sets them; bake.parse would
-                    # refuse it: baked_files.area puts 31 of its 40 faces past the picture's edge).
+                    # The bake read is the bake written (its values as a write of it sets them), one an index takes.
                     self.assertEqual(baked_files.values_of(baked_files.record(faces=40)),
                                      baked_files.values_of(record["baked"]))
+                    self.assertEqual(40, len(bake.parse(record["baked"]).faces))
         for kind in sorted({format_of(path) for path in copies}):
             batch = [path for path in copies if format_of(path) == kind]
             with self.subTest("S1.3", format=kind):
