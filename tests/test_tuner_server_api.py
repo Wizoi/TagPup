@@ -95,9 +95,13 @@ class TunerAPITestBase(unittest.TestCase):
         return self.runtime.index_queues.of(Library(self.TEST_DB))
 
     def plant_status(self, folder, **status):
-        """Say a folder has got somewhere -- running, say -- without indexing it."""
+        """Say a folder has got somewhere -- running, say -- without indexing it: a running one is the run under way, as
+        the worker takes a job (IndexQueue.run_pending)."""
         from tagpup.core import paths
-        self.index_queue()._statuses[paths.key(folder)] = dict(status, folder=folder)
+        queue = self.index_queue()
+        queue._statuses[paths.key(folder)] = dict(status, folder=folder)
+        if status.get("status") == "running":
+            queue._current_folders = [folder]
 
     def wait_until_idle(self, timeout=20.0):
         """Until nothing is being indexed or waiting. A test that stands in for the CLI
