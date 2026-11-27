@@ -26,7 +26,6 @@ Everything below holds for every task; the brief does not repeat it.
   names, and a reason to build one elsewhere goes in your report as a question, not into the branch.
 
 ## How you edit
-- Read CLAUDE.md and the part of docs/ARCHITECTURE.md the task touches first.
 - Edit with a script through `tools/patch.py` (`from patch import Patch`), written with the Write tool (never a
   heredoc: CLAUDE.md) and run with the interpreter. One script per concern: patch, lint, test.
 - New code goes in the layer ARCHITECTURE.md gives it; `tests/test_layers.py` says what
@@ -39,7 +38,8 @@ Everything below holds for every task; the brief does not repeat it.
 - docs/findings.md and docs/DECISIONS.md are refused whole and by slice: `tools/add_findings.py --open`, or Grep a number.
 - Search with Grep and its `head_limit`, not `grep -rn` or `sed -n` through Bash; docs/ARCHITECTURE.md by its section.
 - Test and lint output through `tail -n 40`. No Read after an Edit or a patch: it failed loudly or it holds.
-- Commit what you have by about 175k of context; at 250k the context hook says report.
+- Read what the brief names, your cut of the plan and the ARCHITECTURE.md section it touches, then write (retro
+  2026-11-26). Commit at your first green test and by about 175k of context; at 250k the context hook says report.
 
 ## Before you build: how it fails
 Answer each of these in the design, not after a review asks. Most review rounds were one

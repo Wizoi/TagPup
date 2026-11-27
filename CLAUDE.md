@@ -107,8 +107,7 @@ shape.
 before touching either. Adjusting a threshold to make two lists agree hides the fact
 that they were different lists.
 
-**The second fix for one symptom is not a fix**: ask which single place should own it, and name the test that fails on a
-second reader or writer (`add_findings` refuses a third fix without it). **A decision on where a value is written lists its readers first.**
+**The second fix for one symptom is not a fix** (`add_findings` refuses a third without its guard, #3344); **a decision on where a value is written lists its readers first.**
 
 **Watch an OS-level symptom before fixing it** (a window, a port held, a file that will not delete): run
 `tools/watch_processes.ps1` while it happens and read which process did it.
@@ -156,10 +155,9 @@ domain and which files are its, plus what is particular to the task. Commit befo
 
 ## Keeping the project small
 
-The feature freeze (2026-10-09) is lifted (2026-10-16): the five domains meet the seven conditions of health, and each
-keeps them by its owner's review of every change ([docs/OWNERS.md](docs/OWNERS.md), "Every owner's standing goal and
-checklist"; DECISIONS 2026-10-15 and 2026-10-16). The seven: no reach-ins, no rule written twice, no hidden coupling, no
-concept that could collapse, no branch without an instance, scenario tests owned and mapped, no open `data`/`wrong` finding.
+Each domain keeps the seven conditions of health by its owner's review of every change ([docs/OWNERS.md](docs/OWNERS.md)):
+no reach-ins, no rule written twice, no hidden coupling, no concept that could collapse, no branch without an instance,
+scenario tests owned and mapped, no open `data`/`wrong` finding.
 A feature is taken one at a time, its live count in the brief, planned by the owners of the domains it touches (a sweep
 first, the single place that owns each rule named), built by one worker who checks its diff against the seven conditions,
 reviewed once by each owner: it adds no debt, or it is refused.
