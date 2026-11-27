@@ -23,6 +23,7 @@ import roots_library as rl  # noqa: E402
 
 from tagpup import config  # noqa: E402
 from tagpup.core import machine, paths  # noqa: E402
+from tagpup.files import field_values  # noqa: E402
 from tagpup.store import db, faces, folders, inspection, journal  # noqa: E402
 from tagpup.store import added_folders, file_journal  # noqa: E402
 from tagpup.store import photos as store_photos  # noqa: E402
@@ -44,8 +45,9 @@ class TwoLibraries(unittest.TestCase):
         #: The journal of files, made before anything was adopted, with native paths.
         cls.changes = {}
         if rl.EXIFTOOL:
-            for side in (cls.plain, cls.rooted):
-                cls.changes[side.label] = side.tagged_before().details["change"]
+            with field_values.opened(rl.EXIFTOOL) as fields:
+                for side in (cls.plain, cls.rooted):
+                    cls.changes[side.label] = side.tagged_before(fields).details["change"]
         result = cls.rooted.adopt()
         assert result.ok and not result.refused, result.message()
 

@@ -33,7 +33,6 @@ from tagpup.services import settings as library_settings  # noqa: E402
 from tagpup.services import tagging  # noqa: E402
 from tagpup.store import added_folders, db, derived, suggestions  # noqa: E402
 from tagpup.store import roots as store_roots  # noqa: E402
-from tagpup.files import field_values  # noqa: E402
 
 EXIFTOOL = own_home.installed_exiftool()
 
@@ -195,10 +194,11 @@ class Side:
 
     # ---- What was done before anything was adopted -----------------------------------------
 
-    def tagged_before(self):
+    def tagged_before(self, fields):
         """A journaled change of photo files made before any adoption: its change_files rows
-        hold native paths, as every library's did. Needs ExifTool."""
-        return tagging.change_tags(self.library, self.real[:2], ["Harbour"], [], field_values.opened(EXIFTOOL))
+        hold native paths, as every library's did. Needs ExifTool: `fields`, the caller's, opened over EXIFTOOL (the
+        caller's, so that a test whose Side never tags starts none: tests/test_every_test_file_has_its_size.py)."""
+        return tagging.change_tags(self.library, self.real[:2], ["Harbour"], [], fields)
 
     # ---- Adopting ----------------------------------------------------------------------------
 

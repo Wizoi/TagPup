@@ -73,8 +73,9 @@ class Twins(unittest.TestCase):
         self.plain = rl.Side(self.home, "plain", real=2, bulk=15, outside=1)
         self.rooted = rl.Side(self.home, "rooted", real=2, bulk=15, outside=1)
         if EXIFTOOL:
-            for side in (self.plain, self.rooted):
-                side.tagged_before()
+            with field_values.opened(EXIFTOOL) as fields:
+                for side in (self.plain, self.rooted):
+                    side.tagged_before(fields)
         adopted = self.rooted.adopt()
         self.assertTrue(adopted.ok and not adopted.refused, adopted.message())
         self.assertEqual(1, len(self.rooted.library_roots()))

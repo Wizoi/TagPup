@@ -331,7 +331,8 @@ class AnUndoOfAnEarlierChange(unittest.TestCase):
     def test_a_change_recorded_before_the_adoption_is_undone_at_the_first_place(self):       # #484
         home = own_home.for_test(self, prefix="roots_undo_")
         side = rl.Side(home, LIBRARY, real=2, bulk=0, outside=0)
-        before = side.tagged_before()
+        with field_values.opened(rl.EXIFTOOL) as fields:
+            before = side.tagged_before(fields)
         self.assertEqual(2, before.changed, before.message())
         self.assertIsNone(side.adopt().refused)
         first = os.path.join(home.root, "Copy", "Pictures")
