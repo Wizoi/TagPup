@@ -29,7 +29,7 @@ import { setStatus } from './status.js';
 import { photosWritten } from './cache.js';
 import { askChoice, leavePhotoThen, photoRenamed, queuePhotoWrite, redrawIfShowing } from './edits.js';
 import { readMoved, takeWritten } from './common/photo-write.js';
-import { photosWord, renderWriteQueue, whereWritten } from './write-queue.js';
+import { markBackInPage, photosWord, renderWriteQueue, whereWritten } from './write-queue.js';
 import { namesAPerson, normalizeTag, updatePeopleDatalist, updateTagsDatalist } from './tags.js';
 import { offerWrites } from './stale.js';
 
@@ -420,13 +420,17 @@ async function sendChunk(entry) {
             data = { success: false, error: err.message };
         }
         if (drops === state.pending.drops) {
-            // Refused again after a read, it is a failure (takeReply), and its Retry reads them again.
+            // Refused again after a read, it is a failure (takeReply), and its Retry reads them again. Refused, nothing was
+            // written: while they are read again its files are this page's, until they are given back (write-queue.js).
             let found;
+            markBackInPage(entry, true);
             try {
                 found = await readMoved(data, chunk);
             } catch (err) {
                 return takeReply(chunk, { success: false, error: `photos moved since they were read, and ${err.message}` }, entry,
                     drops !== state.pending.drops);
+            } finally {
+                markBackInPage(entry, false);
             }
             if (found) return followMoved(chunk, found, data, entry, drops);
         }

@@ -88,9 +88,10 @@ export function markEntry(entry, status) {
 }
 
 /**
- * A save under way refused as changed on disk is read again and sent once more (photo-write.js postOrSendAgain): from the
- * refusal until the second send is answered nothing of it is written, and it is waiting in this page (`on`), its row
- * saying so; then it is under way again until it is marked done or failed.
+ * A write under way refused as changed on disk, nothing written, is read again to be sent once more: a save, until its
+ * second send is answered (photo-write.js postOrSendAgain), and a tag chunk naming a photo by id that is no longer at its
+ * path, until the read again gives its files back (pending.js sendChunk, readMoved). Meanwhile it is waiting in this page
+ * (`on`), its row saying so; then it is under way again until it is marked done or failed.
  */
 export function markBackInPage(entry, on) {
     entry.backInPage = on;

@@ -10,12 +10,15 @@
  * (Escape): Keep writing opens the folder and writes them in the background, every scan kept of the folder left
  * following the writes; another folder opened before they are sent does not ask again; rapid switches while it asks give
  * one question, its answer taking the folder first asked about; a write refused as changed on disk while kept writing is
- * read again and sent once more, and one that fails waits for Retry in the list, saying it is lost if the page goes.
+ * read again and sent once more, and one that fails waits for Retry in the list, saying it is lost if the page goes. A
+ * write refused because a photo it names by id was renamed elsewhere is the page's while that photo is read again: the
+ * line says it waits, and closing the tab asks.
  * Another library is a new page, which would end the writes: it offers Stay first, and Discard them; one kept writing
  * is asked about there too. The phone's page has its own write line (mobile-edit.js) and does not share pending.js.
  *
  * The server's tag writes (photos/write, op `tags`) and saves (op `set`) are held until the test answers them, oldest
- * first, as the real entry point answers (harness.mjs tagFiles, taggedAs, saved).
+ * first, as the real entry point answers (harness.mjs tagFiles, taggedAs, saved); a photo read again by its id
+ * (/api/library/photo) waits in `reads` the same.
  */
 import { test, describe, beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";
@@ -34,10 +37,14 @@ const pathOf = (i) => `${FOLDER}\\IMG_${String(i).padStart(4, "0")}.JPG`;
 const RECORDS = Array.from({ length: 50 }, (_, i) => photoRecord({ filename: `IMG_${String(i).padStart(4, "0")}.JPG`, path: pathOf(i), tags: [] }));
 const otherOf = (folder) => Array.from({ length: 3 }, (_, i) => photoRecord({ filename: `DSC_${i}.JPG`, path: `${folder}\\DSC_${i}.JPG`, tags: [] }));
 
-/** FOLDER's 50 photos all selected, on library alpha; tag writes and saves wait in `held` and `saves` for an answer. */
-async function taggingAFolder(t) {
+/**
+ * FOLDER's 50 photos all selected, on library alpha; tag writes, saves and reads by id wait in `held`, `saves` and `reads`
+ * for an answer. `ids` gives a photo the id its scan names it by (a clip's).
+ */
+async function taggingAFolder(t, { ids = {} } = {}) {
   const held = [];
   const saves = [];
+  const reads = [];
   const files = tagFiles(RECORDS);
   const server = new FakeServer()
     .on("/api/tags", [])
@@ -47,8 +54,9 @@ async function taggingAFolder(t) {
     .on("/api/folder/index-status", { status: "completed", percent: 100, message: "Ready" })
     .on("/api/folder/scan", (url) => {
       const asked = new URL(url, "http://localhost:8090/").searchParams.get("path");
-      return asked === FOLDER ? RECORDS.map((r) => ({ ...r, tags: [] })) : otherOf(asked);
+      return asked === FOLDER ? RECORDS.map((r) => ({ ...r, tags: [], ...(ids[r.path] ? { id: ids[r.path] } : {}) })) : otherOf(asked);
     })
+    .on("/api/library/photo", () => new Promise((resolve) => reads.push((photo) => resolve({ photo }))))
     .on("/api/photo-faces", { faces: [], total: 0, unmatched: 0 })
     .on(TAGS, (url, body) => new Promise((resolve) => held.push({ resolve, body })))
     .on(SAVE, (url, body) => new Promise((resolve) => saves.push(() => resolve(saved()(url, body)))))
@@ -59,7 +67,7 @@ async function taggingAFolder(t) {
   await openFolder(ctx, FOLDER);
   ctx.document.getElementById("btn-select-all-thumbnails").click();
   await flush(ctx.window, 4);
-  return Object.assign(ctx, { held, saves, files, state: pageExports(ctx.window, "web/tagpup/state.js").state });
+  return Object.assign(ctx, { held, saves, reads, files, state: pageExports(ctx.window, "web/tagpup/state.js").state });
 }
 
 async function addTags(ctx, text) {
@@ -244,6 +252,25 @@ describe("opening another folder with changes waiting", () => {
     await answer(ctx);
     assert.equal(waiting(ctx), 0);
     assert.equal(line(ctx), "");
+  });
+
+  test("a photo named by id renamed elsewhere: while it is read again the write is the page's, and closing the tab asks", async (t) => {
+    const renamed = `${FOLDER}\\IMG_0003 Harbour.JPG`;
+    const ctx = await taggingAFolder(t, { ids: { [pathOf(3)]: 503 } });
+    await addTags(ctx, "Events/Regatta");
+    await answer(ctx, taggedAs("renamed_since"));
+    assert.equal(ctx.reads.length, 1, "the photo named by id was not read again");
+    assert.equal(line(ctx), "50 photos waiting in this page: stay until they are sent", "a write refused was called sent");
+    assert.equal(leaving(ctx), true, "closing the tab while the refused write was read again asked nothing: it was lost");
+    ctx.reads.shift()({ ...RECORDS[3], id: 503, path: renamed, filename: "IMG_0003 Harbour.JPG", tags: [] });
+    await flush(ctx.window, 8);
+    assert.equal(writes(ctx).length, 2, "the refused write was not sent once more");
+    assert.ok(Object.keys(writes(ctx)[1].changes).includes(renamed), "not named where it is now");
+    await answer(ctx);
+    await answer(ctx);
+    assert.equal(waiting(ctx), 0);
+    assert.equal(line(ctx), "");
+    assert.equal(leaving(ctx), false);
   });
 
   test("kept writing, a write that fails waits for Retry in the list, and Retry writes it from the other folder", async (t) => {
