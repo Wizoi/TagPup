@@ -165,16 +165,33 @@ class AFolderJustAdded(_Tab):
         meet = self.entry(self.tab(), self.meet)
         self.assertEqual(("queued", 2), (meet["queue"], meet["recursive"]))
 
-    def test_a_batch_being_indexed_is_one_entry(self):
-        """A batch of sync's new files is one run, its folders one status: IndexQueue.active names its first folder once
-        for each of them."""
-        def index(_folders, _report):
+    def test_each_folder_of_a_batch_is_marked_while_it_waits_and_while_it_is_indexed(self):
+        """A batch of sync's new files (IndexQueue.start's `together`) is one run of the indexer, its folders one status:
+        the queue names each folder of it, by its own name, with the run's percent and message (IndexQueue.active, what
+        /api/folder/index-active answers to both pages), so the tab marks each -- queued, then indexing -- and none once the
+        run has ended."""
+        heard = []
+
+        def index(_folders, report):
+            report("Reading metadata: 50%", 50)
+            heard.append(self.client.get("/library/api/folder/index-active").get_json())
             self.asked.append(self.tab())
             return Result(attempted=1, changed=1)
         with mock.patch(HELD_BACK):
             self.queue().start([self.relay, self.heats], index, together=True)
+        waiting = self.client.get("/library/api/folder/index-active").get_json()
+        self.assertEqual(([], ["Relay Day", "Heats"], 2), ([job["name"] for job in waiting["active"]],
+                                                           [job["name"] for job in waiting["queued"]], waiting["remaining"]))
+        tab = self.tab()
+        self.assertEqual(("queued", "queued"), (self.entry(tab, self.relay)["queue"], self.entry(tab, self.heats)["queue"]))
         self.queue().run_pending()
-        self.assertEqual("indexing", self.entry(self.asked[0], self.relay)["queue"])
+        self.assertEqual([("Relay Day", 50, "Reading metadata: 50%"), ("Heats", 50, "Reading metadata: 50%")],
+                         [(job["name"], job["percent"], job["message"]) for job in heard[0]["active"]])
+        self.assertTrue(paths.same(self.heats, heard[0]["active"][1]["folder"]), "the second folder named by its own path")
+        self.assertEqual(([], 2), (heard[0]["queued"], heard[0]["remaining"]))
+        tab = self.asked[0]
+        self.assertEqual(("indexing", "indexing"), (self.entry(tab, self.relay)["queue"], self.entry(tab, self.heats)["queue"]))
+        self.assertEqual([None], list({each["queue"] for each in self.tab()}), "nothing marked once the run has ended")
 
 
 class ANewLibrary(_Tab):

@@ -263,8 +263,8 @@ class IndexQueue:
         (tagpup.web.folder_routes): the index would be refused at its next batch (store.photos.record_indexed raises
         NotHeld; the batch makes no rows) and stop, failed, part-way, and its bake would write the files of photos whose
         rows are gone. A folder asked for again while it is indexed waits too (`_missed`). It sees only this queue: a
-        run of another process's is its row's (tagpup.services.libraries.removal_refusal). pending() and active() name
-        a batch by its first folder only, so they cannot answer this."""
+        run of another process's is its row's (tagpup.services.libraries.removal_refusal). pending() names a batch by
+        its first folder only, and active() lists folders, not who covers them, so neither answers this."""
         return self._job_of(folder, overlapping=True)
 
     def _job_of(self, folder, overlapping):
@@ -312,27 +312,26 @@ class IndexQueue:
             return [{"folder": job["folder"]} for job in self._pending]
 
     def active(self):
-        """What is being indexed now, and what waits behind it.
+        """What is being indexed now, and what waits behind it, each folder by its own path and name: a batch
+        (`together`, one run of the indexer) names every folder it indexes, each with the run's percent and message, and
+        every folder it will -- so a page marks each (the Folders tab: services/library_view.py _folders) and counts each
+        ("Indexing N of M folders": web/tagpup/suggestions.js); `remaining` counts folders, not runs (now() counts runs).
 
         A page that has just loaded knows of no folder to ask about, so without this it
         could not tell that a folder is being indexed, nor how many are left.
         """
-        running = []
         # Both under the lock the worker takes a job under: read apart, a job taken between
         # the two reads was neither running nor waiting, and the queue said it was idle.
         with self._lock:
-            statuses = list(self._statuses.items())
-            pending = self.pending()
-        for key, status in statuses:
-            if status.get("status") == "running":
-                folder = status.get("folder") or key
-                running.append({"folder": folder, "name": os.path.basename(folder),
-                                "percent": status.get("percent", 0),
-                                "message": status.get("message", "")})
-        waiting = [{"folder": job["folder"], "name": os.path.basename(job["folder"])}
-                   for job in pending]
-        return {"active": running, "queued": waiting, "busy": bool(running or waiting),
-                "remaining": len(running) + len(waiting)}
+            current = [(each, self._statuses[paths.key(each)]) for each in self._current_folders]
+            waiting = [each for job in self._pending for each in _folders_of(job)]
+        # A run whose index has said how it ended is not running, though its folders are the run's until its row is.
+        running = [{"folder": each, "name": os.path.basename(each), "percent": status.get("percent", 0),
+                    "message": status.get("message", "")}
+                   for each, status in current if status.get("status") == "running"]
+        queued = [{"folder": each, "name": os.path.basename(each)} for each in waiting]
+        return {"active": running, "queued": queued, "busy": bool(running or queued),
+                "remaining": len(running) + len(queued)}
 
     def now(self):
         """What the Activity page shows of this queue: the run of the indexer under way --

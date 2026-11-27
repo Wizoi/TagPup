@@ -187,6 +187,7 @@ class WhatIsQueued(QueueTest):
     def test_cancelling_leaves_the_folder_being_indexed_alone(self):
         running, waiting = self.folders(2)
         self.queue._statuses[paths.key(running)] = {"status": "running", "folder": running}
+        self.queue._current_folders = [running]
         self.start([waiting])
         self.queue.cancel(everything=True)
         self.assertEqual(self.queue.status(running)["status"], "running")
@@ -414,15 +415,17 @@ class TheQueueIsChangedAndReadUnderOneLock(QueueTest):
                 job = self.queue._pending.pop(0)
                 self.queue._statuses[paths.key(job["folder"])] = {"status": "running", "percent": 0,
                                                                   "message": "Starting indexing...", "folder": job["folder"]}
+                self.queue._current_folders = [job["folder"]]
             took.set()
-        asked = self.queue.pending
+        folders_of = indexing._folders_of
 
-        def pending_after_the_worker():
+        def folders_after_the_worker(job):
+            # active() reads the running folders, then the waiting ones: the worker tries to take the job in between.
             threading.Thread(target=worker_takes_the_job, daemon=True).start()
             took.wait(1.0)
-            return asked()
-        self.queue.pending = pending_after_the_worker
-        found = self.queue.active()
+            return folders_of(job)
+        with mock.patch.object(indexing, "_folders_of", side_effect=folders_after_the_worker):
+            found = self.queue.active()
         self.assertTrue(took.wait(5))
         self.assertEqual((True, 1), (found["busy"], found["remaining"]), found)
 
