@@ -515,6 +515,8 @@ class PhotoIndex:
                     "embedding": blob,
                     "frames": _frame_bytes(meta.get("frames", ())),
                     "fingerprint": meta.get("fingerprint"),
+                    # A read that failed for good keeps what the row holds (store.photos.record_indexed).
+                    "read_error": meta.get("read_error"),
                     # The photo's identity beside its path. Where the file has one it is
                     # already in raw_metadata; where it does not, the extractor has
                     # minted one into the file by now.

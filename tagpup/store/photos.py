@@ -544,7 +544,10 @@ def record_indexed(conn, photo_path, row, model=None, known=None, batch=None):
     statement's transaction (embeddings.put: written together, so a stop leaves both or neither) and the fingerprint,
     the (key, hash) of the picture it was made of, or none (a row with no fingerprint forgets the photo's), and the
     photo's people are
-    rebuilt. A row with no stamp is recorded unread (mtime and size NULL). The caller commits. Returns the row's id.
+    rebuilt. A row with no stamp is recorded unread (mtime and size NULL). A `read_error` (a read that failed for good,
+    field_values.Fields.whole) keeps the tags, captions and raw_metadata a row already holds, and its people and derived
+    rows are built from them: a read that fails never empties a row; a new row is recorded holding nothing. The caller
+    commits. Returns the row's id.
 
     A new row only in a folder the library holds (tagpup.store.folders.holds, the rule ensure_row keeps): raises NotHeld,
     and makes nothing, for a photo in any other folder. An index whose folder was removed while it ran (in an app, while
@@ -569,26 +572,35 @@ def record_indexed(conn, photo_path, row, model=None, known=None, batch=None):
     if not held:
         _refuse_unheld(conn, os.path.dirname(stored), batch)
     row_path = paths.to_row(stored, roots)
+    failed = bool(row.get("read_error"))
     conn.execute(
         "INSERT INTO photos (path, kind, mtime, size, width, height, tags, captions, raw_metadata, document_id)"
         " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
         " ON CONFLICT(path) DO UPDATE SET"
         " kind = excluded.kind, mtime = excluded.mtime, size = excluded.size, width = excluded.width,"
-        " height = excluded.height, tags = excluded.tags, captions = excluded.captions,"
-        " raw_metadata = excluded.raw_metadata, document_id = COALESCE(excluded.document_id, photos.document_id)",
+        " height = excluded.height, tags = CASE WHEN ? THEN photos.tags ELSE excluded.tags END,"
+        " captions = CASE WHEN ? THEN photos.captions ELSE excluded.captions END,"
+        " raw_metadata = CASE WHEN ? THEN photos.raw_metadata ELSE excluded.raw_metadata END,"
+        " document_id = COALESCE(excluded.document_id, photos.document_id)",
         (row_path, row.get("kind") or "photo", row.get("mtime"), row.get("size"), row.get("width") or None,
          row.get("height") or None, json.dumps(row.get("tags", [])), json.dumps(row.get("captions", [])),
-         store_roots.raw_to_row(json.dumps(row.get("raw_metadata", {})), roots), row.get("document_id")))
-    if not (batch is not None and batch.prepared) and derived.make_nodes(conn, [row.get("tags", [])], batch):
+         store_roots.raw_to_row(json.dumps(row.get("raw_metadata", {})), roots), row.get("document_id"),
+         failed, failed, failed))
+    photo_id = _row_id(conn, stored)
+    tags = row.get("tags", [])
+    if failed:
+        # The tags the row kept, which its people, face names and keyword rows are built from.
+        (kept,) = conn.execute("SELECT tags FROM photos WHERE id = ?", (photo_id,)).fetchone()
+        tags = json.loads(kept or "[]")
+    if not (batch is not None and batch.prepared) and derived.make_nodes(conn, [tags], batch):
         known = None   # the vocabulary the caller read holds none of the people just made
     people.rebuild_photos(conn, [stored], known)
     _dated_paths(conn, [stored])
-    photo_id = _row_id(conn, stored)
     if held:
         # A photo read again: its faces are there, and its keywords may have changed. A new
         # photo has none yet; the faces recorded for it name themselves (services.faces).
         face_tags.name_photos(conn, [photo_id], vocabulary=known, batch=batch)
-    derived.record(conn, photo_id, row_path, row.get("tags", []), batch)
+    derived.record(conn, photo_id, row_path, tags, batch)
     if row.get("embedding") is not None:
         if model is None:
             # Dropped without a word, it left a library without the vector (#85).
