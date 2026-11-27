@@ -12,7 +12,8 @@ is the keeper's own scenarios, each with a keeper and a cache folder of its own 
 * the release gate (--real-exiftool, record) runs the product's own DocumentID mint and starts ExifTool at `with`;
 * two processes asking for one command at once both get the real answer, and one whole entry is kept;
 * an entry cut off part-way (a kill) is not read and is replaced; a cache folder deleted mid-run is made again;
-* an answer that carries a file's own dates is never kept;
+* an answer that carries a file's own dates is never kept; the oracle's whole read of a copy is (it sets the file
+  system's group aside), and a second copy's is answered from the cache with no ExifTool started;
 * the DocumentID minted under a keeper repeats its sequence, so a photo given one hits on the next run;
 * the kept answers stay within their cap, the entries used longest ago removed first;
 * product code never replays: a fresh TagPup with the variable set has no keeper, and nothing outside tests/ sets one.
@@ -36,7 +37,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import own_home  # noqa: E402
 from tagpup.core import processes  # noqa: E402
-from tagpup.files import exiftool_session, identity  # noqa: E402
+from tagpup.files import exiftool_session, field_values, identity  # noqa: E402
 from tagpup.files.exiftool_session import ExifToolFailed, ExifToolSession  # noqa: E402
 from tests import exiftool_replay  # noqa: E402
 
@@ -324,6 +325,24 @@ class KeptAnswers(unittest.TestCase):
         self.assertEqual((keeper.counts["hits"], keeper.counts["misses"], keeper.counts["kept"]), (0, 2, 0))
         self.assertEqual(keeper.why["not kept: its answer holds a file's dates"], 2)
         self.assertEqual(self.entries(), [])
+
+    def test_the_oracles_whole_read_of_a_copy_is_kept_and_answered_with_no_exiftool_started(self):
+        # The conformance suite's oracle reads every copy whole: kept, its next run answers it without a start (#3464).
+        answers, keepers = [], []
+        for folder in ("a", "b"):
+            keepers.append(self.keeper())
+            photo = self.copy(folder)
+            with field_values.oracle(EXIFTOOL) as oracle:
+                read = oracle.whole([photo])
+            self.assertEqual(1, len(read))
+            row = dict(next(iter(read.values())))
+            self.assertEqual(os.path.basename(photo), os.path.basename(row.pop("SourceFile")))
+            answers.append(row)
+        cold, warm = keepers
+        self.assertEqual((cold.counts["misses"], cold.counts["kept"]), (2, 2), cold.why)
+        self.assertEqual((warm.counts["hits"], warm.counts["misses"], warm.counts["starts"]), (2, 0, 0), warm.why)
+        self.assertEqual(answers[0], answers[1])
+        self.assertFalse([tag for tag in answers[1] if tag.startswith("File:System:")], answers[1])
 
     def test_the_minted_identity_repeats_its_sequence(self):
         first, second = exiftool_replay.seeded_mint(), exiftool_replay.seeded_mint()
