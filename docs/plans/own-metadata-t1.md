@@ -30,14 +30,15 @@ module already settles: one item per recipe digest, made under the stripe lock i
   it); no count and no user action, no item.
 
 **The items** (op names: section 2; "all" = every operation of the format; path today = which writer a journaled write
-takes: P the own patch, R ExifTool's rewrite, `-` refused; as the suite's `WRITES` asserts it, T1b 2026-11-27).
+takes: P the own patch, R ExifTool's rewrite, `-` refused; as the suite's `WRITES` asserts it, T1b 2026-11-27; where
+the plan meant another, that target first and "today" beside it, the stage that flips it named).
 
 | Item | Made by | Live count or user action | Ops | Path today |
 |---|---|---|---|---|
 | `camera` | noise + ExifTool EXIF (Make, Model, DateTimeOriginal, Orientation 1, IFD1 thumbnail); no XMP, no IPTC | user action: a camera's photo added, before its bake (no XMP: 0 in all four after it) | all | R (no XMP to patch); a date shift, turn and mirror P (EXIF's) |
 | `tagged` | `camera` + every owned field by ExifTool (XMP, IPTC with no 1:90, XP copies; keywords with a person path, caption, title, dates, DocumentID, PreservedFileName, Rating, GPS) | every JPEG holds XMP (62,161); no 1:90 15,444 / 4 / 0 / 0; Rating 55,695 / 172 / 4 / 817; GPS 1,552 / 1 / 0 / 0 | all | P; the mint and the bakes R |
 | `tagged_ii` | `tagged`, `-ExifByteOrder=II` | the census's byte orders (T1a recounts) | dates, turn, keyword | P |
-| `iptc_alone` | `camera` + IPTC Keywords, an XMP packet with no dc:subject | 149 / 0 / 0 / 0 (counted 2026-11-27) | keyword, last keyword off | P |
+| `iptc_alone` | `camera` + IPTC Keywords, an XMP packet with no dc:subject | 149 / 0 / 0 / 0 (counted 2026-11-27) | keyword, last keyword off, preserved name (it keeps none) | P |
 | `iptc_utf8` | `tagged` with a caption outside cp1252 (ExifTool adds 1:90) | 124 / 0 / 0 / 0 | caption set, cleared, keyword | P |
 | `app13_without_iptc` | laid: `tagged`'s APP13 holding only a 0x03ED resource | 18 / 2 / 3 / 0 | caption set, keyword | P |
 | `two_app13` | laid as test_the_two_writers_compared_on_copies :112-118 lays it (lifted) | 0 / 2 / 3 / 0 | last keyword off, caption cleared | R |
@@ -51,7 +52,7 @@ takes: P the own patch, R ExifTool's rewrite, `-` refused; as the suite's `WRITE
 | `no_taken` | `camera` without DateTimeOriginal | 60 / 0 / 3 / 0 | Date Taken set | R (adds an entry) |
 | `ifd0_xmp` | laid: the captured header (lifted `photo_with_xmp_in_ifd0`, test_a_photo_written_by_its_own_editors :92) | 39 / 0 / 0 / 0 (#3108) | keyword, shift, turn, last keyword off | R |
 | `nul_xmp` | laid: an XMP segment of NUL bytes | 3 / 0 / 0 / 0 (#2349) | keyword | R: ExifTool says Invalid XMP and writes no XMP, the IPTC and XP copies written; the journal records the file as it holds it (XMP lands at J3a) |
-| `no_wrapper` | laid: a packet with no `<?xpacket` | 52 / 7 / 0 / 0 | keyword | R |
+| `no_wrapper` | laid: a packet with no `<?xpacket` | 52 / 7 / 0 / 0 | keyword | P (the target: the editor takes the packet); today R, ExifTool's rewrite: J3a flips it |
 | `other_appn` | laid: `tagged` + APP11, APP15, COM | 1,622 / 1,049 / 2,468 (photo_index) | keyword, dates | P |
 | `thumb_turn` | `tagged` + IFD1 Orientation and XMP-tiff:Orientation (as :394-405 of test_a_photo_written_by_its_own_editors) | thumbnail 52,306 / 2,178 / 1,304 / 1,280 | turn, mirror | P |
 | `png` | PIL PNG + ExifTool XMP (iTXt), EXIF (eXIf), IPTC | 24 of the 26 | all | R |
