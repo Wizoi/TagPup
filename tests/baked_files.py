@@ -2,6 +2,7 @@
 records ExifTool answers of them: what the bake's tests and the index's read of a bake share.
 
     held = baked_files.record(faces=2)          # a record as ExifTool answers a baked photo
+    baked_files.values_of(held)                 # the values a write of that record sets
     baked_files.write(path, held)               # that record written into the photo at `path`
     baked_files.held(path)                      # the bake the photo holds, parsed
     baked_files.plan(library_path, path, detector)  # the photo's plan, as a bake run makes it
@@ -59,16 +60,22 @@ def record(faces=2, **changed):
     return {key: value for key, value in held.items() if value is not None}
 
 
-def write(path, held):
-    """Write the bake `held` (a record, as `baked` makes one: any of its values changed) into the photo at `path`, through
-    the one writer, in the session a journaled write opens."""
+def values_of(held):
+    """The values a write of the bake `held` (a record, as `baked` makes one: any of its values changed) sets, by the
+    fields a bake is written in (bake.WRITTEN)."""
     values = {bake.WRITTEN[key]: [str(held[key])] for key in bake.REQUIRED if key in held}
     if bake.REGIONS in held:
         values[bake.WRITTEN[bake.REGIONS]] = [bake.region_text(held[bake.REGIONS])]
     if bake.FACE_VECTORS in held:
         values[bake.WRITTEN[bake.FACE_VECTORS]] = list(held[bake.FACE_VECTORS])
+    return values
+
+
+def write(path, held):
+    """Write the bake `held` (values_of) into the photo at `path`, through the one writer, in the session a journaled
+    write opens."""
     with field_values.opened(EXIFTOOL) as et:
-        et.write(path, values)
+        et.write(path, values_of(held))
     return path
 
 
