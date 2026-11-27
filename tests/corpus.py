@@ -12,6 +12,7 @@ and each test is given a copy of it at the path it names.
     corpus.clip(path, arguments, ffmpeg)                   # what `ffmpeg <arguments> <path>` makes
     corpus.library(path)                                   # a new library, as schema.ensure makes one
     corpus.made(path, recipe, build, tool)                 # any file: build(target) makes it, once per run
+    corpus.segment(marker, body)                           # a JPEG segment laid by hand (and xmp_, iptc_, exif_segment)
 
 Kept across runs: what an external writer makes for this module's makers (jpeg, noise_jpeg, clip; ExifTool and ffmpeg
 are not ours: given the same input and arguments they make the same bytes, owner 2026-11-24) is kept in the machine's
@@ -46,6 +47,7 @@ import json
 import os
 import shutil
 import stat
+import struct
 import sys
 import tempfile
 import time
@@ -354,3 +356,30 @@ def library(path):
     with open(schema.__file__, "rb") as handle:
         version = hashlib.sha256(handle.read()).hexdigest()
     return made(path, ["library", version], build)
+
+
+# Segments laid by hand, byte by byte: what a test of a layout gives the readers and editors.
+
+def segment(marker, body):
+    return b"\xff" + bytes([marker]) + struct.pack(">H", 2 + len(body)) + body
+
+
+def xmp_segment(between=b"\n" + b" " * 99):
+    packet = (b'<?xpacket begin="" id="W5M0MpCehiHzreSzNTczkc9d"?><x:xmpmeta xmlns:x="adobe:ns:meta/"></x:xmpmeta>'
+              + between + b'<?xpacket end="w"?>')
+    return segment(0xE1, b"http://ns.adobe.com/xap/1.0/\0" + packet)
+
+
+def resource(resource_id, data):
+    return b"8BIM" + struct.pack(">H", resource_id) + b"\0\0" + struct.pack(">I", len(data)) + data + b"\0" * (len(data) & 1)
+
+
+def iptc_segment(*resources, after=b""):
+    return segment(0xED, b"Photoshop 3.0\0" + b"".join(resources) + after)
+
+
+def exif_segment(zeros):
+    """A little-endian TIFF: IFD0 with one ASCII entry whose value sits after the IFD, then `zeros` zero bytes."""
+    artist = b"Someone\0\0\0"
+    ifd = struct.pack("<H", 1) + struct.pack("<HHII", 0x013B, 2, len(artist), 8 + 2 + 12 + 4) + struct.pack("<I", 0)
+    return segment(0xE1, b"Exif\0\0" + b"II*\0" + struct.pack("<I", 8) + ifd + artist + bytes(zeros))
