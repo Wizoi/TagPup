@@ -10,7 +10,8 @@
  * written or its change dropped, its viewing and the arrows free throughout; Cancel says how
  * many photos it left unwritten, and a write already out neither says Ready over it nor gives its files back; choosing
  * another library or opening another folder asks while changes are not sent -- the tag question and the open photo's
- * together, nothing dropped or discarded until both are yes -- and leaving drops them; back from a library view to the
+ * together, nothing dropped or discarded until both are yes -- and Discard them drops them (Keep writing, the folder
+ * question's first answer: scenario-tagging-a-folder-and-moving-on-without-losing-anything); back from a library view to the
  * folder whose changes they are asks nothing, and staying leaves the view standing; a write's reply reaches every scan
  * this browser keeps of a folder holding its photos -- their own folder's, every folder above, while it is open or after it
  * was left, even while a view shows one of its photos -- and a page left with a write out forgets each of them (#3308);
@@ -49,12 +50,20 @@ const holding = (held) => (url, body) => new Promise((resolve) => held.push({ re
 
 /**
  * The page's own answers and questions on `ctx`: replies held for `answer` from the `files` they write, alerts kept,
- * confirm says OK unless `stay`.
+ * confirm says OK unless `stay`; the question about the tag changes waiting (pending.js leaveThen) is answered as it
+ * opens, its title kept among `confirms`: Stay when `stay`, else Discard them.
  */
 function heldPage(ctx, held, files) {
   const page = Object.assign(ctx, { held, files, alerts: [], confirms: [], stay: false });
   page.window.alert = (text) => page.alerts.push(String(text));
   page.window.confirm = (text) => { page.confirms.push(String(text)); return !page.stay; };
+  new page.window.MutationObserver(() => {
+    const asked = page.document.querySelector(".waiting-changes-modal.active:not([data-answered])");
+    if (!asked) return;
+    asked.dataset.answered = "yes";
+    page.confirms.push(asked.querySelector("h2").textContent);
+    asked.querySelector(`[data-choice='${page.stay ? "stay" : "discard"}']`).click();
+  }).observe(page.document.body, { childList: true });
   return page;
 }
 
@@ -101,7 +110,7 @@ const writes = (ctx) => ctx.server.calls.filter(isTagWrite).map((c) => c.body);
 const status = (ctx) => ctx.document.getElementById("status-text").textContent;
 const scans = (ctx, folder) => ctx.server.calls.filter((c) => c.url.includes(`/api/folder/scan?path=${encodeURIComponent(folder)}`)).length;
 const pendingOf = (ctx) => pageExports(ctx.window, "web/tagpup/state.js").state.pending;
-const LEAVE = "Tag changes for 25 photos are not written yet. Leave without writing them?";
+const LEAVE = "Tag changes for 25 photos are not written yet";
 const kept = (ctx, folder) => JSON.parse(ctx.window.localStorage.getItem(pageExports(ctx.window, "web/tagpup/cache.js").folderCacheKey(folder)) || "null");
 
 /** Open the first photo and type a tag in its box, not saved. */
@@ -446,7 +455,7 @@ describe("choosing another library while changes wait", () => {
     select.value = "beta";
     select.dispatchEvent(new ctx.window.Event("change", { bubbles: true }));
     await flush(ctx.window, 4);
-    assert.ok(ctx.confirms.includes("Tag changes for 25 photos are not written yet. Leave without writing them?"), ctx.confirms.join("|"));
+    assert.ok(ctx.confirms.includes(LEAVE), ctx.confirms.join("|"));
     assert.equal(select.value, "alpha", "the picker still shows the library left");
     await answer(ctx);
     assert.equal(writes(ctx).length, 2, "staying lost the changes not yet sent");
@@ -460,7 +469,7 @@ describe("choosing another library while changes wait", () => {
     select.value = "beta";
     select.dispatchEvent(new ctx.window.Event("change", { bubbles: true }));
     await flush(ctx.window, 4);
-    assert.ok(ctx.confirms.includes("Tag changes for 25 photos are not written yet. Leave without writing them?"), ctx.confirms.join("|"));
+    assert.ok(ctx.confirms.includes(LEAVE), ctx.confirms.join("|"));
     assert.equal(pendingOf(ctx).files.size, 0, "the changes not sent are still waiting");
     await answer(ctx);
     assert.equal(writes(ctx).length, 1, "a change left behind was written");
@@ -555,7 +564,7 @@ describe("a library view between a folder and its changes", () => {
     ctx.stay = true;
     ctx.window.history.back();
     await ctx.settle(300);
-    assert.ok(ctx.confirms.includes("Tag changes for 5 photos are not written yet. Leave without writing them?"), ctx.confirms.join("|"));
+    assert.ok(ctx.confirms.includes("Tag changes for 5 photos are not written yet"), ctx.confirms.join("|"));
     assert.ok(ctx.state.library, "staying left a page with neither the view nor a folder");
     assert.equal(pendingOf(ctx).files.size, 5);
     await answer(ctx);
@@ -665,7 +674,7 @@ describe("opening another folder while changes wait", () => {
     const ctx = await folderOf(t, 50);
     await addTags(ctx, "Trips/Coast");
     await openFolder(ctx, OTHER);
-    assert.ok(ctx.confirms.includes("Tag changes for 25 photos are not written yet. Leave without writing them?"), ctx.confirms.join("|"));
+    assert.ok(ctx.confirms.includes(LEAVE), ctx.confirms.join("|"));
     const { state } = pageExports(ctx.window, "web/tagpup/state.js");
     assert.equal(state.scannedFolder, OTHER);
     await answer(ctx, taggedAs("written", () => ({ tags: ["Trips/Coast"], mtime: 1700000000, size: 2048 })));

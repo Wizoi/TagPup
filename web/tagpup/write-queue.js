@@ -8,7 +8,12 @@
 // Hovering, focusing or clicking it opens a list of the entries: what each does, its
 // state and time, the last few done, and a failed one's reason, with Retry and
 // Dismiss. The entries are state.writeQueue's; only edits.js adds and marks them.
+//
+// Under the status, one line says what leaving the page now does (leaveSaid): a write sent the server finishes whatever
+// the page does; a write queued behind it, and a tag change waiting to be taken into one (pending.js), is still in this
+// page, and closing it loses them. The browser's own Leave prompt asks for the same ones (waitingInPage, edits.js).
 import { buildElement, replaceContent } from './common/dom.js';
+import { pathKey } from './common/paths.js';
 import { upper } from './hooks.js';
 import { state } from './state.js';
 import { libraryName } from './looking.js';
@@ -42,11 +47,15 @@ export function pictureCheckSaid(data) {
 
 export const KEEP_DONE = 10;
 
+/** "1 photo", "2,500 photos": the count the write line and the tag changes' questions say. */
+export const photosWord = (n) => `${n.toLocaleString()} ${n === 1 ? 'photo' : 'photos'}`;
+
 /**
  * A new entry, waiting: `label` says what it does; `photos()` gives the paths of the photos its write sends, asked while
- * it is out (photosOut): a tag drain's chunk is chosen only when its turn comes.
+ * it waits (waitingInPage) and while it is out (photosOut): a tag drain's chunk is chosen only when its turn comes. Every
+ * page writer names them (edits.js queuePhotoWrite); none, for navigator.test.mjs's entries, which write nothing.
  */
-export function queueEntry(label, photos) {
+export function queueEntry(label, photos = () => []) {
     const queue = state.writeQueue;
     if (!pendingWrites()) {
         // A new run of writes: "Saving 1 of 1" again, not "Saving 7 of 7".
@@ -80,7 +89,7 @@ export function markEntry(entry, status) {
 }
 
 /** How many writes are waiting or under way. */
-export function pendingWrites() {
+function pendingWrites() {
     return state.writeQueue.entries.filter(e => e.status === 'waiting' || e.status === 'writing').length;
 }
 
@@ -90,6 +99,33 @@ export function pendingWrites() {
  */
 export function photosOut() {
     return state.writeQueue.entries.filter(e => e.status === 'writing').flatMap(e => e.photos());
+}
+
+/**
+ * How many photos have a write still in this page, not sent: one queued behind the write out (a save, Apply All, a
+ * rename; a tag drain's names nothing until its turn), and the tag changes waiting to be taken into a write (pending.js,
+ * `state.pending.files`, a drain stopped by a failure's too). Closing the page loses them; a write sent is the server's.
+ */
+export function waitingInPage() {
+    const keys = new Set(state.pending.files.keys());
+    state.writeQueue.entries.filter(e => e.status === 'waiting').forEach(e => e.photos().forEach(path => keys.add(pathKey(path))));
+    return keys.size;
+}
+
+/**
+ * The write line's words of what leaving does now, the one place they are said: '' when nothing is sent or waiting. Sent,
+ * the server finishes it if the page goes; waiting in this page, it is lost if the page goes (with a failure: until Retry).
+ */
+export function leaveSaid() {
+    const sent = new Set(photosOut().map(pathKey)).size;
+    const waiting = waitingInPage();
+    const them = (n) => (n === 1 ? 'it' : 'them');
+    if (waiting && !pendingWrites()) return `${photosWord(waiting)} waiting in this page for Retry: lost if you leave`;
+    const until = `stay until ${waiting === 1 ? 'it is' : 'they are'} sent`;
+    if (waiting && sent) return `${photosWord(sent)} sent, ${waiting.toLocaleString()} waiting in this page: ${until}`;
+    if (waiting) return `${photosWord(waiting)} waiting in this page: ${until}`;
+    if (sent) return `${photosWord(sent)} sent: the server finishes ${them(sent)} even if you leave`;
+    return '';
 }
 
 function failedEntries() {
@@ -154,10 +190,11 @@ function entryRow(entry) {
     return row;
 }
 
-/** The status and its list, built once; a click opens it on a touch screen. */
+/** The status, the line under it of what leaving does, and the list, built once; a click opens it on a touch screen. */
 function parts() {
     let status = writeQueueBox.querySelector('.write-queue-status');
     let list = writeQueueBox.querySelector('.write-queue-list');
+    let leave = writeQueueBox.querySelector('.write-queue-leave');
     if (!status) {
         status = buildElement('button', {
             className: 'write-queue-status', attrs: { type: 'button', 'aria-expanded': 'false' },
@@ -176,9 +213,10 @@ function parts() {
         };
         document.addEventListener('pointerdown', (e) => { if (!writeQueueBox.contains(e.target)) close(); });
         document.addEventListener('keydown', (e) => { if (e.key === 'Escape') close(); });
-        replaceContent(writeQueueBox, status, buildElement('div', { className: 'write-queue-panel' }, [list]));
+        leave = buildElement('div', { className: 'write-queue-leave', attrs: { role: 'status' } });
+        replaceContent(writeQueueBox, status, leave, buildElement('div', { className: 'write-queue-panel' }, [list]));
     }
-    return { status, list };
+    return { status, list, leave };
 }
 
 /** Draw the status and its list from state.writeQueue. */
@@ -190,11 +228,13 @@ export function renderWriteQueue() {
         return;
     }
     writeQueueBox.hidden = false;
-    const { status, list } = parts();
+    const { status, list, leave } = parts();
     const pending = pendingWrites();
     const mood = pending ? 'busy' : failedEntries().length ? 'failed' : 'idle';
     writeQueueBox.className = `write-queue write-queue-${mood}${queue.open ? ' open' : ''}`;
     status.textContent = writeQueueText();
     status.setAttribute('aria-expanded', queue.open ? 'true' : 'false');
+    leave.textContent = leaveSaid();
+    leave.hidden = !leave.textContent;
     replaceContent(list, ...queue.entries.slice().reverse().map(entryRow));
 }

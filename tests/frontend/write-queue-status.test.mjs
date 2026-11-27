@@ -6,7 +6,7 @@
  * failed. The status says "Saving 2 of 3..." while the queue works, "1 failed" when a
  * write failed, "All changes saved" when it is done; its list names each write, its
  * state and a failure's reason, and a failed one can be retried. Closing the tab asks
- * while a write is waiting or under way.
+ * while a change waits in the page, not for a write already sent (the server finishes it).
  *
  * The server's tag changes are held here until the test releases them, each answered as the real entry point does
  * (harness tagFiles).
@@ -189,12 +189,17 @@ describe("the list", () => {
 });
 
 describe("closing the tab", () => {
-  test("asks only while a write is waiting or under way", async (t) => {
+  test("asks only while a change waits in the page, not for a write already sent", async (t) => {
     const ctx = await loadSelected(t);
     assert.equal(leaving(ctx), false, "asked with nothing to write");
     click(ctx.window, chip(ctx, "Cross Country"));
     await flush(ctx.window, 8);
-    assert.equal(leaving(ctx), true, "did not ask while a write was out");
+    assert.equal(leaving(ctx), false, "asked about a write already sent, which the server finishes");
+    click(ctx.window, chip(ctx, "Harbourside"));
+    await flush(ctx.window, 8);
+    assert.equal(leaving(ctx), true, "did not ask while a change waited in the page");
+    await answer(ctx);
+    assert.equal(leaving(ctx), false, "asked once the change waiting was sent");
     await answer(ctx);
     assert.equal(leaving(ctx), false, "still asked once everything was written");
   });

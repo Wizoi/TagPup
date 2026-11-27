@@ -18,7 +18,7 @@ import {
 } from './elements.js';
 import { fetchKnownTagsAndPeople } from './tags.js';
 import { wireUnsavedEdits } from './edits.js';
-import { leaveThen, removePhotoTags, wirePending } from './pending.js';
+import { leaveThen, removePhotoTags } from './pending.js';
 import {
     browseFolder, filterFileList, renderFileList, scanFolder,
     wireChangeDogPark, wireFolderPathInput, wireSidebarResizer
@@ -100,7 +100,6 @@ document.addEventListener('DOMContentLoaded', () => {
     initDatabaseSelector(dbSelect, btnCreateDb, {
         beforeLeaving: (go, stay) => leaveThen(go, stay),
     });
-    wirePending();
 
     wireChangeDogPark();
 

@@ -118,6 +118,12 @@ SCENARIOS = {
             "Clear all, the search box's Clear or the toggle clicked twice before Back arrives goes back once; a list past "
             "the server's cap is refused with a sentence; unsaved edits in the open photo ask before any mark."),
     "V33": ("views", "Somebody tags the photos of a folder just added while the index writes its own fields into their files: a save refused as changed on disk is read again and sent once more naming what the page read, the server writing it when the file's tags and caption are as that, the status line saying so; tags changed by someone else meanwhile, or the bake writing again before the second send, are refused again: the refusal as before, nothing merged and no third send; a photo the page no longer lists, or read again gone or unreadable, is not sent again; the next photo opened meanwhile waits for it; a caption that renames the file follows the rename; two refusals in a row each go once more; a library view's photo, a grid card's title, Carry forward, a suggestion taken and the Edit Date Taken dialog's (its base naming the date the page read; another program's date refused, #3425) the same."),
+    "V34": ("views", "Somebody tags a folder's photos and moves on while they are written: the write line says which "
+            "writes are sent (the server finishes them) and which wait in the page (lost if it goes), and the browser's "
+            "Leave prompt asks only for those; another folder asks Keep writing (first), Discard them or Stay, Keep "
+            "writing opening it and writing them in the background, not asked again on the next folder; rapid switches "
+            "give one question, the first folder's; a write refused as changed on disk is read again and sent once more, "
+            "one failed waits for Retry; another library, a new page, offers Stay first or Discard them."),
     "V30": ("views", "On the phone page somebody moves between its screens by the bar of tabs at the foot: a page on a "
             "library opens on Library, one on none shows the list with no bar; each tab is one step of history however "
             "fast it is pressed and none for the tab shown, Back walks back through the tabs to the page's first step, "
@@ -308,6 +314,7 @@ _SCENARIO_FILES = {
     "V32": "scenario-working-on-a-new-folder test_queued_folders_in_the_folders_tab "
            "scenario-queued-folders-in-the-folders-tab",
     "V33": "scenario-saving-while-the-index-writes",
+    "V34": "scenario-tagging-a-folder-and-moving-on-without-losing-anything",
 }
 
 #: owner -> kind -> the unit, migration and guard files, a .mjs without its ".test.mjs".

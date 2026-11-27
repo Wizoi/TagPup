@@ -152,8 +152,8 @@ export const state = {
         note: '', typed: '', typedFor: null,
     },
 
-    // The Image Details write in progress, and the "Save changes?" question being
-    // asked, if any. Up here for the same reason: restoring a cached folder at startup
+    // The Image Details write in progress, and the question about leaving being asked, if
+    // any: "Save changes?" (edits.js) or the tag changes waiting (pending.js leaveThen). Up here for the same reason: restoring a cached folder at startup
     // reaches selectPhoto and showFolderView, which read both.
     detailSaveInFlight: null,
     // A clip playing when a write began: its id and where it was, so it plays on when the writes are done (media.js holdForWrite).
@@ -176,7 +176,7 @@ export const state = {
     // { id, label, status: waiting | writing | done | failed, error, at, retry }.
     // batchTotal and batchSettled count the writes since the queue was last empty.
     writeQueue: { entries: [], nextId: 1, batchTotal: 0, batchSettled: 0, open: false },
-    // The tag changes not yet sent (pending.js): `files` by pathKey, each {path, add, remove, panel, token, actions, folder}, in
+    // The tag changes not yet sent (pending.js): `files` by pathKey, each {path, add, remove, panel, token, actions, folder, kept}, in
     // the order they came; `queued` while a chunk's write waits its turn in the queue, `stopped` after one failed (until Retry or
     // Cancel); `people` the tags a change named as people, whose leaves the records' `people` follow; `drops` how many
     // times the waiting changes were dropped (Cancel, leaving), so a chunk sent before neither gives back nor says Ready;

@@ -298,6 +298,23 @@ const TAGPUP_DIALOGS = {
     dialog: (ctx) => ctx.document.querySelector(".unsaved-edits-modal"),
     cancelled: (ctx) => assert.match(ctx.shown(), /b\.jpg$/, "Escape on Save changes? stepped the photo"),
   },
+  // Escape on the tag changes waiting is Stay: the folder stays, and the changes with it.
+  "Tag changes not written yet": {
+    opener: dateButton,
+    open: (ctx) => {
+      ctx.server.first("/api/photos/write", () => new Promise(() => {}));   // the change stays out: none is written
+      const { leaveThen, pendTags } = pageExports(ctx.window, "web/tagpup/pending.js");
+      pendTags(["D:/Library/2020/a.jpg"], { add: ["Places/Harbour"] });
+      pendTags(["D:/Library/2020/b.jpg"], { add: ["Places/Harbour"] });
+      ctx.left = null;
+      leaveThen(() => { ctx.left = "went"; }, () => { ctx.left = "stayed"; }, "D:/Library/2021");
+    },
+    dialog: (ctx) => ctx.document.querySelector(".waiting-changes-modal"),
+    cancelled: (ctx) => {
+      assert.equal(ctx.left, "stayed", "Escape on the tag changes' question left the folder");
+      assert.equal(pageExports(ctx.window, "web/tagpup/state.js").state.pending.files.size, 1, "Escape dropped the change waiting");
+    },
+  },
   "Which person?": {
     opener: dateButton,
     open: (ctx) => { ctx.answer = pageExports(ctx.window, "web/common/person-choice.js").choosePerson(PEOPLE); },

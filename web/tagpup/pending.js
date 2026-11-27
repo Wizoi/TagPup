@@ -7,7 +7,8 @@
 // line, Undo takes it back whole), in the photo write queue (edits.js queuePhotoWrite) behind any single save queued
 // meanwhile. A tag clicked while a 5,000-photo change drains joins the files not yet sent and rides their chunk; a file
 // already written gets it in a later chunk. A chunk that fails gives its files' ops back and stops the drain until Retry
-// or Cancel: it never loops by itself. The map is this page's memory only (closing the page loses what is not sent).
+// or Cancel: it never loops by itself. The map is this page's memory only (closing the page loses what is not sent: the
+// browser's Leave prompt asks while it holds any, edits.js, and the write line says so, write-queue.js leaveSaid).
 // Each chunk goes through the one entry point of photo writes (POST /api/photos/write, op `tags`; plan one-write-path),
 // a photo named by its id when the page holds a record of it with one (a clip, a library view's open photo), else by
 // its path. A chunk refused because a photo it names by id is no longer there (409 changed_on_disk) is read again by id
@@ -26,16 +27,14 @@ import { upper } from './hooks.js';
 import { state } from './state.js';
 import { setStatus } from './status.js';
 import { photosWritten } from './cache.js';
-import { leavePhotoThen, photoRenamed, queuePhotoWrite, redrawIfShowing } from './edits.js';
+import { askChoice, leavePhotoThen, photoRenamed, queuePhotoWrite, redrawIfShowing } from './edits.js';
 import { readMoved, takeWritten } from './common/photo-write.js';
-import { renderWriteQueue, whereWritten } from './write-queue.js';
+import { photosWord, renderWriteQueue, whereWritten } from './write-queue.js';
 import { namesAPerson, normalizeTag, updatePeopleDatalist, updateTagsDatalist } from './tags.js';
 import { offerWrites } from './stale.js';
 
 /** Files a request: the server's group of one write (batches.CHUNK, the route's limit with a `group`). */
 const CHUNK = 25;
-
-const photosWord = (n) => `${n.toLocaleString()} ${n === 1 ? 'photo' : 'photos'}`;
 
 const STOPPED = 'Tag changes wait for the failed write: Retry or Cancel it (bottom right).';
 
@@ -62,10 +61,11 @@ export function pendChanges(list, { people = false, panel = false } = {}) {
         const key = pathKey(path);
         let entry = pending.files.get(key);
         // A file already waiting keeps the token of the action that put it here first (the plan's cut 3 rule), and the
-        // folder it was clicked in, which leaving another way does not ask about (leaveThen).
+        // folder it was clicked in, which leaving another way does not ask about (leaveThen); `kept`, the owner left a
+        // folder saying Keep writing, and another folder opened does not ask about it again.
         if (!entry) {
             entry = { path, id: ids.get(key) ?? null, add: new Set(), remove: new Set(), panel: new Set(), token, actions: new Set(),
-                folder: state.scannedFolder || null };
+                folder: state.scannedFolder || null, kept: false };
             pending.files.set(key, entry);
         }
         remove.forEach(tag => { entry.add.delete(tag); entry.remove.add(tag); });
@@ -80,6 +80,7 @@ export function pendChanges(list, { people = false, panel = false } = {}) {
     if (pending.stopped && !panel) say('error', STOPPED);
     pageFollows(new Set(list.map(({ path }) => pathKey(path))));
     drain();
+    renderWriteQueue();   // the write line counts the files waiting in this page
     return settled;
 }
 
@@ -226,7 +227,12 @@ function drain() {
     const pending = state.pending;
     if (pending.queued || !pending.files.size || (pending.stopped && !ownRemovals().length)) return;
     pending.queued = true;
-    queuePhotoWrite(chunkOut, sendChunk, 'Write tag changes', () => resume());
+    // Its photos are none while it waits its turn (they are the map's: write-queue.js waitingInPage), its chunk's once out.
+    let out = false;
+    queuePhotoWrite(() => (out ? chunkOut() : []), (entry) => {
+        out = true;
+        return sendChunk(entry);
+    }, 'Write tag changes', () => resume());
 }
 
 /** The photos of the chunk out: the page going while they are out forgets the scans kept of them (write-queue.js photosOut). */
@@ -266,32 +272,61 @@ function cancelPending() {
 /**
  * Leaving with changes waiting, the one place that asks it: another library (`to` null) or another folder opened (`to`
  * its path; from a library view too). Every question comes before anything is dropped or discarded: the tag changes not
- * sent for a folder other than `to`, then the open photo's edits (edits.js leavePhotoThen: Save, Discard or Cancel). Only
- * when both are yes are the changes dropped and `go` run; else `stay`. A chunk already out is a normal write and does not
- * ask (its reply reaches every scan kept of a folder holding its photos, a folder left too: takeReply).
+ * sent for a folder other than `to` (askToLeave), then the open photo's edits (edits.js leavePhotoThen: Save, Discard or
+ * Cancel). Only when both are yes is `go` run, the changes asked about written on in the background (Keep writing: the
+ * page goes on with its drain, as it does under a library view) or dropped (Discard them); else `stay`. Another library
+ * is a new page, which ends the drain: it offers Stay, first, and Discard them. A change kept writing is not asked about
+ * again on the way to another folder; another library asks about it. A chunk already out is a normal write and does not
+ * ask (its reply reaches every scan kept of a folder holding its photos, a folder left too: takeReply). While the question
+ * is open another way out stays (state.leavePrompt, as the photo's question; the answer takes the first).
  */
 export function leaveThen(go, stay = () => {}, to = null) {
-    if (state.leavePrompt) return stay();   // a question about the photo is open: this route waits its turn (edits.js)
+    if (state.leavePrompt) return stay();   // a question about leaving is open: this route waits its turn (edits.js)
     const counted = new Set([...state.pending.files]
-        .filter(([, entry]) => !(to && entry.folder && samePath(entry.folder, to))).map(([key]) => key));
-    const n = counted.size;
-    if (n && !confirm(`Tag changes for ${photosWord(n)} are not written yet. Leave without writing them?`)) return stay();
-    return leavePhotoThen(() => {
-        if (n) dropPending(counted);   // only what was asked about: the changes for the folder gone to stay
-        go();
-    }, { onStay: stay });
+        .filter(([, entry]) => !(to && (entry.kept || (entry.folder && samePath(entry.folder, to))))).map(([key]) => key));
+    if (!counted.size) return leavePhotoThen(go, { onStay: stay });
+    const asked = askToLeave(counted.size, to);
+    state.leavePrompt = asked;
+    asked.then((choice) => {
+        state.leavePrompt = null;
+        if (choice !== 'keep' && choice !== 'discard') return stay();
+        leavePhotoThen(() => {
+            // Only what was asked about: the changes for the folder gone to stay as they were.
+            if (choice === 'discard') dropPending(counted);
+            else keepWriting(counted);
+            go();
+        }, { onStay: stay });
+    });
+    return false;
 }
 
 /**
- * Closing the page asks while changes are not sent (a drain stopped by a failure has no write waiting). A chunk out
- * when the page goes is the write line's (sendChunk names its photos; edits.js wireUnsavedEdits forgets the scans kept
- * of them).
+ * "Tag changes for 25 photos are not written yet": for another folder, Keep writing (focused: Enter), Discard them or
+ * Stay (Escape); for another library, a new page, Stay (focused) or Discard them. Resolves 'keep', 'discard' or 'stay'.
  */
-export function wirePending() {
-    window.addEventListener('beforeunload', (e) => {
-        if (!unsentCount()) return;
-        e.preventDefault();
-        e.returnValue = '';
+function askToLeave(n, to) {
+    const title = `Tag changes for ${photosWord(n)} are not written yet`;
+    if (!to) {
+        return askChoice({
+            className: 'waiting-changes-modal', title,
+            text: 'Another library opens in a new page, and the changes still waiting in this one would be lost. Stay until '
+                + 'they are written (the list of writes, bottom right), or discard them.',
+            choices: [['discard', 'Discard them'], ['stay', 'Stay']], primary: 'stay', cancel: 'stay',
+        });
+    }
+    return askChoice({
+        className: 'waiting-changes-modal', title,
+        text: 'Keep writing writes them while you work on, as long as this page stays open. Discard them leaves those '
+            + 'photos as they are.',
+        choices: [['stay', 'Stay'], ['discard', 'Discard them'], ['keep', 'Keep writing']], primary: 'keep', cancel: 'stay',
+    });
+}
+
+/** Keep writing: the changes asked about go on in the drain, and the next folder opened does not ask about them again. */
+function keepWriting(keys) {
+    keys.forEach(key => {
+        const entry = state.pending.files.get(key);
+        if (entry) entry.kept = true;
     });
 }
 
@@ -607,6 +642,7 @@ function giveBack(items) {
             newer.remove.forEach(t => { item.add.delete(t); item.remove.add(t); });
             [...newer.add, ...newer.remove].forEach(t => (newer.panel.has(t) ? item.panel.add(t) : item.panel.delete(t)));
             newer.actions.forEach(a => item.actions.add(a));
+            item.kept = item.kept || newer.kept;
             files.delete(key);
         }
         front.set(key, item);

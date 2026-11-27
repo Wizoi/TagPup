@@ -15,7 +15,7 @@ import { setStatus } from './status.js';
 import { MOVE_WAIT_SHOWN_AFTER_MS, hideMoveWaiting, showMoveWaiting } from './move-waits.js';
 import { photosGone, recordsWritten } from './cache.js';
 import {
-    dismissEntry, markEntry, pendingWrites, photosOut, pictureCheckSaid, queueEntry, whereWritten
+    dismissEntry, markEntry, photosOut, pictureCheckSaid, queueEntry, waitingInPage, whereWritten
 } from './write-queue.js';
 import {
     fetchKnownTagsAndPeople, namesAPerson, resolveTagOrPerson, updateTagsDatalist
@@ -103,9 +103,11 @@ export function wireUnsavedEdits() {
         if (hasUnsavedEdits()) saveDetailEdits();
     }, true);
 
-    // Closing the tab asks while a write waits or is under way too: it is lost.
+    // Closing the tab asks while something is still in this page: text typed and not saved, a write queued behind the
+    // one out, a tag change not taken into a write yet (write-queue.js waitingInPage); they are lost. A write already
+    // sent is not asked about: the server finishes it whatever the page does (its line says so, write-queue.js leaveSaid).
     window.addEventListener('beforeunload', (e) => {
-        if (!hasUnsavedEdits() && !pendingWrites()) return;
+        if (!hasUnsavedEdits() && !waitingInPage()) return;
         e.preventDefault();
         e.returnValue = '';
     });
@@ -600,43 +602,48 @@ export function letHeldMoveGo() {
 }
 
 /**
- * "Save changes to IMG_0001.jpg?" -- Save, Discard or Cancel.
- *
- * Save is focused, so Enter saves; Escape cancels (web/common/dialog.js), and the focus goes
- * back to what had it however it closes. Resolves 'save', 'discard' or 'cancel'. Built like
- * showPlacementModal, from the page's modal classes.
+ * "Save changes to IMG_0001.jpg?" -- Save, Discard or Cancel. Save is focused, so Enter saves; Escape cancels.
+ * Resolves 'save', 'discard' or 'cancel'.
  */
 export function askToSaveEdits(fileName) {
+    return askChoice({
+        className: 'unsaved-edits-modal',
+        title: `Save changes to ${fileName}?`,
+        text: 'This photo has edits that have not been written to the file.',
+        choices: [['cancel', 'Cancel'], ['discard', 'Discard'], ['save', 'Save']],
+        primary: 'save',
+        cancel: 'cancel',
+    });
+}
+
+/**
+ * A question about leaving, in the page's modal (askToSaveEdits; pending.js leaveThen's about the tag changes waiting):
+ * `title` and `text` go in as text, never as markup; `choices` [value, words] in the footer's order. `primary` is focused,
+ * so Enter takes it (or the button the focus is on); Escape takes `cancel` (web/common/dialog.js), and the focus goes back
+ * to what had it however it closes. Resolves the value chosen. Built like showPlacementModal, from the page's modal classes.
+ */
+export function askChoice({ className, title, text, choices, primary, cancel }) {
     return new Promise((resolve) => {
         const overlay = document.createElement('div');
-        overlay.className = 'modal-overlay active unsaved-edits-modal';
+        overlay.className = `modal-overlay active ${className}`;
         overlay.setAttribute('role', 'dialog');
         overlay.setAttribute('aria-modal', 'true');
-        const choice = (className, value, text) =>
-            buildElement('button', { className: `btn ${className}`, data: { choice: value }, text });
+        const choice = ([value, words]) => buildElement('button', {
+            className: `btn ${value === primary ? 'btn-primary' : 'btn-secondary'}`, data: { choice: value }, text: words,
+        });
         overlay.appendChild(buildElement('div', { className: 'modal-container', style: 'max-width: 420px;' }, [
-            buildElement('div', { className: 'modal-header' }, [
-                // The file name goes in as text, never as markup.
-                buildElement('h2', { text: `Save changes to ${fileName}?` }),
-            ]),
+            buildElement('div', { className: 'modal-header' }, [buildElement('h2', { text: title })]),
             buildElement('div', { className: 'modal-body' }, [
-                buildElement('p', {
-                    style: 'margin: 0; color: var(--text-secondary); line-height: 1.5; font-size: 14px;',
-                    text: 'This photo has edits that have not been written to the file.',
-                }),
+                buildElement('p', { style: 'margin: 0; color: var(--text-secondary); line-height: 1.5; font-size: 14px;', text }),
             ]),
-            buildElement('div', { className: 'modal-footer' }, [
-                choice('btn-secondary', 'cancel', 'Cancel'),
-                choice('btn-secondary', 'discard', 'Discard'),
-                choice('btn-primary', 'save', 'Save'),
-            ]),
+            buildElement('div', { className: 'modal-footer' }, choices.map(choice)),
         ]));
         document.body.appendChild(overlay);
 
-        const close = (choice) => {
+        const close = (value) => {
             overlay.remove();
             releaseFocus(overlay);
-            resolve(choice);
+            resolve(value);
         };
         overlay.querySelectorAll('[data-choice]').forEach(btn => {
             btn.addEventListener('click', () => close(btn.dataset.choice));
@@ -647,10 +654,10 @@ export function askToSaveEdits(fileName) {
             if (e.key === 'Enter') {
                 e.preventDefault();
                 const focused = document.activeElement;
-                const choice = focused && overlay.contains(focused) && focused.dataset.choice;
-                close(choice || 'save');
+                const chosen = focused && overlay.contains(focused) && focused.dataset.choice;
+                close(chosen || primary);
             }
         });
-        holdFocus(overlay, { cancel: () => close('cancel'), focus: overlay.querySelector('[data-choice="save"]') });
+        holdFocus(overlay, { cancel: () => close(cancel), focus: overlay.querySelector(`[data-choice="${primary}"]`) });
     });
 }
