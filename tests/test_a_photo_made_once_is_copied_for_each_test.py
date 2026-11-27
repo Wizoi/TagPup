@@ -125,6 +125,27 @@ class APhotoCopiedForEachTest(ACorpusOfItsOwn):
         self.assertEqual(kept, bytes_of(b), "another test's copy is as it was made")
 
 
+class AnItemWhoseBuildMakesAnother(ACorpusOfItsOwn):
+
+    def test_the_inner_item_on_the_outer_ones_stripe_is_made_not_waited_for(self):
+        # An _over or clip item makes another item inside its build; their keys meet on one of 64 stripes once in 64.
+        outer = os.path.join(corpus.kept(), "00000000-outer.bin")
+        inner = os.path.join(corpus.kept(), "%08x-inner.bin" % corpus.STRIPES)
+
+        def build_inner(part):
+            with open(part, "wb") as handle:
+                handle.write(b"inner")
+
+        def build_outer(part):
+            corpus._make(inner, build_inner, False)
+            with open(part, "wb") as handle:
+                handle.write(b"outer")
+
+        with mock.patch.object(corpus, "WAIT", 1.0):
+            corpus._make(outer, build_outer, False)
+        self.assertEqual([b"outer", b"inner"], [bytes_of(outer), bytes_of(inner)])
+
+
 class ATestRunsEightProcesses(ACorpusOfItsOwn):
 
     def test_a_writer_installed_again_meanwhile_makes_its_items_again(self):

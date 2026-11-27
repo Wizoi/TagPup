@@ -52,6 +52,7 @@ import stat
 import struct
 import sys
 import tempfile
+import threading
 import time
 
 WORKSPACE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -200,13 +201,26 @@ def made(path, recipe, build, tool=None, keep=False):
     return path
 
 
+class _Held(threading.local):
+    """The stripe locks this thread holds: a build that makes a second item meets its own stripe once in 64."""
+    def __init__(self):
+        self.paths = set()
+
+
+_held = _Held()
+
+
 def _make(source, build, keep):
     where, name = os.path.split(source)
     os.makedirs(where, exist_ok=True)
     stripe = int(name[:8], 16) % STRIPES
-    turn = byte_lock.Lock(os.path.join(where, "stripe-%02d.lock" % stripe))
-    if not turn.acquire(wait=WAIT):
-        raise RuntimeError("another test process has been making an item of %s's stripe for %d s" % (name, WAIT))
+    lock_path = os.path.join(where, "stripe-%02d.lock" % stripe)
+    turn = None
+    if lock_path not in _held.paths:   # an item whose build makes another (_over, a clip) may meet its own stripe: the lock is not re-entrant
+        turn = byte_lock.Lock(lock_path)
+        if not turn.acquire(wait=WAIT):
+            raise RuntimeError("another test process has been making an item of %s's stripe for %d s" % (name, WAIT))
+        _held.paths.add(lock_path)
     try:
         if os.path.exists(source):
             return   # another process made it while this one waited
@@ -221,7 +235,9 @@ def _make(source, build, keep):
             _discard(part)
             raise
     finally:
-        turn.release()
+        if turn is not None:
+            _held.paths.discard(lock_path)
+            turn.release()
     if keep:
         evict(kept_root())
 
@@ -347,10 +363,7 @@ def _written(target, values, exiftool, params=()):
     ExifTool, as another program writes a file."""
     from tagpup.files.exiftool_session import ExifToolSession
     with ExifToolSession(executable=exiftool) as et:
-        if values:
-            et.set_tags([target], tags=values, params=["-overwrite_original", *params])
-        else:
-            et.execute("-overwrite_original", *params, target)
+        et.set_tags([target], tags=values, params=["-overwrite_original", *params])
 
 
 def library(path):
