@@ -155,7 +155,7 @@ def sandbox():
         held.release()
 
 
-def _outside(data):
+def outside(data):
     """(every segment of the JPEG `data` but its metadata ones, its picture), or None when it is no JPEG with a scan."""
     layout = containers.read(io.BytesIO(data))
     if not isinstance(layout, containers.Jpeg) or layout.image_offset is None:
@@ -163,7 +163,7 @@ def _outside(data):
     return [data[each.offset:each.end] for each in layout.segments if each.kind not in METADATA], data[layout.image_offset:]
 
 
-def _written(fields, path, values, own):
+def written(fields, path, values, own):
     """(how the write went: patch, rewrite, unchanged or failed; the fields it left stale; why it failed). `own`: the
     write is a journaled one's, the own writer's patch tried first; else ExifTool's rewrite."""
     how = []
@@ -226,7 +226,7 @@ class _Run:
     def photo(self, path, folder):
         """Compare the writers on the photo at `path`, in `folder`; None, or why the run is to stop."""
         state, data = shares.read_whole(path)
-        if state == "read" and _outside(data) is None:
+        if state == "read" and outside(data) is None:
             state = "not a JPEG with a picture"
         if state != "read":
             self.looked[state] += 1
@@ -270,17 +270,17 @@ class _Run:
             with open(copy, "wb") as handle:
                 handle.write(data)
             copies.append(copy)
-            sides.append(_written(self.fields, copy, after, own))
+            sides.append(written(self.fields, copy, after, own))
         (theirs, _, their_error), (own, stale, own_error) = sides
         self.how[operation]["%s, own %s" % (theirs, own)] += 1
         if (theirs == "failed") != (own == "failed"):
             self.differ(path, operation, "one side failed", their_error or own_error)
         if "failed" in (theirs, own):
             return
-        kept = _outside(data)
+        kept = outside(data)
         for (name, _own), copy in zip(SIDES, copies):
             with open(copy, "rb") as handle:
-                now = _outside(handle.read())
+                now = outside(handle.read())
             if now is None or now[1] != kept[1]:
                 self.differ(path, operation, "%s changed the picture" % name)
             elif now[0] != kept[0]:
@@ -299,7 +299,7 @@ class _Run:
         for (name, own), copy in zip(SIDES, copies):
             with open(copy, "rb") as handle:
                 first = handle.read()
-            how, _stale, error = _written(self.fields, copy, after, own)
+            how, _stale, error = written(self.fields, copy, after, own)
             with open(copy, "rb") as handle:
                 if handle.read() != first:
                     self.differ(path, operation, "%s's second write of the same values changed the file" % name,

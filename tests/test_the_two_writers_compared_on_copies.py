@@ -289,7 +289,7 @@ class TheTwoWritersComparedOnCopies(FilesCase):
         # The own writer puts the caption in the title, not the description, and drops the keyword it was to add: the
         # set-asides (KNOWN, empty as absent, warnings against the original's) hide neither.
         self.photo("a.jpg", tags=("Beach",))
-        real = metadata_check._written
+        real = metadata_check.written
 
         def written(fields, path, values, own):
             if own and "XMP:Description" in values and values["XMP:Description"]:
@@ -298,7 +298,7 @@ class TheTwoWritersComparedOnCopies(FilesCase):
                 values = dict(values, **{"XMP:Subject": [each for each in values["XMP:Subject"]
                                                          if each != metadata_check.KEYWORD]})
             return real(fields, path, values, own)
-        with mock.patch.object(metadata_check, "_written", written):
+        with mock.patch.object(metadata_check, "written", written):
             found = self.check(reveal=True)
         said = {(each["operation"], each["difference"]) for each in found["revealed"]}
         for expected in (("caption set", "the sides differ in XMP:XMP-dc:Description"),
