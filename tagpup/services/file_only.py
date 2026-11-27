@@ -30,7 +30,7 @@ at the time of the write, from the library's own answer.
 import logging
 import os
 
-from tagpup.core import fields, paths
+from tagpup.core import fields as core_fields, paths
 from tagpup.core.result import Result
 from tagpup.files import field_values, lock_owners, names, recycle_bin
 from tagpup.services import file_changes
@@ -121,9 +121,9 @@ def _write_fields(et, photo_paths, read, plan_one, unreadable, stop_at_first_err
         if plan.skip:
             result.skip(path, plan.skip)
             continue
-        after = {field: fields.field_values(value) for field, value in plan.after.items()}
+        after = {field: core_fields.field_values(value) for field, value in plan.after.items()}
         before = {field: now.get(field, []) for field in after}
-        if fields.reads_same(before, after):
+        if core_fields.reads_same(before, after):
             written[path] = plan.detail
             continue
         planned.append((path, before, after, plan.detail))
@@ -153,7 +153,7 @@ def _write_one(et, path, before, after, just_read, result):
             now = et.read_one(path, list(after))
         except field_values.Unreadable as e:
             return "could not be read: %s" % e
-        if not fields.reads_same(now, before):
+        if not core_fields.reads_same(now, before):
             result.details["conflicts"].append(path)
             return ("changed since it was read: it holds neither what the edit found nor what it was to leave,"
                     " and is not overwritten")
@@ -170,10 +170,10 @@ def _write_one(et, path, before, after, just_read, result):
             now = et.read_back(path, list(after))
         except field_values.Unreadable:
             return lock_owners.explain(error, path, writable=_writable_if_denied(error, path))
-        if fields.reads_same(now, after):
+        if core_fields.reads_same(now, after):
             return None
         error = lock_owners.explain(error, path, writable=_writable_if_denied(error, path))
-        if fields.reads_same(now, before):
+        if core_fields.reads_same(now, before):
             return error
         result.details["conflicts"].append(path)
         return "a write failed (%s) and left it holding neither what it held nor what it was to hold" % error
@@ -203,7 +203,7 @@ def _read_back(et, wrote, result):
         if now is None or isinstance(now, Exception):
             continue
         kept = {field: now.get(field, []) for field in after}
-        if fields.reads_same(kept, before) and not fields.reads_same(kept, after):
+        if core_fields.reads_same(kept, before) and not core_fields.reads_same(kept, after):
             result.changed -= 1
             result.details["written"].pop(path, None)
             result.fail(path, "ExifTool reported it written, but it holds what it held before")

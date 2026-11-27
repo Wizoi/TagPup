@@ -42,7 +42,7 @@ import tempfile
 import time
 from contextlib import closing, contextmanager
 
-from tagpup.core import byte_lock, dates, fields, paths, vocabulary
+from tagpup.core import byte_lock, dates, fields as core_fields, paths, vocabulary
 from tagpup.core.result import Refused
 from tagpup.files import containers, field_values, shares
 from tagpup.services import photos as photo_actions, roots as roots_service, segment_census, tagging
@@ -75,8 +75,8 @@ SET_ASIDE = frozenset({"SourceFile", "File", "Composite", "ExifTool:ExifToolVers
 KNOWN = frozenset({"XMP:XMP-x:XMPToolkit", "EXIF:IFD1:ThumbnailOffset", "IPTC:EnvelopeRecordVersion",
                    "IPTC:ApplicationRecordVersion"})
 #: What every operation's planner reads of a copy.
-READ = tuple(dict.fromkeys(tagging.SAVE_READ + tuple(fields.caption_fields("")) + dates.SHIFTED_FIELDS
-                           + (fields.ORIENTATION, fields.PRESERVED_NAME)))
+READ = tuple(dict.fromkeys(tagging.SAVE_READ + tuple(core_fields.caption_fields("")) + dates.SHIFTED_FIELDS
+                           + (core_fields.ORIENTATION, core_fields.PRESERVED_NAME)))
 #: A keyword and a person no photo holds (fictional), a caption and a name kept; each but the person holds letters
 #: outside ASCII (IPTC's character set, XMP's escaping, EXIF's UCS-2 XPComment and ASCII ImageDescription).
 KEYWORD, PERSON = "Shadow Check/Lantern Walk \u00e0 Br\u00e9z\u00e9", "Wren Halloway"
@@ -103,7 +103,7 @@ def _fixed(values):
 
 def _preserved(_library):
     """Smart Rename's planner (photos.preserve_names): the name kept, unless the photo keeps one already."""
-    return lambda _path, held: {} if held.get(fields.PRESERVED_NAME) else {fields.PRESERVED_NAME: PRESERVED}
+    return lambda _path, held: {} if held.get(core_fields.PRESERVED_NAME) else {core_fields.PRESERVED_NAME: PRESERVED}
 
 
 #: (name, planner(library) -> plan_one(path, held) answering a file_changes.Plan or a dict of values).
@@ -111,8 +111,8 @@ OPERATIONS = (
     ("keyword added", _keywords(lambda held: [KEYWORD], lambda held: [])),
     ("last keyword taken off", _keywords(lambda held: [], lambda held: held[-1:])),
     ("person added", _keywords(lambda held: [vocabulary.person_tag(PERSON, [], [])], lambda held: [])),
-    ("caption set", _fixed(fields.caption_fields(CAPTION))),
-    ("caption cleared", _fixed(fields.caption_fields(""))),
+    ("caption set", _fixed(core_fields.caption_fields(CAPTION))),
+    ("caption cleared", _fixed(core_fields.caption_fields(""))),
     ("Date Taken shifted", lambda _library: photo_actions.date_shift_plan(SHIFT_MINUTES)),
     ("turned right", lambda _library: photo_actions.rotate_plan("right")),
     ("mirrored", lambda _library: photo_actions.rotate_plan("mirror")),
@@ -177,7 +177,7 @@ def _written(et, path, values, own):
 
 def _same(a, b):
     """Do two values of ExifTool's read hold the same, in any order, one held empty as one not held?"""
-    return sorted(fields.field_values(a)) == sorted(fields.field_values(b))
+    return sorted(core_fields.field_values(a)) == sorted(core_fields.field_values(b))
 
 
 def _said(row):
@@ -250,7 +250,7 @@ class _Run:
         for number, (operation, planner) in enumerate(OPERATIONS):
             plan = planner(self.library)(original, before)
             after = plan if isinstance(plan, dict) else plan.after
-            if not after or fields.reads_same(before, after):
+            if not after or core_fields.reads_same(before, after):
                 self.skipped[operation] += 1
                 continue
             each = os.path.join(folder, str(number))
@@ -289,7 +289,7 @@ class _Run:
         was = {field: before.get(field, []) for field in after}
         for (name, _own), copy, left in zip(SIDES, copies, ((), stale)):
             held = read_back.get(paths.key(copy))
-            if not isinstance(held, dict) or not fields.reads_same(held, fields.as_patched(was, after, left)):
+            if not isinstance(held, dict) or not core_fields.reads_same(held, core_fields.as_patched(was, after, left)):
                 self.differ(path, operation, "%s's fields read back other than written" % name, held)
         found = self.oracle.whole(copies)
         for tag in _tags_differing(whole, found.get(paths.key(copies[0]), {}), found.get(paths.key(copies[1]), {}),

@@ -2,7 +2,7 @@
 import logging
 import os
 
-from tagpup.core import dates, fields, paths, suggesting, validation, vocabulary
+from tagpup.core import dates, fields as core_fields, paths, suggesting, validation, vocabulary
 from tagpup.core.result import CHANGED_ON_DISK, CHANGED_ON_DISK_SENTENCE, Result
 from tagpup.files import field_values, images, metadata, names
 from tagpup.services import batches, file_changes, file_only, libraries
@@ -36,7 +36,7 @@ def refuse_under_people(library, tags):
 
 def _held_title(now):
     """The title the file holds, as the page shows it (fields.title_of: its Title, else its Description)."""
-    return fields.title_of({field: now.get(field) for field in fields.CAPTION_FIELDS})
+    return core_fields.title_of({field: now.get(field) for field in core_fields.CAPTION_FIELDS})
 
 
 #: Every field _differs_from_base reads of the file: the fields its tags come from and every field its title is
@@ -46,7 +46,7 @@ def _held_title(now):
 #: prefixed names alone, as _caption_problem asks: a read answers a field under its group's name (field_values), so a
 #: bare name holds nothing, and a bare key in what the file holds broke the recording of a file that held the save
 #: already (store.photos.follow_fields reads each key as group:name).
-BASE_READ = tuple(dict.fromkeys(fields.TAG_SOURCE_FIELDS + tuple(name for name in fields.CAPTION_FIELDS
+BASE_READ = tuple(dict.fromkeys(core_fields.TAG_SOURCE_FIELDS + tuple(name for name in core_fields.CAPTION_FIELDS
                                                                  if ":" in name)))
 #: Every date field a Date Taken is read from, by the group's name (dates.date_taken): what a save of a date compares,
 #: read only for a base holding one, so a tag or title save of a clip does not walk its QuickTime headers.
@@ -64,7 +64,7 @@ def _differs_from_base(now, base, path):
         if (held or "").strip() != (base["date_taken"] or "").strip():
             return True
     return (set(_tags_held(now)) != set(base.get("tags") or [])
-            or _held_title(now) != fields.trimmed(base.get("title") or ""))
+            or _held_title(now) != core_fields.trimmed(base.get("title") or ""))
 
 
 def _title_written(path, now, wanted):
@@ -73,12 +73,12 @@ def _title_written(path, now, wanted):
     one, counted 2026-11-08) and the save keeps that title, so a tag save of one makes no XMP copy of it; a title changed is written to XMP:Title
     (the writer patches a clip's XMP alone), the QuickTime Title left as it was; a title cleared clears XMP:Title and a
     clip's QuickTime Title too, so no title comes back (DECISIONS 2026-11-08, #2652, #2657). `now` holds BASE_READ."""
-    title = fields.trimmed(wanted.get("XMP:Title") or "")
-    in_xmp = any(fields.trimmed(held) for held in fields.field_values(now.get("XMP:Title")))
-    if not in_xmp and _holds_text(now, fields.CLIP_TITLE, title):
-        return {name: value for name, value in wanted.items() if name not in fields.title_fields("")}
-    if not title and images.is_clip(path) and fields.field_values(now.get(fields.CLIP_TITLE)):
-        return {**wanted, fields.CLIP_TITLE: ""}
+    title = core_fields.trimmed(wanted.get("XMP:Title") or "")
+    in_xmp = any(core_fields.trimmed(held) for held in core_fields.field_values(now.get("XMP:Title")))
+    if not in_xmp and _holds_text(now, core_fields.CLIP_TITLE, title):
+        return {name: value for name, value in wanted.items() if name not in core_fields.title_fields("")}
+    if not title and images.is_clip(path) and core_fields.field_values(now.get(core_fields.CLIP_TITLE)):
+        return {**wanted, core_fields.CLIP_TITLE: ""}
     return wanted
 
 
@@ -93,24 +93,24 @@ def _caption_moved(path, now):
     admitted with (file_changes.leave_out_clips) and is never refused at its write for a field it did not ask (#2663).
     `now` holds BASE_READ and the caption fields."""
     shown = _held_title(now)
-    if not shown or fields.holds_title(now) or images.is_clip(path):
+    if not shown or core_fields.holds_title(now) or images.is_clip(path):
         return {}
-    return {field: "" for field in fields.caption_fields("") if _holds_text(now, field, shown)}
+    return {field: "" for field in core_fields.caption_fields("") if _holds_text(now, field, shown)}
 
 
 def _holds_text(now, field, text):
     """Does `field` of `now` (what a file holds, or a row's raw_metadata) hold `text`, trimmed as the reader trims it?
     The one test of a caption field holding the title: a save's (_caption_moved) and the sweep's (duplicate_captions)."""
-    return text in (fields.trimmed(held) for held in fields.field_values(now.get(field)))
+    return text in (core_fields.trimmed(held) for held in core_fields.field_values(now.get(field)))
 
 
 # ---- The one-off sweep of captions that repeat the title -------------------------------------------------------------
 
 #: The caption fields the sweep clears where they hold the photo's own title (duplicate_captions): every field a caption
 #: is held in but Windows' Comment (fields.SWEPT_CAPTION_FIELDS).
-DUPLICATE_FIELDS = fields.SWEPT_CAPTION_FIELDS
+DUPLICATE_FIELDS = core_fields.SWEPT_CAPTION_FIELDS
 #: What the sweep reads of each file: the title fields and DUPLICATE_FIELDS, by their prefixed names (BASE_READ's reason).
-DUPLICATE_READ = tuple(dict.fromkeys(tuple(fields.title_fields("")) + DUPLICATE_FIELDS))
+DUPLICATE_READ = tuple(dict.fromkeys(tuple(core_fields.title_fields("")) + DUPLICATE_FIELDS))
 #: The sweep's change, as History names it.
 CLEAR_DUPLICATES = "clear duplicate captions"
 #: Why a photo the index named is left alone when its file is read: no caption field holds its title (any more).
@@ -121,7 +121,7 @@ def duplicate_captions(meta):
     """The DUPLICATE_FIELDS of `meta` (what a file holds, or a row's raw_metadata) holding the photo's own title exactly,
     trimmed (fields.own_title: XMP:Title, else a clip's QuickTime Title, else IPTC:ObjectName); [] for a photo with no title of its own. A caption
     holding the title and more ("Relay at the lake" beside the title "Relay") is not one."""
-    title = fields.own_title(meta)
+    title = core_fields.own_title(meta)
     return [field for field in DUPLICATE_FIELDS if _holds_text(meta, field, title)] if title else []
 
 
@@ -133,7 +133,7 @@ def duplicate_candidates(library):
     a title of its own and a caption holding other text), `clips left alone` (a clip whose row holds one),
     `newly shown IPTC captions` (a photo whose XMP Description is cleared while a different IPTC caption remains)."""
     counts = {"photos": 0, "to read": 0}
-    counts.update({field: 0 for field in DUPLICATE_FIELDS if fields.scan_reads(field)})
+    counts.update({field: 0 for field in DUPLICATE_FIELDS if core_fields.scan_reads(field)})
     counts.update({"captions kept": 0, "clips left alone": 0, "newly shown IPTC captions": 0})
     found = []
     conn = db.connect(db.readonly_uri(library.path), uri=True)
@@ -144,17 +144,17 @@ def duplicate_candidates(library):
                 counts["clips left alone"] += bool(repeated)
                 continue
             counts["photos"] += 1
-            title = fields.own_title(raw)
+            title = core_fields.own_title(raw)
             if title and any(text != title for field in DUPLICATE_FIELDS
-                             for text in (fields.trimmed(held) for held in fields.field_values(raw.get(field)))):
+                             for text in (core_fields.trimmed(held) for held in core_fields.field_values(raw.get(field)))):
                 counts["captions kept"] += 1
             if repeated:
                 found.append(path)
                 # XMP's Description (the caption shown first) cleared while a different IPTC caption stays: the photo
                 # shows that one from now on (104 in photo_index, 2026-11-06).
                 if "XMP:Description" in repeated and any(
-                        text and text != title for text in (fields.trimmed(held) for held in
-                                                            fields.field_values(raw.get("IPTC:Caption-Abstract")))):
+                        text and text != title for text in (core_fields.trimmed(held) for held in
+                                                            core_fields.field_values(raw.get("IPTC:Caption-Abstract")))):
                     counts["newly shown IPTC captions"] += 1
                 for field in repeated:
                     if field in counts:
@@ -263,23 +263,23 @@ def save_photo(library, photo_path, title, tags, date_taken, exiftool_path, rena
     result = Result(attempted=1)
     _held, loose = libraries.split(library, [photo_path])
     files_only = bool(loose)
-    wanted = fields.title_fields(title or "")
+    wanted = core_fields.title_fields(title or "")
     if date_taken:
-        wanted.update(fields.date_taken_fields(date_taken, clip=images.is_clip(photo_path)))
+        wanted.update(core_fields.date_taken_fields(date_taken, clip=images.is_clip(photo_path)))
     photo_path = paths.stored(photo_path)
     # A clip this save may not write is refused with its own sentence before anything is compared (#2584); one it may
     # write is compared by its title as the page shows it, its QuickTime Title among the fields read (BASE_READ).
     # The read is the write's (write_fields asks again with all of it, _caption_moved clearing no caption of a clip): the
     # fields it writes and the ones its tags come from. A file of a folder the library does not hold names none, as
     # file_only asks.
-    clip_read = None if files_only else _save_read(fields.keyword_fields([], []), wanted)
+    clip_read = None if files_only else _save_read(core_fields.keyword_fields([], []), wanted)
     if not file_changes.leave_out_clips(Result(), [photo_path], read=clip_read):
         result.refuse(images.CLIP_NOT_EDITED)
         return result
     # A clip's Date Taken goes into its QuickTime headers too, which hold no date before 1904 or after early 2040: the
     # digits asked are the ones the write sets (date_taken_fields), a zone left out, as Convert's carry asks.
     problem = date_taken and images.is_clip(photo_path) and field_values.clip_date_refused(
-        wanted[fields.CLIP_HEADER_DATES[0]])
+        wanted[core_fields.CLIP_HEADER_DATES[0]])
     if problem:
         result.refuse(problem)
         return result
@@ -289,7 +289,7 @@ def save_photo(library, photo_path, title, tags, date_taken, exiftool_path, rena
     # One Fields and one read before the write: the tags the file holds, the plan's before, and the name Smart Rename
     # kept; one deadline from the read to the write's end (Fields.together).
     read = list(dict.fromkeys(SAVE_READ + BASE_READ + (DATE_READ if "date_taken" in base else ()) + tuple(wanted)
-                              + tuple(fields.caption_fields(""))))
+                              + tuple(core_fields.caption_fields(""))))
     with field_values.opened(exiftool_path) as et, et.together():
         now = et.read_one(photo_path, read)
         if _differs_from_base(now, base, photo_path):
@@ -303,10 +303,10 @@ def save_photo(library, photo_path, title, tags, date_taken, exiftool_path, rena
             result.refuse(problem)
             return result
         tags = [t if t in held else vocabulary.normalize(t) for t in tags]
-        flat, hierarchical = fields.expand_tag_fields(tags)
-        after = dict(fields.keyword_fields(flat, hierarchical))
-        after.update(fields.held_dates(_title_written(photo_path, now, wanted), now))
-        asked = fields.date_taken_fields(date_taken, clip=images.is_clip(photo_path)) if date_taken else ()
+        flat, hierarchical = core_fields.expand_tag_fields(tags)
+        after = dict(core_fields.keyword_fields(flat, hierarchical))
+        after.update(core_fields.held_dates(_title_written(photo_path, now, wanted), now))
+        asked = core_fields.date_taken_fields(date_taken, clip=images.is_clip(photo_path)) if date_taken else ()
         dates_written = {field: after[field] for field in asked if field in after}
         after.update(_caption_moved(photo_path, now))
         plan = lambda _path, _held: file_changes.Plan(after=after)   # noqa: E731
@@ -323,7 +323,7 @@ def save_photo(library, photo_path, title, tags, date_taken, exiftool_path, rena
             result.changed = written.changed
             return result
         result.changed = written.changed
-        kept = now.get(fields.PRESERVED_NAME) or [""]
+        kept = now.get(core_fields.PRESERVED_NAME) or [""]
         new_path, skipped, rename_failed = _rename_after_caption(
             library, photo_path, paths.stored(metadata.title_filename(photo_path, title, rename_format, kept[0])),
             files_only)
@@ -338,7 +338,7 @@ def save_photo(library, photo_path, title, tags, date_taken, exiftool_path, rena
             result.details["stamp"] = (written.details.get("stamps") or {}).get(paths.key(photo_path))
         result.details.update(new_path=new_path, renamed=renamed, tags=tags, flat=flat,
                               hierarchical=hierarchical, change=written.details["change"],
-                              dates=dates_written, taken=fields.date_taken_value(date_taken) if date_taken else None,
+                              dates=dates_written, taken=core_fields.date_taken_value(date_taken) if date_taken else None,
                               base={"tags": _tags_held(after), "title": _held_title({**now, **after})})
         touched = 1 if (written.changed or renamed) else 0
         result.details.update({file_only.FILE_ONLY: touched if files_only else 0,
@@ -413,10 +413,10 @@ def _caption_problem(exiftool_path, photo_path, caption):
         return None
     records = {}
     with field_values.opened(exiftool_path) as reader:
-        reader.read([photo_path], [], also=[field for field in fields.HELD_CAPTION_FIELDS if ":" in field],
+        reader.read([photo_path], [], also=[field for field in core_fields.HELD_CAPTION_FIELDS if ":" in field],
                     records=records)
-    held = fields.captions_held(records.get(paths.key(photo_path), {}))
-    return None if fields.trimmed(caption) in held else problem
+    held = core_fields.captions_held(records.get(paths.key(photo_path), {}))
+    return None if core_fields.trimmed(caption) in held else problem
 
 
 #: What a bulk write says of a photo whose file is gone (the page starts the reason with "missing, ").
@@ -634,29 +634,29 @@ def _refused(attempted, problem):
 #: What a keyword write reads of each file: the fields its tags come from, and every
 #: field it writes (tagpup.core.fields.keyword_fields), which the journal records before
 #: and after.
-KEYWORD_READ = tuple(dict.fromkeys(fields.TAG_SOURCE_FIELDS + tuple(fields.keyword_fields([], []))))
+KEYWORD_READ = tuple(dict.fromkeys(core_fields.TAG_SOURCE_FIELDS + tuple(core_fields.keyword_fields([], []))))
 
 #: What a save reads of the file before it writes, beside the caption and date fields
 #: it writes: the fields its tags come from and every keyword field (KEYWORD_READ), and
 #: the name Smart Rename kept, by which a new caption renames it.
-SAVE_READ = KEYWORD_READ + (fields.PRESERVED_NAME,)
+SAVE_READ = KEYWORD_READ + (core_fields.PRESERVED_NAME,)
 
 
 def _save_read(*written):
     """What a save of a held photo says it reads (file_changes.write_fields' `read`): the fields of each of `written` and
     every field its tags come from (fields.TAG_SOURCE_FIELDS)."""
-    return list(dict.fromkeys([field for each in written for field in each] + list(fields.TAG_SOURCE_FIELDS)))
+    return list(dict.fromkeys([field for each in written for field in each] + list(core_fields.TAG_SOURCE_FIELDS)))
 
 
 def _keywords_plan(tags):
     """The Plan of a file whose tags are to be `tags`: every keyword field, and the tags
     and their two forms as written (details["written"])."""
-    flat, hierarchical = fields.expand_tag_fields(tags)
-    return file_changes.Plan(after=fields.keyword_fields(flat, hierarchical), detail=(tags, flat, hierarchical))
+    flat, hierarchical = core_fields.expand_tag_fields(tags)
+    return file_changes.Plan(after=core_fields.keyword_fields(flat, hierarchical), detail=(tags, flat, hierarchical))
 
 
 def _tags_held(held):
-    return vocabulary.extract_tags({field: held.get(field) for field in fields.TAG_SOURCE_FIELDS})
+    return vocabulary.extract_tags({field: held.get(field) for field in core_fields.TAG_SOURCE_FIELDS})
 
 
 def keywords_planner(library, edit):

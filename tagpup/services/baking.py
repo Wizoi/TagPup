@@ -20,7 +20,7 @@ import dataclasses
 
 import numpy as np
 
-from tagpup.core import fields, orientation
+from tagpup.core import fields as core_fields, orientation
 from tagpup.core import paths
 from tagpup.files import bake, field_values, images, shares
 from tagpup.services import settings
@@ -128,7 +128,7 @@ def plan_photo(conn, photo_path, keys, held, shape, fingerprint=None, stamp_of=s
     compared = dict(made)
     if digest is None:
         del compared[bake.WRITTEN[bake.FINGERPRINT]]
-    if fields.reads_same(file_holds, compared) or _current_bake(file_holds, keys, digest):
+    if core_fields.reads_same(file_holds, compared) or _current_bake(file_holds, keys, digest):
         return Current()
     return ToBake(made if digest is not None else None)
 
@@ -141,7 +141,7 @@ def _current_bake(file_holds, keys, digest):
     here: a file differing from the rows is ToBake(None), and the run that decodes it decides."""
     if digest is None:
         return False
-    if not all(fields.same_read(bake.WRITTEN[field], file_holds.get(bake.WRITTEN[field]), [key])
+    if not all(core_fields.same_read(bake.WRITTEN[field], file_holds.get(bake.WRITTEN[field]), [key])
                for field, key in ((bake.PHOTO_MODEL, keys.photo), (bake.FACE_MODEL, keys.face))):
         return False
     texts = file_holds.get(bake.WRITTEN[bake.FINGERPRINT])

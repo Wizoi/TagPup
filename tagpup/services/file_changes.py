@@ -85,7 +85,7 @@ from dataclasses import dataclass
 from stat import S_IWRITE
 from typing import Any, Dict, Optional
 
-from tagpup.core import fields, paths
+from tagpup.core import fields as core_fields, paths
 from tagpup.core.result import Conflict, Refused, Result
 from tagpup.files import exiftool_session, field_values, images, in_place, lock_owners, names, shares
 from tagpup.services import baking, batches, face_batch, rotation
@@ -323,8 +323,8 @@ def leave_out_clips(result, photo_paths, unreadable="fail", read=None):
 
 def _clip_admitted(path, read):
     """May a journaled write reading `read` patch the clip at `path` (leave_out_clips)?"""
-    named = fields.fields_of(field_values.writes(path))
-    return bool(named) and read is not None and set(read) <= named | frozenset(fields.TAG_SOURCE_FIELDS)
+    named = core_fields.fields_of(field_values.writes(path))
+    return bool(named) and read is not None and set(read) <= named | frozenset(core_fields.TAG_SOURCE_FIELDS)
 
 
 #: What a forward write's file found holding its after since the plan comes to (_held_or_conflict's `held_out`): out of
@@ -439,7 +439,7 @@ def _holds_already(et, path, before, after):
     """Does the file at `path` holding `before` hold what a write of `after` would leave it holding: `after`, but for the
     fields the writer leaves as they were (fields.as_patched of Fields.left_as_they_were; `after` itself unless the
     own writer patches, or a clip's)? The plan's one question of a file it need not write."""
-    return fields.reads_same(before, fields.as_patched(before, after, et.left_as_they_were(after, path)))
+    return core_fields.reads_same(before, core_fields.as_patched(before, after, et.left_as_they_were(after, path)))
 
 
 def _refused_whole(photo_paths, why):
@@ -558,7 +558,7 @@ def _write_fields(et, library, operation, exiftool_path, photo_paths, read, plan
             result.skip(path, plan.skip)
             followed.append((path, now))
             continue
-        after = {field: fields.field_values(value) for field, value in plan.after.items()}
+        after = {field: core_fields.field_values(value) for field, value in plan.after.items()}
         before = {field: now.get(field, []) for field in after}
         if _holds_already(et, path, before, after) and not (alongside is not None and alongside.wants(path)):
             written[path] = plan.detail
@@ -924,7 +924,7 @@ def _read_back(et, library, wrote, read=None):
         if now is None or isinstance(now, Exception):
             continue
         kept = {field: now.get(field, []) for field in row.after}
-        if fields.same_fields(kept, row.after):
+        if core_fields.same_fields(kept, row.after):
             continue
         try:
             current = os.stat(row.path)
@@ -932,8 +932,8 @@ def _read_back(et, library, wrote, read=None):
             continue
         if stat is None or (current.st_mtime_ns, current.st_size) != (stat.st_mtime_ns, stat.st_size):
             continue
-        differ = sorted(field for field in row.after if not fields.same_values(kept[field], row.after[field]))
-        same_as_before = fields.reads_same(kept, row.before) and not fields.reads_same(kept, row.after)
+        differ = sorted(field for field in row.after if not core_fields.same_values(kept[field], row.after[field]))
+        same_as_before = core_fields.reads_same(kept, row.before) and not core_fields.reads_same(kept, row.after)
 
         def work(conn, row=row, kept=kept, same_as_before=same_as_before):
             photos.follow_fields(conn, row.path, kept)
@@ -1008,7 +1008,7 @@ def _carry(et, library, row, origin, target, finished, on_failure, wrote=None, n
         # Made twice (field_values.written_once_more): the journal's note of it, which the doctor counts.
         failed = field_values.PictureChanged(file_journal.PICTURE_CHANGED)
     # What the file holds now: `target`, but for the fields the write left as they were (row.stale).
-    held = fields.as_patched(origin, target, row.stale)
+    held = core_fields.as_patched(origin, target, row.stale)
     looked = {}
 
     def read_back():
@@ -1083,7 +1083,7 @@ def _verified(et, library, row, held, read_back=None):
         now = read_back() if read_back is not None else None
         if now is None:
             now = et.read_back(row.path, list(held))
-        if fields.reads_same(now, held):
+        if core_fields.reads_same(now, held):
             return None
         in_place.put_back(row.path, *saved)
     except (OSError, field_values.Unreadable) as e:
@@ -1209,16 +1209,16 @@ def _held_or_conflict(et, library, row, origin, target, finished, now=None, unre
                 return "writing", str(e)
             return _conflict(library, row, "could not be read: %s" % e)
     # What the write leaves: `target`, but for the fields a patch whose record was saved left (row.stale, _by_bytes).
-    left = fields.as_patched(origin, target, row.stale)
-    if fields.reads_same(now, left) and held_out:
+    left = core_fields.as_patched(origin, target, row.stale)
+    if core_fields.reads_same(now, left) and held_out:
         _take_held_out(library, row, now, target, seen)
         return OUT, None
-    if fields.reads_same(now, left):
+    if core_fields.reads_same(now, left):
         # Written already: by a run a crash (or a stop) cut off before it recorded the row, whose
         # stamp from before the write was recorded with it (#265).
         _record_held(library, row, now, target, finished, row.stamp, seen)
         return finished, None
-    if not fields.reads_same(now, origin):
+    if not core_fields.reads_same(now, origin):
         return _conflict(library, row, "changed since it was read: it holds neither what the change found"
                                        " nor what it was to leave, and is not overwritten")
     return None
@@ -1258,11 +1258,11 @@ def _record_held(library, row, now, target, finished, stamp, stat):
     taken before `now` was read, or None when the caller read it (then it is taken now)."""
     held = {field: now.get(field, []) for field in target}
     after = None
-    if finished == "done" and not fields.same_fields(held, target):
+    if finished == "done" and not core_fields.same_fields(held, target):
         after = held
         row.after = held
     # A file that was not to change (its faces were) is not stamped as written.
-    wrote = not fields.reads_same(row.before, row.after)
+    wrote = not core_fields.reads_same(row.before, row.after)
     _record(library, row, held, finished, stamp, wrote=wrote, after=after, stat=stat if wrote else None)
 
 
@@ -1303,13 +1303,13 @@ def _after_failure(et, library, row, origin, target, finished, on_failure, error
         now = _read_now(et, row, target, stall_stops)
     except field_values.Unreadable:
         now = None
-    if now is not None and fields.reads_same(now, fields.as_patched(origin, target, row.stale)):
+    if now is not None and core_fields.reads_same(now, core_fields.as_patched(origin, target, row.stale)):
         _record_held(library, row, now, target, finished, row.stamp, seen)
         return finished, None
     # After a failure only: who holds the file, if it is held; access denied is a holder's only of a file there and not
     # read-only (lock_owners.looks_held).
     error = lock_owners.explain(error, row.path, writable=seen is not None and not row.read_only)
-    if now is not None and fields.reads_same(now, origin):
+    if now is not None and core_fields.reads_same(now, origin):
         if on_failure == "withdraw":
             file_journal.withdraw(library.path, [row.id])
             return "failed", error
@@ -1935,7 +1935,7 @@ def _undoable(library, change_id, exiftool_path, check):
             now = held.get(paths.key(row.path))
             if now is None or isinstance(now, Exception):
                 refused.append((row, "could not be read: %s" % now))
-            elif not fields.reads_same(now, row.after):
+            elif not core_fields.reads_same(now, row.after):
                 refused.append((row, "no longer holds what the change left"))
             elif images.is_clip(row.path) and (why := field_values.clip_refused(row.path, row.before)):
                 # The writer would refuse it: the undo is refused whole, the change left applied, to be undone later.
