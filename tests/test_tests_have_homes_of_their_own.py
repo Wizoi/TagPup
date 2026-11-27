@@ -22,6 +22,10 @@ tests, now asserted beside the scan they check. Each rule fails when its break i
 naming config.ini; a sandbox server started without TAGPUP_NO_JOBS; a script spawn with env=dict(os.environ); a script
 writing TAGPUP_HOME = sandbox; TAGPUP_SERVERS dropped from own_home_environment; end_processes killing nothing; the
 reaper's handle left running (returncode not set).
+
+A test closes every Fields it opens (tests/exiftool_fields.py): one handed straight to a call is never closed, and under
+the stand-in for ExifTool (tests/fake_exiftool.py) the patches an open session holds stayed on for every later test of
+the process, so a test of a patch in place failed when it ran after one that leaked.
 """
 import ast
 import json
@@ -295,6 +299,34 @@ class EndingWhatATestStarted(unittest.TestCase):
         own_home.end_processes(self.home.root)
         self.assertIsNotNone(server.wait(timeout=30))
         self.assertIsNone(processes.started(recorded))
+
+
+def fields_left_open(text):
+    """The lines of `text` that open a Fields (field_values.opened) anywhere but a with block's head: handed straight
+    to a call, or kept, nothing closes it (Fields has no __del__). exiftool_fields.opened is the one that is closed by
+    the test's cleanups."""
+    tree = ast.parse(text)
+    heads = {id(item.context_expr) for node in ast.walk(tree) if isinstance(node, (ast.With, ast.AsyncWith))
+             for item in node.items}
+    return sorted(node.lineno for node in ast.walk(tree)
+                  if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and node.func.attr == "opened"
+                  and getattr(node.func.value, "id", None) == "field_values" and id(node) not in heads)
+
+
+class EveryFieldsATestOpensIsClosed(unittest.TestCase):
+    def test_no_test_hands_a_call_a_fields_nothing_closes(self):
+        left = {name: lines for name in sorted(os.listdir(TESTS))
+                if name.endswith(".py") and name != "exiftool_fields.py"
+                for lines in [fields_left_open(source(name))] if lines}
+        self.assertEqual({}, left, "a Fields handed straight to a call is never closed: open it with "
+                                   "exiftool_fields.opened(self, ...) or in a with block")
+
+    def test_what_counts_as_left_open(self):
+        self.assertEqual([2, 3], fields_left_open(
+            "with field_values.opened(X) as fields:\n"
+            "    file_changes.settle(library, field_values.opened(X))\n"
+            "kept = field_values.opened(X)\n"
+            "tags.delete(library, node, exiftool_fields.opened(self, X))\n"))
 
 
 class TheReaperIsHeld(unittest.TestCase):

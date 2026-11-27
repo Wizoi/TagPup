@@ -23,6 +23,7 @@ from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import exiftool_fields  # noqa: E402
 import test_a_clip_tagged_through_the_journal as tagged  # noqa: E402
 from test_file_journal import Crash, Torn, crash_at, cut_patch  # noqa: E402
 
@@ -30,7 +31,6 @@ from tagpup.files import clip_patch, containers, in_place, segment_edits  # noqa
 import page_writes  # noqa: E402
 from tagpup.services import file_changes, tagging  # noqa: E402
 from tagpup.store import file_journal  # noqa: E402
-from tagpup.files import field_values  # noqa: E402
 
 EXIFTOOL = tagged.EXIFTOOL
 
@@ -68,7 +68,7 @@ class AClipPatchCutShort(tagged.ALibraryHoldingAClip):
         shutil.copyfile(self.clip_path, os.path.join(self.home.root, "original.mp4"))
 
     def tag(self, *tags):
-        return tagging.change_tags(self.vl.library, [self.clip_path], list(tags), [], field_values.opened(EXIFTOOL))
+        return tagging.change_tags(self.vl.library, [self.clip_path], list(tags), [], exiftool_fields.opened(self, EXIFTOOL))
 
     def killed(self, cutting=None, step=None):
         with cutting if cutting is not None else contextlib.nullcontext(), \
@@ -118,7 +118,7 @@ class AClipPatchCutShort(tagged.ALibraryHoldingAClip):
         base = page_writes.base(self.vl.library, self.clip_path)
         with cut_half_way() as cut:
             with self.assertRaises(Crash):
-                tagging.save_photo(self.vl.library, self.clip_path, "", [], saved, field_values.opened(EXIFTOOL), "", base=base)
+                tagging.save_photo(self.vl.library, self.clip_path, "", [], saved, exiftool_fields.opened(self, EXIFTOOL), "", base=base)
         mvhd = next(box for box in containers.read(io.BytesIO(self.original)).headers if box.type == "mvhd")
         self.assertEqual(mvhd.payload + 4, cut[0][0][0], "the first range is the movie header's creation field")
         self.assertEqual(["writing"], self.change_states(self.clip))

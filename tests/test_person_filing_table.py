@@ -13,6 +13,7 @@ import unittest
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
+import exiftool_fields  # noqa: E402
 import damaged_photos  # noqa: E402
 import library_dump  # noqa: E402
 import own_home  # noqa: E402
@@ -24,7 +25,6 @@ from tagpup.services import libraries as library_actions  # noqa: E402
 from tagpup.services import tagging  # noqa: E402
 from tagpup.store import db  # noqa: E402
 from tagpup.store import taxonomy as store_taxonomy  # noqa: E402
-from tagpup.files import field_values  # noqa: E402
 
 EXIFTOOL = own_home.installed_exiftool()
 TABLE = json.load(open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "fixtures", "person_filing.json"),
@@ -82,7 +82,7 @@ class ApplyAllFilesAPersonAsTheChipDoes(unittest.TestCase):
                 before = library_dump.dump(library.path)
                 self.tree_before = self.tree(library)
                 entry = {"tags": [], "people": [{"name": TABLE["name"], "score": 0.9}]}
-                result = tagging.apply_suggestions(library, {photo: entry}, field_values.opened(EXIFTOOL))
+                result = tagging.apply_suggestions(library, {photo: entry}, exiftool_fields.opened(self, EXIFTOOL))
                 if case["expect"] == "ask":
                     # With nobody to ask, Apply All refuses before it writes: it wrote the bare name, which names nobody.
                     self.assertTrue(result.refused, "written without asking")
@@ -108,7 +108,7 @@ class ApplyAllFilesAPersonAsTheChipDoes(unittest.TestCase):
             et.set_tags([photo], tags={"XMP:Subject": ["Family/Wren Okafor"]}, params=["-overwrite_original"])
         library_actions.record_added(library, [os.path.dirname(photo)])
         entry = {"tags": [], "people": [{"name": TABLE["name"], "score": 0.9}]}
-        result = tagging.apply_suggestions(library, {photo: entry}, field_values.opened(EXIFTOOL))
+        result = tagging.apply_suggestions(library, {photo: entry}, exiftool_fields.opened(self, EXIFTOOL))
         self.assertFalse(result.refused, result.refused)
         self.assertEqual(["Family/Wren Okafor"], tags_in(photo))
 

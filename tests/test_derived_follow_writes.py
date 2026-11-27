@@ -17,13 +17,13 @@ import unittest
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
+import exiftool_fields  # noqa: E402
 import own_home  # noqa: E402
 import photo_rows  # noqa: E402
 from test_service_tags import TreeCase  # noqa: E402
 
 from tagpup.services import tags  # noqa: E402
 from tagpup.store import db, derived, journal, photos, schema, taxonomy  # noqa: E402
-from tagpup.files import field_values  # noqa: E402
 
 WINDOWS = os.name == "nt"
 
@@ -379,7 +379,7 @@ class RenamingATagInTagTuner(TreeCase):
         db.write_with_connection(self.lib.library.path, derived.rebuild_all)
         before = self.rows()
         self.assertEqual(sorted([(one, divers), (two, coxes), (two, divers)]), before)
-        result = tags.rename(self.lib.library, divers, "Frogmen", fields=field_values.opened(None))
+        result = tags.rename(self.lib.library, divers, "Frogmen", fields=exiftool_fields.opened(self, None))
         self.assertTrue(result.ok, result.message())
         self.assertEqual(divers, taxonomy.find(self.lib.library.path, "Crew/Frogmen")["id"], "the node keeps its id")
         self.assertEqual(before, self.rows(), "the photos' rows are the node's id, and so are as they were")
@@ -398,7 +398,7 @@ class RenamingATagInTagTuner(TreeCase):
         db.write_with_connection(self.lib.library.path, derived.rebuild_all)
         stuck_id = self.id_of_photo(stuck)
         self.unwritable.add(stuck)
-        result = tags.rename(self.lib.library, divers, "Frogmen", fields=field_values.opened(None))
+        result = tags.rename(self.lib.library, divers, "Frogmen", fields=exiftool_fields.opened(self, None))
         self.assertFalse(result.ok)
         conn = db.connect(db.readonly_uri(self.lib.library.path), uri=True)
         try:

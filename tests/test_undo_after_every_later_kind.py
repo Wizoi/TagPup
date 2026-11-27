@@ -36,6 +36,7 @@ import unittest
 from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import exiftool_fields  # noqa: E402
 import migration_names  # noqa: E402
 import page_writes  # noqa: E402
 import own_home  # noqa: E402
@@ -99,21 +100,21 @@ def a_later_pass(case, library):
 def a_kept_name(case, library):
     """The first photo's name kept in its file before any rename (photos.preserve_names): Smart Rename's first change,
     made alone, of a photo the rename here does not rename."""
-    kept = photo_actions.preserve_names(library, [case.photo[1]], field_values.opened(EXIFTOOL))
+    kept = photo_actions.preserve_names(library, [case.photo[1]], case.fields)
     return kept.details.get("change") if kept.changed else None
 
 
 def a_clear_duplicates(case, library):
     """The sweep of captions repeating their photo's title (scripts/clear_duplicate_captions.py --apply): the first
     photo's Description cleared, its title kept."""
-    cleared = tagging.clear_duplicate_captions(library, field_values.opened(EXIFTOOL), apply=True)
+    cleared = tagging.clear_duplicate_captions(library, case.fields, apply=True)
     return cleared.details.get("change") if cleared.changed else None
 
 
 def a_rotate(case, library):
     """Rotate left on the sixth photo, the one the later pass gives a face with a crop: the turn drops the crops and the
     record of what looked at the photo (tagpup.services.rotation), which no change holds (a crop is a cache)."""
-    turned = photo_actions.rotate_photos(library, [case.photo[6]], "left", field_values.opened(EXIFTOOL))
+    turned = photo_actions.rotate_photos(library, [case.photo[6]], "left", case.fields)
     return turned.details.get("change") if turned.changed else None
 
 
@@ -180,12 +181,12 @@ def a_refresh(case, library):
 def a_save(case, library):
     """Save on the second photo: a caption and a tag (the photo panel)."""
     saved = tagging.save_photo(library, case.photo[2], "Ferry at the quay", ["Harbour/Ferry", "Harbour/Quay"], None,
-                               field_values.opened(EXIFTOOL), "", base=page_writes.base(library, case.photo[2]))
+                               case.fields, "", base=page_writes.base(library, case.photo[2]))
     return saved.details.get("change") if saved.changed else None
 
 
 def a_smart_rename(case, library):
-    renamed = photo_actions.smart_rename(library, [case.photo[3]], "Quay", "{grouping} - {index}", field_values.opened(EXIFTOOL))
+    renamed = photo_actions.smart_rename(library, [case.photo[3]], "Quay", "{grouping} - {index}", case.fields)
     return renamed.details.get("change") if renamed.changed else None
 
 
@@ -218,7 +219,7 @@ def a_bake(case, library):
     if not planned:
         return None
     written = file_changes.write_fields(
-        library, baking.OPERATION, field_values.opened(EXIFTOOL), [path for path, _values in planned.values()], list(bake.WRITTEN.values()),
+        library, baking.OPERATION, case.fields, [path for path, _values in planned.values()], list(bake.WRITTEN.values()),
         lambda path, _held: file_changes.Plan(after=planned[paths.key(path)][1]), summary={"folder": stored})
     return written.details.get("change")
 
@@ -361,6 +362,11 @@ class UndoAfterEveryLaterKind(unittest.TestCase):
         assert switched.changed == 1, switched.refused
         cls.switch_change = switched.details["change"]
 
+    def setUp(self):
+        # One Fields for every write and undo of a test, its ExifTool ended as the test ends: the first test makes
+        # each kind after each other kind, hundreds of operations, and a Fields each would hold a process each.
+        self.fields = exiftool_fields.opened(self, EXIFTOOL)
+
     # ---- copies ------------------------------------------------------------------------------------------------------
 
     @classmethod
@@ -410,9 +416,9 @@ class UndoAfterEveryLaterKind(unittest.TestCase):
         """History listed, Undo rehearsed, Undo applied: (why the listing gives no button, the rehearsal, the undo)."""
         listed = journal_service.refusals(library, [{"id": change_id}])[change_id]
         before = self.digest(library)
-        rehearsed = journal_service.undo(library, change_id, apply=False, fields=field_values.opened(EXIFTOOL))
+        rehearsed = journal_service.undo(library, change_id, apply=False, fields=self.fields)
         self.assertEqual(before, self.digest(library), "the rehearsal wrote")
-        undone = journal_service.undo(library, change_id, apply=True, fields=field_values.opened(EXIFTOOL))
+        undone = journal_service.undo(library, change_id, apply=True, fields=self.fields)
         if undone.refused:
             self.assertEqual(before, self.digest(library), "a refused undo wrote")
         return listed, rehearsed, undone
@@ -471,7 +477,7 @@ class UndoAfterEveryLaterKind(unittest.TestCase):
                             # Undone in order: the later changes first (a rename is two), newest first, then the earlier.
                             for later_id in self.changes_after(library, change_a):
                                 self.assertFalse(journal_service.undo(library, later_id, apply=True,
-                                                                      fields=field_values.opened(EXIFTOOL)).refused)
+                                                                      fields=self.fields).refused)
                             listed, rehearsed, undone = self.undo_from_history(library, change_a)
                             if (a, b) in NOT_LIFTED_IN_ORDER:
                                 self.assertTrue(undone.refused)
@@ -506,7 +512,7 @@ class UndoAfterEveryLaterKind(unittest.TestCase):
         self.put_files_back("base")
         library = self.copy(self.base, "sync_then_save")
         synced = a_sync(self, library)
-        saved = tagging.save_photo(library, self.photo[4], "Ferry at the quay", ["Harbour/Ferry"], None, field_values.opened(EXIFTOOL), "",
+        saved = tagging.save_photo(library, self.photo[4], "Ferry at the quay", ["Harbour/Ferry"], None, self.fields, "",
                                    base=page_writes.base(library, self.photo[4]))
         self.assertTrue(saved.changed, saved.refused)
         said = journal.FILE_WRITTEN_SINCE % {
@@ -515,7 +521,7 @@ class UndoAfterEveryLaterKind(unittest.TestCase):
             with self.subTest(save_undone_first=undone_first):
                 if undone_first:
                     self.assertFalse(journal_service.undo(library, saved.details["change"], apply=True,
-                                                          fields=field_values.opened(EXIFTOOL)).refused)
+                                                          fields=self.fields).refused)
                 entry = journal_service.history(library, change_id=synced)["changes"][0]
                 self.assertEqual(said, entry["why_not"], "History offers the sync's Undo")
                 listed, rehearsed, undone = self.undo_from_history(library, synced)
@@ -533,7 +539,7 @@ class UndoAfterEveryLaterKind(unittest.TestCase):
         found = bake.WRITTEN[bake.FACES_FOUND]
         with mock.patch.object(file_changes, "_reached", side_effect=crash_at("file written")):
             with self.assertRaises(Crash):
-                file_changes.write_fields(library, baking.INDEX_OPERATION, field_values.opened(EXIFTOOL), [self.photo[2]], [found],
+                file_changes.write_fields(library, baking.INDEX_OPERATION, self.fields, [self.photo[2]], [found],
                                           lambda _path, _held: file_changes.Plan(after={found: ["0"]}))
         self.assertEqual([baking.INDEX_OPERATION], [each.operation for each in file_journal.unfinished(library.path)])
         self.assertEqual([], [entry for entry in journal_service.history(library, limit=1000)["changes"]
@@ -543,7 +549,7 @@ class UndoAfterEveryLaterKind(unittest.TestCase):
         self.assertIn(said, listed or "")
         self.assertIn(said, rehearsed.refused or "")
         self.assertIn(said, undone.refused or "")
-        file_changes.settle(library, field_values.opened(EXIFTOOL))
+        file_changes.settle(library, self.fields)
         self.assertEqual([], file_journal.unfinished(library.path))
         listed, rehearsed, undone = self.undo_from_history(library, saved)
         self.assertEqual((None, None, None), (listed, rehearsed.refused, undone.refused))
@@ -558,7 +564,7 @@ class UndoAfterEveryLaterKind(unittest.TestCase):
         library = self.copy(self.base, "sync_then_rename")
         before = set(os.listdir(self.folder))
         self.assertTrue(photo_actions.smart_rename(library, [self.photo[4]], "Quay", "{grouping} - {index}",
-                                                   field_values.opened(EXIFTOOL)).changed)
+                                                   self.fields).changed)
         (named,) = set(os.listdir(self.folder)) - before
         os.makedirs(os.path.join(self.folder, "Pier"))
         moved = os.path.join(self.folder, "Pier", named)
@@ -566,13 +572,13 @@ class UndoAfterEveryLaterKind(unittest.TestCase):
         with field_values.opened(EXIFTOOL) as fields:
             synced = sync.sync(library, apply=True, fields=fields).details.get("change")
         self.assertIsNotNone(synced, "the sync followed no move")
-        renamed = photo_actions.smart_rename(library, [moved], "Pier", "{grouping} - {index}", field_values.opened(EXIFTOOL))
+        renamed = photo_actions.smart_rename(library, [moved], "Pier", "{grouping} - {index}", self.fields)
         self.assertTrue(renamed.changed, renamed.refused)
         (rename,) = self.changes_after(library, synced)   # the rename alone: the first name is in the file
         said = journal.FILE_RENAMED_SINCE % {"other": rename, "operation": "smart rename", "photos": 1, "change": synced}
         listed, rehearsed, undone = self.undo_from_history(library, synced)
         self.assertEqual((said, said, said), (listed, rehearsed.refused, undone.refused))
-        self.assertFalse(journal_service.undo(library, rename, apply=True, fields=field_values.opened(EXIFTOOL)).refused)
+        self.assertFalse(journal_service.undo(library, rename, apply=True, fields=self.fields).refused)
         listed, rehearsed, undone = self.undo_from_history(library, synced)
         self.assertEqual((None, None), (listed, undone.refused))
         self.assertEqual("undone", journal.history(library.path, change_id=synced)[0]["status"])

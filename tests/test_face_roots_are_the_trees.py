@@ -18,10 +18,10 @@ import unittest
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from service_fixture import TempLibrary
 
+import exiftool_fields
 from tagpup.core import vocabulary
 from tagpup.services import tags
 from tagpup.store import db, schema, taxonomy
-from tagpup.files import field_values
 
 
 class FaceRootsAreTheTrees(unittest.TestCase):
@@ -108,17 +108,17 @@ class ALibraryKeepsAFaceRoot(unittest.TestCase):
         self.assertEqual(["People"], self.face_roots())
 
     def test_its_last_face_root_is_not_deleted(self):
-        result = tags.delete(self.lib.library, self.node("People"), "remove", None, field_values.opened(None))
+        result = tags.delete(self.lib.library, self.node("People"), "remove", None, exiftool_fields.opened(self, None))
         self.assertIn("only root that holds faces", result.refused)
         self.assertIsNotNone(taxonomy.find(self.lib.library.path, "People"))
 
     def test_its_last_face_root_is_not_retired(self):
-        result = tags.merge(self.lib.library, "People", None, field_values.opened(None), retire=True, apply=True)
+        result = tags.merge(self.lib.library, "People", None, exiftool_fields.opened(self, None), retire=True, apply=True)
         self.assertIn("only root that holds faces", result.refused)
         self.assertEqual(["People"], self.face_roots())
 
     def test_its_last_face_root_is_not_merged_into_a_word(self):
-        result = tags.merge(self.lib.library, "People", "Activity", field_values.opened(None), apply=True)
+        result = tags.merge(self.lib.library, "People", "Activity", exiftool_fields.opened(self, None), apply=True)
         self.assertIn("only root that holds faces", result.refused)
 
     def test_with_another_face_root_it_may_go(self):
@@ -128,7 +128,7 @@ class ALibraryKeepsAFaceRoot(unittest.TestCase):
         self.assertEqual(["Crew"], self.face_roots())
 
     def test_a_word_root_may_go_whatever_the_face_roots(self):
-        result = tags.delete(self.lib.library, self.node("Activity"), "remove", None, field_values.opened(None))
+        result = tags.delete(self.lib.library, self.node("Activity"), "remove", None, exiftool_fields.opened(self, None))
         self.assertFalse(result.refused)
 
 

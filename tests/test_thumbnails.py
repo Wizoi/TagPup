@@ -15,6 +15,7 @@ from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import exiftool_fields  # noqa: E402
 import photo_rows  # noqa: E402
 import own_home  # noqa: E402
 import roots_library as rl  # noqa: E402
@@ -28,7 +29,6 @@ from tagpup.services import thumbnails  # noqa: E402
 from tagpup.services import faces as face_actions  # noqa: E402
 from tagpup.services import photos as photo_actions  # noqa: E402
 from tagpup.store import db  # noqa: E402
-from tagpup.files import field_values  # noqa: E402
 
 
 def entries_of(library):
@@ -289,7 +289,7 @@ class TakingOne(Cache):
         self.serve()
         self.assertEqual(1, len(entries_of(self.library)))
         with mock.patch("tagpup.files.recycle_bin.send_to_recycle_bin", return_value=True):
-            result = photo_actions.delete(self.library, self.path, field_values.opened(None))
+            result = photo_actions.delete(self.library, self.path, exiftool_fields.opened(self, None))
         self.assertTrue(result.ok, result.message())
         self.assertEqual([], entries_of(self.library))
 

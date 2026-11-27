@@ -8,6 +8,7 @@ import unittest
 from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import exiftool_fields  # noqa: E402
 from test_faces_and_tags_in_step import PEOPLE, InStep  # noqa: E402
 from test_organize_faces import ODA, WREN  # noqa: E402
 
@@ -17,7 +18,6 @@ from tagpup.services import bulk_edit, face_people, tags_from_faces  # noqa: E40
 from tagpup.services import faces as faces_service  # noqa: E402
 from tagpup.services import journal as journal_service  # noqa: E402
 from tagpup.store import db, faces  # noqa: E402
-from tagpup.files import field_values  # noqa: E402
 
 UNNAMED = "face unnamed for a person taken off the photo"
 RENAMED = "face named again for a person put back on the photo"
@@ -56,7 +56,7 @@ class OnlyWhatReallyChangedIsFollowed(Case):
         has, on_has, lacks, on_lacks = self.photos()
         ids = [row[0] for row in self.look("SELECT id FROM photos ORDER BY id")]
         edit = bulk_edit.prepare(self.library, bulk_edit.TAGS, {"remove": [PEOPLE + WREN]})
-        out = bulk_edit.run(self.library, edit, ids, field_values.opened("exiftool"))
+        out = bulk_edit.run(self.library, edit, ids, exiftool_fields.opened(self, "exiftool"))
         self.assertEqual(1, out.changed)
         self.assertEqual((None, "manual"), self.row(on_has)[:2])
         self.assertEqual((WREN, "manual"), self.row(on_lacks)[:2])
@@ -121,7 +121,7 @@ class ATakenOffPersonIsNobodyOnTheirFace(Case):
         self.tuner_post("face/match", {"face_id": face, "person_name": WREN})
         added = self.change_ids("person added for a named face")[0]
         self.files.keep_tags(photo, [PEOPLE + WREN, "Added since, elsewhere"])     # another program changed the file
-        journal_service.undo(self.library, added, apply=True, fields=field_values.opened("exiftool"))
+        journal_service.undo(self.library, added, apply=True, fields=exiftool_fields.opened(self, "exiftool"))
         self.assertEqual((WREN, "manual"), self.row(face)[:2])
         self.assertEqual([], self.change_ids(UNNAMED))
 
@@ -184,7 +184,7 @@ class APersonPutBackNamesNoFaceByItself(Case):
         self.save(photo, ["Regatta"])
         removal = self.change_ids("save photo")[-1]
         unnamed = self.change_ids(UNNAMED)[-1]
-        undone = journal_service.undo(self.library, removal, apply=True, fields=field_values.opened("exiftool"))
+        undone = journal_service.undo(self.library, removal, apply=True, fields=exiftool_fields.opened(self, "exiftool"))
         self.assertEqual([], undone.errors, undone.errors)
         self.assertEqual({PEOPLE + WREN, "Regatta"}, set(self.tags(photo)))
         self.assertEqual([(WREN, "manual"), (None, None)], [self.row(wren)[:2], self.row(other)[:2]])
@@ -196,7 +196,7 @@ class APersonPutBackNamesNoFaceByItself(Case):
         self.save(photo, ["Regatta"])
         removal = self.change_ids("save photo")[-1]
         db.write_with_connection(self.path, lambda conn: faces.name(conn, [wren], ODA))       # by hand, not journaled
-        undone = journal_service.undo(self.library, removal, apply=True, fields=field_values.opened("exiftool"))
+        undone = journal_service.undo(self.library, removal, apply=True, fields=exiftool_fields.opened(self, "exiftool"))
         self.assertEqual(ODA, self.row(wren)[0], "the owner's newer decision was overwritten")
         self.assertEqual({PEOPLE + WREN, "Regatta"}, set(self.tags(photo)), "the tag itself went back")
         self.assertIn("changed since", undone.details["faces_problem"])

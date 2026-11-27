@@ -21,6 +21,7 @@ sys.path.insert(0, WORKSPACE_DIR)
 sys.path.insert(0, os.path.join(WORKSPACE_DIR, "scripts"))
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import exiftool_fields  # noqa: E402
 from tagpup.core import processes  # noqa: E402
 import own_home  # noqa: E402
 from tagpup.core import fields  # noqa: E402
@@ -128,7 +129,7 @@ class ATextHoldingALineBreakReachesTheFileWhole(kept.BakeCase):
                 after = {field: [CAPTION] for field in fields.caption_fields(CAPTION)}
                 after["XMP:Subject"] = ["Beach", KEYWORD]
                 before = self.held(a, list(after))
-                result = file_changes.write_fields(self.library, "caption", field_values.opened(EXIFTOOL), [a], list(after),
+                result = file_changes.write_fields(self.library, "caption", exiftool_fields.opened(self, EXIFTOOL), [a], list(after),
                                                    lambda path, held: file_changes.Plan(after=after))
                 self.assertEqual((1, []), (result.changed, result.errors))
                 held = {field: before[field] if patched and field in left else value for field, value in after.items()}
@@ -148,7 +149,7 @@ class ATextHoldingALineBreakReachesTheFileWhole(kept.BakeCase):
             with self.subTest(caption=caption):
                 after = {field: [caption] for field in fields.caption_fields(caption)}
                 before, written, last = self.held(a, list(after)), os.stat(a).st_mtime_ns, self.last_change()
-                result = file_changes.write_fields(self.library, "caption", field_values.opened(EXIFTOOL), [a], list(after),
+                result = file_changes.write_fields(self.library, "caption", exiftool_fields.opened(self, EXIFTOOL), [a], list(after),
                                                    lambda path, held: file_changes.Plan(after=after))
                 self.assertEqual(changed, result.changed, result.errors)
                 if changed:

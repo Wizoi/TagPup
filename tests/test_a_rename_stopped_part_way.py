@@ -29,6 +29,7 @@ from unittest import mock
 from click.testing import CliRunner
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import exiftool_fields  # noqa: E402
 from face_rows import FACES_WITH_PATHS, VECTORS_WITH_PATHS, add_face, add_vector  # noqa: E402
 from test_file_journal import EXIFTOOL, Crash, FilesCase, crash_at, field_of, keywords_of, write_outside  # noqa: E402
 from test_a_file_holds_what_exiftool_kept import rewritten  # noqa: E402
@@ -43,7 +44,6 @@ from tagpup.services import journal as journal_service  # noqa: E402
 from tagpup.services import libraries as library_actions  # noqa: E402
 from tagpup.store import db, file_journal  # noqa: E402
 from tagpup.store import roots as store_roots  # noqa: E402
-from tagpup.files import field_values  # noqa: E402
 
 FORMAT = "{grouping} - {index} - {caption}"
 NEW_NAME = "Regatta - 1 - Start.jpg"
@@ -92,7 +92,7 @@ class RenameCase(FilesCase):
 
         with mock.patch.object(file_changes, "_reached", side_effect=reached):
             with self.assertRaises(Crash):
-                photo_actions.smart_rename(self.library, [self.a], "Regatta", FORMAT, field_values.opened(EXIFTOOL))
+                photo_actions.smart_rename(self.library, [self.a], "Regatta", FORMAT, exiftool_fields.opened(self, EXIFTOOL))
         return self.last_change()
 
 
@@ -123,7 +123,7 @@ class AKilledRename(RenameCase):
         self.assertFalse(paths.spelled_as(lower))
         with mock.patch.object(file_changes, "_reached", side_effect=crash_at(step)):
             with self.assertRaises(Crash):
-                file_changes.rename(self.library, "smart rename", {old: lower}, {}, field_values.opened(EXIFTOOL))
+                file_changes.rename(self.library, "smart rename", {old: lower}, {}, exiftool_fields.opened(self, EXIFTOOL))
         change = self.last_change()
         self.assertEqual(1, self.settle())
         self.assertEqual(("applied", ["done"]), (self.status(change), self.states(change)))
@@ -145,7 +145,7 @@ class AKilledRename(RenameCase):
 
         before = self.rows("SELECT COUNT(*) FROM changes")[0][0]
         with mock.patch.object(file_changes.os, "stat", side_effect=without_file_id):
-            result = photo_actions.smart_rename(self.library, [self.a], "Regatta", FORMAT, field_values.opened(EXIFTOOL))
+            result = photo_actions.smart_rename(self.library, [self.a], "Regatta", FORMAT, exiftool_fields.opened(self, EXIFTOOL))
         self.assertFalse(result.ok)
         self.assertIn("no file id", result.message())
         self.assertEqual((before, ["IMG_0001.jpg"], self.a), (self.rows("SELECT COUNT(*) FROM changes")[0][0],
@@ -230,7 +230,7 @@ class SmartRenameStaysPut(RenameCase):
     def test_a_photo_in_a_subfolder_stays_in_it(self):
         os.makedirs(os.path.join(self.folder, "Heats"))
         inner = self.make(os.path.join("Heats", "b.jpg"), preserved="b.jpg")
-        result = photo_actions.smart_rename(self.library, [self.a, inner], "Regatta", "{grouping} - {index}", field_values.opened(EXIFTOOL))
+        result = photo_actions.smart_rename(self.library, [self.a, inner], "Regatta", "{grouping} - {index}", exiftool_fields.opened(self, EXIFTOOL))
         self.assertTrue(result.ok, result.message())
         moved = result.details["updated_paths"]
         self.assertEqual(os.path.join(self.folder, "Heats"), os.path.dirname(moved[inner]))
@@ -250,7 +250,7 @@ class SmartRenameStaysPut(RenameCase):
 
         with mock.patch("os.rename", side_effect=rename):
             result = photo_actions.smart_rename(self.library, [self.a] + others, "Regatta", "{grouping} - {index}",
-                                                field_values.opened(EXIFTOOL))
+                                                exiftool_fields.opened(self, EXIFTOOL))
         self.assertFalse(result.ok)
         self.assertEqual(before, self.names(), "photos were left under temporary names or new ones")
         self.assertEqual(self.a, self.path_of_row())
@@ -273,14 +273,14 @@ class ALaterWriteOfTheRenamedPhoto(RenameCase):
         library_actions.record_added(self.library, [self.folder])
 
     def rename(self):
-        renamed = photo_actions.smart_rename(self.library, [self.a], "Regatta", FORMAT, field_values.opened(EXIFTOOL))
+        renamed = photo_actions.smart_rename(self.library, [self.a], "Regatta", FORMAT, exiftool_fields.opened(self, EXIFTOOL))
         self.assertTrue(renamed.ok, renamed.message())
         self.assertEqual([NEW_NAME], self.names())
         return renamed.details["change"]
 
     def save(self):
         """Save on the photo panel: a tag added, the caption as it was (so the name it gives is the one it has)."""
-        saved = tagging.save_photo(self.library, self.new, "Start", ["Beach", "Harbour"], None, field_values.opened(EXIFTOOL), FORMAT,
+        saved = tagging.save_photo(self.library, self.new, "Start", ["Beach", "Harbour"], None, exiftool_fields.opened(self, EXIFTOOL), FORMAT,
                                    base=page_writes.base(self.library, self.new))
         self.assertEqual([NEW_NAME], self.names())
         self.assertTrue(saved.changed, saved.message())
@@ -346,7 +346,7 @@ class AnIdentityTheIndexGivesTheRenamedPhotos(FilesCase):
         self.ids = [self.photo_id(path) for path in self.old]
 
     def rename(self):
-        renamed = photo_actions.smart_rename(self.library, self.old, "Regatta", FORMAT, field_values.opened(EXIFTOOL))
+        renamed = photo_actions.smart_rename(self.library, self.old, "Regatta", FORMAT, exiftool_fields.opened(self, EXIFTOOL))
         self.assertTrue(renamed.ok, renamed.message())
         self.new = [renamed.details["updated_paths"][path] for path in self.old]
         self.assertEqual(sorted(os.path.basename(path) for path in self.new), sorted(os.listdir(self.folder)))
@@ -424,7 +424,7 @@ class AnIdentityTheIndexGivesTheRenamedPhotos(FilesCase):
         # Two writers of one photo: the Save's (journaled) and then the mint's (not). Each carries the rename over its
         # own write, the mint from what the Save left.
         rename = self.rename()
-        saved = tagging.save_photo(self.library, self.new[0], "Start", ["Beach", "Harbour"], None, field_values.opened(EXIFTOOL), FORMAT,
+        saved = tagging.save_photo(self.library, self.new[0], "Start", ["Beach", "Harbour"], None, exiftool_fields.opened(self, EXIFTOOL), FORMAT,
                                    base=page_writes.base(self.library, self.new[0]))
         self.assertTrue(saved.changed, saved.message())
         self.index()

@@ -19,6 +19,7 @@ from unittest.mock import patch
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
+import exiftool_fields  # noqa: E402
 from face_rows import configured_model  # noqa: E402
 from test_a_file_holds_what_exiftool_kept import ReadFilesCase  # noqa: E402
 from test_file_journal import EXIFTOOL, Crash, crash_at  # noqa: E402
@@ -115,7 +116,7 @@ class AFileChangedWhileItIsRead(ReadFilesCase):
             touched_by_another_program(row.path)
             return real(fields, row, read)
         with mock.patch.object(file_changes, "_read_whole", read_whole):
-            saved = tagging.save_photo(self.library, a, "Quay at dusk", ["Beach"], None, field_values.opened(EXIFTOOL), "", base=base)
+            saved = tagging.save_photo(self.library, a, "Quay at dusk", ["Beach"], None, exiftool_fields.opened(self, EXIFTOOL), "", base=base)
         self.assertTrue(saved.ok, saved.message())
         stamp = self.rows("SELECT mtime, size FROM photos WHERE path = ?", (a,))[0]
         self.assertFalse(describes_its_file(stamp, a), "a change made during the read back was stamped as read")

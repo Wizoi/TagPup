@@ -39,6 +39,7 @@ import unittest
 from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import exiftool_fields  # noqa: E402
 from test_file_journal import EXIFTOOL, Crash, FilesCase, crash_at, keywords_of, write_outside  # noqa: E402
 
 import baked_files  # noqa: E402
@@ -79,7 +80,7 @@ class ReadFilesCase(FilesCase):
     def caption(self, photo_paths, caption):
         # The page's save of one photo: its caption, the tags it holds already.
         for path in photo_paths:
-            result = tagging.save_photo(self.library, path, caption, ["Beach"], None, field_values.opened(EXIFTOOL), "",
+            result = tagging.save_photo(self.library, path, caption, ["Beach"], None, exiftool_fields.opened(self, EXIFTOOL), "",
                                         base=page_writes.base(self.library, path))
         return result
 
@@ -274,7 +275,7 @@ class BakeCase(KeptCase):
                            (16, 12), baked_files.DIGEST, baked_files.PHOTO_MODEL, baked_files.FACE_MODEL)
 
     def bake(self, photo_paths, values):
-        return file_changes.write_fields(self.library, "bake", field_values.opened(EXIFTOOL), photo_paths, list(values),
+        return file_changes.write_fields(self.library, "bake", exiftool_fields.opened(self, EXIFTOOL), photo_paths, list(values),
                                          lambda path, held: file_changes.Plan(after=values))
 
     def crash(self, step, photo_paths, values):
@@ -450,7 +451,7 @@ class ABakeIsWritten(BakeCase):
             with self.subTest(patched=patched), mock.patch.object(field_values, "PATCH_IN_PLACE", patched):
                 a = self.make_read("patched.jpg" if patched else "rewritten.jpg")
                 before = bytes_of(a)
-                result = file_changes.write_fields(self.library, "bake", field_values.opened(EXIFTOOL), [a], [fields.REGION_INFO],
+                result = file_changes.write_fields(self.library, "bake", exiftool_fields.opened(self, EXIFTOOL), [a], [fields.REGION_INFO],
                                                    lambda path, held: file_changes.Plan(after={fields.REGION_INFO: [text]}))
                 self.assertEqual(0, result.changed)
                 self.assertIn("is not a field of", str(result.errors))
@@ -472,7 +473,7 @@ class ABakeIsWritten(BakeCase):
             handle.write(data)
         before = bytes(data)
         text = bake.region_text({"RegionList": [{"Type": "Face", "Name": "Face"}]})
-        result = file_changes.write_fields(self.library, "bake", field_values.opened(EXIFTOOL), [a], [fields.REGION_INFO],
+        result = file_changes.write_fields(self.library, "bake", exiftool_fields.opened(self, EXIFTOOL), [a], [fields.REGION_INFO],
                                            lambda path, held: file_changes.Plan(after={fields.REGION_INFO: [text]}))
         self.assertEqual(0, result.changed)
         self.assertIn("Invalid XMP", str(result.errors))

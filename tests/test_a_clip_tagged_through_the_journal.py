@@ -25,6 +25,7 @@ from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import exiftool_fields  # noqa: E402
 import corpus  # noqa: E402
 import test_a_clip_patched_in_place as patched  # noqa: E402
 import photo_rows  # noqa: E402
@@ -54,7 +55,7 @@ class AClipWrittenByTheOneWriter(patched.FfmpegClips):
         self.addCleanup(rewrite.stop)
         stack = contextlib.ExitStack()
         self.addCleanup(stack.close)
-        self.et = stack.enter_context(field_values.opened(EXIFTOOL))
+        self.et = stack.enter_context(exiftool_fields.opened(self, EXIFTOOL))
 
     def saving(self, record, before):
         self.saved.append((record, before))
@@ -298,7 +299,7 @@ class AClipInTheLibrary(ALibraryHoldingAClip):
         def plan_one(path, held):
             raise AssertionError("a clip is not planned")
 
-        result = file_only.write_fields(field_values.opened(EXIFTOOL), [self.clip_path], sorted(fields.CLIP_FIELDS), plan_one)
+        result = file_only.write_fields(exiftool_fields.opened(self, EXIFTOOL), [self.clip_path], sorted(fields.CLIP_FIELDS), plan_one)
         self.assertEqual([images.CLIP_NOT_EDITED], [why for _path, why in result.errors],
                          "no journal to settle a patch a crash cut short")
         self.assertEqual(before, self.read_bytes(self.clip_path))

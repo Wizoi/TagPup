@@ -15,6 +15,7 @@ import unittest
 from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import exiftool_fields  # noqa: E402
 import photo_rows  # noqa: E402
 from people_by_id import MAX_FRIEND, MAX_PET, SAM_I, SAM_T, TwoSams, look, write  # noqa: E402
 from face_rows import FACE_MODEL  # noqa: E402
@@ -23,7 +24,6 @@ from tagpup.core import vocabulary  # noqa: E402
 from tagpup.core.result import NotFound, Refused, Result  # noqa: E402
 from tagpup.services import tags as tags_service  # noqa: E402
 from tagpup.store import db, faces, person_ids, taxonomy  # noqa: E402
-from tagpup.files import field_values  # noqa: E402
 
 
 def stand_in_for_the_files(case):
@@ -57,10 +57,10 @@ class Operations(TwoSams, unittest.TestCase):
         write(self.path, lambda conn: faces.name(conn, [self.faces[2]], self.sam_i))
 
     def rename(self, who, new):
-        return tags_service.rename_person(self.library, who, new, field_values.opened("exiftool"))
+        return tags_service.rename_person(self.library, who, new, exiftool_fields.opened(self, "exiftool"))
 
     def merge(self, source, target, **more):
-        return tags_service.merge(self.library, source, target, field_values.opened("exiftool"), **more)
+        return tags_service.merge(self.library, source, target, exiftool_fields.opened(self, "exiftool"), **more)
 
     # ---- rename ----------------------------------------------------------------------------------
 
@@ -76,7 +76,7 @@ class Operations(TwoSams, unittest.TestCase):
 
     def test_renaming_a_group_counts_the_faces_under_it_after_the_write(self):
         """Fix round 1: faces_renamed was counted before the write, and a group (not a person) counted none."""
-        result = tags_service.rename(self.library, self.node("Family/Ingersoll"), "Ingersoll House", field_values.opened("exiftool"))
+        result = tags_service.rename(self.library, self.node("Family/Ingersoll"), "Ingersoll House", exiftool_fields.opened(self, "exiftool"))
         self.assertTrue(result.ok, result.message())
         self.assertEqual(2, result.details["faces_renamed"], "the two faces of the Sam under it")
         self.assertEqual(self.sam_i, self.node("Family/Ingersoll House/Sam"))
@@ -204,7 +204,7 @@ class Operations(TwoSams, unittest.TestCase):
                 self.assertFalse(result.ok)
                 self.assertEqual([], self.rewrites, "no file was written")
                 self.assertEqual(before, self.the_state(), "the tree, the faces and the index are as they were")
-        moved = tags_service.delete(self.library, self.sam_t, "move", "Places/Coast", field_values.opened("exiftool"))
+        moved = tags_service.delete(self.library, self.sam_t, "move", "Places/Coast", exiftool_fields.opened(self, "exiftool"))
         self.assertFalse(moved.ok)
         self.assertEqual([], self.rewrites)
         self.assertEqual(before, self.the_state())
@@ -217,7 +217,7 @@ class Operations(TwoSams, unittest.TestCase):
     # ---- delete ----------------------------------------------------------------------------------
 
     def test_deleting_a_person_faces_name_is_refused_with_the_count(self):
-        result = tags_service.delete(self.library, self.sam_i, "remove", None, field_values.opened("exiftool"))
+        result = tags_service.delete(self.library, self.sam_i, "remove", None, exiftool_fields.opened(self, "exiftool"))
         self.assertIn("2 face(s) are named", result.refused)
         self.assertIn("about 6 rows", result.refused, "the cost of force in History is said before it is asked for")
         self.assertEqual(self.sam_i, self.node(SAM_I))
@@ -235,7 +235,7 @@ class Operations(TwoSams, unittest.TestCase):
         written = look(self.path, "SELECT id, name, name_source FROM faces ORDER BY id")
         decided = [row for row in written if row[0] in (self.faces[1], self.faces[2])]
         self.assertTrue(all(row[2] == "manual" for row in decided), decided)
-        self.assertTrue(tags_service.delete(self.library, self.sam_i, "remove", None, field_values.opened("exiftool"), force=True).ok)
+        self.assertTrue(tags_service.delete(self.library, self.sam_i, "remove", None, exiftool_fields.opened(self, "exiftool"), force=True).ok)
         changes = look(self.path, "SELECT id, summary FROM changes WHERE operation = ?", (journal.PERSON_DELETED,))
         self.assertEqual(1, len(changes))
         summary = json.loads(changes[0][1])
@@ -245,7 +245,7 @@ class Operations(TwoSams, unittest.TestCase):
                          "three rows a face: what the refusal and the dry run say")
         # The other Sam is called the same, and the person who held the faces is gone: the undo is refused, and the faces are not
         # given to the other Sam.
-        undone = journal_service.undo(self.library, changes[0][0], apply=True, fields=field_values.opened("exiftool"))
+        undone = journal_service.undo(self.library, changes[0][0], apply=True, fields=exiftool_fields.opened(self, "exiftool"))
         self.assertIn("no longer in the tag tree", undone.refused)
         self.assertEqual([(None, None, None)] * 2, [self.face(self.faces[1]), self.face(self.faces[2])])
         self.assertEqual(self.sam_t, self.face(self.faces[0])[0], "the other Sam's face is theirs and no other is")
@@ -257,7 +257,7 @@ class Operations(TwoSams, unittest.TestCase):
         from tagpup.store import journal
         self.assertTrue(self.merge(SAM_I, SAM_T, apply=True).ok)
         change = look(self.path, "SELECT id FROM changes WHERE operation = ?", (journal.PERSON_MERGED,))[0][0]
-        undone = journal_service.undo(self.library, change, apply=True, fields=field_values.opened("exiftool"))
+        undone = journal_service.undo(self.library, change, apply=True, fields=exiftool_fields.opened(self, "exiftool"))
         self.assertIn("no longer in the tag tree", undone.refused)
         self.assertEqual([(self.sam_t, "Sam", "manual")] * 2, [self.face(self.faces[1]), self.face(self.faces[2])],
                          "the merged person is not restored: the faces stay with the person they were merged into")
@@ -269,9 +269,9 @@ class Operations(TwoSams, unittest.TestCase):
         face = write(self.path, lambda conn: faces.insert(conn, self.other, [40, 0, 50, 10], b"\x05" * 8, model=FACE_MODEL))
         write(self.path, lambda conn: faces.name(conn, [face], wren))
         self.assertEqual((wren, "Wren Halloway", "manual"), self.face(face))
-        self.assertTrue(tags_service.delete(self.library, wren, "remove", None, field_values.opened("exiftool"), force=True).ok)
+        self.assertTrue(tags_service.delete(self.library, wren, "remove", None, exiftool_fields.opened(self, "exiftool"), force=True).ok)
         change = look(self.path, "SELECT id FROM changes WHERE operation = ?", (journal.PERSON_DELETED,))[0][0]
-        undone = journal_service.undo(self.library, change, apply=True, fields=field_values.opened("exiftool"))
+        undone = journal_service.undo(self.library, change, apply=True, fields=exiftool_fields.opened(self, "exiftool"))
         self.assertIn("no longer in the tag tree", undone.refused)
         self.assertEqual((None, None, None), self.face(face), "no face is left with a name and no person")
 
@@ -284,7 +284,7 @@ class Operations(TwoSams, unittest.TestCase):
         self.assertIn("the merged person is not kept", summaries[0]["note"])
 
     def test_force_unnames_the_faces_in_the_same_transaction_and_they_are_not_nobody(self):
-        result = tags_service.delete(self.library, self.sam_i, "remove", None, field_values.opened("exiftool"), force=True)
+        result = tags_service.delete(self.library, self.sam_i, "remove", None, exiftool_fields.opened(self, "exiftool"), force=True)
         self.assertTrue(result.ok, result.message())
         self.assertIsNone(self.node(SAM_I))
         self.assertEqual([(None, None, None)] * 2, [self.face(self.faces[1]), self.face(self.faces[2])],
@@ -359,7 +359,7 @@ class TheOwnersRapidClicks(TwoSams, unittest.TestCase):
         def renames():
             for number in range(6):
                 try:
-                    tags_service.rename_person(self.library, self.sam_i, "Samuel %d" % number, field_values.opened("exiftool"))
+                    tags_service.rename_person(self.library, self.sam_i, "Samuel %d" % number, exiftool_fields.opened(self, "exiftool"))
                 except Exception as problem:   # a rename to a name it already has is no error
                     failures.append(problem)
 
@@ -387,7 +387,7 @@ class TheOwnersRapidClicks(TwoSams, unittest.TestCase):
 
     def test_a_person_merged_in_another_window_is_not_found_by_a_page_that_still_sends_them(self):
         write(self.path, lambda conn: faces.name(conn, [self.faces[0]], self.sam_t))
-        self.assertTrue(tags_service.merge(self.library, SAM_T, SAM_I, field_values.opened("exiftool"), apply=True).ok)
+        self.assertTrue(tags_service.merge(self.library, SAM_T, SAM_I, exiftool_fields.opened(self, "exiftool"), apply=True).ok)
         from tagpup.services import faces as faces_service
         with self.assertRaises(NotFound):
             faces_service.name_face(self.library, self.faces[1], self.sam_t)

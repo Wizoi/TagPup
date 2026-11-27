@@ -22,6 +22,7 @@ from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import exiftool_fields  # noqa: E402
 import page_writes  # noqa: E402
 import photo_rows  # noqa: E402
 from handler_harness import Library as RouteLibrary  # noqa: E402
@@ -61,7 +62,7 @@ class ShiftingACamerasClock(FilesCase):
 
     def test_every_date_moves_the_rows_follow_the_answer_counts_the_files_written_and_undo_puts_them_back(self):
         stamp_before = self.row(self.undated)[1]
-        result = photo_actions.shift_date_taken(self.library, self.shot, 30, field_values.opened(EXIFTOOL))
+        result = photo_actions.shift_date_taken(self.library, self.shot, 30, exiftool_fields.opened(self, EXIFTOOL))
         self.assertEqual((5, 3, []), (result.attempted, result.changed, result.errors))
         self.assertEqual({self.undated, self.broken}, {path for path, _why in result.skipped},
                          "a photo holding no date, and one ExifTool cannot read, are skipped and not counted")
@@ -94,7 +95,7 @@ class ShiftingACamerasClock(FilesCase):
         # b is open in a viewer (Explorer's preview, the Photos app: reading, letting others read, write and delete).
         before = self.row(self.b)
         with open_elsewhere(self.b, 0x7):
-            result = photo_actions.shift_date_taken(self.library, [self.a, self.b], 30, field_values.opened(EXIFTOOL))
+            result = photo_actions.shift_date_taken(self.library, [self.a, self.b], 30, exiftool_fields.opened(self, EXIFTOOL))
         self.assertEqual(1, result.changed)
         self.assertEqual([self.b], [path for path, _why in result.errors], result.message())
         self.assertIn("held open by", result.message())
@@ -114,7 +115,7 @@ class ShiftingACamerasClock(FilesCase):
                 found[paths.key(self.b)] = field_values.NotAnswered("ExifTool did not answer in 1 s")
             return found
         with mock.patch.object(field_values, "_read", read):
-            result = photo_actions.shift_date_taken(self.library, [self.a, self.b], 30, field_values.opened(EXIFTOOL))
+            result = photo_actions.shift_date_taken(self.library, [self.a, self.b], 30, exiftool_fields.opened(self, EXIFTOOL))
         self.assertEqual((2, 2, []), (result.attempted, result.changed, result.errors))
         self.assertEqual(SHIFTED, field_of(self.b, "EXIF:DateTimeOriginal"), "its write landed")
         taken_of = result.details[photo_actions.TAKEN_OF]

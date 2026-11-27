@@ -28,6 +28,7 @@ from unittest import mock
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
+import exiftool_fields  # noqa: E402
 import damaged_photos  # noqa: E402
 import library_dump  # noqa: E402
 import own_home  # noqa: E402
@@ -428,7 +429,7 @@ class AWriteThatFailsForOneFileOfMany(Base):
             return real(et, photo_path, values)
 
         with mock.patch("tagpup.files.field_values._write", second_fails):
-            result = photo_actions.shift_date_taken(self.library, self.loose, 60, field_values.opened(EXIFTOOL))
+            result = photo_actions.shift_date_taken(self.library, self.loose, 60, exiftool_fields.opened(self, EXIFTOOL))
         self.assertEqual((3, 2, 1), (result.attempted, result.changed, len(result.errors)))
         self.assertIn("IMG_0002.jpg", result.errors[0][0])
         self.assertEqual("2019:06:10 11:00:00", in_file(self.loose[0], "EXIF:DateTimeOriginal")["EXIF:DateTimeOriginal"])
@@ -449,7 +450,7 @@ class AWriteThatFailsForOneFileOfMany(Base):
             return found
 
         with mock.patch("tagpup.files.field_values._read", changes_after_the_plan):
-            result = tagging.change_tags(self.library, self.loose[:1], ["Trips/Lighthouse"], [], field_values.opened(EXIFTOOL))
+            result = tagging.change_tags(self.library, self.loose[:1], ["Trips/Lighthouse"], [], exiftool_fields.opened(self, EXIFTOOL))
         self.assertFalse(result.ok)
         self.assertEqual(0, result.changed)
         self.assertEqual(["Someone/Elses"], tags_in(self.loose[0]), "an edit made elsewhere was overwritten")

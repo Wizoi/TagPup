@@ -19,8 +19,8 @@ from tests.test_bulk_writes_start_from_the_file import EXISTING, make_photo, tag
 from tests.test_taxonomy_lifecycle import EXIFTOOL, requires_exiftool
 from tests import page_writes
 
+import exiftool_fields
 from tagpup.services import tagging
-from tagpup.files import field_values
 
 
 def at_once(*calls):
@@ -100,12 +100,12 @@ class ASaveAndABulkWriteAtOnce(unittest.TestCase):
         def save():
             with mock.patch.object(tagging, "_caption_problem", side_effect=after_the_read):
                 return tagging.save_photo(self.lib.library, self.photo, "", EXISTING + ["Places/Harbour"], None,
-                                          field_values.opened(EXIFTOOL), "", base=base)
+                                          exiftool_fields.opened(self, EXIFTOOL), "", base=base)
 
         def bulk():
             save_read.wait(30)
             try:
-                return tagging.change_tags(self.lib.library, [self.photo], ["Sunset"], [], field_values.opened(EXIFTOOL))
+                return tagging.change_tags(self.lib.library, [self.photo], ["Sunset"], [], exiftool_fields.opened(self, EXIFTOOL))
             finally:
                 bulk_done.set()
 

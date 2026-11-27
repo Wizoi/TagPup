@@ -15,6 +15,7 @@ from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import exiftool_fields  # noqa: E402
 import corpus  # noqa: E402
 import own_home  # noqa: E402
 import web_client  # noqa: E402
@@ -24,7 +25,6 @@ from view_library import ViewLibrary, make_jpeg  # noqa: E402
 from tagpup.files.exiftool_session import ExifToolSession  # noqa: E402
 from tagpup.services import batches, bulk_edit, file_changes  # noqa: E402
 from tagpup.store import db  # noqa: E402
-from tagpup.files import field_values  # noqa: E402
 
 EXIFTOOL = own_home.installed_exiftool()
 TAKEN = "2024:07:04 10:00:00"
@@ -179,10 +179,10 @@ class ConnectionsOfABulkWrite(unittest.TestCase):
         edit = bulk_edit.prepare(self.library, "tags", {"add": ["Trips/Coast"]})
         with self.counting(), mock.patch.object(file_changes, "_reached", side_effect=crash_at(step, nth=30)):
             with self.assertRaises(Crash):
-                bulk_edit.run(self.library, edit, self.ids, field_values.opened(EXIFTOOL))
+                bulk_edit.run(self.library, edit, self.ids, exiftool_fields.opened(self, EXIFTOOL))
         self.assertEqual([], self.left_open(), "a crash left this thread holding a connection to the library")
         self.assertEqual(0, batches.running_here())
-        self.assertEqual(1, file_changes.settle(self.library, field_values.opened(EXIFTOOL)))
+        self.assertEqual(1, file_changes.settle(self.library, exiftool_fields.opened(self, EXIFTOOL)))
         self.assertEqual(self.PHOTOS, self.tagged())
         self.assertEqual([("applied",)], self.vl.rows("SELECT status FROM changes WHERE operation LIKE 'bulk tags%'"))
 
@@ -222,7 +222,7 @@ class ConnectionsOfABulkWrite(unittest.TestCase):
         with self.counting(), mock.patch.object(file_changes, "_followers", side_effect=followers), \
                 mock.patch.object(db, "write_with_connection", side_effect=write):
             with self.assertRaises(type(error)):
-                bulk_edit.run(self.library, edit, self.ids, field_values.opened(EXIFTOOL))
+                bulk_edit.run(self.library, edit, self.ids, exiftool_fields.opened(self, EXIFTOOL))
         self.assertEqual([(0,)], self.vl.rows("SELECT COUNT(*) FROM marker"), "the failed write's row was committed")
         self.assertGreater(len(used), failed["at"], "no write followed the failed one")
         self.assertEqual([], self.left_open())

@@ -11,13 +11,13 @@ import sys
 import unittest
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import exiftool_fields  # noqa: E402
 import people_by_id  # noqa: E402
 from face_rows import FACE_MODEL  # noqa: E402
 import photo_rows  # noqa: E402
 
 from tagpup.services import tags as tag_service  # noqa: E402
 from tagpup.store import faces, person_ids  # noqa: E402
-from tagpup.files import field_values  # noqa: E402
 
 
 class NoRowWithoutAnId(unittest.TestCase, people_by_id.TwoSams):
@@ -75,23 +75,23 @@ class NoRowWithoutAnId(unittest.TestCase, people_by_id.TwoSams):
         self.use_sam()
         made = tag_service.create(self.library, "People/Zed Quill", has_face=1)
         self.none_without_an_id("made")
-        tag_service.rename_person(self.library, made.details["id"], "Zed Quill Jr", field_values.opened(None))
+        tag_service.rename_person(self.library, made.details["id"], "Zed Quill Jr", exiftool_fields.opened(self, None))
         self.none_without_an_id("renamed")
-        tag_service.merge(self.library, "People/Zed Quill Jr", people_by_id.WREN, field_values.opened(None), apply=True)
+        tag_service.merge(self.library, "People/Zed Quill Jr", people_by_id.WREN, exiftool_fields.opened(self, None), apply=True)
         self.none_without_an_id("merged")
 
     def test_the_undo_of_a_person_deleted_with_force_or_merged_away(self):
         from tagpup.services import journal as journal_service
         wren = self.node(people_by_id.WREN)
         people_by_id.write(self.path, lambda conn: faces.name(conn, [self.faces[1]], wren))
-        tag_service.delete(self.library, wren, "remove", None, field_values.opened("exiftool"), force=True)
+        tag_service.delete(self.library, wren, "remove", None, exiftool_fields.opened(self, "exiftool"), force=True)
         for change, in people_by_id.look(self.path, "SELECT id FROM changes ORDER BY id"):
-            journal_service.undo(self.library, change, apply=True, fields=field_values.opened("exiftool"))   # refused: the person is gone
+            journal_service.undo(self.library, change, apply=True, fields=exiftool_fields.opened(self, "exiftool"))   # refused: the person is gone
             self.none_without_an_id("undo of change %d" % change)
 
     def test_a_photo_read_again_after_a_person_is_renamed(self):
         self.read(subject=[people_by_id.WREN])
-        tag_service.rename_person(self.library, self.node(people_by_id.WREN), "Wren Halloway Jr", field_values.opened(None))
+        tag_service.rename_person(self.library, self.node(people_by_id.WREN), "Wren Halloway Jr", exiftool_fields.opened(self, None))
         self.read(subject=[people_by_id.WREN])
         self.none_without_an_id("read after rename")
 

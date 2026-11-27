@@ -22,6 +22,7 @@ import unittest
 from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import exiftool_fields  # noqa: E402
 import photo_rows  # noqa: E402
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "scripts"))
 import fake_exiftool  # noqa: E402
@@ -34,7 +35,6 @@ from tagpup.services.search import PhotoEmbeddings, PhotoIndex  # noqa: E402
 from tagpup.store import db, embeddings, journal, photos  # noqa: E402
 from tagpup.files import shares  # noqa: E402
 from tagpup.store import roots as store_roots  # noqa: E402
-from tagpup.files import field_values  # noqa: E402
 
 MODEL = embeddings.model_key("ViT-T", "tiny", True, 1.4, 512)
 OTHER = embeddings.model_key("ViT-T", "tiny", True, 1.4, None)
@@ -118,7 +118,7 @@ class Vectors(unittest.TestCase):
 
     def test_a_rotation_takes_the_vectors_away(self):
         fake_exiftool.standing_in(self).hold(self.photo, EXIF__Orientation=1)
-        self.assertEqual(1, photo_actions.rotate(self.lib.library, self.photo, "right", field_values.opened("exiftool")).changed)
+        self.assertEqual(1, photo_actions.rotate(self.lib.library, self.photo, "right", exiftool_fields.opened(self, "exiftool")).changed)
         self.assertIsNone(self.stored())
 
     def test_two_photos_swapping_names_swap_their_vectors(self):

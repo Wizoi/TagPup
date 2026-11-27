@@ -40,6 +40,7 @@ WORKSPACE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, WORKSPACE_DIR)
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
+import exiftool_fields  # noqa: E402
 import photo_rows  # noqa: E402
 from handler_harness import Library  # noqa: E402
 from test_file_journal import EXIFTOOL, FilesCase, field_of, keywords_of, requires_exiftool, write_outside  # noqa: E402
@@ -51,7 +52,6 @@ from tagpup.core.vocabulary import extract_tags  # noqa: E402
 from tagpup.files import exiftool_session  # noqa: E402
 from tagpup.services import photos as photo_actions, tagging  # noqa: E402
 from tagpup.store import db as tagpup_db  # noqa: E402
-from tagpup.files import field_values  # noqa: E402
 
 KEYWORDS = ["Beach", "Cross Country", "People/Rowan Thackeray"]
 HIERARCHICAL = ["People/Rowan Thackeray"]
@@ -174,7 +174,7 @@ class TestARemovedTagStaysRemoved(IndexCase):
             self.assertNotIn("Cross Country", self.row(stored)["tags"])
 
             # Renaming "Beach" re-derives this photo's tags from its raw_metadata.
-            recorded = tagging.replace_tag(self.library, [stored], "Beach", "Places/Beach", field_values.opened("exiftool")).changed
+            recorded = tagging.replace_tag(self.library, [stored], "Beach", "Places/Beach", exiftool_fields.opened(self, "exiftool")).changed
 
         tags = self.row(stored)["tags"]
         self.assertIn("Places/Beach", tags)
@@ -201,7 +201,7 @@ class TestTheRowKeepsTheFilesNewStat(IndexCase):
         stored = self.photo()
         helper, _ = exiftool_that_writes()
         with patch("tagpup.files.exiftool_session.ExifToolSession", helper):
-            tagging.replace_tag(self.library, [stored], "Beach", "Places/Beach", field_values.opened("exiftool"))
+            tagging.replace_tag(self.library, [stored], "Beach", "Places/Beach", exiftool_fields.opened(self, "exiftool"))
         self.assertRowMatchesTheFile(stored)
 
 
@@ -280,7 +280,7 @@ class XmpIsTheCopyRead(FilesCase):
                     "XMP:Subject": ["Beach"], "IPTC:Keywords": ["Beach", "Cross Country"],
                     "EXIF:XPKeywords": "Beach;Cross Country"})
                 self.assertEqual(["Beach"], self.indexed(a))
-                result = tagging.replace_tag(self.library, [a], "Beach", "Shore", field_values.opened(EXIFTOOL))
+                result = tagging.replace_tag(self.library, [a], "Beach", "Shore", exiftool_fields.opened(self, EXIFTOOL))
                 self.assertEqual((1, []), (result.changed, result.errors))
                 iptc = ["Beach", "Cross Country"] if patched else "Shore"
                 self.assertEqual((["Shore"], ["Shore"], iptc),
@@ -291,7 +291,7 @@ class XmpIsTheCopyRead(FilesCase):
         self.assertEqual(["Relay at the lake"], self.captions(a))
         shown = self.shown(a)
         self.assertEqual("Relay at the lake", shown)
-        result = tagging.save_photo(self.library, a, "Relay at the lake, later", [], None, field_values.opened(EXIFTOOL), "",
+        result = tagging.save_photo(self.library, a, "Relay at the lake, later", [], None, exiftool_fields.opened(self, EXIFTOOL), "",
                                     base={"tags": [], "title": shown})
         # The title is saved to the title fields; the Description it showed leaves the caption, and IPTC's caption,
         # another text, is kept (DECISIONS 2026-11-06; #2583).
@@ -310,7 +310,7 @@ class XmpIsTheCopyRead(FilesCase):
         a = self.made("a.jpg", {"XMP:Subject": ["Beach", "Written Elsewhere"]}, {"XMP:Subject": ["Beach"]})
         b = self.made("b.jpg", {"XMP:Subject": ["Relay"]}, {"XMP:Subject": ["Beach", "Relay"]})
         before = os.stat(b).st_mtime_ns
-        result = tagging.replace_tag(self.library, [a, b], "Beach", "Shore", field_values.opened(EXIFTOOL))
+        result = tagging.replace_tag(self.library, [a, b], "Beach", "Shore", exiftool_fields.opened(self, EXIFTOOL))
         self.assertEqual((1, [], ["does not carry the tag"]),
                          (result.changed, result.errors, [why for _path, why in result.skipped]))
         self.assertEqual((["Shore", "Written Elsewhere"],) * 2, (keywords_of(a), self.indexed(a)))
@@ -323,7 +323,7 @@ class XmpIsTheCopyRead(FilesCase):
         a = self.made("a.jpg", {"XMP:Subject": ["Beach"]})
         with open(exiftool_session.scratch_of(a), "wb") as handle:
             handle.write(b"left by another write")
-        result = tagging.replace_tag(self.library, [a], "Beach", "Shore", field_values.opened(EXIFTOOL))
+        result = tagging.replace_tag(self.library, [a], "Beach", "Shore", exiftool_fields.opened(self, EXIFTOOL))
         self.assertEqual((0, 1), (result.changed, len(result.errors)))
         self.assertEqual((["Beach"], ["Beach"]), (keywords_of(a), self.indexed(a)))
 

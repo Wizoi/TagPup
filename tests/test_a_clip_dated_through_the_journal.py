@@ -43,6 +43,7 @@ from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import exiftool_fields  # noqa: E402
 import corpus  # noqa: E402
 import test_a_clip_tagged_through_the_journal as tagged  # noqa: E402
 from test_a_clip_patch_cut_short import cut_half_way  # noqa: E402
@@ -185,7 +186,7 @@ class AClipDatedThroughTheJournal(tagged.ALibraryHoldingAClip):
         return change
 
     def undo(self, change):
-        undone = journal.undo(self.vl.library, change, apply=True, fields=field_values.opened(EXIFTOOL))
+        undone = journal.undo(self.vl.library, change, apply=True, fields=exiftool_fields.opened(self, EXIFTOOL))
         self.assertEqual((1, []), (undone.changed, undone.errors), undone.message())
         return undone
 
@@ -341,7 +342,7 @@ class AClipDatedThroughTheJournal(tagged.ALibraryHoldingAClip):
 
         def save(date):
             start.wait(10)
-            results[date] = tagging.save_photo(self.vl.library, path, "", [], date, field_values.opened(EXIFTOOL), "", base=base)
+            results[date] = tagging.save_photo(self.vl.library, path, "", [], date, exiftool_fields.opened(self, EXIFTOOL), "", base=base)
         saves = [threading.Thread(target=save, args=(date,)) for date in (SAVED, other)]
         for one in saves:
             one.start()
@@ -448,7 +449,7 @@ class AClipDatedThroughTheJournal(tagged.ALibraryHoldingAClip):
         clip, = self.index(held)
         lagging = {"raw_metadata": {"QuickTime:CreateDate": "2020:07:04 18:30:00"}, "tags": []}
 
-        result = tagging.save_photo(self.vl.library, held, "", [], SAVED_AS_THE_PAGE_SENDS, field_values.opened(EXIFTOOL), "",
+        result = tagging.save_photo(self.vl.library, held, "", [], SAVED_AS_THE_PAGE_SENDS, exiftool_fields.opened(self, EXIFTOOL), "",
                                     base=page_writes.base(self.vl.library, held))
         self.assertTrue(result.ok, result.message())
         self.assertEqual(SAVED, result.details["taken"])
@@ -528,7 +529,7 @@ class AClipDatedThroughTheJournal(tagged.ALibraryHoldingAClip):
         self.index(self.clip_path)
         before = self.read_bytes(self.clip_path)
         with open(self.clip_path, "rb"):
-            held = convert.convert_clip(self.vl.library, field_values.opened(EXIFTOOL), TOOLS, self.clip_path, reason=convert.SMALLER)
+            held = convert.convert_clip(self.vl.library, exiftool_fields.opened(self, EXIFTOOL), TOOLS, self.clip_path, reason=convert.SMALLER)
         self.assertEqual(0, held.changed)
         self.assertTrue(held.refused.startswith(convert.HELD_OPEN), held.refused)
         self.assertRegex(held.refused, r"\(this TagPup process, pid \d+\)\.")
@@ -544,7 +545,7 @@ class AClipDatedThroughTheJournal(tagged.ALibraryHoldingAClip):
                     raise OSError(None, said, path, winerror)
                 return opened(path, sharing, write)
             with self.subTest(winerror=winerror), mock.patch.object(lock_owners, "opened", side_effect=failing):
-                result = convert.convert_clip(self.vl.library, field_values.opened(EXIFTOOL), TOOLS, self.clip_path, reason=convert.SMALLER)
+                result = convert.convert_clip(self.vl.library, exiftool_fields.opened(self, EXIFTOOL), TOOLS, self.clip_path, reason=convert.SMALLER)
                 self.assertEqual(0, result.changed)
                 self.assertNotIn("open in another program", result.refused)
                 self.assertEqual(convert.UNREADABLE % said, result.refused)
@@ -555,7 +556,7 @@ class AClipDatedThroughTheJournal(tagged.ALibraryHoldingAClip):
         base = page_writes.base(self.vl.library, self.clip_path)
         with cutting:
             with self.assertRaises(Crash):
-                tagging.save_photo(self.vl.library, self.clip_path, "", [], SAVED, field_values.opened(EXIFTOOL), "", base=base)
+                tagging.save_photo(self.vl.library, self.clip_path, "", [], SAVED, exiftool_fields.opened(self, EXIFTOOL), "", base=base)
         self.assertEqual(["writing"], self.change_states(self.clip))
         with mock.patch.object(file_changes, "_settled", set()):
             self.assertEqual(1, file_changes.settle_once(self.vl.library, EXIFTOOL))

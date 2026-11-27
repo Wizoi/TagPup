@@ -17,13 +17,13 @@ import sys
 import unittest
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import exiftool_fields  # noqa: E402
 import photo_rows  # noqa: E402
 from test_organize_faces import Case, ODA, WREN  # noqa: E402
 
 from tagpup.core import paths  # noqa: E402
 from tagpup.services import journal as journal_service  # noqa: E402
 from tagpup.store import checks, db, faces, people, taxonomy  # noqa: E402
-from tagpup.files import field_values  # noqa: E402
 
 PEOPLE = "People/"
 
@@ -193,7 +193,7 @@ class NamingAddsThePersonToThePhoto(InStep):
         face = self.face(photo)
         self.tuner_post("face/match", {"face_id": face, "person_name": WREN})
         change = self.look("SELECT id FROM changes WHERE operation = 'person added for a named face'")[0][0]
-        undone = journal_service.undo(self.library, change, apply=True, fields=field_values.opened("exiftool"))
+        undone = journal_service.undo(self.library, change, apply=True, fields=exiftool_fields.opened(self, "exiftool"))
         self.assertEqual([], undone.errors)
         self.assertEqual([], self.tags(photo))
         self.assertEqual((None, "manual"), self.row(face)[:2])

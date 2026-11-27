@@ -80,7 +80,8 @@ def read_fields(path):
 def turn(path, direction, exiftool):
     """A quarter turn of a photo of a folder no library holds (Just look): file_only.write_fields with the turn's plan
     (services.photos.rotate_plan), the one writer of a turn. Returns the Orientation the photo now has."""
-    done = file_only.write_fields(field_values.opened(exiftool), [path], [rotation.FIELD], photo_actions.rotate_plan(direction))
+    with field_values.opened(exiftool) as fields:
+        done = file_only.write_fields(fields, [path], [rotation.FIELD], photo_actions.rotate_plan(direction))
     if not done.ok:
         raise AssertionError(done.message())
     return next(iter(done.details["written"].values()))["orientation"]

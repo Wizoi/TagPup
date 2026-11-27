@@ -21,6 +21,7 @@ from unittest import mock
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
+import exiftool_fields  # noqa: E402
 import own_home  # noqa: E402
 import page_writes  # noqa: E402
 import photo_rows  # noqa: E402
@@ -348,7 +349,7 @@ class AnUndoOfAnEarlierChange(unittest.TestCase):
                         "an undo would write the old copy: " + files[0].path)
         moved = first + side.real[0][len(side.pictures):]
         self.assertIn("Harbour", keywords(moved))
-        undone = journal_service.undo(side.library, change, apply=True, fields=field_values.opened(rl.EXIFTOOL))
+        undone = journal_service.undo(side.library, change, apply=True, fields=exiftool_fields.opened(self, rl.EXIFTOOL))
         self.assertEqual((True, 2), (undone.ok, undone.changed), undone.message())
         self.assertNotIn("Harbour", keywords(moved))
         self.assertIn("Harbour", keywords(side.real[0]), "the old copy was written")
@@ -454,7 +455,7 @@ class AWriteStoppedByARootChange(unittest.TestCase):
 
     def test_the_change_is_finished_at_once_so_what_was_written_can_be_undone(self):               # #486
         result = self.stopped(lambda: tagging.change_tags(self.library, self.side.real[:3], ["Harbour"], [],
-                                                          field_values.opened(rl.EXIFTOOL)))
+                                                          exiftool_fields.opened(self, rl.EXIFTOOL)))
         change = result.details["change"]
         self.assertEqual("applied", file_journal.change(self.side.db_path, change).status)
         states = [row.state for row in file_journal.files_of(self.side.db_path, change)]

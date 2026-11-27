@@ -25,6 +25,7 @@ sys.path.insert(0, WORKSPACE_DIR)
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(WORKSPACE_DIR, "scripts"))
 
+import exiftool_fields  # noqa: E402
 import clear_duplicate_captions  # noqa: E402
 import corpus  # noqa: E402
 import photo_rows  # noqa: E402
@@ -34,7 +35,6 @@ from tagpup.core.fields import scan_reads  # noqa: E402
 from tagpup.files import shares  # noqa: E402
 from tagpup.services import batches, file_changes, journal as journal_service  # noqa: E402
 from tagpup.store import db  # noqa: E402
-from tagpup.files import field_values  # noqa: E402
 
 TITLE = "Relay at the lake"
 
@@ -183,7 +183,7 @@ class AShelfOfPhotos(CaptionSweep):
         # own writer's patch, which writes a caption into the XMP alone and leaves IPTC's and EXIF's as the sweep left
         # them, cleared (DECISIONS 2026-11-03, A KEYWORD OR CAPTION SAVE WRITES THE XMP COPY ONLY; docs/domains/files.md,
         # "Known, by this design").
-        undone = journal_service.undo(self.library, change, apply=True, fields=field_values.opened(EXIFTOOL))
+        undone = journal_service.undo(self.library, change, apply=True, fields=exiftool_fields.opened(self, EXIFTOOL))
         self.assertTrue(undone.ok, undone.errors)
         self.assertEqual((TITLE, None, None), self.captions_of(self.same))
         self.assertEqual("Relay", field_of(self.more, "IPTC:Caption-Abstract"))
@@ -404,7 +404,7 @@ class StoppedPartWay(CaptionSweep):
         self.assertEqual([], self.rows("SELECT id FROM change_files WHERE change_id = ? AND state = 'planned'", (change,)))
         # The script's process has ended (a process of this machine that is gone owns the change).
         self.execute("UPDATE changes SET owner = ? WHERE id = ?", ("%s:4000000:1" % socket.gethostname(), change))
-        self.assertEqual(1, file_changes.settle(self.library, field_values.opened(EXIFTOOL)))
+        self.assertEqual(1, file_changes.settle(self.library, exiftool_fields.opened(self, EXIFTOOL)))
         self.assertEqual("applied", self.changes()[0][2])
         for path in (self.photos + more)[:9]:
             self.assert_cleared(path)

@@ -13,6 +13,7 @@ from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import exiftool_fields  # noqa: E402
 from waiting import wait_until  # noqa: E402
 import page_writes  # noqa: E402
 import test_bulk_edits as T  # noqa: E402
@@ -23,7 +24,6 @@ from tagpup.services import journal as journal_service  # noqa: E402
 from tagpup.store import db, file_journal  # noqa: E402
 from tagpup.web import lifecycle  # noqa: E402
 from tagpup.runtime import Runtime  # noqa: E402
-from tagpup.files import field_values  # noqa: E402
 
 ANOTHER = "otherhost:1:1"                                 # a live process on another machine: this one cannot tell
 GONE = "%s:4000000:1" % socket.gethostname()             # a process of this machine that ended
@@ -89,7 +89,7 @@ class Chunks(T.Bulk):
         self.assertEqual((self.PHOTOS - 25, 25), (again["changed"], again["unchanged"]))
         self.assertEqual(self.PHOTOS, self.files.writes, "no file was written twice")
         first = self.changes("bulk tags%")[0][0]
-        undone = file_changes.undo(self.library, first, field_values.opened("exiftool"), journal_service.why_not, apply=True)
+        undone = file_changes.undo(self.library, first, exiftool_fields.opened(self, "exiftool"), journal_service.why_not, apply=True)
         self.assertEqual(25, undone.changed, "what the stopped batch wrote can be undone")
 
     def test_a_stop_asked_while_the_files_are_read_writes_and_plans_nothing(self):
@@ -237,7 +237,7 @@ class Line(T.Bulk):
 
     def edit_refused(self):
         try:
-            bulk_edit.run(self.library, bulk_edit.prepare(self.library, "tags", {"add": ["Trips/Coast"]}), self.ids, field_values.opened("exiftool"))
+            bulk_edit.run(self.library, bulk_edit.prepare(self.library, "tags", {"add": ["Trips/Coast"]}), self.ids, exiftool_fields.opened(self, "exiftool"))
         except Refused as why:
             return str(why)
 
@@ -253,7 +253,7 @@ class Line(T.Bulk):
         holder.start()
         self.assertTrue(started.wait(30))
         with file_changes.exclusively():
-            done = file_changes.write_fields(self.library, "x", field_values.opened("exiftool"), [self.path(each) for each in self.ids], [], None)
+            done = file_changes.write_fields(self.library, "x", exiftool_fields.opened(self, "exiftool"), [self.path(each) for each in self.ids], [], None)
         self.assertIn("A batch of photo files is running", done.refused)
         release.set()
         holder.join(30)
@@ -262,7 +262,7 @@ class Line(T.Bulk):
 class Cap(T.Bulk):
     def test_the_cap_is_five_thousand_and_5001_is_refused_before_ExifTool_is_started(self):
         self.assertEqual(5000, batches.MAX_BATCH)
-        done = file_changes.write_fields(self.library, "x", field_values.opened("exiftool"), ["a%d.jpg" % n for n in range(5001)], [], None)
+        done = file_changes.write_fields(self.library, "x", exiftool_fields.opened(self, "exiftool"), ["a%d.jpg" % n for n in range(5001)], [], None)
         self.assertEqual("Select up to 5,000 photos at a time (5,001 were named).", done.refused)
         self.assertEqual((0, 0), (self.files.starts, self.files.read_calls))
 
@@ -276,7 +276,7 @@ class Cap(T.Bulk):
                 mock.patch.object(names, "read_for_renaming") as read_captions:
             tagged = self.client.post("/library" + page_writes.ROUTE, json=page_writes.tags(
                 {photo: {"add": ["Trips/Coast"]} for photo in chosen}))
-            renamed = photo_actions.smart_rename(self.library, chosen, "Regatta", "{grouping} - {index} - {caption}", field_values.opened("exiftool"))
+            renamed = photo_actions.smart_rename(self.library, chosen, "Regatta", "{grouping} - {index} - {caption}", exiftool_fields.opened(self, "exiftool"))
         self.assertEqual((400, False, "Select up to 30 photos at a time (31 were named)."),
                          (tagged.status_code, tagged.get_json()["success"], page_writes.why(tagged.get_json())))
         self.assertEqual("Select up to 30 photos at a time (31 were named).", renamed.refused)
@@ -288,7 +288,7 @@ class Cap(T.Bulk):
             self.assertEqual(30, ok["changed"])
             reads = self.files.read_calls
             edit = bulk_edit.prepare(self.library, "tags", {"add": ["Trips/Lakes"]})
-            refused = bulk_edit.run(self.library, edit, self.ids[:31], field_values.opened("exiftool"))      # past the selection's own check
+            refused = bulk_edit.run(self.library, edit, self.ids[:31], exiftool_fields.opened(self, "exiftool"))      # past the selection's own check
         self.assertEqual((0, 31), (refused.changed, len(refused.errors)))
         self.assertIn("Select up to 30 photos at a time (31 were named)", refused.errors[0][2])
         self.assertEqual(reads, self.files.read_calls)
@@ -296,9 +296,9 @@ class Cap(T.Bulk):
     def test_the_tag_trees_rewrites_have_no_cap(self):
         wanted = [self.path(each) for each in self.ids]
         with mock.patch.object(batches, "MAX_BATCH", 30):
-            capped = tagging.change_tags(self.library, wanted, ["Trips/Coast"], [], field_values.opened("exiftool"))
+            capped = tagging.change_tags(self.library, wanted, ["Trips/Coast"], [], exiftool_fields.opened(self, "exiftool"))
             self.assertIn("Select up to 30", capped.refused)
-            renamed = tagging.replace_tag(self.library, wanted, "Old/Stuff", "Old/Things", field_values.opened("exiftool"))
+            renamed = tagging.replace_tag(self.library, wanted, "Old/Stuff", "Old/Things", exiftool_fields.opened(self, "exiftool"))
         self.assertEqual((None, 20), (renamed.refused, renamed.changed), "a third of the 60 carry the tag")
 
 
@@ -330,7 +330,7 @@ class SeenFromTheJournal(T.Bulk):
     def test_a_change_whose_process_is_gone_is_not_running_and_the_next_open_settles_it(self):
         change_id = self.plan_by(GONE)
         self.assertEqual([], batches.listing(self.library), "a crash left it; nothing is writing it")
-        self.assertEqual(1, file_changes.settle(self.library, field_values.opened("exiftool")))
+        self.assertEqual(1, file_changes.settle(self.library, exiftool_fields.opened(self, "exiftool")))
         self.assertEqual("applied", file_journal.change(self.library.path, change_id).status)
         self.assertEqual(30, len([each for each in self.ids if self.tags(each) == ["Trips/Coast"]]))
 
@@ -355,7 +355,7 @@ class HandOver(T.Bulk):
         self.addCleanup(gate.release.set)
         self.addCleanup(batches.reopen)
         edit = bulk_edit.prepare(self.library, "tags", {"add": ["Trips/Coast"]})
-        writing, outcome = in_thread(lambda: bulk_edit.run(self.library, edit, self.ids, field_values.opened("exiftool")))
+        writing, outcome = in_thread(lambda: bulk_edit.run(self.library, edit, self.ids, exiftool_fields.opened(self, "exiftool")))
         self.assertTrue(gate.reached.wait(30))
         moving = lifecycle.Lifecycle(runtime=Runtime())
         draining, drained = in_thread(lambda: moving.drain(seconds=30, lease=60))

@@ -27,6 +27,7 @@ from unittest import mock
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
+import exiftool_fields  # noqa: E402
 import own_home  # noqa: E402
 import photo_rows  # noqa: E402
 import roots_library as rl  # noqa: E402
@@ -42,7 +43,6 @@ from tagpup.services import activity, file_changes, roots_location, roots_sample
 from tagpup.services import roots as roots_service  # noqa: E402
 from tagpup.store import db  # noqa: E402
 from tagpup.store import job_runs as store_job_runs  # noqa: E402
-from tagpup.files import field_values  # noqa: E402
 
 WINDOWS = os.name == "nt"
 
@@ -631,7 +631,7 @@ class AWriteStoppedHalfWay(BeforeAMove):
             return real(*args, **kwargs)
 
         with mock.patch.object(file_changes, "_carry", stop_after_the_first):
-            result = tagging.change_tags(self.library, self.side.real[:3], ["Harbour"], [], field_values.opened(rl.EXIFTOOL))
+            result = tagging.change_tags(self.library, self.side.real[:3], ["Harbour"], [], exiftool_fields.opened(self, rl.EXIFTOOL))
         self.assertIn(roots_service.STOPPED, result.refused)
         self.assertIn("Before it stopped 1 file(s) were written", result.refused)
         self.assertEqual(1, result.changed)
