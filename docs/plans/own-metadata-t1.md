@@ -30,28 +30,28 @@ module already settles: one item per recipe digest, made under the stripe lock i
   it); no count and no user action, no item.
 
 **The items** (op names: section 2; "all" = every operation of the format; path today = which writer a journaled write
-takes: P the own patch, R ExifTool's rewrite, `-` refused).
+takes: P the own patch, R ExifTool's rewrite, `-` refused; as the suite's `WRITES` asserts it, T1b 2026-11-27).
 
 | Item | Made by | Live count or user action | Ops | Path today |
 |---|---|---|---|---|
-| `camera` | noise + ExifTool EXIF (Make, Model, DateTimeOriginal, Orientation 1, IFD1 thumbnail); no XMP, no IPTC | user action: a camera's photo added, before its bake (no XMP: 0 in all four after it) | all | R (no XMP to patch) |
-| `tagged` | `camera` + every owned field by ExifTool (XMP, IPTC with no 1:90, XP copies; keywords with a person path, caption, title, dates, DocumentID, PreservedFileName, Rating, GPS) | every JPEG holds XMP (62,161); no 1:90 15,444 / 4 / 0 / 0; Rating 55,695 / 172 / 4 / 817; GPS 1,552 / 1 / 0 / 0 | all | P where it fits |
+| `camera` | noise + ExifTool EXIF (Make, Model, DateTimeOriginal, Orientation 1, IFD1 thumbnail); no XMP, no IPTC | user action: a camera's photo added, before its bake (no XMP: 0 in all four after it) | all | R (no XMP to patch); a date shift, turn and mirror P (EXIF's) |
+| `tagged` | `camera` + every owned field by ExifTool (XMP, IPTC with no 1:90, XP copies; keywords with a person path, caption, title, dates, DocumentID, PreservedFileName, Rating, GPS) | every JPEG holds XMP (62,161); no 1:90 15,444 / 4 / 0 / 0; Rating 55,695 / 172 / 4 / 817; GPS 1,552 / 1 / 0 / 0 | all | P; the mint and the bakes R |
 | `tagged_ii` | `tagged`, `-ExifByteOrder=II` | the census's byte orders (T1a recounts) | dates, turn, keyword | P |
 | `iptc_alone` | `camera` + IPTC Keywords, an XMP packet with no dc:subject | 149 / 0 / 0 / 0 (counted 2026-11-27) | keyword, last keyword off | P |
 | `iptc_utf8` | `tagged` with a caption outside cp1252 (ExifTool adds 1:90) | 124 / 0 / 0 / 0 | caption set, cleared, keyword | P |
-| `app13_without_iptc` | laid: `tagged`'s APP13 holding only a 0x03ED resource | 18 / 2 / 3 / 0 | caption set, keyword | P / R |
+| `app13_without_iptc` | laid: `tagged`'s APP13 holding only a 0x03ED resource | 18 / 2 / 3 / 0 | caption set, keyword | P |
 | `two_app13` | laid as test_the_two_writers_compared_on_copies :112-118 lays it (lifted) | 0 / 2 / 3 / 0 | last keyword off, caption cleared | R |
 | `two_exif` | laid: `tagged`'s Exif APP1 once more after it | 73 / 0 / 0 / 0 | dates, turn | R |
 | `two_xmp` | laid: two APP1 XMP | 0: the refusal arm's one item (J2, J3a) | keyword | R |
 | `extended_xmp` | `tagged` + a bake of 40 faces by ExifTool (it splits the packet) | 2,488 / 85 / 5 / 7 | keyword, bake | R |
-| `big_xmp` | `tagged` + a hierarchy of fictional keywords to a 60 KB packet, no extension | 202 / 40 / 5 / 9 | keyword | R |
-| `mpf` | PIL's MPO of two noise frames + ExifTool's fields | 2,811 / 14 / 0 / 0 | keyword, dates | P / R |
+| `big_xmp` | `tagged` + a hierarchy of fictional keywords to a 60 KB packet, no extension | 202 / 40 / 5 / 9 | keyword | P |
+| `mpf` | PIL's MPO of two noise frames + ExifTool's fields | 2,811 / 14 / 0 / 0 | keyword, dates | P |
 | `trailer` | laid: `tagged` + 64 bytes after the EOI | 46 / 3 / 0 / 0 | keyword, dates | P |
 | `maker_note` | laid: `tagged`'s EXIF with a Canon-footed note IFD (lifted `note_ifd`, test_exif_block_edits_what_it_owns :87) | Canon moved 10,716, Sony moved 5,108 (photo_index) | dates, turn | P |
 | `no_taken` | `camera` without DateTimeOriginal | 60 / 0 / 3 / 0 | Date Taken set | R (adds an entry) |
 | `ifd0_xmp` | laid: the captured header (lifted `photo_with_xmp_in_ifd0`, test_a_photo_written_by_its_own_editors :92) | 39 / 0 / 0 / 0 (#3108) | keyword, shift, turn, last keyword off | R |
-| `nul_xmp` | laid: an XMP segment of NUL bytes | 3 / 0 / 0 / 0 (#2349) | keyword | R, fails (Invalid XMP) until J3a |
-| `no_wrapper` | laid: a packet with no `<?xpacket` | 52 / 7 / 0 / 0 | keyword | P |
+| `nul_xmp` | laid: an XMP segment of NUL bytes | 3 / 0 / 0 / 0 (#2349) | keyword | R: ExifTool says Invalid XMP and writes no XMP, the IPTC and XP copies written; the journal records the file as it holds it (XMP lands at J3a) |
+| `no_wrapper` | laid: a packet with no `<?xpacket` | 52 / 7 / 0 / 0 | keyword | R |
 | `other_appn` | laid: `tagged` + APP11, APP15, COM | 1,622 / 1,049 / 2,468 (photo_index) | keyword, dates | P |
 | `thumb_turn` | `tagged` + IFD1 Orientation and XMP-tiff:Orientation (as :394-405 of test_a_photo_written_by_its_own_editors) | thumbnail 52,306 / 2,178 / 1,304 / 1,280 | turn, mirror | P |
 | `png` | PIL PNG + ExifTool XMP (iTXt), EXIF (eXIf), IPTC | 24 of the 26 | all | R |
@@ -63,7 +63,7 @@ takes: P the own patch, R ExifTool's rewrite, `-` refused).
 | `premiere_mp4` | laid: `mp4_bare` given test_xmp_packet_edits_what_it_owns's `PREMIERE` packet (properties as attributes, about 200 KB; lifted) | user action: a clip exported by Adobe Premiere (C2's test_an_adobe_clip_packet_edited_and_read_back) | clip tags, date | P |
 | `clip_headers` | laid: every shape of `tests/fixtures/clip_headers.json` (lifted `clip_of`, test_a_clip_dated_through_the_journal :101) | 2,930 clips' header layouts, as captured | clip date | P |
 | `cut_short` | `damaged_photos.truncated` | user action: a copy that stopped | keyword (step 3) | R |
-| `no_picture` | laid: `tagged`'s header with no scan | 0; user action: a copy cut short | keyword (step 3) | `-` (`NO_PICTURE`) |
+| `no_picture` | laid: `tagged`'s header with no scan | 0; user action: a copy cut short | keyword (step 3) | `-` (ExifTool's own refusal, before `NO_PICTURE`) |
 | `zeros`, `text_named_jpg` | `damaged_photos.all_zeros`; a text file named .jpg (#46) | user action: a file misnamed or zeroed | read only | `-` |
 
 Conditions put on a copy, not items: **held open** (`lock_owners.opened(copy, lock_owners.NO_SHARING)` held across the
