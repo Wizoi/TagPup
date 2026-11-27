@@ -535,7 +535,7 @@ export function carryTagsForward() {
         return;
     }
 
-    return queueWriteOf(path, async () => {
+    return queueWriteOf(path, async (entry) => {
         // What is missing now, not when the key was pressed: a write queued
         // ahead of this one may have added some of it, or removed others.
         const held = (photo.tags || []).slice();
@@ -549,7 +549,7 @@ export function carryTagsForward() {
         setStatus('busy', `Copying ${missing.length} tag(s) from ${from}...`);
         let saved;
         try {
-            saved = await postOrSendAgain(photo, { tags: updatedTags }, onThisPage);
+            saved = await postOrSendAgain(photo, { tags: updatedTags }, onThisPage(entry));
         } catch (err) {
             console.error(err);
             setStatus('error', 'Could not copy tags: ' + err.message);

@@ -145,6 +145,13 @@ async function pick(ctx, text, tag) {
   await settle(ctx);
 }
 
+/** Does closing the tab now ask (the browser's own Leave site?)? */
+function leaving(ctx) {
+  const event = new ctx.window.Event("beforeunload", { cancelable: true });
+  ctx.window.dispatchEvent(event);
+  return event.defaultPrevented;
+}
+
 /** A route answered later: `release(reply)` sends the reply, a route's function of (url, body) (saved) or its body. */
 function holdNext(ctx, route) {
   const hold = {};
@@ -378,7 +385,7 @@ describe("editing a photo on the phone", () => {
     assert.match(said(ctx), /changed on the PC since it was read/);
   });
 
-  test("the photo left while its refused Save is read again: it is still sent once more, and the draft let go", async (t) => {
+  test("the photo left while its refused Save is read again: it is still sent once more, closing asks till then, the draft let go", async (t) => {
     const ctx = await phone(t);
     await openSheet(ctx);
     ctx.held.mtime += 300;
@@ -392,16 +399,19 @@ describe("editing a photo on the phone", () => {
     click(ctx.window, el(ctx, "edit-save"));
     await settle(ctx);
     assert.equal(typeof reading.hold.release, "function", "the read again is out");
+    assert.equal(leaving(ctx), true, "the tab closed while the refused Save is read again asked nothing");
     ctx.window.history.back();                         // the sheet, then the photo
     await settle(ctx);
     ctx.window.history.back();
     await settle(ctx);
     assert.deepEqual(shown(ctx), ["grid"]);
+    assert.equal(leaving(ctx), true, "the photo left, the Save not written: closing still asks");
     reading.hold.release({ photo: ctx.record() });
     await settle(ctx);
     assert.equal(saveCalls(ctx.server).length, 2);
     assert.equal(ctx.held.title, "Wren's Last Lap", "the Save the owner tapped is written");
     assert.equal(pageState(ctx).drafts.has(1), false, "and its draft let go: nothing to put back");
+    assert.equal(leaving(ctx), false, "written, closing asks nothing");
   });
 
   test("a chip taken off, Close, and Edit again within its Undo: the chip stays off, and the next Save lands", async (t) => {

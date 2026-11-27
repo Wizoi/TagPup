@@ -63,11 +63,11 @@ export function wireDateTakenModal() {
 
             // In the photo write queue with every other write: it sends the tags and
             // title too, and those are read when it runs, not when Save was clicked.
-            queueWriteOf(photo.path, async () => {
+            queueWriteOf(photo.path, async (entry) => {
                 let saved;
                 setStatus('busy', 'Saving date taken...');
                 try {
-                    saved = await postOrSendAgain(photo, { date_taken: newDateVal }, onThisPage);
+                    saved = await postOrSendAgain(photo, { date_taken: newDateVal }, onThisPage(entry));
                 } catch (err) {
                     console.error(err);
                     setStatus('error', 'Error');

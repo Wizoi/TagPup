@@ -511,7 +511,7 @@ function buildThumbnailCard(photo) {
             // are the photo's tags when it runs, not a copy from before.
             // Refused as changed on disk, it is read again and sent once more (postOrSendAgain); refused still, it rejects with
             // the server's sentence, after photoChangedOnDisk.
-            queueWriteOf(photo.path, () => postOrSendAgain(photo, { title: newTitle }, onThisPage)
+            queueWriteOf(photo.path, (entry) => postOrSendAgain(photo, { title: newTitle }, onThisPage(entry))
             .then(data => {
                 const oldPath = photo.path;
                 photo.title = newTitle;

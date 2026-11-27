@@ -88,6 +88,16 @@ export function markEntry(entry, status) {
     renderWriteQueue();
 }
 
+/**
+ * A save under way refused as changed on disk is read again and sent once more (photo-write.js postOrSendAgain): from the
+ * refusal until the second send is answered nothing of it is written, and it is waiting in this page (`on`), its row
+ * saying so; then it is under way again until it is marked done or failed.
+ */
+export function markBackInPage(entry, on) {
+    entry.backInPage = on;
+    renderWriteQueue();
+}
+
 /** How many writes are waiting or under way. */
 function pendingWrites() {
     return state.writeQueue.entries.filter(e => e.status === 'waiting' || e.status === 'writing').length;
@@ -103,12 +113,14 @@ export function photosOut() {
 
 /**
  * How many photos have a write still in this page, not sent: one queued behind the write out (a save, Apply All, a
- * rename; a tag drain's names nothing until its turn), and the tag changes waiting to be taken into a write (pending.js,
- * `state.pending.files`, a drain stopped by a failure's too). Closing the page loses them; a write sent is the server's.
+ * rename; a tag drain's names nothing until its turn), a save refused and being read again to be sent once more
+ * (markBackInPage), and the tag changes waiting to be taken into a write (pending.js, `state.pending.files`, a drain
+ * stopped by a failure's too). Closing the page loses them; a write sent is the server's.
  */
 export function waitingInPage() {
     const keys = new Set(state.pending.files.keys());
-    state.writeQueue.entries.filter(e => e.status === 'waiting').forEach(e => e.photos().forEach(path => keys.add(pathKey(path))));
+    state.writeQueue.entries.filter(e => e.status === 'waiting' || (e.status === 'writing' && e.backInPage))
+        .forEach(e => e.photos().forEach(path => keys.add(pathKey(path))));
     return keys.size;
 }
 
@@ -117,7 +129,8 @@ export function waitingInPage() {
  * the server finishes it if the page goes; waiting in this page, it is lost if the page goes (with a failure: until Retry).
  */
 export function leaveSaid() {
-    const sent = new Set(photosOut().map(pathKey)).size;
+    const sent = new Set(state.writeQueue.entries.filter(e => e.status === 'writing' && !e.backInPage)
+        .flatMap(e => e.photos()).map(pathKey)).size;
     const waiting = waitingInPage();
     const them = (n) => (n === 1 ? 'it' : 'them');
     if (waiting && !pendingWrites()) return `${photosWord(waiting)} waiting in this page for Retry: lost if you leave`;
@@ -160,7 +173,7 @@ const STATE_WORDS = { waiting: 'waiting', writing: 'writing', done: 'done', fail
 function entryRow(entry) {
     const said = entry.status === 'failed' && entry.error
         ? `failed: ${entry.error}`
-        : entry.note ? `${STATE_WORDS[entry.status]}, ${entry.note}` : STATE_WORDS[entry.status];
+        : entry.status === 'writing' && entry.backInPage ? 'writing, its file read again' : STATE_WORDS[entry.status];
     const row = buildElement('li', { className: 'write-queue-entry', data: { status: entry.status } }, [
         buildElement('span', { className: 'write-queue-label', text: entry.label }),
         buildElement('span', { className: 'write-queue-state', text: said }),

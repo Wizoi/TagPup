@@ -15,7 +15,7 @@ import { setStatus } from './status.js';
 import { MOVE_WAIT_SHOWN_AFTER_MS, hideMoveWaiting, showMoveWaiting } from './move-waits.js';
 import { photosGone, recordsWritten } from './cache.js';
 import {
-    dismissEntry, markEntry, photosOut, pictureCheckSaid, queueEntry, waitingInPage, whereWritten
+    dismissEntry, markBackInPage, markEntry, photosOut, pictureCheckSaid, queueEntry, waitingInPage, whereWritten
 } from './write-queue.js';
 import {
     fetchKnownTagsAndPeople, namesAPerson, resolveTagOrPerson, updateTagsDatalist
@@ -274,14 +274,18 @@ export function photoChangedOnDisk(photo) {
 const SENT_AGAIN = ' after reading its file again (indexing, or another program, had written to it)';
 
 /**
- * What this page hands photo-write.js postOrSendAgain of its own: its way of showing a refusal (photoChangedOnDisk), and
- * whether its list still holds the photo -- the open folder's, or the view's one open photo -- which a save goes to only
- * then (the queue's own rule, writeDetailEdits).
+ * What this page hands photo-write.js postOrSendAgain of its own, for the save of the queue's `entry`: its way of showing
+ * a refusal (photoChangedOnDisk), whether its list still holds the photo -- the open folder's, or the view's one open
+ * photo -- which a save goes to only then (the queue's own rule, writeDetailEdits), and the entry marked waiting in the
+ * page while it is read again (write-queue.js markBackInPage).
  */
-export const onThisPage = {
-    changed: photoChangedOnDisk,
-    stillListed: photo => state.folderPhotos.some(p => samePath(p.path, photo.path)),
-};
+export function onThisPage(entry) {
+    return {
+        changed: photoChangedOnDisk,
+        stillListed: photo => state.folderPhotos.some(p => samePath(p.path, photo.path)),
+        backInPage: on => markBackInPage(entry, on),
+    };
+}
 
 /** The status line's words of a save, `said`; `sentAgain` and so, when it was sent once more after its file was read again. */
 export function saidOfSave(reply, said, sentAgain = said) {
@@ -401,7 +405,7 @@ export async function writeDetailEdits(fields, { intent = null, taken = null, pa
     setStatus('busy', 'Saving...');
     let data;
     try {
-        data = await postOrSendAgain(photo, { title: newTitle === null ? photo.title : newTitle, tags }, onThisPage);
+        data = await postOrSendAgain(photo, { title: newTitle === null ? photo.title : newTitle, tags }, onThisPage(entry));
     } catch (err) {
         console.error(err);
         setStatus('error', `Not saved: ${err.message}`, { transient: false });

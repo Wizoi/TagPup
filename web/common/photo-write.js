@@ -154,33 +154,44 @@ export async function postPhotoMetadata(photo, { title = photo.title, tags = pho
  * still hold the photo?). Then, or refused the second time, `changed(photo)` -- the page's way of reading it again to
  * show it -- and it rejects with the refusal (`changedOnDisk`); it is never sent a third time. Nothing is merged.
  * `request` is postPhotoMetadata's.
+ *
+ * From the refusal until the second send is answered (or it is not sent again) the save is the page's again: refused,
+ * nothing was written, and a page going then loses it. `backInPage(true)` says so at the refusal and `backInPage(false)`
+ * once it is settled, before the caller has the refusal or the reply: the PC's write line counts it waiting in the page,
+ * and the browser's Leave prompt asks for it (web/tagpup/write-queue.js waitingInPage).
  */
-export async function postOrSendAgain(photo, changes = {}, { changed = () => {}, stillListed = () => true, request = {} } = {}) {
+export async function postOrSendAgain(photo, changes = {},
+    { changed = () => {}, stillListed = () => true, request = {}, backInPage = () => {} } = {}) {
     const asked = { title: photo.title, tags: (photo.tags || []).slice(), ...changes };
     try {
         return await postPhotoMetadata(photo, asked, () => {}, request);
     } catch (err) {
         if (!err.changedOnDisk) throw err;
-        const before = { ...baseSent(photo, asked) };
-        const now = await readAgain(photo).catch((why) => {
-            console.error('Could not read the photo again:', why);
-            return null;
-        });
-        if (!now || now.missing || now.unreadable || !stillListed(photo)) {
-            changed(photo);
-            throw err;
-        }
-        const record = { ...now, id: photo.id, path: photo.path, base: before };
-        if (photo.id === undefined) delete record.id;    // a folder's photo: the page's record has none
-        let reply;
+        backInPage(true);
         try {
-            reply = await postPhotoMetadata(record, asked, () => {}, request);
-        } catch (again) {
-            if (again.changedOnDisk) changed(photo);
-            throw again;
+            const before = { ...baseSent(photo, asked) };
+            const now = await readAgain(photo).catch((why) => {
+                console.error('Could not read the photo again:', why);
+                return null;
+            });
+            if (!now || now.missing || now.unreadable || !stillListed(photo)) {
+                changed(photo);
+                throw err;
+            }
+            const record = { ...now, id: photo.id, path: photo.path, base: before };
+            if (photo.id === undefined) delete record.id;    // a folder's photo: the page's record has none
+            let reply;
+            try {
+                reply = await postPhotoMetadata(record, asked, () => {}, request);
+            } catch (again) {
+                if (again.changedOnDisk) changed(photo);
+                throw again;
+            }
+            Object.assign(photo, record);
+            return { ...reply, readAgain: true };
+        } finally {
+            backInPage(false);
         }
-        Object.assign(photo, record);
-        return { ...reply, readAgain: true };
     }
 }
 

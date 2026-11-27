@@ -712,7 +712,7 @@ export function applySuggestedTagsDirect(tagNames, isPerson, forPath = state.act
     const photo = state.folderPhotos.find(p => p.path === path);
     if (!photo) return;
 
-    return queueWriteOf(path, async () => {
+    return queueWriteOf(path, async (entry) => {
         const added = [];
         let had = null;
         for (const tagName of tagNames) {
@@ -732,7 +732,7 @@ export function applySuggestedTagsDirect(tagNames, isPerson, forPath = state.act
         setStatus('busy', 'Saving...');
         let saved;
         try {
-            saved = await postOrSendAgain(photo, { tags: updatedTags }, onThisPage);
+            saved = await postOrSendAgain(photo, { tags: updatedTags }, onThisPage(entry));
         } catch (err) {
             console.error(err);
             setStatus('error', 'Error');
@@ -772,7 +772,7 @@ export async function applyAllSingleSuggestions() {
     const sugg = state.folderSuggestions[path];
     if (!photo || !sugg) return;
 
-    return queueWriteOf(path, async () => {
+    return queueWriteOf(path, async (entry) => {
         // Resolve each suggestion to the tag it is filed under before writing it,
         // and skip anyone the photo already names -- as it is now, after whatever
         // was queued ahead. Applying the list raw wrote bare leaves.
@@ -796,7 +796,7 @@ export async function applyAllSingleSuggestions() {
         setStatus('busy', 'Saving...');
         let saved;
         try {
-            saved = await postOrSendAgain(photo, { tags: updatedTags }, onThisPage);
+            saved = await postOrSendAgain(photo, { tags: updatedTags }, onThisPage(entry));
         } catch (err) {
             console.error(err);
             setStatus('error', 'Error');

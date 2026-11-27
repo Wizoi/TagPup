@@ -11,12 +11,16 @@
  * Every save of the page's that names a base goes by the one rule (web/common/photo-write.js postOrSendAgain): the
  * panel's, a card's title in the grid, Carry forward, a suggestion taken one or all at once, the Edit Date Taken dialog's
  * (its base names the date the page read, which the server compares with the file's, #3425: another program's date is
- * refused, never written over); the owner opening the next photo while one is read again waits for it. The phone's Save: scenario-editing-a-photo-on-the-phone (V26).
+ * refused, never written over); the owner opening the next photo while one is read again waits for it. From the refusal
+ * until the second send is answered nothing of the save is written: the write line says it waits in this page, and closing
+ * the tab asks (the browser's own Leave site?), for every one of those saves; refused the second time it stops waiting.
+ * The phone's Save: scenario-editing-a-photo-on-the-phone (V26).
  *
  * The server is a fake of the files as they are now (`disk`, each with its row's id), which a save that wrote changes, and
  * which refuses a save as the real one does (tagging.py save_photo): its stamp not the file's, or its base not the file's
  * tags (as a set) and caption. The scan gives a folder's photos without an id, as photos.scan_folder does. `ctx.replies`
- * answers the next saves instead, for a reply the model does not make (a rename).
+ * answers the next saves instead, for a reply the model does not make (a rename); `ctx.holdReads` holds the reads of a
+ * photo again (`ctx.held()` answers it), `ctx.holdSave` the next save (`ctx.heldSave()`).
  */
 import { test, describe, afterEach } from "node:test";
 import assert from "node:assert/strict";
@@ -58,6 +62,28 @@ function refused(file, sent) {
     || (sent.base.date_taken !== undefined && (file.taken || "") !== sent.base.date_taken);
 }
 
+/** Does closing the tab now ask (the browser's own Leave site?)? */
+function leaving(ctx) {
+  const event = new ctx.window.Event("beforeunload", { cancelable: true });
+  ctx.window.dispatchEvent(event);
+  return event.defaultPrevented;
+}
+
+/** The write line's words of what leaving does now (write-queue.js leaveSaid), '' when it says nothing. */
+function line(ctx) {
+  const said = ctx.document.querySelector("#write-queue .write-queue-leave");
+  return said && !said.hidden ? said.textContent : "";
+}
+
+/** The save's read again is out: closing the tab asks, the line says it waits in the page; then the read is answered. */
+async function asksWhileReadAgain(ctx) {
+  await until(ctx, () => ctx.held, "the read again");
+  assert.equal(line(ctx), "1 photo waiting in this page: stay until it is sent");
+  assert.equal(leaving(ctx), true, "closing the tab while the refused save was read again asked nothing: it was lost");
+  ctx.holdReads = false;
+  ctx.held();
+}
+
 /** The page on FOLDER, its server's files in `ctx.disk` (path -> record with its id); `ctx.replies` answers the next saves. */
 async function page(t, { view = false, open = true, taken = null } = {}) {
   const ctx = { replies: [], held: null, alerts: [] };
@@ -82,6 +108,11 @@ async function page(t, { view = false, open = true, taken = null } = {}) {
       return new Promise((resolve) => { ctx.held = () => resolve(read()); });
     })
     .on(SAVE, (url, body) => {
+      if (!ctx.holdSave) return answerSave(url, body);
+      ctx.holdSave = false;
+      return new Promise((resolve) => { ctx.heldSave = () => resolve(answerSave(url, body)); });
+    });
+  function answerSave(url, body) {
       const answer = ctx.replies.length ? ctx.replies.shift()
         : refused(disk.get(savedPhoto(body).path), savedPhoto(body)) ? changedOnDisk() : saved();
       const reply = answer(url, body);
@@ -97,7 +128,7 @@ async function page(t, { view = false, open = true, taken = null } = {}) {
         });
       }
       return reply;
-    });
+  }
   if (view) {
     server
       .on("/api/library/ids", { total: 1, ids: [IDS[A.path]], complete: true })
@@ -287,6 +318,95 @@ describe("V33: a save refused because the index wrote to the file", () => {
   });
 });
 
+describe("V33: closing the tab while a refused save is read again and sent once more", () => {
+  test("from the refusal until the second send is answered it waits in this page and closing the tab asks", async (t) => {
+    const ctx = await page(t);
+    ctx.bake(A.path);
+    ctx.holdReads = true;
+    ctx.addTag("Trips/Lakes");
+    await until(ctx, () => ctx.held, "the read again");
+    assert.equal(line(ctx), "1 photo waiting in this page: stay until it is sent");
+    assert.equal(leaving(ctx), true, "closing the tab while the refused save was read again asked nothing: it was lost");
+    assert.equal(ctx.document.querySelector(".write-queue-entry .write-queue-state").textContent, "writing, its file read again");
+    ctx.holdSave = true;
+    ctx.holdReads = false;
+    ctx.held();
+    await until(ctx, () => ctx.heldSave, "the second send");
+    assert.equal(leaving(ctx), true, "the second send not answered yet: it may be refused again");
+    ctx.heldSave();
+    await until(ctx, () => /^Saved/.test(ctx.status()), () => `the save (${ctx.status()})`);
+    assert.equal(line(ctx), "");
+    assert.equal(leaving(ctx), false, "a save written still asked");
+  });
+
+  test("refused the second time: it stops waiting, the refusal said; only the text given back asks, and Escape lets it go", async (t) => {
+    const ctx = await page(t);
+    const file = ctx.disk.get(A.path);
+    ctx.disk.set(A.path, { ...file, tags: ["Trips/Coast", "Activity/Sailing"], mtime: file.mtime + 300 });
+    ctx.holdReads = true;
+    ctx.addTag("Trips/Lakes");
+    await asksWhileReadAgain(ctx);
+    await until(ctx, () => ctx.alerts.length, "the refusal said");
+    await flush(ctx.window, 12);
+    assert.equal(ctx.saves().length, 2, "no third send");
+    assert.equal(ctx.document.querySelector(".write-queue-entry").dataset.status, "failed");
+    assert.equal(line(ctx), "", "a refused save still said it waited in the page");
+    const box = ctx.document.getElementById("input-add-tag");
+    assert.equal(box.value, "Trips/Lakes", "the text typed was given back");
+    assert.equal(leaving(ctx), true, "the text given back is unsaved: closing asks for it");
+    box.dispatchEvent(new ctx.window.KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }));
+    assert.equal(leaving(ctx), false, "closing the tab asked forever");
+  });
+
+  test("rapid saves while one is read again: they wait behind it, one photo waiting, each written once", async (t) => {
+    const ctx = await page(t);
+    ctx.bake(A.path);
+    ctx.holdReads = true;
+    ctx.addTag("Trips/Lakes");
+    await until(ctx, () => ctx.held, "the read again");
+    ctx.addTag("Trips/Harbour");
+    ctx.addTag("Trips/Bay");
+    await flush(ctx.window, 6);
+    assert.equal(ctx.saves().length, 1, "a save behind the one read again was sent beside it");
+    assert.equal(line(ctx), "1 photo waiting in this page: stay until it is sent");
+    assert.equal(leaving(ctx), true);
+    ctx.holdReads = false;
+    ctx.held();
+    await until(ctx, () => ctx.saves().length === 4 && !line(ctx), () => `the saves (${ctx.saves().length}, ${line(ctx)})`);
+    assert.deepEqual(ctx.disk.get(A.path).tags, ["Trips/Coast", "Trips/Lakes", "Trips/Harbour", "Trips/Bay"]);
+    assert.equal(leaving(ctx), false);
+    assert.deepEqual(ctx.alerts, []);
+  });
+
+  test("another folder opened while it is read again: the folder waits for the save, then opens", async (t) => {
+    const ctx = await page(t);
+    ctx.bake(A.path);
+    ctx.holdReads = true;
+    ctx.addTag("Trips/Lakes");
+    await until(ctx, () => ctx.held, "the read again");
+    await openFolder(ctx, "D:\\Library\\2022 Hills");
+    assert.equal(ctx.state.scannedFolder, FOLDER, "the folder opened over a save not written");
+    ctx.holdReads = false;
+    ctx.held();
+    await until(ctx, () => ctx.state.scannedFolder === "D:\\Library\\2022 Hills", () => `the folder (${ctx.status()})`);
+    assert.equal(ctx.saves().length, 2);
+    assert.deepEqual(ctx.disk.get(A.path).tags, ["Trips/Coast", "Trips/Lakes"], "written");
+    assert.equal(leaving(ctx), false);
+  });
+
+  test("the Edit Date Taken dialog's save the same (#3425)", async (t) => {
+    const ctx = await page(t, { taken: "2020:01:02 03:04:05" });
+    ctx.bake(A.path);
+    ctx.holdReads = true;
+    ctx.document.getElementById("btn-edit-date-taken").click();
+    ctx.document.getElementById("input-date-taken").value = "2021-05-06T07:08:09";
+    click(ctx.window, ctx.document.getElementById("btn-save-date-modal"));
+    await asksWhileReadAgain(ctx);
+    await until(ctx, () => /^Saved the date taken/.test(ctx.status()), () => `the save (${ctx.status()})`);
+    assert.equal(leaving(ctx), false);
+  });
+});
+
 describe("V33: a Date Taken saved from the dialog goes by the same rule (#3425)", () => {
   /** The owner types `date` in the Edit Date Taken dialog of the open photo and saves. */
   function saveDate(ctx, date) {
@@ -363,12 +483,14 @@ describe("V33: the page's other saves go by the same rule", () => {
   test("a card's title typed in the folder's grid", async (t) => {
     const ctx = await page(t, { open: false });
     ctx.bake(A.path);
+    ctx.holdReads = true;
     const card = [...ctx.document.querySelectorAll("[data-path]")]
       .find((each) => each.getAttribute("data-path") === A.path && each.querySelector(".thumbnail-filename"));
     card.querySelector(".thumbnail-filename").dispatchEvent(new ctx.window.MouseEvent("click", { bubbles: true }));
     const input = card.querySelector(".thumbnail-filename-input");
     input.value = "Harbour";
     input.dispatchEvent(new ctx.window.KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }));
+    await asksWhileReadAgain(ctx);   // not the open photo's: another library chosen now goes, and the browser asks
     await until(ctx, () => /^Saved/.test(ctx.status()), () => `the save (${ctx.status()})`);
     assert.equal(ctx.saves().length, 2);
     assert.deepEqual(ctx.saves()[1].stamp, { mtime: A.mtime + 300, size: A.size + 512 });
@@ -381,7 +503,9 @@ describe("V33: the page's other saves go by the same rule", () => {
     const ctx = await page(t);
     await ctx.open(B.path);
     ctx.bake(B.path);
+    ctx.holdReads = true;
     ctx.document.getElementById("btn-carry-forward").click();
+    await asksWhileReadAgain(ctx);
     await until(ctx, () => /^Copied/.test(ctx.status()), () => `the carry (${ctx.status()})`);
     assert.equal(ctx.saves().length, 2);
     assert.match(ctx.status(), new RegExp("^Copied 1 tag\\(s\\) from a\\.jpg" + sentAgain.source));
@@ -399,7 +523,9 @@ describe("V33: the page's other saves go by the same rule", () => {
     test(how, async (t) => {
       const ctx = await page(t);
       ctx.bake(A.path);
+      ctx.holdReads = true;
       take(ctx);
+      await asksWhileReadAgain(ctx);
       await until(ctx, () => /^Saved/.test(ctx.status()), () => `the save (${ctx.status()})`);
       assert.equal(ctx.saves().length, 2);
       assert.match(ctx.status(), new RegExp("^Saved" + sentAgain.source));
