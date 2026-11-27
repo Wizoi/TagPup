@@ -248,8 +248,9 @@ class AClipIsIndexedAsAVideo(unittest.TestCase):
         folder = os.path.join(self.home.root, "Moorings")
         clip(folder, "harbour.mp4")
         photo(os.path.join(folder, "sail.jpg"), (30, 30, 200))
-        found = {os.path.basename(r["path"]): r["media"]
-                 for r in photo_service.scan_folder(Library(self.library), folder, own_home.installed_exiftool()).values()}
+        with field_values.opened(own_home.installed_exiftool()) as fields:
+            found = {os.path.basename(r["path"]): r["media"]
+                     for r in photo_service.scan_folder(Library(self.library), folder, fields).values()}
         self.assertEqual({"harbour.mp4": "video", "sail.jpg": "photo"}, found)
 
 

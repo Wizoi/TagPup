@@ -124,12 +124,12 @@ def changed_on_disk(path, stamp):
     return not photos.describes(stamp[0], stamp[1], file_stamp(path))
 
 
-def read_file(library, path, exiftool_path, stamp=None):
+def read_file(library, path, fields, stamp=None):
     """The page record of one photo read from its FILE with ExifTool, as the folder scan reads a photo whose row
     does not describe it (the library's people vocabulary told to the reader). mtime and size are the file's:
     `stamp`, (mtime, size), when the caller has just taken it."""
     stamp = stamp or file_stamp(path) or (None, None)
-    return _read(library, [(path, stamp[0], stamp[1])], exiftool_path)[paths.key(path)]
+    return _read(library, [(path, stamp[0], stamp[1])], fields)[paths.key(path)]
 
 
 def taken_order(record):
@@ -157,7 +157,7 @@ def scan_stamp(library):
         return None
 
 
-def scan_folder(library, folder, exiftool_path):
+def scan_folder(library, folder, fields):
     """The photos under `folder`, at any depth, as page records keyed by paths.key:
     opening a folder in TagPup.
 
@@ -189,7 +189,7 @@ def scan_folder(library, folder, exiftool_path):
     if to_read:
         logger.info("Scan found %d new/modified files in %s. Running ExifTool...", len(to_read), folder)
         try:
-            found.update(_read(library, [(f, mt, sz) for f, mt, sz in to_read], exiftool_path))
+            found.update(_read(library, [(f, mt, sz) for f, mt, sz in to_read], fields))
         except Exception as e:
             logger.error("Error running ExifTool during scan: %s", e)
     return _with_posters(found, known)
@@ -230,18 +230,16 @@ def _with_posters(found, known):
     return found
 
 
-def _read(library, files, exiftool_path):
+def _read(library, files, fields):
     """{paths.key: page record} of `files`, each (path, mtime, size), mtime and size the
     reader's when None, read with ExifTool in batches of READ_BATCH."""
     people = taxonomy.people_vocabulary(library.path)
     found = {}
-    with field_values.opened(exiftool_path) as reader:
-        for start in range(0, len(files), READ_BATCH):
-            batch = files[start:start + READ_BATCH]
-            for (file, mtime, size), meta in zip(batch, reader.whole([f for f, _, _ in batch], people=people)):
-                found[paths.key(file)] = page_record(
-                    file, meta, meta["mtime"] if mtime is None else mtime,
-                    meta["size"] if size is None else size)
+    for start in range(0, len(files), READ_BATCH):
+        batch = files[start:start + READ_BATCH]
+        for (file, mtime, size), meta in zip(batch, fields.whole([f for f, _, _ in batch], people=people)):
+            found[paths.key(file)] = page_record(
+                file, meta, meta["mtime"] if mtime is None else mtime, meta["size"] if size is None else size)
     return found
 
 

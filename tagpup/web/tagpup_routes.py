@@ -223,7 +223,8 @@ def _folder_photos(library, folder, force=False):
     found = None if force else cache.get(folder)
     if not found:
         stamp = cache.stamp()
-        found = cache.put(folder, photo_actions.scan_folder(library, folder, state.exiftool(library)), stamp)
+        with state.fields(library) as fields:
+            found = cache.put(folder, photo_actions.scan_folder(library, folder, fields), stamp)
     return found
 
 
@@ -638,7 +639,8 @@ def library_photo():
         return responses.error(400, "id must be a whole number.")
     photo_id = int(wanted)
     try:
-        return jsonify({"photo": library_view.photo(library, photo_id, lambda: state.exiftool(library))})
+        with state.fields(library) as fields:
+            return jsonify({"photo": library_view.photo(library, photo_id, fields)})
     except responses.ANSWERED as why:
         return responses.of(why)
     except Exception as e:

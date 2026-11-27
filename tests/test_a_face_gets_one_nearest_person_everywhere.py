@@ -36,6 +36,7 @@ import web_client  # noqa: E402
 import fake_exiftool  # noqa: E402
 
 from tagpup.core.library import Library  # noqa: E402
+from tagpup.files import field_values  # noqa: E402
 from tagpup.services import faces_from_tags  # noqa: E402
 from tagpup.services import identify  # noqa: E402
 from tagpup.services import photos as photos_service  # noqa: E402
@@ -120,7 +121,8 @@ class AFaceGetsOneNearestPersonEverywhere(unittest.TestCase):
 
     def suggested(self, photo_path):
         """The person Suggest offers for the photo's face, handed the page's record of it as a run is."""
-        record = photos_service.scan_folder(self.library, os.path.dirname(photo_path), None)
+        with field_values.opened(None) as fields:
+            record = photos_service.scan_folder(self.library, os.path.dirname(photo_path), fields)
         meta = next(each for each in record.values() if os.path.basename(each["path"]) == os.path.basename(photo_path))
         index = PhotoIndex(self.path)
         index.load()

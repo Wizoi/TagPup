@@ -324,7 +324,7 @@ def read_ids(text):
     return found
 
 
-def photo(library, photo_id, exiftool_path=None):
+def photo(library, photo_id, fields):
     """The photo `photo_id` as the page reads a photo of a folder (services.photos.page_record): what the details panel
     shows and edits by path. NotFound when the library has no such photo.
 
@@ -344,7 +344,7 @@ def photo(library, photo_id, exiftool_path=None):
     path, mtime, size, tags, people, captions, raw, year, kind = row
     stamp = photo_actions.file_stamp(path)
     if stamp is not None and not store_photos.describes(mtime, size, stamp):
-        record = photo_actions.read_file(library, path, exiftool_path() if callable(exiftool_path) else exiftool_path, stamp)
+        record = photo_actions.read_file(library, path, fields, stamp)
     else:
         record = photo_actions.page_record(path, {
             "tags": json.loads(tags) if tags else [], "people": json.loads(people) if people else [],

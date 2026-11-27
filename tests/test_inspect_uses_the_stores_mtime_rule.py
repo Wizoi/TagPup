@@ -13,6 +13,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import own_home  # noqa: E402
 
 from tagpup.core.library import Library  # noqa: E402
+from tagpup.files import field_values  # noqa: E402
 from tagpup.services import inspect  # noqa: E402
 from tagpup.store import db, photos, schema  # noqa: E402
 
@@ -39,7 +40,8 @@ class TheMtimeOfARowAndItsFile(unittest.TestCase):
         record = {"document_id": None, "mtime": file_mtime, "size": 1, "tags": [], "captions": [], "people": [],
                   "raw_metadata": {}}
         with mock.patch("tagpup.files.field_values.Fields.whole", return_value=[record]):
-            return inspect.photo_against_file(self.library, self.photo_id, "exiftool")
+            with field_values.opened("exiftool") as fields:
+                return inspect.photo_against_file(self.library, self.photo_id, fields)
 
     def test_the_tolerance_is_the_stores(self):
         self.assertTrue(self.compared(100.05)["mtime"]["same"])

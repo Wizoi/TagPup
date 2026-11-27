@@ -129,7 +129,8 @@ class TheOwnersFlows(Twins):
 
     def test_opening_a_folder(self):
         def flow(side):
-            found = photo_actions.scan_folder(side.library, side.pictures, EXIFTOOL)
+            with field_values.opened(EXIFTOOL) as fields:
+                found = photo_actions.scan_folder(side.library, side.pictures, fields)
             return sorted((key, record["path"], record["tags"]) for key, record in found.items())
         listed = self.both(flow)
         self.assertEqual(6, len(listed), "the six real photos")
@@ -423,10 +424,12 @@ class WhenTheMachineMovesTheRoot(Twins):
     def test_opening_a_folder_and_a_sync_at_the_new_place_say_what_they_said_at_the_old(self):
         """The same photos, at the new place: the rows describe their files there as they
         described them at the old one, so nothing is read again and nothing is missing."""
-        at_the_old_place = photo_actions.scan_folder(self.rooted.library, self.rooted.pictures, EXIFTOOL)
+        with field_values.opened(EXIFTOOL) as fields:
+            at_the_old_place = photo_actions.scan_folder(self.rooted.library, self.rooted.pictures, fields)
         self.move_the_root(keep_old=False)
         # copytree kept each file's modified time: the rows' stamps match the copies.
-        at_the_new_place = photo_actions.scan_folder(self.rooted.library, self.moved, EXIFTOOL)
+        with field_values.opened(EXIFTOOL) as fields:
+            at_the_new_place = photo_actions.scan_folder(self.rooted.library, self.moved, fields)
         self.assertEqual(
             self.rooted.norm(sorted((r["path"], r["tags"], r["size"]) for r in at_the_old_place.values())),
             self.rooted.norm(sorted((r["path"], r["tags"], r["size"]) for r in at_the_new_place.values()),
