@@ -346,7 +346,7 @@ class APhotoWrittenByItsOwnEditors(FilesCase):
         )
         for label, operation in operations:
             with self.subTest(label), saves_counted() as saved, \
-                    mock.patch.object(field_values, "write", wraps=field_values.write) as wrote:
+                    mock.patch.object(field_values, "_write", wraps=field_values._write) as wrote:
                 operation()
                 change = self.last_change()
                 self.assertEqual((len(made), len(made)), (saved.call_count, wrote.call_count), "not every photo a patch")
@@ -356,7 +356,7 @@ class APhotoWrittenByItsOwnEditors(FilesCase):
                 with ExifToolSession(executable=EXIFTOOL) as et:
                     for path, after in recorded:
                         after = json.loads(after)
-                        held = field_values.read_one(et, path, list(after))
+                        held = field_values._read_one(et, path, list(after))
                         raw, mtime, size = self.rows("SELECT raw_metadata, mtime, size FROM photos WHERE path = ?",
                                                      (path,))[0]
                         # The row keeps the fields the scan reads (fields.scan_reads), and the file's stamp.
@@ -419,7 +419,7 @@ class APhotoWrittenByItsOwnEditors(FilesCase):
         self.assertEqual((1, [], 1), (result.changed, result.errors, saved.call_count), result.message())
         turned = json.loads(self.rows("SELECT fields_after FROM change_files")[0][0])[fields.ORIENTATION]
         with ExifToolSession(executable=EXIFTOOL) as et:
-            field_values.write(et, theirs, {fields.ORIENTATION: turned})
+            field_values._write(et, theirs, {fields.ORIENTATION: turned})
         self.assertEqual(orientations(theirs), orientations(a))
         # Both turn the picture's copies and leave the thumbnail's own (ExifTool 13.59).
         self.assertEqual({"IFD0:Orientation": 6, "IFD1:Orientation": 1, "XMP-tiff:Orientation": 6}, orientations(a))
@@ -435,7 +435,7 @@ class APhotoWrittenByItsOwnEditors(FilesCase):
                                    base=page_writes.base(self.library, a))
         self.assertEqual((1, []), (first.changed, first.errors), first.message())
         change, held = first.details["change"], read(a)
-        with mock.patch.object(field_values, "write", wraps=field_values.write) as wrote, saves_counted() as saved:
+        with mock.patch.object(field_values, "_write", wraps=field_values._write) as wrote, saves_counted() as saved:
             again = tagging.save_photo(self.library, a, "", ["Beach", "Harbour"], None, EXIFTOOL, "",
                                        base=first.details["base"])   # the page's next base: the first save's reply
             tagged = self.add([a])
@@ -462,7 +462,7 @@ class APhotoWrittenByItsOwnEditors(FilesCase):
         (the patches each saved, the reads)."""
         a = photo_with_xmp_in_ifd0(os.path.join(self.folder, "a.jpg"), tag)
         with ExifToolSession(executable=EXIFTOOL) as et:
-            self.seed(a, field_values.read(et, [a], metadata_check.READ)[paths.key(a)])
+            self.seed(a, field_values._read(et, [a], metadata_check.READ)[paths.key(a)])
         writes = (lambda: self.add([a]),
                   lambda: photo_actions.shift_date_taken(self.library, [a], 60, EXIFTOOL),
                   lambda: photo_actions.rotate_photos(self.library, [a], "right", EXIFTOOL),

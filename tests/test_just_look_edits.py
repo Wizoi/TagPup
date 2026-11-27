@@ -393,7 +393,7 @@ class AFileExifToolCannotRead(Base):
 
 class AWriteThatFailsForOneFileOfMany(Base):
     def test_reports_exactly_what_was_written(self):
-        real = field_values.write
+        real = field_values._write
         calls = []
 
         def second_fails(et, photo_path, values):
@@ -402,7 +402,7 @@ class AWriteThatFailsForOneFileOfMany(Base):
                 raise RuntimeError("the share went away")
             return real(et, photo_path, values)
 
-        with mock.patch("tagpup.files.field_values.write", second_fails):
+        with mock.patch("tagpup.files.field_values._write", second_fails):
             reply = self.tag(self.loose, ["Trips/Lighthouse"])
         self.assertEqual((200, False), (reply.status_code, reply.get_json()["success"]), reply.data)
         body = reply.get_json()
@@ -418,7 +418,7 @@ class AWriteThatFailsForOneFileOfMany(Base):
         for n, path in enumerate(self.loose):
             write_into(path, DateTimeOriginal="2019:06:1%d 10:00:00" % n)
         self.before = library_dump.dump(self.library.path)
-        real = field_values.write
+        real = field_values._write
         calls = []
 
         def second_fails(et, photo_path, values):
@@ -427,7 +427,7 @@ class AWriteThatFailsForOneFileOfMany(Base):
                 raise RuntimeError("the share went away")
             return real(et, photo_path, values)
 
-        with mock.patch("tagpup.files.field_values.write", second_fails):
+        with mock.patch("tagpup.files.field_values._write", second_fails):
             result = photo_actions.shift_date_taken(self.library, self.loose, 60, EXIFTOOL)
         self.assertEqual((3, 2, 1), (result.attempted, result.changed, len(result.errors)))
         self.assertIn("IMG_0002.jpg", result.errors[0][0])
@@ -438,7 +438,7 @@ class AWriteThatFailsForOneFileOfMany(Base):
 
     def test_a_file_changed_outside_since_it_was_read_is_not_overwritten(self):
         from tagpup.services import tagging
-        real_read = field_values.read
+        real_read = field_values._read
         seen = []
 
         def changes_after_the_plan(et, photo_paths, wanted, *args, **kwargs):
@@ -448,7 +448,7 @@ class AWriteThatFailsForOneFileOfMany(Base):
                 write_into(self.loose[0], Subject=["Someone/Elses"])
             return found
 
-        with mock.patch("tagpup.files.field_values.read", changes_after_the_plan):
+        with mock.patch("tagpup.files.field_values._read", changes_after_the_plan):
             result = tagging.change_tags(self.library, self.loose[:1], ["Trips/Lighthouse"], [], EXIFTOOL)
         self.assertFalse(result.ok)
         self.assertEqual(0, result.changed)
@@ -526,7 +526,7 @@ class AFolderTheLibraryHoldsPartOf(Base):
 
 class TheFolderIsAddedWhileAFileOnlyWriteIsInFlight(Base):
     def test_the_photo_gets_its_row_from_the_indexer_and_never_from_the_write(self):
-        real = field_values.write
+        real = field_values._write
         added = []
 
         def adds_the_folder_first(et, photo_path, values):
@@ -534,7 +534,7 @@ class TheFolderIsAddedWhileAFileOnlyWriteIsInFlight(Base):
                 added.append(library_actions.record_added(self.library, [self.lighthouse]))
             return real(et, photo_path, values)
 
-        with mock.patch("tagpup.files.field_values.write", adds_the_folder_first):
+        with mock.patch("tagpup.files.field_values._write", adds_the_folder_first):
             body = self.assertWrote(self.save(self.loose[0], "Lamp room", ["Trips/Lighthouse"]))
         self.assertEqual([1], added)
         # The write decided at its start: the file only, and no half state.

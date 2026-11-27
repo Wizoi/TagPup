@@ -30,7 +30,7 @@ at the time of the write, from the library's own answer.
 import logging
 import os
 
-from tagpup.core import fields, paths
+from tagpup.core import fields as core_fields, paths
 from tagpup.core.result import Result
 from tagpup.files import field_values, lock_owners, names, recycle_bin
 from tagpup.services import file_changes
@@ -77,28 +77,28 @@ def combined(held, loose):
 
 @file_changes.exclusively()
 def write_fields(exiftool_path, photo_paths, read, plan_one, unreadable="fail", stop_at_first_error=False,
-                 et=None, held=None):
+                 fields=None, held=None):
     """file_changes.write_fields for photos the library does not hold: the same planning
     (`read` the fields to read of each file, `plan_one(path, held)` a Plan from what it
-    holds, `unreadable`, `stop_at_first_error`, an `et` Fields (field_values.opened) and what the caller `held`
+    holds, `unreadable`, `stop_at_first_error`, a Fields `fields` (field_values.opened) and what the caller `held`
     of the files through it) and the same Result -- `changed` the files written, errors the photos
     that failed, details `written` {path: detail} of each written or already holding it, `stamps` {path key: (mtime,
     size) or None} of each file written, taken just after its write (file_changes.stamp_after_write), `conflicts`,
     `pictures_refused` when a write was made once more -- but only the files are written: no
     journal change (details["change"] is None), no row, nothing after."""
-    if et is None:
-        with field_values.opened(exiftool_path) as et:
-            return _write_fields(et, photo_paths, read, plan_one, unreadable, stop_at_first_error, held)
-    return _write_fields(et, photo_paths, read, plan_one, unreadable, stop_at_first_error, held)
+    if fields is None:
+        with field_values.opened(exiftool_path) as fields:
+            return _write_fields(fields, photo_paths, read, plan_one, unreadable, stop_at_first_error, held)
+    return _write_fields(fields, photo_paths, read, plan_one, unreadable, stop_at_first_error, held)
 
 
-def _write_fields(et, photo_paths, read, plan_one, unreadable, stop_at_first_error, fresh):
+def _write_fields(fields, photo_paths, read, plan_one, unreadable, stop_at_first_error, fresh):
     result = Result(attempted=len(photo_paths))
     written = result.details["written"] = {}
     result.details.update(change=None, conflicts=[])
     # A clip is left out before anything is read of it, as a held photo's write leaves it out.
     stored = file_changes.leave_out_clips(result, [paths.stored(p) for p in photo_paths], unreadable)
-    held = fresh if fresh is not None else et.read(stored, read)
+    held = fresh if fresh is not None else fields.read(stored, read)
     planned = []
     for path in stored:
         now = held.get(paths.key(path))
@@ -121,15 +121,15 @@ def _write_fields(et, photo_paths, read, plan_one, unreadable, stop_at_first_err
         if plan.skip:
             result.skip(path, plan.skip)
             continue
-        after = {field: fields.field_values(value) for field, value in plan.after.items()}
+        after = {field: core_fields.field_values(value) for field, value in plan.after.items()}
         before = {field: now.get(field, []) for field in after}
-        if fields.reads_same(before, after):
+        if core_fields.reads_same(before, after):
             written[path] = plan.detail
             continue
         planned.append((path, before, after, plan.detail))
     wrote = []
     for path, before, after, detail in planned:
-        failure = _write_one(et, path, before, after, fresh is not None, result)
+        failure = _write_one(fields, path, before, after, fresh is not None, result)
         if failure:
             result.fail(path, failure)
             if stop_at_first_error:
@@ -140,20 +140,20 @@ def _write_fields(et, photo_paths, read, plan_one, unreadable, stop_at_first_err
         # Its stamp now, before the read back: the reply's, never looked at after a share that may have stopped (#3306).
         result.details.setdefault("stamps", {})[paths.key(path)] = file_changes.stamp_after_write(path)
         wrote.append((path, before, after))
-    _read_back(et, wrote, result)
+    _read_back(fields, wrote, result)
     logger.info("Wrote %d file(s) only, no row of any library (%d failed)", result.changed, len(result.errors))
     return result
 
 
-def _write_one(et, path, before, after, just_read, result):
+def _write_one(fields, path, before, after, just_read, result):
     """Bring one file from `before` to `after`. None when it was, else why it was not; a file
     that changed outside since it was read is never overwritten."""
     if not just_read:
         try:
-            now = et.read_one(path, list(after))
+            now = fields.read_one(path, list(after))
         except field_values.Unreadable as e:
             return "could not be read: %s" % e
-        if not fields.reads_same(now, before):
+        if not core_fields.reads_same(now, before):
             result.details["conflicts"].append(path)
             return ("changed since it was read: it holds neither what the edit found nor what it was to leave,"
                     " and is not overwritten")
@@ -162,18 +162,18 @@ def _write_one(et, path, before, after, just_read, result):
                        "written once more")
         result.details["pictures_refused"] = result.details.get("pictures_refused", 0) + 1
     try:
-        et.write(path, after, again=again)
+        fields.write(path, after, again=again)
     except Exception as error:
         # Settled by what the file holds after it, as the journaled write settles it; after a failure only, who holds the
         # file, if it is held (access denied is a holder's only of a file there and not read-only: lock_owners.looks_held).
         try:
-            now = et.read_back(path, list(after))
+            now = fields.read_back(path, list(after))
         except field_values.Unreadable:
             return lock_owners.explain(error, path, writable=_writable_if_denied(error, path))
-        if fields.reads_same(now, after):
+        if core_fields.reads_same(now, after):
             return None
         error = lock_owners.explain(error, path, writable=_writable_if_denied(error, path))
-        if fields.reads_same(now, before):
+        if core_fields.reads_same(now, before):
             return error
         result.details["conflicts"].append(path)
         return "a write failed (%s) and left it holding neither what it held nor what it was to hold" % error
@@ -186,7 +186,7 @@ def _writable_if_denied(error, path):
     return lock_owners.looks_held(error, writable=True) and file_changes.writable(path)
 
 
-def _read_back(et, wrote, result):
+def _read_back(fields, wrote, result):
     """Read the files written back, once. One that holds what it held before, though ExifTool
     said it wrote it, changed nothing: not counted (the journaled write's #276). A value
     ExifTool keeps differently from how it was written is the file's: nothing is recorded
@@ -194,7 +194,7 @@ def _read_back(et, wrote, result):
     if not wrote:
         return
     try:
-        held = et.read([path for path, _b, _a in wrote], sorted({field for _p, _b, after in wrote for field in after}))
+        held = fields.read([path for path, _b, _a in wrote], sorted({field for _p, _b, after in wrote for field in after}))
     except Exception as e:
         logger.warning("Could not read back %d file(s) written: %s", len(wrote), e)
         return
@@ -203,7 +203,7 @@ def _read_back(et, wrote, result):
         if now is None or isinstance(now, Exception):
             continue
         kept = {field: now.get(field, []) for field in after}
-        if fields.reads_same(kept, before) and not fields.reads_same(kept, after):
+        if core_fields.reads_same(kept, before) and not core_fields.reads_same(kept, after):
             result.changed -= 1
             result.details["written"].pop(path, None)
             result.fail(path, "ExifTool reported it written, but it holds what it held before")

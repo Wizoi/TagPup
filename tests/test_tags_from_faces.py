@@ -230,7 +230,7 @@ class TheApply(Mending):
         holding what it was to hold, done; holding what it held, written (the person asked --apply). Undo then puts all back."""
         photos = [self.drifted("drift_%d.jpg" % n) for n in range(batches.CHUNK + 1)]
         seen, gone = [], []
-        real = field_values.read_one
+        real = field_values._read_one
 
         def read_one(et, path, wanted):
             if gone:
@@ -244,7 +244,7 @@ class TheApply(Mending):
                     gone.append(at)
                     raise KeyboardInterrupt
         with mock.patch.object(file_changes, "_reached", side_effect=reached), \
-                mock.patch.object(field_values, "read_one", side_effect=read_one):
+                mock.patch.object(field_values, "_read_one", side_effect=read_one):
             said = self.run_cli("--apply")
         self.assertEqual(1, said.exit_code, said.output)
         self.assertEqual(on_disk, sum(1 for photo in photos if self.files.tags_of(photo)))

@@ -76,7 +76,7 @@ def held(path):
     """The bake the photo at `path` holds, as the index reads it: bake.parse of its record (a Bake, or bake.Rejected)."""
     records = {}
     with exiftool_session.ExifToolSession(executable=EXIFTOOL, common_args=list(bake.READ_ARGS)) as et:
-        field_values.read(et, [path], [], also=bake.FIELDS, records=records)
+        field_values._read(et, [path], [], also=bake.FIELDS, records=records)
     return bake.parse(records[paths.key(path)])
 
 

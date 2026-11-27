@@ -365,7 +365,7 @@ class AWriteThroughTheOneEntryPoint(unittest.TestCase):
         one (shares.stamp_of: a stamp not taken by the write itself is not known)."""
         shares.forget()
         self.addCleanup(shares.forget)
-        real_read_one, real_read, real_share_of = field_values.read_one, field_values.read, shares.share_of
+        real_read_one, real_read, real_share_of = field_values._read_one, field_values._read, shares.share_of
         real_stamp_of = shares.stamp_of
         under, stopped = os.path.normcase(folder or self.held), []
 
@@ -391,7 +391,7 @@ class AWriteThroughTheOneEntryPoint(unittest.TestCase):
 
         def stamp_of(path):
             return shares.UNANSWERED if stopped and on_it(path) else real_stamp_of(path)
-        with mock.patch.object(field_values, "read_one", read_one), mock.patch.object(field_values, "read", read), \
+        with mock.patch.object(field_values, "_read_one", read_one), mock.patch.object(field_values, "_read", read), \
                 mock.patch.object(shares, "share_of", share_of), mock.patch.object(shares, "stamp_of", stamp_of):
             yield
 

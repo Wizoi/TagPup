@@ -497,7 +497,7 @@ class APatchInPlace(FilesCase):
         self.assertEqual(1, self.settle())
         self.assertEqual((("applied", ["done", "done"]), [], ["Shore"]), ((self.status(change), self.states(change)),
                                                                           self.recorded(), keywords_of(a)))
-        with mock.patch.object(field_values, "write", wraps=field_values.write) as writes, \
+        with mock.patch.object(field_values, "_write", wraps=field_values._write) as writes, \
                 mock.patch.object(file_journal, "save_patch", wraps=file_journal.save_patch) as saved:
             result = self.undo(change)
         self.assertEqual((2, []), (result.changed, result.errors))
@@ -531,7 +531,7 @@ def share_away(at_the_write=True):
     paths field_values.read_one was asked to read through ExifTool after the share went: on a share gone, each waits
     ExifTool's whole deadline (five minutes)."""
     real_write, real_bounded, away, asked = in_place._write, in_place._bounded, [], []
-    real_read_one = field_values.read_one
+    real_read_one = field_values._read_one
 
     def write(handle, changes):
         at, new = changes[0]
@@ -551,7 +551,7 @@ def share_away(at_the_write=True):
         return real_read_one(et, path, *args, **kwargs)
 
     with mock.patch.object(in_place, "_write", write), mock.patch.object(in_place, "_bounded", bounded), \
-            mock.patch.object(field_values, "read_one", read_one):
+            mock.patch.object(field_values, "_read_one", read_one):
         yield asked
 
 

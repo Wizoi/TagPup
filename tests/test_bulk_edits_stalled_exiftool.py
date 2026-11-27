@@ -235,7 +235,7 @@ class AStalledExifTool(T.Bulk):
             def get_tags(self, batch, tags=None):
                 calls.append(list(batch))
                 raise exiftool_session.ExifToolTimeout("ExifTool did not answer")
-        found = field_values.read(Stalled(), ["a.jpg", "b.jpg", "c.jpg"], ["XMP:Subject"])
+        found = field_values._read(Stalled(), ["a.jpg", "b.jpg", "c.jpg"], ["XMP:Subject"])
         self.assertEqual(1, len(calls))
         self.assertEqual(3, len(found))
         self.assertTrue(all(isinstance(each, field_values.Unreadable) and "did not answer in 60 s" in str(each) for each in found.values()))
@@ -249,7 +249,7 @@ class AStalledExifTool(T.Bulk):
                 if len(batch) > 1:
                     raise RuntimeError("one of them is no file")
                 return [{"SourceFile": batch[0], "File:MIMEType": "image/jpeg"}]
-        found = field_values.read(Refuses(), ["a.jpg", "b.jpg", "c.jpg"], ["XMP:Subject"])
+        found = field_values._read(Refuses(), ["a.jpg", "b.jpg", "c.jpg"], ["XMP:Subject"])
         self.assertEqual(4, len(calls))
         self.assertFalse(any(isinstance(each, Exception) for each in found.values()))
 

@@ -71,7 +71,7 @@ import logging
 import os
 import threading
 
-from tagpup.core import dates, fields, paths, vocabulary
+from tagpup.core import dates, fields as core_fields, paths, vocabulary
 from tagpup.core.result import (CHANGED_ON_DISK, CHANGED_ON_DISK_SENTENCE, Conflict, NotFound, Refused, Result,
                                 Unavailable)
 from tagpup.files import (clip_convert, convertible, field_values, images, lock_owners, names, shares,
@@ -88,11 +88,11 @@ OPERATION = file_journal.CONVERT
 CARRIED = "convert: tags carried"
 #: What the conversion reads of the original, and the carry of the copy: every keyword field, the title, the kept name,
 #: the XMP dates (a clip's write names no other: fields.CLIP_FIELDS).
-READ = (tagging.KEYWORD_READ + tuple(fields.title_fields("")) + (fields.CLIP_TITLE, fields.PRESERVED_NAME)
+READ = (tagging.KEYWORD_READ + tuple(core_fields.title_fields("")) + (core_fields.CLIP_TITLE, core_fields.PRESERVED_NAME)
         + dates.CLIP_XMP_DATE_FIELDS)
 #: What the carry reads of the copy: READ and its QuickTime header dates, box by box, by TagPup's walk of the copy's box
 #: headers (field_values.read: no byte of its picture or sound; the original's are never read).
-CARRY_READ = READ + fields.CLIP_HEADER_DATES
+CARRY_READ = READ + core_fields.CLIP_HEADER_DATES
 #: The reason of the one-time convert of the old formats (convert_clip's `reason`).
 OLD_FORMAT = "old format"
 #: The reason of a clip that plays made smaller, an MP4 (the panel's Make smaller (MP4): a .mov over SmugMug's limit; owner
@@ -340,15 +340,15 @@ def _ready(library, exiftool_path, tools, source, reason):
         conn.close()
     if found is None:
         return NO_ROW
-    with field_values.opened(exiftool_path) as et:
+    with field_values.opened(exiftool_path) as fields:
         # Whole, in the indexer's shape: its Date Taken is the row's (dates.date_taken of what the indexer records), but
         # for a date in its name, which is not carried: the copy has the clip's name and is dated by it again.
         try:
-            held, whole = et.read_one(source, list(READ) + [fields.CLIP_CATEGORY], whole=True)
+            held, whole = fields.read_one(source, list(READ) + [core_fields.CLIP_CATEGORY], whole=True)
         except field_values.Unreadable as e:
             logger.warning("A clip to convert could not be read whole: %s", e)
             return UNREADABLE % "ExifTool could not read it"
-    windows = [str(text) for text in dict.fromkeys(fields.field_values(held.get(fields.CLIP_CATEGORY)))]
+    windows = [str(text) for text in dict.fromkeys(core_fields.field_values(held.get(core_fields.CLIP_CATEGORY)))]
     carryable = _carryable(library) if windows else frozenset()
     cannot = [text for text in windows if text not in carryable]
     if cannot:
@@ -378,11 +378,11 @@ def _ready(library, exiftool_path, tools, source, reason):
     room = clip_convert.room_for(source, stamp[1])
     if room:
         return room
-    tags = list(vocabulary.extract_tags({field: held.get(field) for field in fields.TAG_SOURCE_FIELDS}))
+    tags = list(vocabulary.extract_tags({field: held.get(field) for field in core_fields.TAG_SOURCE_FIELDS}))
     # As a read of the copy gives them back (a Windows level, Places beside Places/Coast, is no tag of its own), so that
     # the copy reads back holding what it carries (_short_of).
-    carry = {"tags": list(vocabulary.extract_tags(fields.keyword_fields(*fields.expand_tag_fields(tags + windows)))),
-             "title": fields.own_title(held),
+    carry = {"tags": list(vocabulary.extract_tags(core_fields.keyword_fields(*core_fields.expand_tag_fields(tags + windows)))),
+             "title": core_fields.own_title(held),
              "name": names.preserved_name(held) or os.path.basename(source), "date": dates.date_taken(whole, None, dates.VIDEO)}
     return _Ready(found[0], stamp, before, streams, carry, clip_convert.target_of(source), packet)
 
@@ -556,11 +556,11 @@ def _short_of(library, exiftool_path, target, after):
     nothing to write) and no Windows Tags (ffmpeg carries no Xtra); else what it lacks, a phrase naming fields, never
     tags. Read after the carry and before the original, the one other holder of what it carries, is deleted for good."""
     try:
-        with field_values.opened(exiftool_path) as et:
-            held = et.read_back(target, list(CARRY_READ) + [fields.CLIP_CATEGORY])
+        with field_values.opened(exiftool_path) as fields:
+            held = fields.read_back(target, list(CARRY_READ) + [core_fields.CLIP_CATEGORY])
     except (OSError, field_values.Unreadable) as e:
         return "it could not be read back: %s" % e
-    if fields.field_values(held.get(fields.CLIP_CATEGORY)):
+    if core_fields.field_values(held.get(core_fields.CLIP_CATEGORY)):
         return "it holds Windows Tags"
     plan = _carrier(library, after)(target, held)
     return None if plan.skip else "read back, it lacks %s" % ", ".join(plan.detail)
@@ -656,9 +656,9 @@ def _followed(library, exiftool_path, row, target):
     """The photo's row moved to `target` (a new name) and made to say what the copy holds, read whole, in one transaction;
     its stamp the copy's, so its vectors and frames are computed again. False when another row is at `target`."""
     stat = os.stat(target)   # unbounded: the conversion's own copy, just put in place under the lock
-    with field_values.opened(exiftool_path) as et:
+    with field_values.opened(exiftool_path) as fields:
         try:
-            _held, whole = et.read_back(target, [], whole=True)
+            _held, whole = fields.read_back(target, [], whole=True)
         except field_values.Unreadable as e:
             logger.warning("%s: could not read it back whole: %s", row.named(), e)
             whole = None
@@ -687,20 +687,20 @@ def _carrier(library, after):
 
     def plan_one(path, held):
         wanted = {}
-        held_tags = vocabulary.extract_tags({field: held.get(field) for field in fields.TAG_SOURCE_FIELDS})
+        held_tags = vocabulary.extract_tags({field: held.get(field) for field in core_fields.TAG_SOURCE_FIELDS})
         if any(tag not in held_tags for tag in carry["tags"]):
             wanted.update(tags_planner(path, held).after)
-        if carry["title"] and fields.own_title(held) != carry["title"]:
-            wanted.update(fields.title_fields(carry["title"]))
+        if carry["title"] and core_fields.own_title(held) != carry["title"]:
+            wanted.update(core_fields.title_fields(carry["title"]))
         if carry["name"] and names.preserved_name(held) != carry["name"]:
-            wanted[fields.PRESERVED_NAME] = carry["name"]
+            wanted[core_fields.PRESERVED_NAME] = carry["name"]
         if carry["date"]:
-            dated = fields.held_dates(fields.date_taken_fields(carry["date"], clip=True), held)
+            dated = core_fields.held_dates(core_fields.date_taken_fields(carry["date"], clip=True), held)
             # Every box compared: a copy whose XMP holds the date (its packet carried whole) while ffmpeg left its
             # headers zero is written, the XMP date beside them in the patch (field_values.clip_refused).
             if dates.date_taken(held, None, dates.VIDEO) != carry["date"] or any(
-                    fields.field_values(held.get(field)) != [dated[field]]
-                    for field in fields.CLIP_HEADER_DATES if field in dated):
+                    core_fields.field_values(held.get(field)) != [dated[field]]
+                    for field in core_fields.CLIP_HEADER_DATES if field in dated):
                 wanted.update(dated)
         if not wanted:
             return file_changes.skip("its converted copy holds what it carries already")

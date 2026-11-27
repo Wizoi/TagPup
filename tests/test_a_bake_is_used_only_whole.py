@@ -153,7 +153,7 @@ class ABakeAsExifToolReadsItBack(unittest.TestCase):
     def read(self, path):
         records = {}
         with ExifToolSession(executable=EXIFTOOL, common_args=list(bake.READ_ARGS)) as et:
-            field_values.read(et, [path], [], also=bake.FIELDS, records=records)
+            field_values._read(et, [path], [], also=bake.FIELDS, records=records)
         return bake.parse(records[paths.key(path)])
 
     def test_faces_one_and_two_and_none(self):

@@ -63,7 +63,7 @@ RULES = (
     # as ExifTool's rewrite (no `saving`) and once as a journaled write is (a `saving` that saves nothing: the own
     # writer's patch when it fits; tests/test_the_two_writers_compared_on_copies.py).
     ("a photo's fields are written by file_changes", os.path.join("tagpup", "services", "file_changes.py"),
-     r"field_values\.write\(|from\s+tagpup\.files\.field_values\s+import\s[^\n]*\bwrite\b",
+     r"field_values\._?write\(|from\s+tagpup\.files\.field_values\s+import\s[^\n]*\b_?write\b",
      (os.path.join("tagpup", "services", "file_only.py"), os.path.join("tagpup", "services", "metadata_check.py"))),
 )
 

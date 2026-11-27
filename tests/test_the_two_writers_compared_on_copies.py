@@ -169,14 +169,14 @@ class TheTwoWritersComparedOnCopies(FilesCase):
 
     def test_a_photo_gone_part_way_is_counted_and_the_run_goes_on(self):
         a, b, c = self.photo("a.jpg"), self.photo("b.jpg"), self.photo("c.jpg")
-        real, gone = field_values.write, []
+        real, gone = field_values._write, []
 
         def write(*args, **kwargs):
             if not gone:
                 os.remove(b)                 # another program deletes it while a.jpg is compared
                 gone.append(b)
             return real(*args, **kwargs)
-        with mock.patch.object(field_values, "write", write):
+        with mock.patch.object(field_values, "_write", write):
             found = self.check()
         self.assertEqual(({}, None, {"read": 2, "gone": 1}), (found["differences"], found["stopped"], found["looked"]))
         self.assertTrue(os.path.exists(a) and os.path.exists(c))
@@ -217,14 +217,14 @@ class TheTwoWritersComparedOnCopies(FilesCase):
         os.makedirs(os.path.join(self.sandbox, "photo"))       # left by a run that was killed
         with open(os.path.join(self.sandbox, "photo", "original.jpg"), "wb") as handle:
             handle.write(b"left")
-        real, written = field_values.write, []
+        real, written = field_values._write, []
 
         def write(*args, **kwargs):
             written.append(args[1])
             if len(written) == 3:
                 raise KeyboardInterrupt
             return real(*args, **kwargs)
-        with mock.patch.object(field_values, "write", write):
+        with mock.patch.object(field_values, "_write", write):
             result = CliRunner().invoke(cli, ["--db", self.library.path, "metadata-check"])
         self.assertEqual(2, result.exit_code, result.output)
         self.assertIn("stopped: %s" % metadata_check.INTERRUPTED, result.output)
@@ -257,7 +257,7 @@ class TheTwoWritersComparedOnCopies(FilesCase):
         self.photo("a.jpg")
         # More room than any disk has: the free space measured a moment before grows when another program frees some.
         with mock.patch.object(metadata_check, "MARGIN", 1 << 60), \
-                mock.patch.object(field_values, "write", side_effect=AssertionError("a copy was written")):
+                mock.patch.object(field_values, "_write", side_effect=AssertionError("a copy was written")):
             found = self.check()
         self.assertEqual(({}, {}), (found["how"], found["looked"]))
         self.assertTrue(found["stopped"].startswith("the sandbox's disk has less than"), found["stopped"])
@@ -291,13 +291,13 @@ class TheTwoWritersComparedOnCopies(FilesCase):
         self.photo("a.jpg", tags=("Beach",))
         real = metadata_check._written
 
-        def written(et, path, values, own):
+        def written(fields, path, values, own):
             if own and "XMP:Description" in values and values["XMP:Description"]:
                 values = dict(values, **{"XMP:Title": values["XMP:Description"], "XMP:Description": ""})
             if own and metadata_check.KEYWORD in values.get("XMP:Subject", []):
                 values = dict(values, **{"XMP:Subject": [each for each in values["XMP:Subject"]
                                                          if each != metadata_check.KEYWORD]})
-            return real(et, path, values, own)
+            return real(fields, path, values, own)
         with mock.patch.object(metadata_check, "_written", written):
             found = self.check(reveal=True)
         said = {(each["operation"], each["difference"]) for each in found["revealed"]}

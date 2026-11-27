@@ -42,7 +42,7 @@ import tempfile
 import time
 from contextlib import closing, contextmanager
 
-from tagpup.core import byte_lock, dates, fields, paths, vocabulary
+from tagpup.core import byte_lock, dates, fields as core_fields, paths, vocabulary
 from tagpup.core.result import Refused
 from tagpup.files import containers, field_values, shares
 from tagpup.services import photos as photo_actions, roots as roots_service, segment_census, tagging
@@ -75,8 +75,8 @@ SET_ASIDE = frozenset({"SourceFile", "File", "Composite", "ExifTool:ExifToolVers
 KNOWN = frozenset({"XMP:XMP-x:XMPToolkit", "EXIF:IFD1:ThumbnailOffset", "IPTC:EnvelopeRecordVersion",
                    "IPTC:ApplicationRecordVersion"})
 #: What every operation's planner reads of a copy.
-READ = tuple(dict.fromkeys(tagging.SAVE_READ + tuple(fields.caption_fields("")) + dates.SHIFTED_FIELDS
-                           + (fields.ORIENTATION, fields.PRESERVED_NAME)))
+READ = tuple(dict.fromkeys(tagging.SAVE_READ + tuple(core_fields.caption_fields("")) + dates.SHIFTED_FIELDS
+                           + (core_fields.ORIENTATION, core_fields.PRESERVED_NAME)))
 #: A keyword and a person no photo holds (fictional), a caption and a name kept; each but the person holds letters
 #: outside ASCII (IPTC's character set, XMP's escaping, EXIF's UCS-2 XPComment and ASCII ImageDescription).
 KEYWORD, PERSON = "Shadow Check/Lantern Walk \u00e0 Br\u00e9z\u00e9", "Wren Halloway"
@@ -103,7 +103,7 @@ def _fixed(values):
 
 def _preserved(_library):
     """Smart Rename's planner (photos.preserve_names): the name kept, unless the photo keeps one already."""
-    return lambda _path, held: {} if held.get(fields.PRESERVED_NAME) else {fields.PRESERVED_NAME: PRESERVED}
+    return lambda _path, held: {} if held.get(core_fields.PRESERVED_NAME) else {core_fields.PRESERVED_NAME: PRESERVED}
 
 
 #: (name, planner(library) -> plan_one(path, held) answering a file_changes.Plan or a dict of values).
@@ -111,8 +111,8 @@ OPERATIONS = (
     ("keyword added", _keywords(lambda held: [KEYWORD], lambda held: [])),
     ("last keyword taken off", _keywords(lambda held: [], lambda held: held[-1:])),
     ("person added", _keywords(lambda held: [vocabulary.person_tag(PERSON, [], [])], lambda held: [])),
-    ("caption set", _fixed(fields.caption_fields(CAPTION))),
-    ("caption cleared", _fixed(fields.caption_fields(""))),
+    ("caption set", _fixed(core_fields.caption_fields(CAPTION))),
+    ("caption cleared", _fixed(core_fields.caption_fields(""))),
     ("Date Taken shifted", lambda _library: photo_actions.date_shift_plan(SHIFT_MINUTES)),
     ("turned right", lambda _library: photo_actions.rotate_plan("right")),
     ("mirrored", lambda _library: photo_actions.rotate_plan("mirror")),
@@ -163,13 +163,13 @@ def _outside(data):
     return [data[each.offset:each.end] for each in layout.segments if each.kind not in METADATA], data[layout.image_offset:]
 
 
-def _written(et, path, values, own):
+def _written(fields, path, values, own):
     """(how the write went: patch, rewrite, unchanged or failed; the fields it left stale; why it failed). `own`: the
     write is a journaled one's, the own writer's patch tried first; else ExifTool's rewrite."""
     how = []
     saving = (lambda _record, _before: how.append("patch")) if own else None
     try:
-        stale = et.write(path, values, saving=saving, scratch_written=lambda: how.append("rewrite"))
+        stale = fields.write(path, values, saving=saving, scratch_written=lambda: how.append("rewrite"))
     except Exception as error:
         return "failed", (), str(error)
     return (how[0] if how else "unchanged"), tuple(stale), None
@@ -177,7 +177,7 @@ def _written(et, path, values, own):
 
 def _same(a, b):
     """Do two values of ExifTool's read hold the same, in any order, one held empty as one not held?"""
-    return sorted(fields.field_values(a)) == sorted(fields.field_values(b))
+    return sorted(core_fields.field_values(a)) == sorted(core_fields.field_values(b))
 
 
 def _said(row):
@@ -212,8 +212,8 @@ def _tags_differing(original, theirs, own, stale):
 
 
 class _Run:
-    def __init__(self, library, et, oracle, reveal):
-        self.library, self.et, self.oracle, self.reveal = library, et, oracle, reveal
+    def __init__(self, library, fields, oracle, reveal):
+        self.library, self.fields, self.oracle, self.reveal = library, fields, oracle, reveal
         self.looked, self.skipped = collections.Counter(), collections.Counter()
         self.how, self.differences = collections.defaultdict(collections.Counter), collections.Counter()
         self.revealed = []
@@ -237,7 +237,7 @@ class _Run:
         original = os.path.join(folder, "original.jpg")
         with open(original, "wb") as handle:
             handle.write(data)
-        before = self.et.read([original], READ).get(paths.key(original))
+        before = self.fields.read([original], READ).get(paths.key(original))
         if not isinstance(before, dict):
             self.looked["read, not by ExifTool"] += 1
             return None
@@ -250,7 +250,7 @@ class _Run:
         for number, (operation, planner) in enumerate(OPERATIONS):
             plan = planner(self.library)(original, before)
             after = plan if isinstance(plan, dict) else plan.after
-            if not after or fields.reads_same(before, after):
+            if not after or core_fields.reads_same(before, after):
                 self.skipped[operation] += 1
                 continue
             each = os.path.join(folder, str(number))
@@ -270,7 +270,7 @@ class _Run:
             with open(copy, "wb") as handle:
                 handle.write(data)
             copies.append(copy)
-            sides.append(_written(self.et, copy, after, own))
+            sides.append(_written(self.fields, copy, after, own))
         (theirs, _, their_error), (own, stale, own_error) = sides
         self.how[operation]["%s, own %s" % (theirs, own)] += 1
         if (theirs == "failed") != (own == "failed"):
@@ -285,11 +285,11 @@ class _Run:
                 self.differ(path, operation, "%s changed the picture" % name)
             elif now[0] != kept[0]:
                 self.differ(path, operation, "%s changed a segment outside EXIF, XMP and IPTC" % name)
-        read_back = self.et.read(copies, list(after))
+        read_back = self.fields.read(copies, list(after))
         was = {field: before.get(field, []) for field in after}
         for (name, _own), copy, left in zip(SIDES, copies, ((), stale)):
             held = read_back.get(paths.key(copy))
-            if not isinstance(held, dict) or not fields.reads_same(held, fields.as_patched(was, after, left)):
+            if not isinstance(held, dict) or not core_fields.reads_same(held, core_fields.as_patched(was, after, left)):
                 self.differ(path, operation, "%s's fields read back other than written" % name, held)
         found = self.oracle.whole(copies)
         for tag in _tags_differing(whole, found.get(paths.key(copies[0]), {}), found.get(paths.key(copies[1]), {}),
@@ -299,7 +299,7 @@ class _Run:
         for (name, own), copy in zip(SIDES, copies):
             with open(copy, "rb") as handle:
                 first = handle.read()
-            how, _stale, error = _written(self.et, copy, after, own)
+            how, _stale, error = _written(self.fields, copy, after, own)
             with open(copy, "rb") as handle:
                 if handle.read() != first:
                     self.differ(path, operation, "%s's second write of the same values changed the file" % name,
@@ -320,8 +320,8 @@ def check(library, exiftool_path, sample=SAMPLE, seed=segment_census.SEED, revea
         jpegs = [path for _photo_id, path in inspection.photo_files(conn) if segment_census.is_jpeg(path)]
     chosen = segment_census.drawn(jpegs, sample, seed)
     stopped = None
-    with sandbox() as root, field_values.opened(exiftool_path) as et, field_values.oracle(exiftool_path) as oracle:
-        run = _Run(library, et, oracle, reveal)
+    with sandbox() as root, field_values.opened(exiftool_path) as fields, field_values.oracle(exiftool_path) as oracle:
+        run = _Run(library, fields, oracle, reveal)
         try:
             for done, path in enumerate(chosen, 1):
                 folder = tempfile.mkdtemp(prefix="%d-" % done, dir=root)
