@@ -525,8 +525,8 @@ describe("counts after an edit", () => {
     };
     const keywordsAsked = () => ctx.navigatorAsked.filter((name) => name === "keywords").length;
     const queue = ctx.module("write-queue.js");
-    queue.markEntry(queue.queueEntry("Add tag"), "done");
-    queue.markEntry(queue.queueEntry("Add tag"), "done");
+    queue.markEntry(queue.queueEntry("Add tag", () => []), "done");
+    queue.markEntry(queue.queueEntry("Add tag", () => []), "done");
     ctx.window.setTimeout = realTimeout;
     for (let i = 0; i < 10; i++) await Promise.resolve();
     assert.equal(keywordsAsked(), asked, "not at once: edits come in runs");
@@ -545,7 +545,7 @@ describe("counts after an edit", () => {
     const ctx = await loadViewPage(t, { search: "?view=all" });
     await ctx.openTab("people");
     const queue = ctx.module("write-queue.js");
-    for (let i = 0; i < 5; i++) queue.markEntry(queue.queueEntry("Add tag"), "done");
+    for (let i = 0; i < 5; i++) queue.markEntry(queue.queueEntry("Add tag", () => []), "done");
     await ctx.settle(1500);
     assert.equal(ctx.navigatorAsked.filter((name) => name === "people").length, 2);
     assert.equal(ctx.navigatorAsked.filter((name) => name === "folders").length, 1, "Folders is not on screen: not read yet");

@@ -19,7 +19,7 @@ import { state } from './state.js';
 import { libraryName } from './looking.js';
 import { writeQueueBox } from './elements.js';
 
-/** Done entries the list keeps; a failed one stays until it is dismissed or retried. *//**
+/**
  * What a write's reply says of where it wrote (the server's `file_only`, `with_rows`: files
  * written with no row because the library does not hold their folder, and with theirs), as a
  * sentence to follow "Saved.", or '' when every file was written with its rows.
@@ -44,7 +44,7 @@ export function pictureCheckSaid(data) {
     return " The first try would have changed the photo's picture, so it was thrown away and the photo written again; nothing was lost.";
 }
 
-
+/** Done entries the list keeps; a failed one stays until it is dismissed or retried. */
 export const KEEP_DONE = 10;
 
 /** "1 photo", "2,500 photos": the count the write line and the tag changes' questions say. */
@@ -52,10 +52,9 @@ export const photosWord = (n) => `${n.toLocaleString()} ${n === 1 ? 'photo' : 'p
 
 /**
  * A new entry, waiting: `label` says what it does; `photos()` gives the paths of the photos its write sends, asked while
- * it waits (waitingInPage) and while it is out (photosOut): a tag drain's chunk is chosen only when its turn comes. Every
- * page writer names them (edits.js queuePhotoWrite); none, for navigator.test.mjs's entries, which write nothing.
+ * it waits (waitingInPage) and while it is out (photosOut): a tag drain's chunk is chosen only when its turn comes.
  */
-export function queueEntry(label, photos = () => []) {
+export function queueEntry(label, photos) {
     const queue = state.writeQueue;
     if (!pendingWrites()) {
         // A new run of writes: "Saving 1 of 1" again, not "Saving 7 of 7".
