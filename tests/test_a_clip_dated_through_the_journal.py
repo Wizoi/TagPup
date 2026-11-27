@@ -32,7 +32,6 @@ clip's Date Taken whole, and the header scenarios on the code before the 2026-11
 Fictional names only.
 """
 import io
-import json
 import os
 import shutil
 import struct
@@ -45,6 +44,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import exiftool_fields  # noqa: E402
 import corpus  # noqa: E402
+from corpus import DISAGREEING, SHAPES, THREE_TRACKS, VERSION_ONE, ZERO_HEADERS, clip_of  # noqa: E402
 import test_a_clip_tagged_through_the_journal as tagged  # noqa: E402
 from test_a_clip_patch_cut_short import cut_half_way  # noqa: E402
 from test_file_journal import Crash, crash_at  # noqa: E402
@@ -73,38 +73,6 @@ ADOBES = "2019:03:02 08:00:00"
 XMP_DATES = ("XMP:DateTimeOriginal", "XMP:CreateDate")
 QUICKTIME_DATES = ("QuickTime:CreateDate", "QuickTime:ModifyDate", "QuickTime:TrackCreateDate",
                    "QuickTime:TrackModifyDate", "QuickTime:MediaCreateDate", "QuickTime:MediaModifyDate")
-
-
-#: Real clips' header layouts (the module): the shape of most of the 681 clips the one-off dates, of the clips holding
-#: version 1 headers, of a dated three-track .mov, and of one whose track and media headers disagree.
-with open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "fixtures", "clip_headers.json"), encoding="utf-8") as _f:
-    SHAPES = json.load(_f)["shapes"]
-ZERO_HEADERS = "mp4 version 0, two tracks, zero headers"
-VERSION_ONE = "mp4 version 1 movie and track headers, version 0 media headers, two tracks, zero"
-THREE_TRACKS = "mov version 0, three tracks, dated"
-DISAGREEING = "mov version 0, four tracks whose track and media headers disagree"
-
-
-def _box(kind, content=b""):
-    return struct.pack(">I", 8 + len(content)) + kind.encode("latin-1") + content
-
-
-def _boxes(entries, at, depth):
-    made = b""
-    while at < len(entries) and entries[at]["depth"] == depth:
-        entry = entries[at]
-        children, at = _boxes(entries, at + 1, depth + 1)
-        made += bytes.fromhex(entry["bytes"]) if entry["bytes"] else _box(entry["type"], children)
-    return made, at
-
-
-def clip_of(shape, moov_after_mdat=False):
-    """The bytes of a clip laid out as the real clips of `shape` are: its boxes under moov as the fixture lists them (a
-    header's bytes as captured, any other box empty), an ftyp before them and an mdat before or after."""
-    moov, _ = _boxes(SHAPES[shape]["boxes"], 0, 0)
-    brand = b"qt  \0\0\0\0qt  " if shape.startswith("mov") else b"isom\0\0\2\0isomiso2mp41"
-    mdat = _box("mdat", bytes(64))
-    return _box("ftyp", brand) + (mdat + moov if moov_after_mdat else moov + mdat)
 
 
 def creation_times(data):

@@ -21,6 +21,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import exiftool_fields  # noqa: E402
 import test_a_clip_tagged_through_the_journal as tagged  # noqa: E402
+import corpus  # noqa: E402
 
 from tagpup.services import journal  # noqa: E402
 from tagpup.store import file_journal  # noqa: E402
@@ -62,7 +63,7 @@ class AClipTagUndone(tagged.ALibraryHoldingAClip):
         """The clip given a Premiere packet with `events` saves in its History (tests/test_xmp_packet_edits_what_it_owns.
         premiere) in a uuid box at its end; its row, as the indexer reads it, and its bytes."""
         with open(self.clip_path, "ab") as handle:
-            handle.write(tagged.patched.xmp_box(tagged.patched.shapes.premiere(events)))
+            handle.write(tagged.patched.xmp_box(corpus.premiere(events)))
         clip, = self.index(self.clip_path)
         return clip, self.read_bytes(self.clip_path)
 

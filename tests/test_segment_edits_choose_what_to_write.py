@@ -25,6 +25,7 @@ sys.path.insert(0, os.path.dirname(WORKSPACE_DIR))
 sys.path.insert(0, WORKSPACE_DIR)
 
 import test_xmp_packet_edits_what_it_owns as shapes  # noqa: E402
+import corpus  # noqa: E402
 from tagpup.core import dates, fields  # noqa: E402
 from tagpup.files import (containers, exif_block, identity, in_place, iptc_block, segment_edits, xmp_packet)
 
@@ -326,8 +327,8 @@ class AClipsSave(unittest.TestCase):
         self.assertEqual(("IPTC:Keywords", "EXIF:XPKeywords"), stale)
 
     def test_adobes_wrapped_packet_is_edited_where_it_stands(self):
-        new, stale = self.made(shapes.PREMIERE, {**keywords(["Pier"]), **title("The pier at noon")})
-        self.assertEqual(len(shapes.PREMIERE), len(new))
+        new, stale = self.made(corpus.PREMIERE, {**keywords(["Pier"]), **title("The pier at noon")})
+        self.assertEqual(len(corpus.PREMIERE), len(new))
         held = xmp_packet.read(new)
         self.assertEqual((["Pier"], "The pier at noon", "xmp.did:7c2d0e4a"),
                          (held["dc:subject"], held["dc:title"], held["xmpMM:DocumentID"]))

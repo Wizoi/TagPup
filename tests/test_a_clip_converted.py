@@ -833,7 +833,7 @@ class AClipHoldingXmpOfOtherPrograms(AnOldClipInTheLibrary):
 
     def test_every_property_its_packet_held_is_in_its_copy_with_what_it_carries_written_over_it(self):
         attribute = re.compile(rb'([\w]+:[\w]+)="([^"]*)"')
-        for n, packet in enumerate((shapes.PREMIERE, shapes.premiere(), shapes.BARE)):
+        for n, packet in enumerate((corpus.PREMIERE, corpus.premiere(), shapes.BARE)):
             with self.subTest(len(packet)):
                 source, photo_id = self.xmp_clip("dock%d.mp4" % n, packet)
                 result = self.convert(source)
@@ -847,7 +847,7 @@ class AClipHoldingXmpOfOtherPrograms(AnOldClipInTheLibrary):
                 self.assertEqual(packet.count(b"stEvt:action="), copied.count(b"stEvt:action="))
 
     def test_a_clip_whose_xmp_no_patch_reads_is_refused_before_ffmpeg_and_left_as_it_was(self):
-        source, photo_id = self.xmp_clip("dock.mp4", shapes.PREMIERE, shapes.BARE)
+        source, photo_id = self.xmp_clip("dock.mp4", corpus.PREMIERE, shapes.BARE)
         before = self.read_bytes(source)
         with mock.patch.object(clip_convert, "convert", side_effect=AssertionError("ffmpeg ran")):
             result = self.convert(source)
@@ -858,7 +858,7 @@ class AClipHoldingXmpOfOtherPrograms(AnOldClipInTheLibrary):
         self.assertEqual([], [op for _id, op, _status in self.changes() if op == file_journal.CONVERT], "nothing planned")
 
     def test_killed_once_its_copy_holds_the_packet_the_settle_removes_the_copy_and_keeps_the_original(self):
-        source, photo_id = self.xmp_clip("dock.mp4", shapes.PREMIERE)
+        source, photo_id = self.xmp_clip("dock.mp4", corpus.PREMIERE)
         before = self.read_bytes(source)
         temp, held = clip_convert.temp_of(clip_convert.target_of(source)), []
 
@@ -870,7 +870,7 @@ class AClipHoldingXmpOfOtherPrograms(AnOldClipInTheLibrary):
         with mock.patch.object(convert, "_reached", side_effect=reached):
             with self.assertRaises(Crash):
                 self.convert(source)
-        self.assertEqual([shapes.PREMIERE], held, "its copy held the original's packet when it was verified")
+        self.assertEqual([corpus.PREMIERE], held, "its copy held the original's packet when it was verified")
         self.settled()
         self.assert_as_it_was(source, photo_id, before)
         self.assertEqual([], self.converted_states(photo_id), "taken out of the change")

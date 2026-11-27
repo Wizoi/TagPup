@@ -13,8 +13,9 @@ import unittest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from test_a_clip_dated_through_the_journal import (  # noqa: E402
-    DISAGREEING, SHAPES, THREE_TRACKS, VERSION_ONE, ZERO_HEADERS, clip_of)
+from corpus import (  # noqa: E402
+    DISAGREEING, SHAPES, THREE_TRACKS, VERSION_ONE, ZERO_HEADERS, clip_of, exif_segment, iptc_segment, resource, segment,
+    xmp_segment)
 from tagpup.files import containers  # noqa: E402
 
 XMP_UUID = bytes.fromhex("BE7ACFCB97A942E89C71999491E3AFAC")
@@ -36,31 +37,6 @@ FTYP = box(b"ftyp", b"isom\0\0\2\0isomiso2mp41")
 MOOV = box(b"moov", box(b"mvhd", bytes(100)) + box(b"trak", bytes(40)))
 MDAT = box(b"mdat", bytes(64))
 XMP = uuid_box(XMP_UUID, b"<x:xmpmeta/>" + b" " * 200)
-
-
-def segment(marker, body):
-    return b"\xff" + bytes([marker]) + struct.pack(">H", 2 + len(body)) + body
-
-
-def xmp_segment(between=b"\n" + b" " * 99):
-    packet = (b'<?xpacket begin="" id="W5M0MpCehiHzreSzNTczkc9d"?><x:xmpmeta xmlns:x="adobe:ns:meta/"></x:xmpmeta>'
-              + between + b'<?xpacket end="w"?>')
-    return segment(0xE1, b"http://ns.adobe.com/xap/1.0/\0" + packet)
-
-
-def resource(resource_id, data):
-    return b"8BIM" + struct.pack(">H", resource_id) + b"\0\0" + struct.pack(">I", len(data)) + data + b"\0" * (len(data) & 1)
-
-
-def iptc_segment(*resources, after=b""):
-    return segment(0xED, b"Photoshop 3.0\0" + b"".join(resources) + after)
-
-
-def exif_segment(zeros):
-    """A little-endian TIFF: IFD0 with one ASCII entry whose value sits after the IFD, then `zeros` zero bytes."""
-    artist = b"Someone\0\0\0"
-    ifd = struct.pack("<H", 1) + struct.pack("<HHII", 0x013B, 2, len(artist), 8 + 2 + 12 + 4) + struct.pack("<I", 0)
-    return segment(0xE1, b"Exif\0\0" + b"II*\0" + struct.pack("<I", 8) + ifd + artist + bytes(zeros))
 
 
 SOS = segment(0xDA, b"\x01\x01\x00\x00\x3f\x00") + b"\x12\x34" * 20 + b"\xff\xd9"

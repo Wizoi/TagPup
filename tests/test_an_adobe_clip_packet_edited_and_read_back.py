@@ -84,11 +84,11 @@ class AnAdobeClipEditedAndReadBack(unittest.TestCase):
         return path
 
     def test_premieres_packet_its_date_orientation_and_a_keyword_changed_in_place(self):
-        path = self.clip_holding(shapes.PREMIERE)
-        self.read_back(path, xmp_packet.read(shapes.PREMIERE))
+        path = self.clip_holding(corpus.PREMIERE)
+        self.read_back(path, xmp_packet.read(corpus.PREMIERE))
         changes = {"dc:subject": ["Beach", "Wren Ashcombe"], "dc:description": "Kites & <dunes>",
                    "xmp:CreateDate": "2018-06-03T08:00:00Z", "tiff:Orientation": "6"}
-        edited = xmp_packet.edit(shapes.PREMIERE, changes)
+        edited = xmp_packet.edit(corpus.PREMIERE, changes)
         self.assertFalse(edited.length_changed)
         self.placed(path, edited.body, clip_patch.IN_PLACE)
         xmp = self.read_back(path, {**changes, "xmpMM:DocumentID": "xmp.did:7c2d0e4a"})

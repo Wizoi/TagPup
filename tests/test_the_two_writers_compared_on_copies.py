@@ -52,7 +52,8 @@ import unittest
 from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from test_a_photo_patched_in_place import PRINT_FLAGS, read  # noqa: E402
+from test_a_photo_patched_in_place import read  # noqa: E402
+import corpus  # noqa: E402
 from test_file_journal import EXIFTOOL, FilesCase, field_of, requires_exiftool, write_outside  # noqa: E402
 
 from click.testing import CliRunner  # noqa: E402
@@ -111,11 +112,9 @@ class TheTwoWritersComparedOnCopies(FilesCase):
 
     def test_a_photo_with_two_app13_segments_is_rewritten_by_both(self):
         a = self.photo("a.jpg")
-        held = read(a)
-        iptc = containers.read(io.BytesIO(held)).of_kind("iptc")[0]
-        body = b"Photoshop 3.0\0" + PRINT_FLAGS
+        laid = corpus.second_app13(read(a))
         with open(a, "wb") as handle:
-            handle.write(held[:iptc.end] + b"\xff\xed" + (len(body) + 2).to_bytes(2, "big") + body + held[iptc.end:])
+            handle.write(laid)
         found = self.check()
         self.assert_agreed(found, 1)
         self.assertEqual({"rewrite, own rewrite": 1}, found["how"]["keyword added"])
@@ -289,7 +288,7 @@ class TheTwoWritersComparedOnCopies(FilesCase):
         # The own writer puts the caption in the title, not the description, and drops the keyword it was to add: the
         # set-asides (KNOWN, empty as absent, warnings against the original's) hide neither.
         self.photo("a.jpg", tags=("Beach",))
-        real = metadata_check._written
+        real = metadata_check.written
 
         def written(fields, path, values, own):
             if own and "XMP:Description" in values and values["XMP:Description"]:
@@ -298,7 +297,7 @@ class TheTwoWritersComparedOnCopies(FilesCase):
                 values = dict(values, **{"XMP:Subject": [each for each in values["XMP:Subject"]
                                                          if each != metadata_check.KEYWORD]})
             return real(fields, path, values, own)
-        with mock.patch.object(metadata_check, "_written", written):
+        with mock.patch.object(metadata_check, "written", written):
             found = self.check(reveal=True)
         said = {(each["operation"], each["difference"]) for each in found["revealed"]}
         for expected in (("caption set", "the sides differ in XMP:XMP-dc:Description"),

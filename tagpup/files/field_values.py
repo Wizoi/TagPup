@@ -456,8 +456,10 @@ def _why_unread(path, stamp):
 #: (exiftool_session.DEFAULT_COMMON_ARGS) is given after each command's and wins over a -G0:1 in it, naming IFD0's and
 #: IFD1's Orientation alike, so the oracle has a session of its own whose common arguments are -n alone. Keys read so
 #: (ExifTool 13.59): "EXIF:IFD0:Orientation", "XMP:XMP-dc:Subject"; a group whose family 1 is its family 0 is named once,
-#: "IPTC:Keywords", and a second APP13's "IPTC:IPTC2:Keywords".
-WHOLE_READ = ("-j", "-G0:1", "-a", "-all:all")
+#: "IPTC:Keywords", and a second APP13's "IPTC:IPTC2:Keywords". The file system's group (File:System: the folder, the
+#: file's name, size and dates) is left out: it is no field of the file, the shadow comparison sets the File group aside
+#: (metadata_check.SET_ASIDE), and an answer naming a folder or a file's dates is never kept for the tests' replay.
+WHOLE_READ = ("-j", "-G0:1", "-a", "-all:all", "--System:all")
 #: What ExifTool says of a file as it reads it, every warning and error of its validation: by their copy numbers (family
 #: 4), as one key holds one ("ExifTool:Warning", "ExifTool:Copy1:Warning"); -G0:1 answers the first warning alone.
 READER_READ = ("-j", "-G0:4", "-a", "-ExifTool:Warning", "-ExifTool:Error", "-validate")
