@@ -111,9 +111,9 @@ class AFileChangedWhileItIsRead(ReadFilesCase):
         real = file_changes._read_whole
         base = page_writes.base(self.library, a)
 
-        def read_whole(et, row, read):
+        def read_whole(fields, row, read):
             touched_by_another_program(row.path)
-            return real(et, row, read)
+            return real(fields, row, read)
         with mock.patch.object(file_changes, "_read_whole", read_whole):
             saved = tagging.save_photo(self.library, a, "Quay at dusk", ["Beach"], None, EXIFTOOL, "", base=base)
         self.assertTrue(saved.ok, saved.message())

@@ -163,13 +163,13 @@ def _outside(data):
     return [data[each.offset:each.end] for each in layout.segments if each.kind not in METADATA], data[layout.image_offset:]
 
 
-def _written(et, path, values, own):
+def _written(fields, path, values, own):
     """(how the write went: patch, rewrite, unchanged or failed; the fields it left stale; why it failed). `own`: the
     write is a journaled one's, the own writer's patch tried first; else ExifTool's rewrite."""
     how = []
     saving = (lambda _record, _before: how.append("patch")) if own else None
     try:
-        stale = et.write(path, values, saving=saving, scratch_written=lambda: how.append("rewrite"))
+        stale = fields.write(path, values, saving=saving, scratch_written=lambda: how.append("rewrite"))
     except Exception as error:
         return "failed", (), str(error)
     return (how[0] if how else "unchanged"), tuple(stale), None
@@ -212,8 +212,8 @@ def _tags_differing(original, theirs, own, stale):
 
 
 class _Run:
-    def __init__(self, library, et, oracle, reveal):
-        self.library, self.et, self.oracle, self.reveal = library, et, oracle, reveal
+    def __init__(self, library, fields, oracle, reveal):
+        self.library, self.fields, self.oracle, self.reveal = library, fields, oracle, reveal
         self.looked, self.skipped = collections.Counter(), collections.Counter()
         self.how, self.differences = collections.defaultdict(collections.Counter), collections.Counter()
         self.revealed = []
@@ -237,7 +237,7 @@ class _Run:
         original = os.path.join(folder, "original.jpg")
         with open(original, "wb") as handle:
             handle.write(data)
-        before = self.et.read([original], READ).get(paths.key(original))
+        before = self.fields.read([original], READ).get(paths.key(original))
         if not isinstance(before, dict):
             self.looked["read, not by ExifTool"] += 1
             return None
@@ -270,7 +270,7 @@ class _Run:
             with open(copy, "wb") as handle:
                 handle.write(data)
             copies.append(copy)
-            sides.append(_written(self.et, copy, after, own))
+            sides.append(_written(self.fields, copy, after, own))
         (theirs, _, their_error), (own, stale, own_error) = sides
         self.how[operation]["%s, own %s" % (theirs, own)] += 1
         if (theirs == "failed") != (own == "failed"):
@@ -285,7 +285,7 @@ class _Run:
                 self.differ(path, operation, "%s changed the picture" % name)
             elif now[0] != kept[0]:
                 self.differ(path, operation, "%s changed a segment outside EXIF, XMP and IPTC" % name)
-        read_back = self.et.read(copies, list(after))
+        read_back = self.fields.read(copies, list(after))
         was = {field: before.get(field, []) for field in after}
         for (name, _own), copy, left in zip(SIDES, copies, ((), stale)):
             held = read_back.get(paths.key(copy))
@@ -299,7 +299,7 @@ class _Run:
         for (name, own), copy in zip(SIDES, copies):
             with open(copy, "rb") as handle:
                 first = handle.read()
-            how, _stale, error = _written(self.et, copy, after, own)
+            how, _stale, error = _written(self.fields, copy, after, own)
             with open(copy, "rb") as handle:
                 if handle.read() != first:
                     self.differ(path, operation, "%s's second write of the same values changed the file" % name,
@@ -320,8 +320,8 @@ def check(library, exiftool_path, sample=SAMPLE, seed=segment_census.SEED, revea
         jpegs = [path for _photo_id, path in inspection.photo_files(conn) if segment_census.is_jpeg(path)]
     chosen = segment_census.drawn(jpegs, sample, seed)
     stopped = None
-    with sandbox() as root, field_values.opened(exiftool_path) as et, field_values.oracle(exiftool_path) as oracle:
-        run = _Run(library, et, oracle, reveal)
+    with sandbox() as root, field_values.opened(exiftool_path) as fields, field_values.oracle(exiftool_path) as oracle:
+        run = _Run(library, fields, oracle, reveal)
         try:
             for done, path in enumerate(chosen, 1):
                 folder = tempfile.mkdtemp(prefix="%d-" % done, dir=root)

@@ -334,9 +334,9 @@ class TheIndexWritesTheBake(unittest.TestCase):
         planned = []
         real_planned = bake_after_index._planned
 
-        def planning(library, et, detector, folder, *args):
+        def planning(library, fields, detector, folder, *args):
             planned.append(folder)
-            return real_planned(library, et, detector, folder, *args)
+            return real_planned(library, fields, detector, folder, *args)
         with mock.patch.object(file_changes.roots_service, "pinned", side_effect=roots_service.RootsChanged("moved")), \
                 mock.patch.object(bake_after_index, "_planned", side_effect=planning):
             baked = bake_after_index.bake_folders(self.library, EXIFTOOL, DETECTOR, [self.folder, quay], {})
@@ -608,11 +608,11 @@ class TheIndexWritesTheBake(unittest.TestCase):
                 Image.new("RGB", SIZE, colour).save(path, "JPEG")
         real, planned = bake_after_index._planned, []
 
-        def falls_over_at_the_second(library, et, detector, folder, *args):
+        def falls_over_at_the_second(library, fields, detector, folder, *args):
             planned.append(folder)
             if len(planned) == 2:
                 raise RuntimeError("the bake fell over")
-            return real(library, et, detector, folder, *args)
+            return real(library, fields, detector, folder, *args)
         with mock.patch.object(bake_after_index, "_planned", side_effect=falls_over_at_the_second):
             said = " ".join(self.index(self.folder, quay).output.split())
         self.assertIn("Bake: stopped (RuntimeError)", said)

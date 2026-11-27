@@ -382,9 +382,9 @@ class StoppedPartWay(CaptionSweep):
         more = [self.repeated("more %d.jpg" % n) for n in range(7)]
         real, read_at_the_stop = file_changes._read_back, []
 
-        def again(et, library, wrote, read=None):
+        def again(fields, library, wrote, read=None):
             if not isinstance(sys.exc_info()[1], KeyboardInterrupt):
-                return real(et, library, wrote, read)     # a chunk's own read back, before the first press
+                return real(fields, library, wrote, read)     # a chunk's own read back, before the first press
             # The read back after the first press: the files written since the last chunk, not all of them.
             read_at_the_stop.append(len(wrote))
             signal.raise_signal(signal.SIGINT)

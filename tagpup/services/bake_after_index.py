@@ -147,9 +147,9 @@ def bake_folders(library, exiftool_path, detector, folders, handed, stop=None, e
     baked, snapshot, walk, chunk_lines = Baked(), [], baking.walk(stop), [True]
     owe_first(library, folders, handed)
     # One deadline for the run (Fields.together): a share away ends it at that folder, the rest baked by the next index.
-    with field_values.opened(exiftool_path) as et, et.together():
+    with field_values.opened(exiftool_path) as fields, fields.together():
         if folders:
-            et.ready_to_write()   # an ExifTool that will not start fails the run once, not as an unreadable line per photo
+            fields.ready_to_write()   # an ExifTool that will not start fails the run once, not as an unreadable line per photo
         for number, folder in enumerate(folders, 1):
             if stop is not None and stop():
                 break
@@ -171,15 +171,15 @@ def bake_folders(library, exiftool_path, detector, folders, handed, stop=None, e
                 except Exception as error:
                     chunk_lines.clear()
                     logger.warning("The bake's progress lines stop here, its writes go on: %s: %s", type(error).__name__, error)
-            to_bake, stored, unfingerprinted = _planned(library, et, detector, folder, handed, baked, walk)
+            to_bake, stored, unfingerprinted = _planned(library, fields, detector, folder, handed, baked, walk)
             written = None
             if to_bake and not baked.stalled:
                 if not snapshot:
                     snapshot.append(snapshot_service.before_a_long_write(library))
-                written = _write(library, exiftool_path, et, stored, to_bake, baked,
+                written = _write(library, exiftool_path, fields, stored, to_bake, baked,
                                  say_chunk)
             _adopt(library, unfingerprinted, to_bake, written, handed, baked)
-            if baked.stalled or et.dead:
+            if baked.stalled or fields.dead:
                 baked.stalled = True
                 break
             if baked.roots_changed:
@@ -206,7 +206,7 @@ def owe_first(library, folders, handed):
                                  label="the fingerprints the index recorded of the photos its bake is to write")
 
 
-def _planned(library, et, detector, folder, handed, baked, walk):
+def _planned(library, fields, detector, folder, handed, baked, walk):
     """({paths.key(path): (path, values)} of the photos of `folder` to bake, the folder as the library stores it, and
     {paths.key(path): (photo id, _Decode)} of those planned that have no fingerprint row, current or to bake), counting
     into `baked` the photos current, not answered and that cannot be planned."""
@@ -218,7 +218,7 @@ def _planned(library, et, detector, folder, handed, baked, walk):
         group = [(photo_id, path) for photo_id, path in inspection.under(conn, folder, store_photos.BAKED_KINDS)
                  if paths.key(os.path.dirname(path)) == paths.key(folder)]
         fingerprinted = photo_fingerprints.fingerprinted(conn, [photo_id for photo_id, _path in group])
-        read = baking.FolderRead(et, [path for _id, path in group])
+        read = baking.FolderRead(fields, [path for _id, path in group])
         to_bake, unfingerprinted = {}, {}
         for photo_id, path in group:
             photo, decode = baking.PhotoAt(path, read, walk), _Decode(path, handed)
@@ -281,14 +281,14 @@ def _adopt(library, unfingerprinted, to_bake, written, handed, baked):
     baked.adopted += db.write_with_connection(library.path, adopt, label="the fingerprints of the photos whose files hold their bake")
 
 
-def _write(library, exiftool_path, et, stored, to_bake, baked, on_chunk):
+def _write(library, exiftool_path, fields, stored, to_bake, baked, on_chunk):
     """Write the photos of one folder to bake as one internal change, each file read again before its write, and count
     in `baked` what the write reported (its Result: the change is erased once it finishes, its conflicts of NOTES kept); `on_chunk(done, of)` as each
     chunk of its files ends (write_fields)."""
     result = file_changes.write_fields(
         library, baking.INDEX_OPERATION, exiftool_path, [path for path, _values in to_bake.values()],
         list(bake.WRITTEN.values()), lambda path, _held: file_changes.Plan(after=to_bake[paths.key(path)][1]),
-        summary={"folder": stored}, et=et, on_chunk=on_chunk)
+        summary={"folder": stored}, fields=fields, on_chunk=on_chunk)
     unanswered = {paths.key(path) for path in result.details.get("not_answered", [])}
     conflicts = len(result.details.get("conflicts", []))
     baked.planned += len(to_bake)

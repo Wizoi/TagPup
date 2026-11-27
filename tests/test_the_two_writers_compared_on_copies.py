@@ -291,13 +291,13 @@ class TheTwoWritersComparedOnCopies(FilesCase):
         self.photo("a.jpg", tags=("Beach",))
         real = metadata_check._written
 
-        def written(et, path, values, own):
+        def written(fields, path, values, own):
             if own and "XMP:Description" in values and values["XMP:Description"]:
                 values = dict(values, **{"XMP:Title": values["XMP:Description"], "XMP:Description": ""})
             if own and metadata_check.KEYWORD in values.get("XMP:Subject", []):
                 values = dict(values, **{"XMP:Subject": [each for each in values["XMP:Subject"]
                                                          if each != metadata_check.KEYWORD]})
-            return real(et, path, values, own)
+            return real(fields, path, values, own)
         with mock.patch.object(metadata_check, "_written", written):
             found = self.check(reveal=True)
         said = {(each["operation"], each["difference"]) for each in found["revealed"]}

@@ -340,11 +340,11 @@ def _ready(library, exiftool_path, tools, source, reason):
         conn.close()
     if found is None:
         return NO_ROW
-    with field_values.opened(exiftool_path) as et:
+    with field_values.opened(exiftool_path) as fields:
         # Whole, in the indexer's shape: its Date Taken is the row's (dates.date_taken of what the indexer records), but
         # for a date in its name, which is not carried: the copy has the clip's name and is dated by it again.
         try:
-            held, whole = et.read_one(source, list(READ) + [core_fields.CLIP_CATEGORY], whole=True)
+            held, whole = fields.read_one(source, list(READ) + [core_fields.CLIP_CATEGORY], whole=True)
         except field_values.Unreadable as e:
             logger.warning("A clip to convert could not be read whole: %s", e)
             return UNREADABLE % "ExifTool could not read it"
@@ -556,8 +556,8 @@ def _short_of(library, exiftool_path, target, after):
     nothing to write) and no Windows Tags (ffmpeg carries no Xtra); else what it lacks, a phrase naming fields, never
     tags. Read after the carry and before the original, the one other holder of what it carries, is deleted for good."""
     try:
-        with field_values.opened(exiftool_path) as et:
-            held = et.read_back(target, list(CARRY_READ) + [core_fields.CLIP_CATEGORY])
+        with field_values.opened(exiftool_path) as fields:
+            held = fields.read_back(target, list(CARRY_READ) + [core_fields.CLIP_CATEGORY])
     except (OSError, field_values.Unreadable) as e:
         return "it could not be read back: %s" % e
     if core_fields.field_values(held.get(core_fields.CLIP_CATEGORY)):
@@ -656,9 +656,9 @@ def _followed(library, exiftool_path, row, target):
     """The photo's row moved to `target` (a new name) and made to say what the copy holds, read whole, in one transaction;
     its stamp the copy's, so its vectors and frames are computed again. False when another row is at `target`."""
     stat = os.stat(target)   # unbounded: the conversion's own copy, just put in place under the lock
-    with field_values.opened(exiftool_path) as et:
+    with field_values.opened(exiftool_path) as fields:
         try:
-            _held, whole = et.read_back(target, [], whole=True)
+            _held, whole = fields.read_back(target, [], whole=True)
         except field_values.Unreadable as e:
             logger.warning("%s: could not read it back whole: %s", row.named(), e)
             whole = None
