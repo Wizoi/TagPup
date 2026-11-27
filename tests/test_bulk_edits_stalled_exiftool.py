@@ -190,6 +190,13 @@ class AnExifToolThatWillNotStart(T.Bulk):
         self.assertEqual([(None, metadata.NOT_STARTED)] * 2, [(r["mtime"], r["unread"]) for r in records])
         self.assertEqual(2, WillNotStart.starts, "each call tries the start again")
 
+    def test_the_bake_after_an_index_fails_once_rather_than_calling_every_photo_unreadable(self):
+        from tagpup.services import bake_after_index
+        folder = os.path.dirname(self.photos[0])
+        with self.assertRaises(field_values.Refused):
+            bake_after_index.bake_folders(self.library, "exiftool", "detector", [folder], {})
+        self.assertEqual(1, WillNotStart.starts, "one start attempt, not one per photo")
+
     def test_the_change_is_refused_before_its_record(self):
         # A write's Fields starts ExifTool at its first command, and a save hands in its own read: that command could come
         # after the change's record and a patch's bytes, a file left `writing` that nothing reads back. ready_to_write

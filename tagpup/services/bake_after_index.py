@@ -148,6 +148,8 @@ def bake_folders(library, exiftool_path, detector, folders, handed, stop=None, e
     owe_first(library, folders, handed)
     # One deadline for the run (Fields.together): a share away ends it at that folder, the rest baked by the next index.
     with field_values.opened(exiftool_path) as et, et.together():
+        if folders:
+            et.ready_to_write()   # an ExifTool that will not start fails the run once, not as an unreadable line per photo
         for number, folder in enumerate(folders, 1):
             if stop is not None and stop():
                 break
