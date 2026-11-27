@@ -28,7 +28,8 @@ test's end however it ends; the share-away stand-in is a patch of this test (set
 
 Breaks that fail these, each tried on a copy of the code (2026-11-27): segment_edits.new_header writing one byte more
 into a segment the write's fields are not held in fails S2.1 (the segments outside the write); in_place.patch_jpeg
-answering () with no byte written fails S2.1 (the path, and the targets as the oracle reads them).
+answering () with no byte written fails S2.1 (the path, and the targets as the oracle reads them); bake._number_text
+rounding a fraction to 3 places fails S2.1's regions as the oracle reads them, which TagPup's own read back agrees with.
 """
 import io
 import os
@@ -46,7 +47,7 @@ import test_file_journal  # noqa: E402
 
 from tagpup import config  # noqa: E402
 from tagpup.core import fields, paths  # noqa: E402
-from tagpup.files import containers, exiftool_session, field_values, images, in_place, lock_owners, metadata  # noqa: E402
+from tagpup.files import bake, containers, exiftool_session, field_values, images, in_place, lock_owners, metadata  # noqa: E402
 from tagpup.files import shares  # noqa: E402
 from tagpup.files.exiftool_session import ExifToolSession  # noqa: E402
 from tagpup.services import metadata_check  # noqa: E402
@@ -132,9 +133,12 @@ NOT_LANDING = {"nul_xmp": "ExifTool writes no XMP into a segment of NUL bytes, s
 #: {item: tags (by name) ExifTool's rewrite lays out again, by its own rule}: where the picture lies (a TIFF's strips,
 #: an MPO's second frame: as KNOWN's ThumbnailOffset). An EXIF IFD a rewrite makes is its own too (landed).
 ALSO = {"tiff": ("StripOffsets",), "mpf": ("MPImageStart",)}
-#: What a bake's write makes beside its fields: MWG's regions flattened (the oracle reads no structure) and, past 64 KB,
-#: the extended packet's GUID.
-BAKE_ALSO = ("XMP-mwg-rs", "XMP-xmpNote")
+#: What a bake's write makes beside its fields, set aside from "a tag outside it": past 64 KB, the extended packet's GUID
+#: (ExifTool's digest of the part it split off).
+BAKE_ALSO = ("XMP-xmpNote",)
+#: The group of MWG's regions flattened (the oracle reads no structure): of a write naming them, landed compares them
+#: with the structure written, flattened, and of its undo with the original's; set aside from "a tag outside it".
+REGIONS_GROUP = "XMP-mwg-rs"
 
 
 def format_of(path):
@@ -176,6 +180,33 @@ def lands(field, read, wanted):
     if field in fields.CLIP_HEADER_DATES:
         return set(read) == set(fields.field_values(wanted))
     return fields.same_read(field, read, wanted)
+
+
+def plain(value):
+    """A value of the oracle's read or of a structure, as the two are compared: a number by its float, else its text."""
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return str(value)
+
+
+def flattened(regions):
+    """{tag: [values]} of the MWG RegionInfo structure `regions` (as baked_files.record holds it, bake.region_text's
+    parts) as ExifTool reads it with no -struct: RegionAppliedToDimensions<key>, and of each region in list order
+    Region<key>, its Area's RegionArea<key>."""
+    found = {"RegionAppliedToDimensions" + key: [plain(value)]
+             for key, value in regions.get("AppliedToDimensions", {}).items()}
+    for region in regions.get("RegionList", []):
+        for key, value in region.items():
+            for name, one in value.items() if isinstance(value, dict) else (("", value),):
+                found.setdefault("Region" + key + name, []).append(plain(one))
+    return found
+
+
+def regions_of(row):
+    """{tag: [values]} of the MWG regions the oracle's read `row` holds, flattened (REGIONS_GROUP)."""
+    return {tag.split(":")[-1]: [plain(each) for each in (value if isinstance(value, list) else [value])]
+            for tag, value in row.items() if tag.split(":")[1:2] == [REGIONS_GROUP]}
 
 
 def changed(was, now):
@@ -339,10 +370,16 @@ class AFilesFieldsReadAndWritten(test_file_journal.FilesCase):
             for op, after in planned.items():
                 if after is None:
                     continue
+                regions = None
+                if fields.REGION_INFO in after:
+                    regions = baked_files.record(faces=int(op.rsplit(" ", 1)[1]))[bake.REGIONS]
+                    self.assertEqual([bake.region_text(regions)], after[fields.REGION_INFO])
                 for side, own in sides:
                     with self.subTest("S2", item=name, op=op, side=side):
-                        also = ALSO.get(name, ()) + (BAKE_ALSO if op in BAKES else ())
-                        self.written(original, was, before, after, other.get(op, path_today) if own else R, own, also)
+                        also = ALSO.get(name, ()) + (BAKE_ALSO if op in BAKES else ()) + (
+                            (REGIONS_GROUP,) if regions is not None else ())
+                        self.written(original, was, before, after, other.get(op, path_today) if own else R, own, also,
+                                     regions)
         self.assertEqual(sorted(SKIPPED), sorted(skipped), "the (item, operation) pairs planned to write nothing")
         clip = self.copy("mp4")
         with self.subTest("S2.1", item="mp4", side="outside"):
@@ -351,9 +388,10 @@ class AFilesFieldsReadAndWritten(test_file_journal.FilesCase):
                 self.fields, clip, fields.title_fields(TITLE), False)[::2])
             self.assertEqual(data, bytes_of(clip))
 
-    def landed(self, copy, was, before, after, stale, also, how, start=None, rewritten=False):
+    def landed(self, copy, was, before, after, stale, also, how, start=None, rewritten=False, regions=None):
         """The oracle's read of `copy` once a write of `after` left `stale` as `before` held them: each target as
-        fields.as_patched says, every other tag as `was` (the original's), and, written by the own patch (`how`),
+        fields.as_patched says (a bake's regions, given: `regions`, flattened as the oracle reads them), every other tag
+        as `was` (the original's), and, written by the own patch (`how`),
         nothing said of it that was not said of the file it patched (`start`, the oracle's read of it: `was` when
         None). ExifTool's rewrite is the oracle's own writer: what its validation says of an IFD it made is its own,
         and so are the tags it gives an IFD it made, in this write or the one before (`rewritten`)."""
@@ -366,13 +404,16 @@ class AFilesFieldsReadAndWritten(test_file_journal.FilesCase):
             also = tuple(also) + tuple({tag.split(":")[1] for tag in row if tag.startswith("EXIF:")} - held)
         self.assertEqual({}, {field: (oracle_value(row, field), wanted[field]) for field in plain
                               if not lands(field, oracle_value(row, field), wanted[field])}, "the targets")
+        if regions is not None:
+            self.assertEqual(regions, regions_of(row), "the regions as the oracle reads them")
         self.assertEqual({}, changed(other_tags(was, after, also), other_tags(row, after, also)), "a tag outside it")
         if how == P:
             self.assertEqual(set(), said(row) - said(start or was), "ExifTool says of the patched copy what it did "
                                                                      "not say of the file it patched")
         return row, wanted
 
-    def written(self, original, was, before, after, path_today, own, also):
+    def written(self, original, was, before, after, path_today, own, also, regions=None):
+        """S2.1-S2.3 of the write of `after` into a fresh copy of `original` (`regions`: the structure a bake writes)."""
         name = os.path.splitext(os.path.basename(original))[0]
         copy = self.copy(name)
         data = bytes_of(copy)
@@ -385,8 +426,8 @@ class AFilesFieldsReadAndWritten(test_file_journal.FilesCase):
             self.assertFalse(fields.reads_same(self.fields.read_back(copy, list(after)), wanted), NOT_LANDING[name])
             return
         # S2.1: the targets as the oracle reads them, every other tag as before, and nothing else of the file changed.
-        row, wanted = self.landed(copy, was, before, after, stale, also, how)
-        regions = fields.REGION_INFO in after
+        row, wanted = self.landed(copy, was, before, after, stale, also, how,
+                                  regions=None if regions is None else flattened(regions))
         plain = [field for field in after if not fields.is_struct(field)]
         now = bytes_of(copy)
         if format_of(copy) == "jpeg":
@@ -400,7 +441,7 @@ class AFilesFieldsReadAndWritten(test_file_journal.FilesCase):
         self.assert_answered(copy, "read", commands)
         self.assertEqual({}, {field: (back.get(field), oracle_value(row, field)) for field in plain
                               if not lands(field, oracle_value(row, field), back.get(field))}, "read back")
-        if regions:
+        if fields.REGION_INFO in after:
             self.assertTrue(fields.reads_same(back, after), "a bake's regions read back as written")
         # S2.2: the same write again changes no byte, and a patch with nothing to write saves no record.
         again, _stale, error = metadata_check.written(self.fields, copy, after, own)
@@ -413,7 +454,8 @@ class AFilesFieldsReadAndWritten(test_file_journal.FilesCase):
         undo = {field: before.get(field, []) for field in after}
         how_back, stale_back, error = metadata_check.written(self.fields, copy, undo, own)
         self.assertIsNone(error)
-        self.landed(copy, was, wanted, undo, stale_back, also, how_back, row, rewritten=how == R)
+        self.landed(copy, was, wanted, undo, stale_back, also, how_back, row, rewritten=how == R,
+                    regions=None if regions is None else regions_of(was))
         xmp = [field for field in after if str(field).startswith("XMP")]
         if how == P == how_back and set(after) - set(stale) <= set(xmp) and all(before.get(field) for field in xmp):
             self.assertEqual(data, bytes_of(copy), "an XMP-only patch undone gives the original bytes back")
