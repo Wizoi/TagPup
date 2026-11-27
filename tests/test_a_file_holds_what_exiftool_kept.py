@@ -43,6 +43,7 @@ import exiftool_fields  # noqa: E402
 from test_file_journal import EXIFTOOL, Crash, FilesCase, crash_at, keywords_of, write_outside  # noqa: E402
 
 import baked_files  # noqa: E402
+import corpus  # noqa: E402
 import photo_rows  # noqa: E402
 import page_writes  # noqa: E402
 from tagpup.core import fields, orientation  # noqa: E402
@@ -464,14 +465,9 @@ class ABakeIsWritten(BakeCase):
         a = self.make_read("a.jpg")
         self.outside(a, "-XMP-dc:Subject=seed")
         with open(a, "rb") as handle:
-            data = bytearray(handle.read())
-        header = b"http://ns.adobe.com/xap/1.0/\x00"
-        start = data.index(header) + len(header)
-        length = int.from_bytes(data[data.index(header) - 2:data.index(header)], "big") - 2 - len(header)
-        data[start:start + length] = bytes(length)
+            before = corpus.xmp_of_zeros(handle.read())
         with open(a, "wb") as handle:
-            handle.write(data)
-        before = bytes(data)
+            handle.write(before)
         text = bake.region_text({"RegionList": [{"Type": "Face", "Name": "Face"}]})
         result = file_changes.write_fields(self.library, "bake", exiftool_fields.opened(self, EXIFTOOL), [a], [fields.REGION_INFO],
                                            lambda path, held: file_changes.Plan(after={fields.REGION_INFO: [text]}))

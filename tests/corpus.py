@@ -546,3 +546,12 @@ def note_ifd(order, shift=0, footer=False, told=None):
         said = base if told is None else at - told
         return data + ((b"II*\0" if order == "<" else b"MM\0*") + struct.pack(order + "I", said) if footer else b"")
     return made
+
+
+def xmp_of_zeros(data):
+    """The JPEG `data`, its XMP packet's bytes all zero, its segment's length as it was: 3 / 0 / 0 / 0 photos (#2349),
+    which ExifTool reads as "Invalid XMP" and leaves as they were."""
+    header = b"http://ns.adobe.com/xap/1.0/\x00"
+    at = data.index(header)
+    start, length = at + len(header), int.from_bytes(data[at - 2:at], "big") - 2 - len(header)
+    return data[:start] + bytes(length) + data[start + length:]
