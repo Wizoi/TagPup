@@ -295,6 +295,96 @@ class AFilesFieldsReadAndWritten(test_file_journal.FilesCase):
                 self.assertEqual([{field: alone[path].get(field, found[paths.key(path)][field]) for field in wanted}
                                   for path in batch], [found[paths.key(path)] for path in batch])
 
+    # ---- S2: each operation written, read back, written again and undone ----
+
+    def test_each_operation_lands_as_the_oracle_reads_it_twice_alike_and_undone(self):
+        for name, (ops, path_today, other) in WRITES.items():
+            original = self.copy(name)
+            held = self.fields.read([original], metadata_check.READ)[paths.key(original)]
+            planned = {op: self.planned(name, op, original, held) for op in ops}
+            targets = list(dict.fromkeys(field for after in planned.values() if after for field in after))
+            before = self.fields.read([original], [field for field in targets if not fields.is_struct(field)])
+            before = dict(before[paths.key(original)])
+            if any(fields.is_struct(field) for field in targets):
+                before.update(self.fields.read([original], [fields.REGION_INFO])[paths.key(original)])
+            was = self.whole([original])[paths.key(original)]
+            sides = (("journaled", True),) if images.is_clip(original) else (("outside", False), ("journaled", True))
+            for op, after in planned.items():
+                if after is None:
+                    continue
+                for side, own in sides:
+                    with self.subTest("S2", item=name, op=op, side=side):
+                        also = ALSO.get(name, ()) + (BAKE_ALSO if op in BAKES else ())
+                        self.written(original, was, before, after, other.get(op, path_today) if own else R, own, also)
+        clip = self.copy("mp4")
+        with self.subTest("S2.1", item="mp4", side="outside"):
+            data = bytes_of(clip)
+            self.assertEqual(("failed", images.CLIP_NOT_EDITED), metadata_check.written(
+                self.fields, clip, fields.title_fields(TITLE), False)[::2])
+            self.assertEqual(data, bytes_of(clip))
+
+    def landed(self, copy, was, before, after, stale, also, how, start=None):
+        """The oracle's read of `copy` once a write of `after` left `stale` as `before` held them: each target as
+        fields.as_patched says, every other tag as `was` (the original's), and, written by the own patch (`how`),
+        nothing said of it that was not said of the file it patched (`start`, the oracle's read of it: `was` when
+        None). ExifTool's rewrite is the oracle's own writer: what its validation says of an IFD it made is its own."""
+        row = self.whole([copy])[paths.key(copy)]
+        wanted = fields.as_patched(before, after, stale)
+        plain = [field for field in after if not fields.is_struct(field)]
+        self.assertEqual({}, {field: (oracle_value(row, field), wanted[field]) for field in plain
+                              if not lands(field, oracle_value(row, field), wanted[field])}, "the targets")
+        self.assertEqual({}, changed(other_tags(was, after, also), other_tags(row, after, also)), "a tag outside it")
+        if how == P:
+            self.assertEqual(set(), said(row) - said(start or was), "ExifTool says of the patched copy what it did "
+                                                                     "not say of the file it patched")
+        return row, wanted
+
+    def written(self, original, was, before, after, path_today, own, also):
+        name = os.path.splitext(os.path.basename(original))[0]
+        copy = self.copy(name)
+        data = bytes_of(copy)
+        (how, stale, error), commands = self.counted(lambda: metadata_check.written(self.fields, copy, after, own))
+        self.assertEqual((path_today, None), (how, error), "the path the write took")
+        call = how if format_of(copy) == "jpeg" else "write"
+        self.assert_answered(copy, call, commands)
+        if name in NOT_LANDING:
+            wanted = fields.as_patched(before, after, stale)
+            self.assertFalse(fields.reads_same(self.fields.read_back(copy, list(after)), wanted), NOT_LANDING[name])
+            return
+        # S2.1: the targets as the oracle reads them, every other tag as before, and nothing else of the file changed.
+        row, wanted = self.landed(copy, was, before, after, stale, also, how)
+        regions = fields.REGION_INFO in after
+        plain = [field for field in after if not fields.is_struct(field)]
+        now = bytes_of(copy)
+        if format_of(copy) == "jpeg":
+            self.assertEqual(metadata_check.outside(data), metadata_check.outside(now), "the picture or a segment "
+                             "outside EXIF, XMP and IPTC changed")
+            if how == P:
+                kinds = {kind for field in after if field not in stale for kind, _name in fields.EDITED_AS[field]}
+                self.assertEqual(segments_outside(data, kinds), segments_outside(now, kinds),
+                                 "a patch changed a segment none of its fields is held in")
+        back, commands = self.counted(lambda: self.fields.read_back(copy, list(after)))
+        self.assert_answered(copy, "read", commands)
+        self.assertEqual({}, {field: (back.get(field), oracle_value(row, field)) for field in plain
+                              if not lands(field, oracle_value(row, field), back.get(field))}, "read back")
+        if regions:
+            self.assertTrue(fields.reads_same(back, after), "a bake's regions read back as written")
+        # S2.2: the same write again changes no byte, and a patch with nothing to write saves no record.
+        again, _stale, error = metadata_check.written(self.fields, copy, after, own)
+        self.assertEqual((now, None), (bytes_of(copy), error), "a second write of the same values")
+        if how == P:
+            self.assertEqual("unchanged", again)
+        # S2.3: its undo, a write of what the file held: its targets as fields.as_patched says (a copy an XMP-only patch
+        # of it leaves holds what the first write left), every other tag as the original's; an XMP-only patch of
+        # properties the packet held, undone, gives the original bytes back.
+        undo = {field: before.get(field, []) for field in after}
+        how_back, stale_back, error = metadata_check.written(self.fields, copy, undo, own)
+        self.assertIsNone(error)
+        self.landed(copy, was, wanted, undo, stale_back, also, how_back, row)
+        xmp = [field for field in after if str(field).startswith("XMP")]
+        if how == P == how_back and set(after) - set(stale) <= set(xmp) and all(before.get(field) for field in xmp):
+            self.assertEqual(data, bytes_of(copy), "an XMP-only patch undone gives the original bytes back")
+
 
 if __name__ == "__main__":
     unittest.main()
