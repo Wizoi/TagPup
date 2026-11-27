@@ -948,15 +948,11 @@ def tiff(path, exiftool, _ffmpeg=None):
 
 
 def _clip_made(path, exiftool, ffmpeg, values):
-    """The kept clip ffmpeg makes (CLIP, the format `path`'s extension names), given `values` by ExifTool."""
+    """The kept clip ffmpeg makes (clip, of CLIP: the format `path`'s extension names) given `values` by ExifTool."""
     def build(target):
-        from tagpup.core import processes
-        done = processes.run([ffmpeg] + CLIP + [target], capture_output=True, timeout=120)
-        if done.returncode != 0:
-            raise RuntimeError("ffmpeg failed: %s" % done.stderr.decode("utf-8", "replace"))
-        if values:
-            _written(target, values, exiftool)
-    return made(path, ["clip", CLIP, values, identity(exiftool) if values else None], build, ffmpeg, keep=True)
+        clip(target, CLIP, ffmpeg)
+        _written(target, values, exiftool)
+    return made(path, ["clip", CLIP, values, identity(exiftool)], build, ffmpeg, keep=True)
 
 
 def _clip_values():
@@ -980,7 +976,7 @@ def mov(path, exiftool, ffmpeg):
 @_item(".mp4")
 def mp4_bare(path, exiftool, ffmpeg):
     """ffmpeg's MP4 with no XMP (the patch appends one). User action: a phone's clip added."""
-    return _clip_made(path, exiftool, ffmpeg, None)
+    return clip(path, CLIP, ffmpeg)
 
 
 @_item(".mp4")
