@@ -18,12 +18,14 @@ from unittest import mock
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
+import exiftool_fields  # noqa: E402
 import own_home  # noqa: E402
 import page_writes  # noqa: E402
 import roots_library as rl  # noqa: E402
 
 from tagpup import config  # noqa: E402
 from tagpup.core import paths  # noqa: E402
+from tagpup.files import field_values  # noqa: E402
 from tagpup.files.exiftool_session import ExifToolSession  # noqa: E402
 from tagpup.services import libraries as library_actions  # noqa: E402
 from tagpup.services import indexing, photos, tagging  # noqa: E402
@@ -76,7 +78,8 @@ class AfterAMove(unittest.TestCase):
                         "the row's stamp is not the first-place file's")
 
     def nothing_to_refresh(self):
-        found = sync_service.sync(self.library, apply=False, exiftool_path=rl.EXIFTOOL, roots=(self.first,))
+        with field_values.opened(rl.EXIFTOOL) as fields:
+            found = sync_service.sync(self.library, apply=False, fields=fields, roots=(self.first,))
         self.assertEqual(0, found.details["counts"]["changed"], "a sync would read the rows from the files again")
 
     def test_roots_canonical_resolves_the_old_spelling_and_leaves_everything_else(self):
@@ -89,7 +92,7 @@ class AfterAMove(unittest.TestCase):
         self.assertEqual(paths.canonical(self.held[0], None), self.held[0])
 
     def test_a_save_with_the_old_spelling_writes_the_first_place(self):
-        result = tagging.save_photo(self.library, self.held[0], "A title", ["Harbour"], None, rl.EXIFTOOL, "",
+        result = tagging.save_photo(self.library, self.held[0], "A title", ["Harbour"], None, exiftool_fields.opened(self, rl.EXIFTOOL), "",
                                     base=page_writes.base(self.library, self.held[0], rl.EXIFTOOL))
         self.assertEqual((True, 1), (result.ok, result.changed), result.message())
         self.assertIn("Harbour", keywords(self.moved[0]))
@@ -98,7 +101,7 @@ class AfterAMove(unittest.TestCase):
         self.nothing_to_refresh()
 
     def test_bulk_tags_with_the_old_spelling_write_the_first_place(self):
-        result = tagging.change_tags(self.library, self.held, ["Harbour"], [], rl.EXIFTOOL)
+        result = tagging.change_tags(self.library, self.held, ["Harbour"], [], exiftool_fields.opened(self, rl.EXIFTOOL))
         self.assertEqual(len(self.held), result.changed, result.message())
         for moved in self.moved:
             self.assertIn("Harbour", keywords(moved))
@@ -107,7 +110,7 @@ class AfterAMove(unittest.TestCase):
         self.nothing_to_refresh()
 
     def test_a_rename_with_the_old_spelling_renames_at_the_first_place(self):
-        result = photos.smart_rename(self.library, self.held, "Regatta", "{grouping} - {index}", rl.EXIFTOOL)
+        result = photos.smart_rename(self.library, self.held, "Regatta", "{grouping} - {index}", exiftool_fields.opened(self, rl.EXIFTOOL))
         self.assertEqual((True, len(self.held)), (result.ok, result.changed), result.message())
         self.old_untouched()
         for new in result.details["renamed"].values():
@@ -124,7 +127,7 @@ class AfterAMove(unittest.TestCase):
             return True
 
         with mock.patch("tagpup.files.recycle_bin.send_to_recycle_bin", side_effect=recycle):
-            result = photos.delete(self.library, self.held[0], None)
+            result = photos.delete(self.library, self.held[0], exiftool_fields.opened(self, None))
         self.assertEqual(1, result.changed, result.message())
         self.assertEqual([self.moved[0]], removed)
         self.assertFalse(os.path.exists(self.moved[0]))
@@ -134,7 +137,7 @@ class AfterAMove(unittest.TestCase):
         self.assertEqual(1, len(self.rows_of(self.moved[1])))
 
     def test_a_rotate_with_the_old_spelling_turns_the_first_place_file(self):
-        result = photos.rotate(self.library, self.held[0], "right", rl.EXIFTOOL)
+        result = photos.rotate(self.library, self.held[0], "right", exiftool_fields.opened(self, rl.EXIFTOOL))
         self.assertEqual(1, result.changed, result.message())
         self.assertNotEqual(self.before[self.held[0]], digest(self.moved[0]))
         self.old_untouched()

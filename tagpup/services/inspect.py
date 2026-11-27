@@ -24,7 +24,6 @@ from contextlib import closing
 from tagpup.core import paths, vocabulary
 from tagpup.core.result import NotFound, Refused
 from tagpup.files import images, shares
-from tagpup.files import field_values
 from tagpup.services import roots as roots_service
 from tagpup.store import checks as rules
 from tagpup.store import db, embeddings, inspection, schema, taxonomy
@@ -183,9 +182,9 @@ def _by_field(raw):
     return fields
 
 
-def photo_against_file(library, photo_id, exiftool_path, reveal=False):
+def photo_against_file(library, photo_id, fields, reveal=False):
     """A photo's row against what its file holds now, read with ExifTool the way the
-    indexer reads it (`exiftool_path`, the library's: runtimes.exiftool): whether the file is there; its modified time and size; its tags,
+    indexer reads it (`fields`, over the library's ExifTool: runtimes.fields): whether the file is there; its modified time and size; its tags,
     captions and the people its keywords name; its DocumentID; and which raw metadata
     fields differ (field names, not values). Counts, and the values only with `reveal`.
     The file is only read."""
@@ -199,8 +198,7 @@ def photo_against_file(library, photo_id, exiftool_path, reveal=False):
     if not answer["file_exists"]:
         answer["stale"] = True
         return answer
-    with field_values.opened(exiftool_path) as reader:
-        (record,) = reader.whole([row["path"]], people=known)
+    (record,) = fields.whole([row["path"]], people=known)
     if "document_id" not in record or record["mtime"] is None:
         # ExifTool could not be started, or could not read this file, or its stamp could not be taken: the read
         # answers an empty or unstamped record, which is no statement about what the file holds.

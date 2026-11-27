@@ -28,6 +28,7 @@ import own_home  # noqa: E402
 
 from tagpup.core import paths  # noqa: E402
 from tagpup.core.library import Library  # noqa: E402
+from tagpup.files import field_values  # noqa: E402
 from tagpup.services import photos  # noqa: E402
 
 ROUTE = "/api/photos/write"
@@ -47,7 +48,8 @@ def record(library, path, exiftool=EXIFTOOL):
     """The page's record of the photo at `path`, as opening its folder gives it (photos.scan_folder: from its row when
     the row describes the file, else read with ExifTool). `library`, a Library or its database's path."""
     library = library if isinstance(library, Library) else Library(library)
-    return photos.scan_folder(library, os.path.dirname(path), exiftool)[paths.key(path)]
+    with field_values.opened(exiftool) as fields:
+        return photos.scan_folder(library, os.path.dirname(path), fields)[paths.key(path)]
 
 
 def set_from(found, title=None, tags=None, date_taken=None, path=None, **named):
@@ -110,5 +112,6 @@ def shift_all(library, folder, minutes, exiftool=EXIFTOOL):
     its path and no id, as the page sends it (a folder's records carry none). `library`, a Library or its database's
     path."""
     library = library if isinstance(library, Library) else Library(library)
-    found = photos.scan_folder(library, folder, exiftool).values()
+    with field_values.opened(exiftool) as fields:
+        found = photos.scan_folder(library, folder, fields).values()
     return shift([each["path"] for each in found if each["media"] == "photo"], minutes)

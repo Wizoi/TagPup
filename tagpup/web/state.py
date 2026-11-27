@@ -42,6 +42,13 @@ def exiftool(library):
     return runtimes.exiftool(library)
 
 
+def fields(library):
+    """The face for one operation's reads and writes of the library's photo files (tagpup.runtime.fields): a route's,
+    in a `with` block around the call it serves, never kept."""
+    from tagpup import runtime as runtimes
+    return runtimes.fields(library)
+
+
 def rename_format(library):
     """The pattern Smart Rename names the library's photos with."""
     return settings(library).rename_format

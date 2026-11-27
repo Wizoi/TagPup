@@ -30,6 +30,7 @@ from PIL import Image
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "tools"))
+import exiftool_fields  # noqa: E402
 import baked_files  # noqa: E402
 import doctor  # noqa: E402
 import own_home  # noqa: E402
@@ -217,7 +218,7 @@ class AShareThatFallsAsleepMidLook(unittest.TestCase):
             vl.photo("Coast", os.path.basename(path), fields=values)
         held = [read_bytes(path) for path in photo_paths]
         with mock.patch.object(in_place, "_alone", side_effect=self.falls_asleep) as opened:
-            done = tagging.replace_tag(vl.library, photo_paths, "Trips/Harbour", "Trips/Coast", EXIFTOOL)
+            done = tagging.replace_tag(vl.library, photo_paths, "Trips/Harbour", "Trips/Coast", exiftool_fields.opened(self, EXIFTOOL))
         self.assertEqual(0, done.changed)
         self.assertEqual(1, opened.call_count, "a photo on the share asleep was opened")
         said = " ".join(str(why) for _, why in done.errors)
@@ -680,7 +681,7 @@ class AServerThatSaysNotFoundAtOnce(unittest.TestCase):
         with mock.patch.object(shares, "AWAY_SECONDS", 6.0), \
                 mock.patch.object(shares, "wait_back") as wait_back, \
                 mock.patch("tagpup.files.exiftool_session.ExifToolSession", session):
-            done = tagging.replace_tag(vl.library, self.PHOTOS, "Trips/Harbour", "Trips/Coast", "exiftool")
+            done = tagging.replace_tag(vl.library, self.PHOTOS, "Trips/Harbour", "Trips/Coast", exiftool_fields.opened(self, "exiftool"))
         self.assertLess(time.monotonic() - started, 3.0, "waited for the share's window")
         wait_back.assert_not_called()
         self.assertEqual(0, done.changed)
@@ -1187,7 +1188,7 @@ class ABakeOnAShareSlowToWake(unittest.TestCase):
 
     def bake(self):
         started = time.monotonic()
-        baked = bake_after_index.bake_folders(self.library, own_home.installed_exiftool(), self.detector, [self.folder], {})
+        baked = bake_after_index.bake_folders(self.library, exiftool_fields.opened(self, own_home.installed_exiftool()), self.detector, [self.folder], {})
         return baked, time.monotonic() - started
 
     def test_a_share_whose_first_answer_is_slower_than_its_moment_is_waited_for_and_its_photos_baked(self):

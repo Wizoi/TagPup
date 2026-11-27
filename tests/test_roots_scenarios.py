@@ -28,6 +28,7 @@ from unittest import mock
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
+import exiftool_fields  # noqa: E402
 import own_home  # noqa: E402
 import page_writes  # noqa: E402
 import photo_rows  # noqa: E402
@@ -40,6 +41,7 @@ from tagpup import runtime as runtimes  # noqa: E402
 from tagpup.core import paths  # noqa: E402
 from tagpup.core.library import Library  # noqa: E402
 from tagpup.core.result import Conflict, Result  # noqa: E402
+from tagpup.files import field_values  # noqa: E402
 from tagpup.jobs import indexing as indexing_jobs  # noqa: E402
 from tagpup.mcp import server as mcp_server  # noqa: E402
 from tagpup.services import libraries as library_actions  # noqa: E402
@@ -72,8 +74,9 @@ class Twins(unittest.TestCase):
         self.plain = rl.Side(self.home, "plain", real=2, bulk=15, outside=1)
         self.rooted = rl.Side(self.home, "rooted", real=2, bulk=15, outside=1)
         if EXIFTOOL:
-            for side in (self.plain, self.rooted):
-                side.tagged_before()
+            with field_values.opened(EXIFTOOL) as fields:
+                for side in (self.plain, self.rooted):
+                    side.tagged_before(fields)
         adopted = self.rooted.adopt()
         self.assertTrue(adopted.ok and not adopted.refused, adopted.message())
         self.assertEqual(1, len(self.rooted.library_roots()))
@@ -128,7 +131,8 @@ class TheOwnersFlows(Twins):
 
     def test_opening_a_folder(self):
         def flow(side):
-            found = photo_actions.scan_folder(side.library, side.pictures, EXIFTOOL)
+            with field_values.opened(EXIFTOOL) as fields:
+                found = photo_actions.scan_folder(side.library, side.pictures, fields)
             return sorted((key, record["path"], record["tags"]) for key, record in found.items())
         listed = self.both(flow)
         self.assertEqual(6, len(listed), "the six real photos")
@@ -141,7 +145,7 @@ class TheOwnersFlows(Twins):
     def test_a_tag_save_with_its_rename(self):
         def flow(side):
             result = tagging.save_photo(side.library, side.real[0], "Start line", ["Activity/Sailing", "Harbour"],
-                                        None, EXIFTOOL, FORMAT, base=page_writes.base(side.library, side.real[0]))
+                                        None, exiftool_fields.opened(self, EXIFTOOL), FORMAT, base=page_writes.base(side.library, side.real[0]))
             return [result.attempted, result.changed, result.errors, result.refused, result.details.get("new_path"),
                     result.details.get("renamed"), self.seen(side)]
         found = self.both(flow)
@@ -150,9 +154,9 @@ class TheOwnersFlows(Twins):
 
     def test_bulk_tags_and_their_undo(self):
         def flow(side):
-            result = tagging.change_tags(side.library, side.real, ["Bulk"], ["Activity/Sailing"], EXIFTOOL)
+            result = tagging.change_tags(side.library, side.real, ["Bulk"], ["Activity/Sailing"], exiftool_fields.opened(self, EXIFTOOL))
             changed = [result.attempted, result.changed, result.errors, result.refused, self.seen(side)]
-            undone = journal_service.undo(side.library, result.details["change"], apply=True, exiftool_path=EXIFTOOL)
+            undone = journal_service.undo(side.library, result.details["change"], apply=True, fields=exiftool_fields.opened(self, EXIFTOOL))
             return [changed, undone.changed, undone.errors, undone.refused, self.seen(side)]
         found = self.both(flow)
         self.assertEqual(6, found[0][1])
@@ -168,7 +172,7 @@ class TheOwnersFlows(Twins):
         def flow(side):
             change = before[side.label][0]["id"]
             refusals = journal_service.refusals(side.library, [{"id": change, "operation": before[side.label][0]["operation"]}])
-            undone = journal_service.undo(side.library, change, apply=True, exiftool_path=EXIFTOOL)
+            undone = journal_service.undo(side.library, change, apply=True, fields=exiftool_fields.opened(self, EXIFTOOL))
             return [refusals, undone.changed, undone.errors, undone.refused, self.seen(side)]
         found = self.both(flow)
         self.assertEqual(2, found[1])
@@ -178,11 +182,11 @@ class TheOwnersFlows(Twins):
     def test_smart_rename_and_its_undo(self):
         def flow(side):
             with mock.patch("tagpup.services.photos.preserve_names", return_value=Result()):
-                renamed = photo_actions.smart_rename(side.library, side.real[:4], "Regatta", FORMAT, EXIFTOOL)
+                renamed = photo_actions.smart_rename(side.library, side.real[:4], "Regatta", FORMAT, exiftool_fields.opened(self, EXIFTOOL))
             names = [renamed.attempted, renamed.changed, renamed.errors, renamed.refused,
                      sorted(renamed.details.get("renamed", {}).items()), renamed.details.get("index_rows_moved"),
                      self.seen(side)]
-            undone = journal_service.undo(side.library, renamed.details["change"], apply=True, exiftool_path=EXIFTOOL)
+            undone = journal_service.undo(side.library, renamed.details["change"], apply=True, fields=exiftool_fields.opened(self, EXIFTOOL))
             return [names, undone.changed, undone.errors, undone.refused, self.seen(side)]
         found = self.both(flow)
         self.assertEqual(4, found[0][1])
@@ -194,7 +198,7 @@ class TheOwnersFlows(Twins):
                 os.remove(path)
                 return True
             with mock.patch("tagpup.files.recycle_bin.send_to_recycle_bin", side_effect=recycle):
-                result = photo_actions.delete(side.library, side.real[0], None)
+                result = photo_actions.delete(side.library, side.real[0], exiftool_fields.opened(self, None))
             return [result.attempted, result.changed, result.errors, result.details.get("removed"), self.seen(side)]
         found = self.both(flow)
         self.assertEqual({"faces": 1, "photos": 1}, found[3])
@@ -212,7 +216,8 @@ class TheOwnersFlows(Twins):
                 asked.append(sorted(folders_to_index))
                 return Result(attempted=len(folders_to_index), changed=len(folders_to_index))
 
-            result = sync.sync(side.library, apply=True, exiftool_path=EXIFTOOL, queue=queue, roots=[side.pictures])
+            with field_values.opened(EXIFTOOL) as fields:
+                result = sync.sync(side.library, apply=True, fields=fields, queue=queue, roots=[side.pictures])
             counts = {k: v for k, v in result.details["counts"].items() if isinstance(v, int)}
             return [counts, result.changed, result.ok, asked, result.details["changed"], self.seen(side)]
         found = self.both(flow)
@@ -225,7 +230,8 @@ class TheOwnersFlows(Twins):
 
     def test_a_sync_that_finds_nothing_wrong_reads_nothing(self):
         for side in (self.plain, self.rooted):
-            result = sync.sync(side.library, apply=False, exiftool_path=EXIFTOOL, roots=[side.pictures])
+            with field_values.opened(EXIFTOOL) as fields:
+                result = sync.sync(side.library, apply=False, fields=fields, roots=[side.pictures])
             self.assertEqual(0, result.details["counts"]["moved"], side.label)
             self.assertEqual(0, result.details["counts"]["changed"], side.label)
             self.assertEqual(0, result.details["counts"]["new"], side.label)
@@ -401,7 +407,7 @@ class WhenTheMachineMovesTheRoot(Twins):
     def test_the_flows_work_against_the_new_place(self):
         self.move_the_root()
         target = os.path.join(self.moved, "2024 Regatta", "IMG_1001.jpg")
-        result = tagging.change_tags(self.rooted.library, [target], ["At the share"], [], EXIFTOOL)
+        result = tagging.change_tags(self.rooted.library, [target], ["At the share"], [], exiftool_fields.opened(self, EXIFTOOL))
         self.assertEqual((1, []), (result.changed, result.errors))
         conn = db.connect(db.readonly_uri(self.rooted.db_path), uri=True)
         try:
@@ -413,22 +419,25 @@ class WhenTheMachineMovesTheRoot(Twins):
         self.assertEqual(1, len([p for p in self.rooted.raw_paths() if p.endswith("IMG_1001.jpg")]))
         # The file at the old place is another copy: written to, it is written under the same row
         # (the two places are one root's, and the page says which one writes go to).
-        undone = journal_service.undo(self.rooted.library, result.details["change"], apply=True, exiftool_path=EXIFTOOL)
+        undone = journal_service.undo(self.rooted.library, result.details["change"], apply=True, fields=exiftool_fields.opened(self, EXIFTOOL))
         self.assertEqual(1, undone.changed, undone.errors)
 
     @requires_exiftool
     def test_opening_a_folder_and_a_sync_at_the_new_place_say_what_they_said_at_the_old(self):
         """The same photos, at the new place: the rows describe their files there as they
         described them at the old one, so nothing is read again and nothing is missing."""
-        at_the_old_place = photo_actions.scan_folder(self.rooted.library, self.rooted.pictures, EXIFTOOL)
+        with field_values.opened(EXIFTOOL) as fields:
+            at_the_old_place = photo_actions.scan_folder(self.rooted.library, self.rooted.pictures, fields)
         self.move_the_root(keep_old=False)
         # copytree kept each file's modified time: the rows' stamps match the copies.
-        at_the_new_place = photo_actions.scan_folder(self.rooted.library, self.moved, EXIFTOOL)
+        with field_values.opened(EXIFTOOL) as fields:
+            at_the_new_place = photo_actions.scan_folder(self.rooted.library, self.moved, fields)
         self.assertEqual(
             self.rooted.norm(sorted((r["path"], r["tags"], r["size"]) for r in at_the_old_place.values())),
             self.rooted.norm(sorted((r["path"], r["tags"], r["size"]) for r in at_the_new_place.values()),
                              base=os.path.dirname(self.moved)))
-        result = sync.sync(self.rooted.library, apply=False, exiftool_path=EXIFTOOL, roots=[self.moved])
+        with field_values.opened(EXIFTOOL) as fields:
+            result = sync.sync(self.rooted.library, apply=False, fields=fields, roots=[self.moved])
         counts = result.details["counts"]
         self.assertEqual((0, 0, 0), (counts["moved"], counts["changed"], counts["new"]))
         self.assertEqual(self.before, self.rooted.dump(), "a dry run at the new place wrote to the library")

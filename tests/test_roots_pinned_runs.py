@@ -18,6 +18,7 @@ from unittest import mock
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
+import exiftool_fields  # noqa: E402
 import own_home  # noqa: E402
 import roots_library as rl  # noqa: E402
 from click.testing import CliRunner  # noqa: E402
@@ -114,7 +115,7 @@ class AChangeOfPhotoFiles(PinnedRuns):
             return Result()
 
         with mock.patch.object(file_changes, "_write_fields", write):
-            file_changes.write_fields(self.library, "test", rl.EXIFTOOL, [self.side.real[0]], read=[],
+            file_changes.write_fields(self.library, "test", exiftool_fields.opened(self, rl.EXIFTOOL), [self.side.real[0]], read=[],
                                       plan_one=None)
         self.assertEqual([self.side.pictures], seen)
         self.assertEqual(self.copy, self.place_seen_by_a_new_connection())
@@ -130,7 +131,7 @@ class AChangeOfPhotoFiles(PinnedRuns):
 
         before = self.side.dump(leave_out=("roots", "generations", "changes", "change_rows", "schema_version"))
         with mock.patch.object(file_changes, "_write_fields", write):
-            result = file_changes.write_fields(self.library, "test", rl.EXIFTOOL, [self.side.real[0]], read=[],
+            result = file_changes.write_fields(self.library, "test", exiftool_fields.opened(self, rl.EXIFTOOL), [self.side.real[0]], read=[],
                                                plan_one=None)
         self.assertEqual(roots_service.STOPPED, result.refused)
         self.assertEqual(0, result.changed)
@@ -140,14 +141,14 @@ class AChangeOfPhotoFiles(PinnedRuns):
 
     def test_a_change_in_a_library_this_machine_does_not_place_is_refused_in_words_and_writes_nothing(self):
         os.remove(config.machine_roots_path())
-        result = file_changes.write_fields(self.library, "test", rl.EXIFTOOL, [self.side.real[0]], read=[],
+        result = file_changes.write_fields(self.library, "test", exiftool_fields.opened(self, rl.EXIFTOOL), [self.side.real[0]], read=[],
                                            plan_one=None)
         self.assertIn("machine_roots.json", result.refused or "")
         self.assertEqual(0, result.changed)
         # A service that looks at the rows first is refused by the store, as it always was, naming the
         # same file; the servers answer it before it gets there (tagpup.web.roots_gate).
         with self.assertRaises(paths.UnmappedRoot) as why:
-            tagging.change_tags(self.library, self.side.real[:1], ["Harbour"], [], rl.EXIFTOOL)
+            tagging.change_tags(self.library, self.side.real[:1], ["Harbour"], [], exiftool_fields.opened(self, rl.EXIFTOOL))
         self.assertIn("machine_roots.json", str(why.exception))
 
     def test_a_rename_raises_the_stop_for_its_caller(self):
@@ -167,7 +168,7 @@ class AChangeOfPhotoFiles(PinnedRuns):
         self.assertTrue(os.path.exists(old), "nothing was renamed")
 
     def test_an_ordinary_tag_write_still_works_pinned(self):
-        result = tagging.change_tags(self.library, self.side.real[:1], ["Harbour"], [], rl.EXIFTOOL)
+        result = tagging.change_tags(self.library, self.side.real[:1], ["Harbour"], [], exiftool_fields.opened(self, rl.EXIFTOOL))
         self.assertIsNone(result.refused, result.refused)
         self.assertEqual(1, result.changed)
 

@@ -124,7 +124,7 @@ def usage(library, node_id):
             "affected_photos": carrying[:100], "faces_named": named, "history_rows_if_forced": 3 * named}
 
 
-def delete(library, node_id, action, target, exiftool_path, force=False):
+def delete(library, node_id, action, target, fields, force=False):
     """Take a node, and every node under it, out of the tree and off the photos carrying
     them: removed, or with `action` "move", replaced by the tag `target`, under which
     the branch goes on in the tree. Deleting in the tree view.
@@ -162,12 +162,12 @@ def delete(library, node_id, action, target, exiftool_path, force=False):
         return result
     # A move goes on whether or not photos carry the tag: a crash between the last file and the tree move leaves none, and the
     # branch must still go to its new place.
-    _retag(library, old, new, list(carrying), exiftool_path, result, always_move=action == "move", force=force)
+    _retag(library, old, new, list(carrying), fields, result, always_move=action == "move", force=force)
     result.details["tag"] = old
     return result
 
 
-def rename(library, node_id, new_name, exiftool_path):
+def rename(library, node_id, new_name, fields):
     """Give a node a new name: the node, the nodes under it, and every photo carrying any
     of them. For a node holding faces, the faces named for it and each photo's list of
     people too. Renaming in the tree view.
@@ -206,14 +206,14 @@ def rename(library, node_id, new_name, exiftool_path):
     # node (a group's faces are those of everyone under it; their path changed), and for a person, those that now carry the
     # new name.
     under = [each["id"] for each in taxonomy.branch(library.path, old)] if node["has_face"] else []
-    if not _rename_in_place(library, old, new, exiftool_path, result):
+    if not _rename_in_place(library, old, new, fields, result):
         return result
     leaf = len(under) == 1
     result.details["faces_renamed"] = _faces_of(library, under, named=vocabulary.leaf_of(new) if leaf else None)
     return result
 
 
-def merge(library, source, target, exiftool_path, retire=False, apply=False, force=False):
+def merge(library, source, target, fields, retire=False, apply=False, force=False):
     """Rename the tag `source` to `target` everywhere it lives, joining it with `target`
     where that is a tag already -- or, with `retire`, take it off everything. TagTuner's
     Rename, Merge and Retire.
@@ -274,7 +274,7 @@ def merge(library, source, target, exiftool_path, retire=False, apply=False, for
     if not apply:
         return result
 
-    if _retag(library, source, target or None, list(carrying), exiftool_path, result, always_move=True, force=force):
+    if _retag(library, source, target or None, list(carrying), fields, result, always_move=True, force=force):
         db.write_with_connection(library.path, lambda conn: taxonomy.forget_tag_embeddings(conn, source),
                                  label="tag embeddings of %s" % source)
         result.details["applied"] = True
@@ -284,7 +284,7 @@ def merge(library, source, target, exiftool_path, retire=False, apply=False, for
     return result
 
 
-def rename_person(library, person, new_name, exiftool_path):
+def rename_person(library, person, new_name, fields):
     """Rename ONE person: the one picked -- `person` is the id of their node, or a tag path or a name (a name two people have
     is refused, naming them) -- everywhere: their node in the tree (its id stays, so their faces and the photos' lists follow it
     and take the new name in the same transaction), and the photos carrying their tag. TagTuner's Rename Person.
@@ -327,7 +327,7 @@ def rename_person(library, person, new_name, exiftool_path):
     try:
         # The photo files first, then the node with its faces' cache in one transaction (_retag): a rename stopped half way
         # leaves the tree as it was.
-        if not _rename_in_place(library, found.tag, new_tag, exiftool_path, result):
+        if not _rename_in_place(library, found.tag, new_tag, fields, result):
             return result
         result.details["faces_renamed"] = _faces_of(library, [found.id], named=new_name)   # counted after the write
     except Exception as e:
@@ -387,7 +387,7 @@ def _refuse_under_person(library, tag, result):
     return False
 
 
-def _retag(library, old, new, carrying, exiftool_path, result, always_move=False, add_up=False, force=False, rename=False):
+def _retag(library, old, new, carrying, fields, result, always_move=False, add_up=False, force=False, rename=False):
     """Take the tag `old` off the photos in `carrying` -- replaced by `new`, if given --
     and then out of its place in the tree: its branch moved under `new`, joining the
     nodes there, or taken out. The ONE place that orders a tag-tree edit against its photo files, for a delete, a merge, a
@@ -415,7 +415,7 @@ def _retag(library, old, new, carrying, exiftool_path, result, always_move=False
         if new and not rename:
             db.write_with_connection(library.path, lambda conn: taxonomy.add_node(conn, new),
                                      label="tag tree: add %s" % new)
-        rewritten, unwritten, stopped, failed = _rewrite(library, carrying, old, new, exiftool_path)
+        rewritten, unwritten, stopped, failed = _rewrite(library, carrying, old, new, fields)
         _name_failed(result, failed)
     _count(result, len(carrying), rewritten, add_up)
     if stopped:
@@ -467,12 +467,12 @@ def _tree_refusal(library, old, new, make_target):
     return None
 
 
-def _rename_in_place(library, old, new, exiftool_path, result, add_up=False):
+def _rename_in_place(library, old, new, fields, result, add_up=False):
     """Rewrite the photos carrying the branch `old`, then move it to the free place `new` in the tree (_retag, which orders
     the two). A photo that could not be rewritten keeps the old tag, and the Result fails for it; the tree keeps the old
     name too, until the edit is made again. Returns whether the tree was moved."""
     carrying = list(photos.carrying(library.path, old))
-    return _retag(library, old, new, carrying, exiftool_path, result, always_move=True, add_up=add_up, rename=True)
+    return _retag(library, old, new, carrying, fields, result, always_move=True, add_up=add_up, rename=True)
 
 
 #: The most photos a reply names as not rewritten; the rest are counted.
@@ -487,7 +487,7 @@ def _name_failed(result, failed):
     result.details["failed_count"] = result.details.get("failed_count", 0) + len(failed)
 
 
-def _rewrite(library, carrying, old, new, exiftool_path):
+def _rewrite(library, carrying, old, new, fields):
     """(rewritten, not rewritten, why it was stopped or None, [(path, why)] of the photos that failed) of the photos in
     `carrying` (tagging.replace_tag). A photo whose file is gone is skipped, as one that does not carry the tag.
 
@@ -497,7 +497,7 @@ def _rewrite(library, carrying, old, new, exiftool_path):
     photo carried (docs/findings.md, #44). What is neither rewritten nor skipped -- an
     error, or a photo whose row could not be read -- may still carry it.
     """
-    outcome = tagging.replace_tag(library, carrying, old, new, exiftool_path)
+    outcome = tagging.replace_tag(library, carrying, old, new, fields)
     return outcome.changed, len(carrying) - outcome.changed - len(outcome.skipped), outcome.refused, outcome.errors
 
 

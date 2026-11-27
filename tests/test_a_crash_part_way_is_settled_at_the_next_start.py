@@ -34,6 +34,7 @@ import unittest
 from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import exiftool_fields  # noqa: E402
 import photo_rows  # noqa: E402
 from face_rows import add_face  # noqa: E402
 from test_file_journal import EXIFTOOL, Crash, FilesCase, crash_at, cut_patch, field_of, keywords_of, \
@@ -172,12 +173,12 @@ class AnInPlacePatchCutShort(FilesCase):
     def replace(self, cutting=None, step=None):
         with cutting if cutting is not None else contextlib.nullcontext(), \
                 mock.patch.object(file_changes, "_reached", side_effect=crash_at(step) if step else None):
-            return tagging.replace_tag(self.library, [self.a], "Beach", "Shore", EXIFTOOL)
+            return tagging.replace_tag(self.library, [self.a], "Beach", "Shore", exiftool_fields.opened(self, EXIFTOOL))
 
     def shift(self, cutting=None, step=None):
         with cutting if cutting is not None else contextlib.nullcontext(), \
                 mock.patch.object(file_changes, "_reached", side_effect=crash_at(step) if step else None):
-            return photos.shift_date_taken(self.library, [self.a], 60, EXIFTOOL)
+            return photos.shift_date_taken(self.library, [self.a], 60, exiftool_fields.opened(self, EXIFTOOL))
 
     def killed(self, cutting=None, step=None, writing=None):
         with self.assertRaises(Crash):
@@ -319,7 +320,7 @@ class APictureAWriteDamagesTwice(FilesCase):
         found = bake.WRITTEN[bake.FACES_FOUND]
         with mock.patch.object(file_changes, "_reached", side_effect=crash_at("plan committed")):
             with self.assertRaises(Crash):
-                file_changes.write_fields(self.library, baking.INDEX_OPERATION, EXIFTOOL, [self.a], [found],
+                file_changes.write_fields(self.library, baking.INDEX_OPERATION, exiftool_fields.opened(self, EXIFTOOL), [self.a], [found],
                                           lambda _path, _held: file_changes.Plan(after={found: ["0"]}))
         change = self.last_change()
         self.execute("UPDATE changes SET owner = ? WHERE id = ?", (GONE, change))
@@ -337,7 +338,7 @@ class APictureAWriteDamagesTwice(FilesCase):
         found = bake.WRITTEN[bake.FACES_FOUND]
         with mock.patch.object(file_changes, "_reached", side_effect=crash_at("plan committed")):
             with self.assertRaises(Crash):
-                file_changes.write_fields(self.library, baking.INDEX_OPERATION, EXIFTOOL, [self.a], [found],
+                file_changes.write_fields(self.library, baking.INDEX_OPERATION, exiftool_fields.opened(self, EXIFTOOL), [self.a], [found],
                                           lambda _path, _held: file_changes.Plan(after={found: ["0"]}))
         change = self.last_change()
         self.execute("UPDATE changes SET owner = ? WHERE id = ?", (GONE, change))

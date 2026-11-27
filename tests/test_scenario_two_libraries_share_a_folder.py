@@ -23,6 +23,7 @@ import unittest
 from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import exiftool_fields  # noqa: E402
 import fake_exiftool  # noqa: E402
 import own_home  # noqa: E402
 import photo_rows  # noqa: E402
@@ -160,7 +161,7 @@ class SharedFolderTwoLibraries(unittest.TestCase):
         with mock.patch("tagpup.files.field_values.Fields.whole", autospec=True,
                         side_effect=reads.whole), \
                 mock.patch("tagpup.files.exiftool_session.ExifToolSession", side_effect=reads.session):
-            return sync.sync(library, apply=True, exiftool_path="exiftool", **kwargs)
+            return sync.sync(library, apply=True, **kwargs)
 
     def test_a_write_through_one_library_never_reaches_the_others_tree_or_rows(self):
         meet_photo = self.photo(self.meet, "meet_01.jpg")
@@ -170,7 +171,7 @@ class SharedFolderTwoLibraries(unittest.TestCase):
         files = {meet_photo: []}
         session, _et = exiftool(files)
         with mock.patch("tagpup.files.exiftool_session.ExifToolSession", session):
-            result = tagging.change_tags(self.alpha, [meet_photo], ["Trips/Meet"], [], "exiftool")
+            result = tagging.change_tags(self.alpha, [meet_photo], ["Trips/Meet"], [], exiftool_fields.opened(self, "exiftool"))
         self.assertEqual((1, 1), (result.attempted, result.changed))
 
         self.assertEqual(["Trips/Meet"], self.tags_of(self.alpha_path, meet_photo))
@@ -190,7 +191,7 @@ class SharedFolderTwoLibraries(unittest.TestCase):
         files = {meet_photo: []}
         session, _et = exiftool(files)
         with mock.patch("tagpup.files.exiftool_session.ExifToolSession", session):
-            tagging.change_tags(self.alpha, [meet_photo], ["Trips/Meet"], [], "exiftool")
+            tagging.change_tags(self.alpha, [meet_photo], ["Trips/Meet"], [], exiftool_fields.opened(self, "exiftool"))
         later = os.stat(meet_photo).st_mtime + 10
         os.utime(meet_photo, (later, later))
         self.truth["meet_01.jpg"] = {"XMP:Subject": ["Trips/Meet"]}
@@ -304,7 +305,7 @@ class TwoLibrariesAdoptEachOthersBake(unittest.TestCase):
         for name in ("alpha", "beta"):
             self.assertIsInstance(self.current_in(name, a), baking.Current, name)
 
-        turned = photos.rotate(Library(self.libraries["alpha"]), a, "right", EXIFTOOL)
+        turned = photos.rotate(Library(self.libraries["alpha"]), a, "right", exiftool_fields.opened(self, EXIFTOOL))
         self.assertTrue(turned.changed, turned.refused or turned.errors)
         self.index("alpha")   # alpha bakes the turned picture
         held = baked_files.held(a)

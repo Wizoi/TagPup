@@ -159,8 +159,8 @@ def build():
     def photo_against_file(library: str, photo_id: int, reveal: bool = False) -> dict[str, Any]:
         def read():
             found = find_library(library)
-            return inspect.photo_against_file(found, photo_id, runtimes.exiftool(found, runtimes.peek_settings(found)),
-                                              reveal)
+            with runtimes.fields(found, runtimes.peek_settings(found)) as fields:
+                return inspect.photo_against_file(found, photo_id, fields, reveal)
         return _answer(read, reveal)
 
     @tool("The faces in a photo, by photo id: each face's id, box, whether it is named and by whom "

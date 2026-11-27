@@ -78,7 +78,8 @@ def undo_change(change_id):
     body = request.get_json(silent=True) or {}
     apply = body.get("apply") is True
     try:
-        result = journal_service.undo(library, change_id, apply=apply, exiftool_path=state.exiftool(library))
+        with state.fields(library) as fields:
+            result = journal_service.undo(library, change_id, apply=apply, fields=fields)
     except responses.ANSWERED as why:
         return responses.of(why)
     except Exception as e:

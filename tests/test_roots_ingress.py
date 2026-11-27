@@ -21,6 +21,7 @@ from unittest import mock
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
+import exiftool_fields  # noqa: E402
 import own_home  # noqa: E402
 import page_writes  # noqa: E402
 import photo_rows  # noqa: E402
@@ -37,6 +38,7 @@ from tagpup.services import roots as roots_service  # noqa: E402
 from tagpup.store import checks, db, file_journal  # noqa: E402
 from tagpup.web import app as web  # noqa: E402
 from tagpup.web import roots_gate, roots_ingress, tagpup_routes  # noqa: E402
+from tagpup.files import field_values  # noqa: E402
 
 WINDOWS = os.name == "nt"
 LIBRARY = "photo_index"
@@ -330,7 +332,8 @@ class AnUndoOfAnEarlierChange(unittest.TestCase):
     def test_a_change_recorded_before_the_adoption_is_undone_at_the_first_place(self):       # #484
         home = own_home.for_test(self, prefix="roots_undo_")
         side = rl.Side(home, LIBRARY, real=2, bulk=0, outside=0)
-        before = side.tagged_before()
+        with field_values.opened(rl.EXIFTOOL) as fields:
+            before = side.tagged_before(fields)
         self.assertEqual(2, before.changed, before.message())
         self.assertIsNone(side.adopt().refused)
         first = os.path.join(home.root, "Copy", "Pictures")
@@ -346,7 +349,7 @@ class AnUndoOfAnEarlierChange(unittest.TestCase):
                         "an undo would write the old copy: " + files[0].path)
         moved = first + side.real[0][len(side.pictures):]
         self.assertIn("Harbour", keywords(moved))
-        undone = journal_service.undo(side.library, change, apply=True, exiftool_path=rl.EXIFTOOL)
+        undone = journal_service.undo(side.library, change, apply=True, fields=exiftool_fields.opened(self, rl.EXIFTOOL))
         self.assertEqual((True, 2), (undone.ok, undone.changed), undone.message())
         self.assertNotIn("Harbour", keywords(moved))
         self.assertIn("Harbour", keywords(side.real[0]), "the old copy was written")
@@ -452,7 +455,7 @@ class AWriteStoppedByARootChange(unittest.TestCase):
 
     def test_the_change_is_finished_at_once_so_what_was_written_can_be_undone(self):               # #486
         result = self.stopped(lambda: tagging.change_tags(self.library, self.side.real[:3], ["Harbour"], [],
-                                                          rl.EXIFTOOL))
+                                                          exiftool_fields.opened(self, rl.EXIFTOOL)))
         change = result.details["change"]
         self.assertEqual("applied", file_journal.change(self.side.db_path, change).status)
         states = [row.state for row in file_journal.files_of(self.side.db_path, change)]

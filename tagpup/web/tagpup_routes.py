@@ -223,7 +223,8 @@ def _folder_photos(library, folder, force=False):
     found = None if force else cache.get(folder)
     if not found:
         stamp = cache.stamp()
-        found = cache.put(folder, photo_actions.scan_folder(library, folder, state.exiftool(library)), stamp)
+        with state.fields(library) as fields:
+            found = cache.put(folder, photo_actions.scan_folder(library, folder, fields), stamp)
     return found
 
 
@@ -427,7 +428,8 @@ def folder_auto_apply():
     try:
         # The page's records are told in the order the files were written.
         with file_changes.batch_exclusively(library, "apply suggestions", len(suggestions)):
-            result = tagging_actions.apply_suggestions(library, suggestions, state.exiftool(library))
+            with state.fields(library) as fields:
+                result = tagging_actions.apply_suggestions(library, suggestions, fields)
             if result.refused:
                 return _refused_after_writing(library, result)
             records_written(library, result)
@@ -472,9 +474,9 @@ def folder_rename_photos():
             stamp = photo_actions.file_stamp(photo_path)
             return "mtime_%s" % stamp[0] if stamp else "9999"
 
-        result = photo_actions.smart_rename(
-            library, sorted(photo_paths, key=taken), grouping, state.rename_format(library),
-            state.exiftool(library))
+        with state.fields(library) as fields:
+            result = photo_actions.smart_rename(
+                library, sorted(photo_paths, key=taken), grouping, state.rename_format(library), fields)
         if result.refused:
             return responses.refused(result)
         # What the server keeps follows every photo the rename wrote, and every file it moved aside, whatever stopped
@@ -638,7 +640,8 @@ def library_photo():
         return responses.error(400, "id must be a whole number.")
     photo_id = int(wanted)
     try:
-        return jsonify({"photo": library_view.photo(library, photo_id, lambda: state.exiftool(library))})
+        with state.fields(library) as fields:
+            return jsonify({"photo": library_view.photo(library, photo_id, fields)})
     except responses.ANSWERED as why:
         return responses.of(why)
     except Exception as e:
@@ -710,7 +713,8 @@ def library_bulk_edit():
         # A delete deletes exactly the photos its question named, or nothing (#691).
         bulk_edit.refuse_if_changed(edit, resolved.ids, selection_service.token_of,
                                     lambda ids: selection_service.deleted_for_good(library, ids))
-        out = bulk_edit.run(library, edit, resolved.ids, state.exiftool(library))
+        with state.fields(library) as fields:
+            out = bulk_edit.run(library, edit, resolved.ids, fields)
     except responses.ANSWERED as why:
         return responses.of(why)
     except Exception as e:
@@ -930,7 +934,8 @@ def photo_rotate():
     try:
         # Anything but an explicit direction is refused by the service, with the
         # "rotate direction" kind's message, rather than taken for a right turn.
-        result = photo_actions.rotate(library, photo_path, direction, state.exiftool(library))
+        with state.fields(library) as fields:
+            result = photo_actions.rotate(library, photo_path, direction, fields)
         if result.refused:
             return responses.refused(result)
         if not result.ok:
@@ -957,7 +962,8 @@ def photo_delete():
     if refused:
         return refused
     try:
-        result = photo_actions.delete(library, photo_path, state.exiftool(library), body.get("for_good") is True)
+        with state.fields(library) as fields:
+            result = photo_actions.delete(library, photo_path, fields, body.get("for_good") is True)
         if result.refused:
             # A file its drive's Recycle Bin would not keep: named (`not_kept`), for the page to ask, then send `for_good`.
             not_kept = result.details.get("not_kept")
@@ -1080,8 +1086,8 @@ def photo_smart_rename():
     photo_path = paths.stored(photo_path)
     grouping = (body.get("grouping") or "").strip()
     try:
-        result = photo_actions.smart_rename_one(library, photo_path, grouping, state.rename_format(library),
-                                                state.exiftool(library))
+        with state.fields(library) as fields:
+            result = photo_actions.smart_rename_one(library, photo_path, grouping, state.rename_format(library), fields)
         if result.refused:
             return responses.refused(result)
         if not result.ok:
@@ -1148,9 +1154,10 @@ def _write(library, op, changes, group=None, params=None):
     takes none: an id is checked under this hold), and the records are told under it, in the order the files were
     written. (the Result, {path: (mtime, size) or None} of each photo written). Raises responses.ANSWERED."""
     with file_changes.batch_exclusively(library, photo_writes.OPERATIONS[op], len(changes)):
-        result = photo_writes.write(library, op, changes, state.exiftool(library),
-                                    state.rename_format(library) if op == photo_writes.SET else None,
-                                    group=group, params=params)
+        with state.fields(library) as fields:
+            result = photo_writes.write(library, op, changes, fields,
+                                        state.rename_format(library) if op == photo_writes.SET else None,
+                                        group=group, params=params)
         return result, _told(library, op, changes, result)
 
 

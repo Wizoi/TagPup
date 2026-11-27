@@ -15,6 +15,7 @@ from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import exiftool_fields  # noqa: E402
 import corpus  # noqa: E402
 import own_home  # noqa: E402
 import web_client  # noqa: E402
@@ -38,7 +39,7 @@ class RealFiles(unittest.TestCase):
         self.app, self.home = web_client.app_for(self, "tagpup")
         self.client = self.app.test_client()
         self.vl = ViewLibrary(self, "library", home=self.home)
-        patcher = mock.patch("tagpup.web.state.exiftool", return_value=EXIFTOOL)
+        patcher = mock.patch("tagpup.runtime.exiftool", return_value=EXIFTOOL)
         patcher.start()
         self.addCleanup(patcher.stop)
         self.vl.tree("Trips/Coast", "Old/Stuff")
@@ -99,7 +100,7 @@ class ConnectionsOfABulkWrite(unittest.TestCase):
         self.client = self.app.test_client()
         self.vl = ViewLibrary(self, "library", home=self.home)
         self.library = self.vl.library
-        patcher = mock.patch("tagpup.web.state.exiftool", return_value=EXIFTOOL)
+        patcher = mock.patch("tagpup.runtime.exiftool", return_value=EXIFTOOL)
         patcher.start()
         self.addCleanup(patcher.stop)
         self.vl.tree("Trips/Coast", "Trips/Lakes", "Old/Stuff")
@@ -178,10 +179,10 @@ class ConnectionsOfABulkWrite(unittest.TestCase):
         edit = bulk_edit.prepare(self.library, "tags", {"add": ["Trips/Coast"]})
         with self.counting(), mock.patch.object(file_changes, "_reached", side_effect=crash_at(step, nth=30)):
             with self.assertRaises(Crash):
-                bulk_edit.run(self.library, edit, self.ids, EXIFTOOL)
+                bulk_edit.run(self.library, edit, self.ids, exiftool_fields.opened(self, EXIFTOOL))
         self.assertEqual([], self.left_open(), "a crash left this thread holding a connection to the library")
         self.assertEqual(0, batches.running_here())
-        self.assertEqual(1, file_changes.settle(self.library, EXIFTOOL))
+        self.assertEqual(1, file_changes.settle(self.library, exiftool_fields.opened(self, EXIFTOOL)))
         self.assertEqual(self.PHOTOS, self.tagged())
         self.assertEqual([("applied",)], self.vl.rows("SELECT status FROM changes WHERE operation LIKE 'bulk tags%'"))
 
@@ -221,7 +222,7 @@ class ConnectionsOfABulkWrite(unittest.TestCase):
         with self.counting(), mock.patch.object(file_changes, "_followers", side_effect=followers), \
                 mock.patch.object(db, "write_with_connection", side_effect=write):
             with self.assertRaises(type(error)):
-                bulk_edit.run(self.library, edit, self.ids, EXIFTOOL)
+                bulk_edit.run(self.library, edit, self.ids, exiftool_fields.opened(self, EXIFTOOL))
         self.assertEqual([(0,)], self.vl.rows("SELECT COUNT(*) FROM marker"), "the failed write's row was committed")
         self.assertGreater(len(used), failed["at"], "no write followed the failed one")
         self.assertEqual([], self.left_open())

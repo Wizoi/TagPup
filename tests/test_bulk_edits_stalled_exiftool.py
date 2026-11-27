@@ -14,6 +14,7 @@ from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import exiftool_fields  # noqa: E402
 import test_bulk_edits as T  # noqa: E402
 
 import page_writes  # noqa: E402
@@ -145,8 +146,8 @@ class TheIndexAndSyncReadAShareThatStopsAnswering(unittest.TestCase):
         self.assertEqual(1, len(starts), "one session for the reader's life")
 
     def test_syncs_pairing_read_waits_one_deadline_and_pairs_nothing(self):
-        with mock.patch.object(exiftool_session, "ExifToolSession", StalledSession):
-            by_original, by_identity = relink_photos.claims_of(self.photos)
+        with mock.patch.object(exiftool_session, "ExifToolSession", StalledSession), field_values.opened(None) as fields:
+            by_original, by_identity = relink_photos.claims_of(self.photos, fields)
         self.assertEqual(1, len(StalledSession.calls))
         self.assertEqual(({}, {}), (by_original, by_identity))
 
@@ -173,12 +174,12 @@ class AnExifToolThatWillNotStart(T.Bulk):
 
     def test_syncs_pairing_read_raises_rather_than_pairing_nothing(self):
         # Pairing nothing would leave a whole sync to remove the rows a DocumentID could have relinked.
-        with self.assertRaises(FileNotFoundError):
-            relink_photos.claims_of(self.photos)
+        with self.assertRaises(FileNotFoundError), field_values.opened(None) as fields:
+            relink_photos.claims_of(self.photos, fields)
 
     def test_smart_renames_read_raises_rather_than_reading_no_caption(self):
         with self.assertRaises(FileNotFoundError):
-            names.read_for_renaming("exiftool", self.photos)
+            names.read_for_renaming(exiftool_fields.opened(self, "exiftool"), self.photos)
 
     def test_one_reader_raises_on_a_read_leaves_the_index_read_unread_and_tries_the_start_again(self):
         with field_values.opened("exiftool") as reader:
@@ -194,7 +195,7 @@ class AnExifToolThatWillNotStart(T.Bulk):
         from tagpup.services import bake_after_index
         folder = os.path.dirname(self.photos[0])
         with self.assertRaises(field_values.Refused):
-            bake_after_index.bake_folders(self.library, "exiftool", "detector", [folder], {})
+            bake_after_index.bake_folders(self.library, exiftool_fields.opened(self, "exiftool"), "detector", [folder], {})
         self.assertEqual(1, WillNotStart.starts, "one start attempt, not one per photo")
 
     def test_the_change_is_refused_before_its_record(self):
@@ -324,7 +325,7 @@ class AShareThatStopsAnsweringMidWrite(T.Bulk):
         self.assertEqual((self.PHOTOS - k + 1, k - 1, 0), (again["changed"], again["unchanged"], again["error_count"]))
         self.assertEqual(self.PHOTOS, self.coast())
         # The stopped change is undone as any other: the files it wrote, and only those, lose the keyword.
-        undone = journal.undo(self.library, change_id, apply=True, exiftool_path="exiftool")
+        undone = journal.undo(self.library, change_id, apply=True, fields=exiftool_fields.opened(self, "exiftool"))
         self.assertEqual((None, k - 1), (undone.refused, undone.changed))
         self.assertEqual(self.PHOTOS - k + 1, self.coast())
 
@@ -370,7 +371,7 @@ class AShareThatStopsAnsweringMidWrite(T.Bulk):
         self.files.on_write, self.files.on_read = None, read
         reads = self.files.reads.get(under_way[0], 0)
         with mock.patch.object(shares, "stamp_of", lambda path: shares.UNANSWERED if paths.key(path) in under_way else real(path)):
-            saved = tagging.save_photo(self.library, others[0], "", ["Trips/Lakes"], None, "exiftool", "",
+            saved = tagging.save_photo(self.library, others[0], "", ["Trips/Lakes"], None, exiftool_fields.opened(self, "exiftool"), "",
                                        base=bases[0])
         self.assertTrue(saved.ok, saved.errors)
         self.assertEqual(reads, self.files.reads.get(under_way[0], 0), "the file on the share away was read")
@@ -380,14 +381,46 @@ class AShareThatStopsAnsweringMidWrite(T.Bulk):
         self.assertNotEqual("applied", self.changes("bulk tags%")[0][2])
         # The share answers again: the next write settles the file under way by what it holds (what it held: written on).
         self.files.on_read = None
-        again = tagging.save_photo(self.library, others[1], "", ["Trips/Lakes"], None, "exiftool", "", base=bases[1])
+        again = tagging.save_photo(self.library, others[1], "", ["Trips/Lakes"], None, exiftool_fields.opened(self, "exiftool"), "", base=bases[1])
         self.assertTrue(again.ok, again.errors)
         self.assertEqual([(change_id, "applied")], [(each[0], each[2]) for each in self.changes("bulk tags%")])
         self.assertEqual([("done", k)],
                          self.vl.rows("SELECT state, COUNT(*) FROM change_files WHERE change_id = ? GROUP BY state ORDER BY state",
                                       change_id))
-        undone = journal.undo(self.library, change_id, apply=True, exiftool_path="exiftool")
+        undone = journal.undo(self.library, change_id, apply=True, fields=exiftool_fields.opened(self, "exiftool"))
         self.assertEqual((None, k), (undone.refused, undone.changed))
+
+    def test_a_file_left_under_way_exiftool_does_not_answer_for_does_not_fail_a_save_of_another_photo(self):
+        """The share holding the file a stopped change left under way answers a look, but ExifTool does not answer for the
+        file: the save of another photo settles the stopped change first, through an ExifTool of its own, whose deadline is
+        the settle's, never the save's; the save is written and the change left for the next settle. Break: the settle on
+        the save's own Fields, inside the save's together(): the settle's timeout fails every command of the save after it."""
+        k = batches.CHUNK + 6
+        under_way = []
+
+        def write(path, n):
+            if n == k:
+                under_way.append(paths.key(path))
+                raise exiftool_session.ExifToolTimeout(STALLED)
+        self.files.on_write = write
+        self.tags_edit(add=["Trips/Coast"])
+        ((change_id, _op, _status),) = self.changes("bulk tags%")
+        reached = {photo_id for (photo_id,) in self.vl.rows("SELECT photo_id FROM change_files WHERE change_id = ?", change_id)}
+        other_id = [photo_id for photo_id in self.ids if photo_id not in reached][0]
+        other = self.path(other_id)
+        base = page_writes.base(self.library, other, "exiftool")
+
+        def read(path, _n):
+            if paths.key(path) in under_way:
+                raise exiftool_session.ExifToolTimeout(STALLED)
+        self.files.on_write, self.files.on_read = None, read
+        with field_values.opened("exiftool") as fields:
+            saved = tagging.save_photo(self.library, other, "", ["Trips/Lakes"], None, fields, "", base=base)
+        self.assertTrue(saved.ok, saved.errors)
+        self.assertIn("Trips/Lakes", self.tags(other_id))
+        self.assertEqual([("done", k - 1), ("writing", 1)],
+                         self.vl.rows("SELECT state, COUNT(*) FROM change_files WHERE change_id = ? GROUP BY state ORDER BY state",
+                                      change_id), "the file ExifTool did not answer for is left for the next settle")
 
     def test_a_save_whose_write_the_share_stops_says_so_after_one_deadline(self):
         """A save reports a write's errors, not its refusal: the photo under way is its error. The save passes its own
@@ -407,7 +440,7 @@ class AShareThatStopsAnsweringMidWrite(T.Bulk):
         path = self.path(self.ids[0])
         base = page_writes.base(self.library, path, "exiftool")
         self.files.on_write, self.files.on_read = write, read
-        saved = tagging.save_photo(self.library, path, "", ["Trips/Coast"], None, "exiftool", "", base=base)
+        saved = tagging.save_photo(self.library, path, "", ["Trips/Coast"], None, exiftool_fields.opened(self, "exiftool"), "", base=base)
         self.assertFalse(saved.ok)
         self.assertIn("ExifTool stopped answering as it was written", str(saved.errors[0][1]))
         self.assertEqual(["write"], waited, "the commands that waited out a deadline")
@@ -416,7 +449,7 @@ class AShareThatStopsAnsweringMidWrite(T.Bulk):
     def test_the_photo_a_stall_came_before_the_write_of_is_said_not_begun(self):
         self.stall_at(2)
         two = [self.path(photo_id) for photo_id in self.ids[:2]]
-        result = tagging.change_tags(self.library, two, ["Trips/Coast"], [], "exiftool", stop_at_first_error=False)
+        result = tagging.change_tags(self.library, two, ["Trips/Coast"], [], exiftool_fields.opened(self, "exiftool"), stop_at_first_error=False)
         self.assertEqual(1, result.changed)
         self.assertEqual(["ExifTool stopped answering before it was written"],
                          [str(why).split(": ", 1)[1].split(",")[0] for _path, why in result.errors])
@@ -463,7 +496,7 @@ class AScratchFileAnInterruptedWriteLeft(T.Bulk):
         self.files.on_write = write
 
     def tag(self, *photos):
-        return tagging.change_tags(self.library, list(photos), ["Trips/Coast"], [], "exiftool", stop_at_first_error=False)
+        return tagging.change_tags(self.library, list(photos), ["Trips/Coast"], [], exiftool_fields.opened(self, "exiftool"), stop_at_first_error=False)
 
     def test_the_share_back_the_next_write_removes_the_scratch_file_and_writes_the_photo(self):
         self.interrupt()

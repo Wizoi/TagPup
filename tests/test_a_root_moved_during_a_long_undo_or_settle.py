@@ -26,6 +26,7 @@ from unittest import mock
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
+import exiftool_fields  # noqa: E402
 import own_home  # noqa: E402
 import roots_library as rl  # noqa: E402
 from test_file_journal import Crash, crash_at  # noqa: E402
@@ -114,12 +115,12 @@ class ALongRun(unittest.TestCase):
             conn.close()
 
     def tag_them_all(self):
-        result = tagging.change_tags(self.library, self.photos, ["Harbour"], [], rl.EXIFTOOL)
+        result = tagging.change_tags(self.library, self.photos, ["Harbour"], [], exiftool_fields.opened(self, rl.EXIFTOOL))
         self.assertEqual(60, result.changed, result.errors)
         return result.details["change"]
 
     def undo(self, change):
-        return journal.undo(self.library, change, apply=True, exiftool_path=rl.EXIFTOOL)
+        return journal.undo(self.library, change, apply=True, fields=exiftool_fields.opened(self, rl.EXIFTOOL))
 
 
 class AnUndo(ALongRun):
@@ -163,7 +164,7 @@ class AnUndo(ALongRun):
         # Left as a crash leaves an undo: released, still being undone, for the next settle.
         self.assertIsNone(file_journal.change(self.library.path, change).owner)
 
-        self.assertEqual(1, file_changes.settle(self.library, rl.EXIFTOOL))
+        self.assertEqual(1, file_changes.settle(self.library, exiftool_fields.opened(self, rl.EXIFTOOL)))
         self.assertEqual(0, self.holding_harbour(self.photos))
         self.assertEqual("undone", file_journal.change(self.library.path, change).status)
 
@@ -186,7 +187,7 @@ class ASettle(ALongRun):
                 if run:
                     run()
                 else:
-                    tagging.change_tags(self.library, self.photos, ["Harbour"], [], rl.EXIFTOOL)
+                    tagging.change_tags(self.library, self.photos, ["Harbour"], [], exiftool_fields.opened(self, rl.EXIFTOOL))
         change = max(each.id for each in file_journal.unfinished(self.library.path))
         conn = db.connect(self.side.db_path)
         try:
@@ -200,7 +201,7 @@ class ASettle(ALongRun):
         change = self.cut_off()
         copied = self.copy_the_photos()
         with mock.patch.object(file_changes, "_reached", side_effect=self.at_the_thirtieth_file(self.move_the_map)):
-            self.assertEqual(1, file_changes.settle(self.library, rl.EXIFTOOL))
+            self.assertEqual(1, file_changes.settle(self.library, exiftool_fields.opened(self, rl.EXIFTOOL)))
         self.assertEqual(60, self.holding_harbour(self.photos), "a photo of the change was left unwritten")
         self.assertEqual((60, 0), self.rows_holding_harbour(), "a row did not follow its file, by the root")
         self.assertEqual(copied, {path: self.bytes_of(path) for path in self.copies()},
@@ -222,7 +223,7 @@ class ASettle(ALongRun):
             self.move_the_map()
             return rename_all(*args, **kwargs)
         with mock.patch.object(names, "rename_all", side_effect=moved_then_renamed):
-            self.assertEqual(1, file_changes.settle(self.library, rl.EXIFTOOL))
+            self.assertEqual(1, file_changes.settle(self.library, exiftool_fields.opened(self, rl.EXIFTOOL)))
         self.assertEqual(60, sum(1 for new in renamed.values() if os.path.exists(new)), "a photo was not renamed again")
         rows = [path for (path,) in self.side.rows("SELECT path FROM photos")]
         self.assertEqual(60, sum(1 for path in rows if path.startswith("@") and "/Renamed_" in path),

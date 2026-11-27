@@ -19,6 +19,7 @@ import unittest
 from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import exiftool_fields  # noqa: E402
 import own_home  # noqa: E402
 import photo_rows  # noqa: E402
 from waiting import wait_until  # noqa: E402
@@ -699,7 +700,7 @@ class TagPupsOwnWrites(Base):
         wait_until(lambda: not watcher.busy(), 60)
 
     def write(self, photos, library=None):
-        written = tagging.change_tags(library or self.harbour, photos, ["Harbour"], [], EXIFTOOL)
+        written = tagging.change_tags(library or self.harbour, photos, ["Harbour"], [], exiftool_fields.opened(self, EXIFTOOL))
         self.assertEqual(len(photos), written.changed, written.refused)
 
     def folder_records(self, library):

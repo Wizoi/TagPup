@@ -32,6 +32,7 @@ from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import exiftool_fields  # noqa: E402
 import own_home  # noqa: E402
 import page_fixtures  # noqa: E402
 import web_client  # noqa: E402
@@ -429,7 +430,7 @@ class DeletingAPhoto(unittest.TestCase):
                 raise moved
             return moved
         with mock.patch("tagpup.files.recycle_bin.send_to_recycle_bin", side_effect=recycle):
-            return photo_actions.delete(self.lib.library, self.photo, None)
+            return photo_actions.delete(self.lib.library, self.photo, exiftool_fields.opened(self, None))
 
     def counts(self, path):
         # Faces by their photo's path, and the faces that point at no photo row at all: a face whose photo row went while

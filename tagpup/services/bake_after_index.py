@@ -42,7 +42,7 @@ import os
 
 from tagpup.core import paths
 from tagpup.core import progress_line
-from tagpup.files import bake, field_values, images, shares
+from tagpup.files import bake, images, shares
 from tagpup.services import baking, file_changes, settings
 from tagpup.services import snapshots as snapshot_service
 from tagpup.store import db, inspection, photo_fingerprints
@@ -136,7 +136,7 @@ class Baked:
                                   conflicts=self.conflicts)
 
 
-def bake_folders(library, exiftool_path, detector, folders, handed, stop=None, each=None):
+def bake_folders(library, fields, detector, folders, handed, stop=None, each=None):
     """Bake the photos of each of `folders` (native folder paths, the photos directly in each) that plan ToBake, a
     folder at a time: Baked. `detector`, the name the library's face detector records its looks under
     (tagpup.services.faces.detector_named); `handed`, {paths.key(path): ((mtime, size), digest of the upright decode)}
@@ -147,7 +147,7 @@ def bake_folders(library, exiftool_path, detector, folders, handed, stop=None, e
     baked, snapshot, walk, chunk_lines = Baked(), [], baking.walk(stop), [True]
     owe_first(library, folders, handed)
     # One deadline for the run (Fields.together): a share away ends it at that folder, the rest baked by the next index.
-    with field_values.opened(exiftool_path) as fields, fields.together():
+    with fields.together():
         if folders:
             fields.ready_to_write()   # an ExifTool that will not start fails the run once, not as an unreadable line per photo
         for number, folder in enumerate(folders, 1):
@@ -176,8 +176,7 @@ def bake_folders(library, exiftool_path, detector, folders, handed, stop=None, e
             if to_bake and not baked.stalled:
                 if not snapshot:
                     snapshot.append(snapshot_service.before_a_long_write(library))
-                written = _write(library, exiftool_path, fields, stored, to_bake, baked,
-                                 say_chunk)
+                written = _write(library, fields, stored, to_bake, baked, say_chunk)
             _adopt(library, unfingerprinted, to_bake, written, handed, baked)
             if baked.stalled or fields.dead:
                 baked.stalled = True
@@ -281,14 +280,14 @@ def _adopt(library, unfingerprinted, to_bake, written, handed, baked):
     baked.adopted += db.write_with_connection(library.path, adopt, label="the fingerprints of the photos whose files hold their bake")
 
 
-def _write(library, exiftool_path, fields, stored, to_bake, baked, on_chunk):
+def _write(library, fields, stored, to_bake, baked, on_chunk):
     """Write the photos of one folder to bake as one internal change, each file read again before its write, and count
     in `baked` what the write reported (its Result: the change is erased once it finishes, its conflicts of NOTES kept); `on_chunk(done, of)` as each
     chunk of its files ends (write_fields)."""
     result = file_changes.write_fields(
-        library, baking.INDEX_OPERATION, exiftool_path, [path for path, _values in to_bake.values()],
+        library, baking.INDEX_OPERATION, fields, [path for path, _values in to_bake.values()],
         list(bake.WRITTEN.values()), lambda path, _held: file_changes.Plan(after=to_bake[paths.key(path)][1]),
-        summary={"folder": stored}, fields=fields, on_chunk=on_chunk)
+        summary={"folder": stored}, on_chunk=on_chunk)
     unanswered = {paths.key(path) for path in result.details.get("not_answered", [])}
     conflicts = len(result.details.get("conflicts", []))
     baked.planned += len(to_bake)

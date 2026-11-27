@@ -19,6 +19,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import own_home  # noqa: E402
 
 from tagpup.core.library import Library  # noqa: E402
+from tagpup.files import field_values  # noqa: E402
 import photo_rows  # noqa: E402
 from tagpup.services import inspect, maintenance  # noqa: E402
 from tagpup.store import db, journal, schema, taxonomy  # noqa: E402
@@ -73,7 +74,8 @@ class APhotoAgainstItsFile(ALibrary):
             "INSERT INTO photos (path, mtime, size, tags, captions, raw_metadata, document_id) VALUES (?,?,?,?,?,?,?)",
             (path, record["mtime"], record["size"], json.dumps(record["tags"]), json.dumps(record["captions"]),
              json.dumps(prefixed, default=str), record.get("document_id")))
-        answer = inspect.photo_against_file(self.library, photo_id, exiftool)
+        with field_values.opened(exiftool) as fields:
+            answer = inspect.photo_against_file(self.library, photo_id, fields)
         self.assertFalse(answer["stale"], answer)
         self.assertEqual([], answer["raw_metadata"]["fields_differing"])
 
@@ -81,7 +83,8 @@ class APhotoAgainstItsFile(ALibrary):
         path = self.photo()
         photo_id = self.execute("INSERT INTO photos (path, mtime, size, tags, raw_metadata) VALUES (?,?,?,?,?)",
                                 (path, 1.0, 1, "[]", "{}"))
-        answer = inspect.photo_against_file(self.library, photo_id, os.path.join(self.home.root, "no-exiftool.exe"))
+        with field_values.opened(os.path.join(self.home.root, "no-exiftool.exe")) as fields:
+            answer = inspect.photo_against_file(self.library, photo_id, fields)
         self.assertTrue(answer["file_exists"])
         self.assertFalse(answer["file_read"])
         self.assertIsNone(answer["stale"])

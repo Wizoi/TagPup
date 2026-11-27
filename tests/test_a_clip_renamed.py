@@ -24,6 +24,7 @@ from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import exiftool_fields  # noqa: E402
 import corpus  # noqa: E402
 import test_a_clip_patched_in_place as patched  # noqa: E402
 import test_a_clip_tagged_through_the_journal as tagged  # noqa: E402
@@ -85,11 +86,11 @@ class AClipRenamed(tagged.ALibraryHoldingAClip):
         self.assertEqual(paths.key(clip_now), paths.key(self.path_of(clip)), "its row follows the file")
         kept, renaming = self.changes_of(clip)
         self.assertEqual([kept, renaming], self.changes_of(photo), "one change of each step, the photo's and the clip's")
-        undone = journal.undo(self.vl.library, renaming, apply=True, exiftool_path=EXIFTOOL)
+        undone = journal.undo(self.vl.library, renaming, apply=True, fields=exiftool_fields.opened(self, EXIFTOOL))
         self.assertEqual((2, []), (undone.changed, undone.errors))
         self.assertEqual(before, self.listed(), "both have their names back")
         self.assertEqual(paths.key(self.clip_path), paths.key(self.path_of(clip)))
-        undone = journal.undo(self.vl.library, kept, apply=True, exiftool_path=EXIFTOOL)
+        undone = journal.undo(self.vl.library, kept, apply=True, fields=exiftool_fields.opened(self, EXIFTOOL))
         self.assertEqual((2, []), (undone.changed, undone.errors))
         self.assertEqual("", self.kept_name(self.clip_path), "and the name it kept goes with its undo")
 
@@ -169,7 +170,8 @@ class AClipRenamed(tagged.ALibraryHoldingAClip):
         reply = self.post("photo/smart-rename", {"path": self.clip_path, "grouping": "Harbour"})
         self.assertEqual(200, reply.status_code, reply.get_json())
         new_path = page_writes.saved(reply.get_json())["new_path"]
-        lookup, by_identity = relink_photos.claims_of([new_path], EXIFTOOL)
+        with field_values.opened(EXIFTOOL) as fields:
+            lookup, by_identity = relink_photos.claims_of([new_path], fields)
         pairs, unmatched = relink_photos.pair([paths.stored(self.clip_path)], lookup, by_identity, {}, set())
         self.assertEqual(([(paths.key(self.clip_path), paths.key(new_path))], []),
                          ([(paths.key(old), paths.key(new)) for old, new in pairs], unmatched))

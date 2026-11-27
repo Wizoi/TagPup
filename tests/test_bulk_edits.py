@@ -16,6 +16,7 @@ from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import exiftool_fields  # noqa: E402
 import photo_rows  # noqa: E402
 import roots_library as rl  # noqa: E402
 import web_client  # noqa: E402
@@ -247,7 +248,7 @@ class Interrupted(Bulk):
         self.files.on_write = die
         edit = bulk_edit.prepare(self.library, "tags", {"add": ["Trips/Coast"]})
         with self.assertRaises(Crash):
-            bulk_edit.run(self.library, edit, self.ids, "exiftool")
+            bulk_edit.run(self.library, edit, self.ids, exiftool_fields.opened(self, "exiftool"))
         self.assertEqual(0, batches.running_here(), "the line is free for the next batch")
         done = [photo_id for photo_id in self.ids if "Trips/Coast" in self.tags(photo_id)]
         self.assertEqual(29, len(done), "the files written before it are written")
@@ -255,7 +256,7 @@ class Interrupted(Bulk):
         self.assertEqual(1, len(change))
         self.assertNotEqual("applied", change[0][2], "and the change says it is not finished")
         self.files.on_write = None
-        self.assertEqual(1, file_changes.settle(self.library, "exiftool"))
+        self.assertEqual(1, file_changes.settle(self.library, exiftool_fields.opened(self, "exiftool")))
         self.assertEqual(self.PHOTOS, len([photo_id for photo_id in self.ids if "Trips/Coast" in self.tags(photo_id)]))
         self.assertEqual("applied", self.changes("bulk tags%")[0][2])
         for photo_id in self.ids:
@@ -273,7 +274,7 @@ class Interrupted(Bulk):
         # The test client answers when the request is done, as the server does whether or not anyone is reading: what the request
         # wrote is in the files, the rows and the journal by then, with nothing left to settle.
         self.tags_edit(add=["Trips/Coast"])
-        self.assertEqual(0, file_changes.settle(self.library, "exiftool"))
+        self.assertEqual(0, file_changes.settle(self.library, exiftool_fields.opened(self, "exiftool")))
         self.assertEqual("applied", self.changes("bulk tags%")[0][2])
 
 
@@ -333,7 +334,7 @@ class WhilePhotosMove(Bulk):
         self.assertEqual(["Trips/Coast"], self.row_tags(self.ids[10]), "its row says what it holds")
         ((change_id, _op, status),) = self.changes("bulk tags%")
         self.assertEqual("applied", status)
-        undone = journal.undo(self.library, change_id, apply=True, exiftool_path="exiftool")
+        undone = journal.undo(self.library, change_id, apply=True, fields=exiftool_fields.opened(self, "exiftool"))
         self.assertEqual((None, self.PHOTOS - 1), (undone.refused, undone.changed))
         self.assertEqual(["Trips/Coast"], self.tags(self.ids[10]), "the undo took back the other program's write")
         self.assertEqual([], self.tags(self.ids[11]))
@@ -349,7 +350,7 @@ class WhilePhotosMove(Bulk):
         edit = bulk_edit.prepare(self.library, "tags", {"add": ["Trips/Coast"]})
         with mock.patch.object(file_changes, "_reached", side_effect=crash_at("plan committed")):
             with self.assertRaises(StoppedAt):
-                bulk_edit.run(self.library, edit, self.ids, "exiftool")
+                bulk_edit.run(self.library, edit, self.ids, exiftool_fields.opened(self, "exiftool"))
         self.files.keep_tags(target, self.tags(self.ids[10]) + ["Trips/Coast"])      # a second window's edit
         ((change_id, _op, status),) = self.changes("bulk tags%")
         self.assertEqual("planned", status)
@@ -361,18 +362,18 @@ class WhilePhotosMove(Bulk):
             return real(path, work, label=label)
         with mock.patch.object(db, "write_with_connection", dies_taking_it_out):
             with self.assertRaises(Crash):
-                file_changes.settle(self.library, "exiftool")
+                file_changes.settle(self.library, exiftool_fields.opened(self, "exiftool"))
         self.assertEqual([("planned",)], self.vl.rows("SELECT state FROM change_files WHERE photo_id = ?", self.ids[10]),
                          "the settle that died left the photo as it found it")
         self.vl.conn.execute("UPDATE changes SET owner = ? WHERE id = ?", (GHOST, change_id))   # that process is gone
         self.vl.conn.commit()
-        self.assertEqual(1, file_changes.settle(self.library, "exiftool"))
+        self.assertEqual(1, file_changes.settle(self.library, exiftool_fields.opened(self, "exiftool")))
         self.assertEqual([], self.vl.rows("SELECT state FROM change_files WHERE photo_id = ?", self.ids[10]),
                          "the photo another program wrote is in the change")
         self.assertEqual(self.row_tags(self.ids[10]), self.tags(self.ids[10]), "its row says what it holds")
         self.assertEqual(0, self.files.writes_of.get(paths.key(target), 0), "and it was never written by the change")
         self.assertEqual("applied", self.changes("bulk tags%")[0][2])
-        undone = journal.undo(self.library, change_id, apply=True, exiftool_path="exiftool")
+        undone = journal.undo(self.library, change_id, apply=True, fields=exiftool_fields.opened(self, "exiftool"))
         self.assertEqual((None, self.PHOTOS - 1), (undone.refused, undone.changed))
         self.assertIn("Trips/Coast", self.tags(self.ids[10]), "the undo took the other program's keyword out")
         self.assertNotIn("Trips/Coast", self.tags(self.ids[11]))

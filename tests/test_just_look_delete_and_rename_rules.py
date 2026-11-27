@@ -16,6 +16,7 @@ from unittest import mock
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
+import exiftool_fields  # noqa: E402
 import damaged_photos  # noqa: E402
 import library_dump  # noqa: E402
 import page_writes  # noqa: E402
@@ -93,7 +94,7 @@ class ASmartRenameSplitsOnce(jl.Base):
 
         with mock.patch.object(library_actions, "split", adding_after_the_first):
             result = photo_actions.smart_rename(self.library, self.loose, "Lighthouse", "{grouping} - {index} - {caption}",
-                                                jl.EXIFTOOL)
+                                                exiftool_fields.opened(self, jl.EXIFTOOL))
         self.assertEqual(1, len(calls), "Smart Rename split more than once")
         self.assertTrue(result.ok, result.message())
         self.assertEqual(0, result.details["with_rows"])

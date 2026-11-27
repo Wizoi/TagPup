@@ -369,8 +369,8 @@ def between_chunks(batch):
 # ---- Forward ---------------------------------------------------------------------------
 
 @roots_service.canonical_args("photo_paths")
-def write_fields(library, operation, exiftool_path, photo_paths, read, plan_one, summary=None,
-                 unreadable="fail", stop_at_first_error=False, fields=None, held=None, whole=False, on_planned=None,
+def write_fields(library, operation, fields, photo_paths, read, plan_one, summary=None,
+                 unreadable="fail", stop_at_first_error=False, held=None, whole=False, on_planned=None,
                  uncapped=False, alongside=None, on_chunk=None, patient=False, unpooled=None):
     """Write fields into many photos as one change named `operation` (see the module's
     docstring). `read` is the fields read from each file; `plan_one(path, held)` says
@@ -382,8 +382,8 @@ def write_fields(library, operation, exiftool_path, photo_paths, read, plan_one,
     holding what it is to hold already -- is not in the change, and its row is made to
     say what the file holds.
 
-    `fields` is the caller's Fields (field_values.opened), used instead of one of this call's
-    own; `held`, {paths.key(path): {field: [texts]}}, what the caller read of each file
+    `fields` is the operation's Fields (field_values.opened), which the files are read and written through (a change
+    left half done is settled first, through an ExifTool of its own: settle); `held`, {paths.key(path): {field: [texts]}}, what the caller read of each file
     through it just now, is the plan's before, and the file is not read again before its
     write. With `whole`, each file written is read back whole (every field the scan reads)
     in that session before it is marked done, and its row records all of it, stamped, in the
@@ -430,8 +430,8 @@ def write_fields(library, operation, exiftool_path, photo_paths, read, plan_one,
                 refused = _refused_whole(photo_paths, str(why))
                 refused.details["cancelled"] = isinstance(why, Refused)     # cancelled while it waited, not a queue that is full
                 return refused
-        return _write_session(library, operation, exiftool_path, photo_paths, read, plan_one, summary, unreadable,
-                              stop_at_first_error, fields, held, whole, on_planned, alongside, on_chunk, patient=patient,
+        return _write_session(library, operation, fields, photo_paths, read, plan_one, summary, unreadable,
+                              stop_at_first_error, held, whole, on_planned, alongside, on_chunk, patient=patient,
                               unpooled=unpooled)
 
 
@@ -450,22 +450,18 @@ def _refused_whole(photo_paths, why):
 
 @_exclusive
 @_pinned
-def _write_session(library, operation, exiftool_path, photo_paths, read, plan_one, summary, unreadable,
-                   stop_at_first_error, fields, held, whole, on_planned, alongside=None, on_chunk=None, patient=False,
+def _write_session(library, operation, fields, photo_paths, read, plan_one, summary, unreadable,
+                   stop_at_first_error, held, whole, on_planned, alongside=None, on_chunk=None, patient=False,
                    unpooled=None):
     if len(photo_paths) > batches.CHUNK and batches.current() is None:
         raise RuntimeError("%d photos are written without a batch's claim (write_fields takes it)" % len(photo_paths))
     since = _counted_so_far()
-    with contextlib.ExitStack() as own:
-        if fields is None:
-            fields = own.enter_context(field_values.opened(exiftool_path))
-        # One deadline for the write, a caller's Fields (a save's) too (Fields.together): a share that went away costs its
-        # deadline once, not once a file, nor again for the read that settles the file whose write timed out
-        # (_after_failure, #1927). Inside a caller's own block (a save's, a bake run's), the caller's.
-        with fields.together():
-            result = _write_fields(fields, library, operation, exiftool_path, photo_paths, read, plan_one, summary,
-                                   unreadable, stop_at_first_error, held, whole, on_planned, alongside, on_chunk, patient,
-                                   unpooled)
+    # One deadline for the write (Fields.together): a share that went away costs its deadline once, not once a file, nor
+    # again for the read that settles the file whose write timed out (_after_failure, #1927). Inside a caller's own block
+    # (a save's, a bake run's), the caller's.
+    with fields.together():
+        result = _write_fields(fields, library, operation, photo_paths, read, plan_one, summary, unreadable,
+                               stop_at_first_error, held, whole, on_planned, alongside, on_chunk, patient, unpooled)
     return _said_removed(result, since)
 
 
@@ -488,7 +484,7 @@ def _looked_at_again(stored, away, stop):
             if state == AWAY}
 
 
-def _write_fields(fields, library, operation, exiftool_path, photo_paths, read, plan_one, summary, unreadable,
+def _write_fields(fields, library, operation, photo_paths, read, plan_one, summary, unreadable,
                   stop_at_first_error, fresh, whole, on_planned=None, alongside=None, on_chunk=None, patient=False,
                   unpooled=None):
     result = Result(attempted=len(photo_paths))
@@ -505,7 +501,7 @@ def _write_fields(fields, library, operation, exiftool_path, photo_paths, read, 
     except Refused as why:
         result.refuse(str(why))
         return result
-    settle(library, exiftool_path)
+    settle(library, fields)
     problem = alongside.verify(library) if alongside is not None else None
     if problem:
         result.refuse(problem)
@@ -1424,7 +1420,7 @@ def _holds(path, row):
 @roots_service.canonical_args(both=("renames", "aside"))
 @_exclusive
 @_pinned
-def rename(library, operation, renames, aside, exiftool_path=None, summary=None):
+def rename(library, operation, renames, aside, fields=None, summary=None):
     """Rename photos -- `renames`, old -> new, and first the files in the way, `aside`
     (tagpup.files.names.aside_for) -- as one change named `operation`: planned and
     committed, marked writing, renamed all together or not at all, then marked done in
@@ -1435,8 +1431,8 @@ def rename(library, operation, renames, aside, exiftool_path=None, summary=None)
         # A rename is known by its operation (file_journal.RENAMES): one under another would not be followed by the writes
         # of its files after it.
         raise ValueError("%r is not one of the renames the journal knows (file_journal.RENAMES)" % operation)
-    if exiftool_path:
-        settle(library, exiftool_path)
+    if fields is not None:
+        settle(library, fields)
     moves = dict(aside)
     moves.update({old: new for old, new in renames.items() if old != new})
     if not moves:
@@ -1569,7 +1565,7 @@ def _settle_renames(library, rows, forward, redo):
 # ---- Settling at start -------------------------------------------------------------------
 
 @_exclusive
-def settle(library, exiftool_path):
+def settle(library, fields):
     """Finish every change of photo files that a process no longer running -- or an error
     in this one -- left half done: each file it left planned or writing is settled by
     what it holds, forward or, for an undo under way, back. Returns how many changes
@@ -1577,9 +1573,15 @@ def settle(library, exiftool_path):
     ExifTool does not answer for, as _finish says, or one whose settle was stopped as asked -- is logged, released and
     left as it is for the next time: it does NOT raise, so a caller that must know asks the journal afterwards
     (tagpup.store.file_journal.unfinished). A change whose settle this process was asked to stop is not taken up again
-    by this process (_put_off): the next start settles it, not the next save."""
-    return sum(1 for change in file_journal.unfinished(library.path)
-               if _take(library, change) and _settle_taken(library, change, exiftool_path))
+    by this process (_put_off): the next start settles it, not the next save.
+
+    Its files are read and written through an ExifTool of its own (a Fields opened over the ExifTool of `fields`, the
+    operation's that settles first: a write's, a rename's, a Delete's, a Convert's), never through `fields` itself: a file
+    it meets that ExifTool does not answer for costs the settle its own deadline, and never fails the operation's files on
+    another drive inside the operation's together() (tests/test_bulk_edits_stalled_exiftool.py)."""
+    with field_values.opened(fields.exiftool_path) as own:
+        return sum(1 for change in file_journal.unfinished(library.path)
+                   if _take(library, change) and _settle_taken(library, change, own))
 
 
 def _take(library, change):
@@ -1592,21 +1594,21 @@ def _take(library, change):
     return file_journal.claim(library.path, change.id, change.owner)
 
 
-def _settle_taken(library, change, exiftool_path):
+def _settle_taken(library, change, fields):
     """Finish `change`, taken (_take). True when it is finished; else it is logged and released for the next settle,
     never marked done."""
     try:
-        return _finished(library, change, exiftool_path)
+        return _finished(library, change, fields)
     except Exception:
         logger.exception("%s: change %d, left half done, could not be finished now", library.path, change.id)
         file_journal.release(library.path, change.id)
         return False
 
 
-def _finished(library, change, exiftool_path):
+def _finished(library, change, fields):
     """_finish `change`, taken: True when it is finished, said in a line; False when it is left, released for the next
     settle. An error is the caller's (_settle_taken; the settle thread's _settle_in_turn puts the change off)."""
-    if not _finish(library, change, exiftool_path):
+    if not _finish(library, change, fields):
         file_journal.release(library.path, change.id)
         return False
     logger.info("%s: change %d (%s), left half done, is finished", library.path, change.id, change.operation)
@@ -1675,7 +1677,7 @@ def _settle_turn(library, change, count):
         yield batch.stop
 
 
-def _finish(library, change, exiftool_path):
+def _finish(library, change, fields):
     """Settle the files `change` left; True when it is finished. A file on a share that does not answer (file_states), or
     that ExifTool does not answer for (_Stalled), is left as it is, and the change unfinished, for a settle once it can be
     read: it is never a conflict for not answering, and the write whose settle met it waits no deadline for it (#1921).
@@ -1693,7 +1695,7 @@ def _finish(library, change, exiftool_path):
     if change.operation == file_journal.CONVERT and not undoing:
         # One clip, settled by where its copy is (tagpup.services.convert); never undone (journal.UNDO_CHECKS).
         from tagpup.services import convert
-        return convert.settle_change(library, change, exiftool_path)
+        return convert.settle_change(library, change, fields)
     if change.operation == file_journal.DELETE:
         # Photos sent to the Recycle Bin, settled by a look at each (tagpup.services.photos); never undone.
         from tagpup.services import photos as photo_service
@@ -1704,7 +1706,7 @@ def _finish(library, change, exiftool_path):
             with _settle_turn(library, change, len(changed)) as stop:
                 if renames:
                     _settle_renames(library, renames, forward=not undoing, redo=True)
-                left = _settle_files(library, change, exiftool_path, changed, stop) if changed else False
+                left = _settle_files(library, change, fields, changed, stop) if changed else False
     except (_NoTurn, roots_service.RootsChanged, roots_service.Unplaced) as why:
         logger.info("%s: change %d is left half done for the next settle: %s", library.path, change.id,
                     why if isinstance(why, _NoTurn) else roots_service.stopped(why))
@@ -1729,7 +1731,7 @@ def _pending(library, change):
     return [row for row in pending if row.is_rename], [row for row in pending if not row.is_rename]
 
 
-def _settle_files(library, change, exiftool_path, changed, stop):
+def _settle_files(library, change, fields, changed, stop):
     """_finish's files that are not renames, a chunk at a time. True when any is left as it is (away, not answered for,
     unreadable now, or not reached before a stop). Inside _finish's pin: its held connection (db.connections_held)
     converts every file by the map the settle began with, not the one roots._held would take at its next recheck."""
@@ -1741,7 +1743,7 @@ def _settle_files(library, change, exiftool_path, changed, stop):
     kept = (face_batch.photos_kept(library, change.id)
             if not undoing and any(row.state == "planned" for row in changed) else set())
     put_off, mine = False, (library.key, change.id)
-    with field_values.opened(exiftool_path) as fields, fields.together(), db.connections_held(library.path):
+    with fields.together(), db.connections_held(library.path):
         wrote = {}
         try:
             for row in changed:
@@ -1809,7 +1811,8 @@ def settle_once(library, exiftool_path, on_a_thread=False):
         if on_a_thread:
             _settle_on_a_thread(library, exiftool_path)
             return 0
-        return settle(library, exiftool_path)
+        with field_values.opened(exiftool_path) as fields:
+            return settle(library, fields)
     except Exception:
         logger.exception("%s: settling its photo files failed", library.path)
         return 0
@@ -1854,8 +1857,9 @@ def _settle_in_turn(library, taken, exiftool_path):
         mine = (library.key, change.id)
         try:
             with batches.claim(library, change.operation, sum(map(len, _pending(library, change))), change_id=change.id):
-                with exclusively():
-                    if not _finished(library, change, exiftool_path):
+                # Its Fields opened on this thread, the one that uses it: one a change.
+                with exclusively(), field_values.opened(exiftool_path) as fields:
+                    if not _finished(library, change, fields):
                         _put_aside(library, change)
         except Refused:
             _put_aside(library, change)
@@ -1891,7 +1895,7 @@ def writes_files(library, change_id):
     return file_journal.writes_files(library.path, change_id)
 
 
-def _undoable(library, change_id, exiftool_path, check):
+def _undoable(library, change_id, fields, check):
     """(the change, [(file, None)] it can put back, [(file, why)] it cannot), reading every
     file it left done; or (None, why it cannot be undone at all, None). `check(conn,
     change_id)` is the one account of whether it may be undone now
@@ -1926,11 +1930,10 @@ def _undoable(library, change_id, exiftool_path, check):
             refused.append((row, "its old name is taken"))
     changed = [row for row in done if not row.is_rename]
     if changed:
-        if not exiftool_path:
+        if fields is None:
             return None, "undoing change %d rewrites photo files, and needs ExifTool" % change_id, None
         wanted = {f for row in changed for f in row.after}
-        with field_values.opened(exiftool_path) as fields:
-            held = fields.read([row.path for row in changed], sorted(wanted))
+        held = fields.read([row.path for row in changed], sorted(wanted))
         for row in changed:
             now = held.get(paths.key(row.path))
             if now is None or isinstance(now, Exception):
@@ -1946,14 +1949,14 @@ def _undoable(library, change_id, exiftool_path, check):
 
 
 @_exclusive
-def rehearse_undo(library, change_id, exiftool_path, check):
+def rehearse_undo(library, change_id, fields, check):
     """What undoing change `change_id` would do, reading every file and writing none. A
     Result like tagpup.services.journal.rehearse's: details["rehearsal"] has `rows` (the
     files it would put back), `exact` (none would be refused), `differences` (each file
     it would refuse, named, and why), and `files`. Refused out of hand when `check` says
     so (_undoable)."""
     result = Result(details={"dry_run": True, "change": change_id, "files": True})
-    change, ready, refused = _undoable(library, change_id, exiftool_path, check)
+    change, ready, refused = _undoable(library, change_id, fields, check)
     if change is None:
         result.refuse(ready)
         result.details["rehearsal"] = {"refused": ready, "rows": 0, "changed": 0, "exact": False,
@@ -1972,7 +1975,7 @@ def rehearse_undo(library, change_id, exiftool_path, check):
 
 
 @_exclusive
-def undo(library, change_id, exiftool_path, check, apply=False):
+def undo(library, change_id, fields, check, apply=False):
     """Undo change `change_id`: a rehearsal unless `apply` (rehearse_undo). Applied, each
     file that still holds what the change left is written back to what it held, its row
     following, through the same states; each that does not is refused, named in the
@@ -1988,7 +1991,7 @@ def undo(library, change_id, exiftool_path, check, apply=False):
     begun = []
     try:
         with roots_service.pinned(library):
-            return _undo(library, change_id, exiftool_path, check, apply, result, begun)
+            return _undo(library, change_id, fields, check, apply, result, begun)
     except (roots_service.RootsChanged, roots_service.Unplaced) as stop:
         said = roots_service.stopped(stop)
         if begun:
@@ -1999,16 +2002,16 @@ def undo(library, change_id, exiftool_path, check, apply=False):
         return result
 
 
-def _undo(library, change_id, exiftool_path, check, apply, result, begun):
+def _undo(library, change_id, fields, check, apply, result, begun):
     """undo's work, inside its pin: `result` filled as it goes, `begun` given True once the change is marked as being
     undone (what a stop part-way says)."""
-    rehearsal = rehearse_undo(library, change_id, exiftool_path, check)
+    rehearsal = rehearse_undo(library, change_id, fields, check)
     if not apply or rehearsal.refused:
         return rehearsal
     result.attempted = rehearsal.attempted
     since = _counted_so_far()
     schema.ensure(library.path)
-    change, ready, refused = _undoable(library, change_id, exiftool_path, check)
+    change, ready, refused = _undoable(library, change_id, fields, check)
     if change is None:
         result.refuse(ready)
         return result
@@ -2035,7 +2038,7 @@ def _undo(library, change_id, exiftool_path, check, apply, result, begun):
                 result.changed += len(renames)
         changed = [row for row in ready if not row.is_rename]
         if changed:
-            with field_values.opened(exiftool_path) as fields, db.connections_held(library.path):
+            with db.connections_held(library.path):
                 for row in changed:
                     outcome, why = _carry(fields, library, row, row.after, row.before, "undone", on_failure="conflict")
                     result.details["faces_left"] = result.details.get("faces_left", 0) + row.faces_left

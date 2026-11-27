@@ -23,6 +23,7 @@ swept photo is saved again (a newer change of the same files), and undoing takes
     .venv/Scripts/python.exe scripts/clear_duplicate_captions.py --library photo_index --apply
 """
 import argparse
+import contextlib
 import os
 import signal
 import sys
@@ -102,9 +103,10 @@ def run(db_path, apply, out=say):
     progress = Progress(library, out)
     before = signal.signal(signal.SIGINT, progress.interrupted) if apply else None
     try:
-        exiftool = runtime.exiftool(library) if apply else None
-        result = tagging.clear_duplicate_captions(library, exiftool, apply=apply, on_planned=progress.planned,
-                                                  on_chunk=progress.chunk)
+        # A dry run reads the index alone: no Fields, and the library's settings not stamped.
+        with runtime.fields(library) if apply else contextlib.nullcontext() as fields:
+            result = tagging.clear_duplicate_captions(library, fields, apply=apply, on_planned=progress.planned,
+                                                      on_chunk=progress.chunk)
     except KeyboardInterrupt as stopped:
         out(file_changes.what_a_stop_left(library, stopped, progress.change, who=name))
         return 130

@@ -33,8 +33,9 @@ not written here: they are one batch of photo files whose photos' faces are writ
 """
 import logging
 
-from tagpup.core import fields, paths, vocabulary
+from tagpup.core import fields as core_fields, paths, vocabulary
 from tagpup.core.result import Conflict, Refused, Result
+from tagpup.files import field_values
 from tagpup.services import faces as faces_service
 from tagpup.services import file_changes, tagging
 from tagpup.services import people as people_service
@@ -157,9 +158,9 @@ def write_tags(library, changes, writer, operation, persons=None, stop_at_first_
     result = Result(attempted=len(changes))
     try:
         with file_changes.batch_exclusively(library, operation, len(changes)):
-            done = tagging.change_each(library, changes, writer.exiftool_path, operation, persons=persons,
-                                       stop_at_first_error=stop_at_first_error, unpooled=unpooled,
-                                       on_planned=on_planned)
+            with field_values.opened(writer.exiftool_path) as fields:
+                done = tagging.change_each(library, changes, fields, operation, persons=persons,
+                                           stop_at_first_error=stop_at_first_error, unpooled=unpooled, on_planned=on_planned)
             if writer.told:
                 writer.told(done)
     except (Conflict, Refused) as why:
@@ -449,7 +450,7 @@ def unname_for_removed_tags(library, removed, files_change=None):
 
 def _tags_of(held):
     """The keyword tags of a journaled file's fields ({field: texts}, the journal's own keys)."""
-    return vocabulary.extract_tags({fields.read_key(field): texts for field, texts in held.items()})
+    return vocabulary.extract_tags({core_fields.read_key(field): texts for field, texts in held.items()})
 
 
 def follow_change(library, change_id, undone=False, moved=None, undo=None):

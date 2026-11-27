@@ -13,6 +13,7 @@ import unittest
 from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import exiftool_fields  # noqa: E402
 from test_file_journal import EXIFTOOL, FilesCase, crash_at, Crash  # noqa: E402
 
 from tagpup.services import file_changes, photos as photo_actions  # noqa: E402
@@ -66,7 +67,7 @@ class WhatTheViewsRead(FilesCase):
         db.write_with_connection(self.library.path, derived.rebuild_all)
         folder_rows = self.rows("SELECT COUNT(*) FROM folders")[0][0]
         before = self.keyword_rows()
-        result = photo_actions.smart_rename(self.library, [c], "Regatta", "{grouping} - {index} - {caption}", EXIFTOOL)
+        result = photo_actions.smart_rename(self.library, [c], "Regatta", "{grouping} - {index} - {caption}", exiftool_fields.opened(self, EXIFTOOL))
         self.assertEqual(1, result.changed)
         self.assertEqual(folder_rows, self.rows("SELECT COUNT(*) FROM folders")[0][0], "the same folder")
         self.assertEqual(before, self.keyword_rows())

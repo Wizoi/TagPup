@@ -15,7 +15,6 @@ import json
 from collections import Counter
 
 from tagpup.core.vocabulary import people_in_photo
-from tagpup.files import field_values
 from tagpup.store import journal
 from tagpup.store import faces as store_faces
 from tagpup.store import photos as store_photos
@@ -25,7 +24,7 @@ from tagpup.store import taxonomy as store_taxonomy
 BATCH = 200
 
 
-def read_files(conn, photo_paths, exiftool_path):
+def read_files(conn, photo_paths, fields):
     """{path: what its file holds}, read the way the indexer reads, of the library open
     on `conn`. Files are only read: no DocumentID is minted.
 
@@ -35,16 +34,14 @@ def read_files(conn, photo_paths, exiftool_path):
     """
     known = store_taxonomy.people_vocabulary(conn=conn)
     records = {}
-    with field_values.opened(exiftool_path) as reader:
-        for start in range(0, len(photo_paths), BATCH):
-            batch = photo_paths[start:start + BATCH]
-            for record in reader.whole(batch, people=known):
-                # People from the keywords AND the photo's named faces, as every writer
-                # of the column now records them; the read alone knows only the
-                # keywords, and would take off everyone identified by face.
-                record["people"] = people_in_photo(record["tags"], store_faces.face_refs(record["path"], conn=conn),
-                                                   known)
-                records[record["path"]] = record
+    for start in range(0, len(photo_paths), BATCH):
+        batch = photo_paths[start:start + BATCH]
+        for record in fields.whole(batch, people=known):
+            # People from the keywords AND the photo's named faces, as every writer
+            # of the column now records them; the read alone knows only the
+            # keywords, and would take off everyone identified by face.
+            record["people"] = people_in_photo(record["tags"], store_faces.face_refs(record["path"], conn=conn), known)
+            records[record["path"]] = record
     return records
 
 
@@ -69,15 +66,15 @@ def differences(conn, path, record, stored=None):
     return changed, json.loads(captions or "[]"), (mtime, size)
 
 
-def reread(conn, stale, exiftool_path):
+def reread(conn, stale, fields):
     """What the files of the rows named in `stale` (paths as stored) hold, against their
     rows, on `conn`: (records, {path: what its file holds}; to_write, the paths whose row
-    differs; fields, a Counter of the fields that differ; unreadable, the paths whose file
+    differs; differing, a Counter of the fields that differ; unreadable, the paths whose file
     could not be read; identities, {path: the row's document_id} of those to write). Reads
     the files; writes nothing. Sync's (tagpup.services.sync) one reading of changed rows."""
-    records, to_write, fields, unreadable, identities = {}, [], Counter(), [], {}
+    records, to_write, differing, unreadable, identities = {}, [], Counter(), [], {}
     if stale:
-        records = read_files(conn, sorted(stale), exiftool_path)
+        records = read_files(conn, sorted(stale), fields)
     for path in sorted(stale):
         record = records.get(path)
         if record is None or not record.get("raw_metadata"):
@@ -88,8 +85,8 @@ def reread(conn, stale, exiftool_path):
         if changed:
             to_write.append(path)
             identities[path] = stored[6]
-            fields.update(changed)
-    return records, to_write, fields, unreadable, identities
+            differing.update(changed)
+    return records, to_write, differing, unreadable, identities
 
 
 def edits_for(records, to_write, found, identities, ids):

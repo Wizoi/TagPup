@@ -11,6 +11,7 @@ import unittest
 from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import exiftool_fields  # noqa: E402
 from service_fixture import TempLibrary  # noqa: E402
 
 from tagpup.core.result import Result  # noqa: E402
@@ -27,7 +28,7 @@ class SmartRenaming(unittest.TestCase):
         with mock.patch("tagpup.files.names.read_for_renaming",
                         side_effect=lambda exiftool, present: {p: captions.get(p, "") for p in present}), \
                 mock.patch.object(photos, "preserve_names", return_value=Result()):
-            return photos.smart_rename(self.lib.library, paths, grouping, FORMAT, "exiftool")
+            return photos.smart_rename(self.lib.library, paths, grouping, FORMAT, exiftool_fields.opened(self, "exiftool"))
 
     def names(self):
         return sorted(os.listdir(self.lib.photos))

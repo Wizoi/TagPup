@@ -29,6 +29,7 @@ import unittest
 from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import exiftool_fields  # noqa: E402
 import face_rows  # noqa: E402
 from test_bulk_delete import Delete  # noqa: E402
 
@@ -64,7 +65,7 @@ class ABulkDeleteStoppedPartWay(Delete):
         return self.vl.rows("SELECT path FROM change_files WHERE state = 'planned'")
 
     def settle(self):
-        return file_changes.settle(self.library, None)
+        return file_changes.settle(self.library, exiftool_fields.opened(self, None))
 
     def cancel(self):
         [running] = batches.listing(self.library)
@@ -222,7 +223,7 @@ class ABulkDeleteStoppedPartWay(Delete):
         with mock.patch.object(photo_actions, "_reached", side_effect=reached), \
                 mock.patch.object(photo_actions, "end_deletes"):
             with self.assertRaises(Crash):
-                bulk_edit.run(self.library, bulk_edit.Edit(bulk_edit.DELETE, token="asked"), self.coast, None)
+                bulk_edit.run(self.library, bulk_edit.Edit(bulk_edit.DELETE, token="asked"), self.coast, exiftool_fields.opened(self, None))
         self.vl.conn.execute("UPDATE changes SET owner = ?", (GONE,))
         self.vl.conn.commit()
         self.assertEqual(3, len(self.sent))

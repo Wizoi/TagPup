@@ -76,19 +76,15 @@ def combined(held, loose):
 # ---- Fields ---------------------------------------------------------------------------------
 
 @file_changes.exclusively()
-def write_fields(exiftool_path, photo_paths, read, plan_one, unreadable="fail", stop_at_first_error=False,
-                 fields=None, held=None):
+def write_fields(fields, photo_paths, read, plan_one, unreadable="fail", stop_at_first_error=False, held=None):
     """file_changes.write_fields for photos the library does not hold: the same planning
     (`read` the fields to read of each file, `plan_one(path, held)` a Plan from what it
-    holds, `unreadable`, `stop_at_first_error`, a Fields `fields` (field_values.opened) and what the caller `held`
+    holds, `unreadable`, `stop_at_first_error`, the operation's Fields `fields` (field_values.opened) and what the caller `held`
     of the files through it) and the same Result -- `changed` the files written, errors the photos
     that failed, details `written` {path: detail} of each written or already holding it, `stamps` {path key: (mtime,
     size) or None} of each file written, taken just after its write (file_changes.stamp_after_write), `conflicts`,
     `pictures_refused` when a write was made once more -- but only the files are written: no
     journal change (details["change"] is None), no row, nothing after."""
-    if fields is None:
-        with field_values.opened(exiftool_path) as fields:
-            return _write_fields(fields, photo_paths, read, plan_one, unreadable, stop_at_first_error, held)
     return _write_fields(fields, photo_paths, read, plan_one, unreadable, stop_at_first_error, held)
 
 

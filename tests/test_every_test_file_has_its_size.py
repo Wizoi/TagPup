@@ -21,6 +21,9 @@ files, 2026-11-24, --real-exiftool), 226 files: 3 differ besides the Flask files
 ran none under the test client), none of them a process missed: two said pure opened a library two modules deep,
 one said sqlite opened none. Four files whose use is more than one module deep are OVERRIDES, each with its
 reason: the general cause (a test handing a service 'exiftool') said 6 files that start none were subprocess.
+Eight more since the services take a Fields (L0c of docs/plans/own-metadata-library.md): a file handing one to a
+service whose writes it mocks starts no ExifTool, since a Fields starts its own at its first command (audited
+2026-11-27: none started a process but the own_home reaper of a process's first home).
 """
 import ast
 import os
@@ -44,8 +47,21 @@ NOT_THE_FILES = frozenset({
     ("tests.corpus", "identity"),             # a tool's version, asked once a run for an item already made
     ("tagpup.config", "_does_not_run"),       # ffmpeg/ffprobe -version, once a process
 })
+#: Why a file handing a service a Fields it never commands is sqlite (OVERRIDES).
+LAZY_FIELDS = ("hands a Fields to a service whose writes are mocked; Fields opens ExifTool lazily, audited "
+               "2026-11-27 (the rule follows field_values.opened into the whole Fields class)")
 #: {test file: (size, why)}: a file the rule cannot see, for a reason only it has.
 OVERRIDES = {
+    "test_derived_follow_writes": ("sqlite", "hands a Fields to a service whose writes are mocked; Fields "
+                                   "opens ExifTool lazily, audited 2026-11-27: it starts only the own_home "
+                                   "reaper (cmd.exe), as it did on the trunk before L0c"),
+    "test_embeddings_follow_their_photo": ("sqlite", LAZY_FIELDS),
+    "test_face_roots_are_the_trees": ("sqlite", LAZY_FIELDS),
+    "test_inspect_uses_the_stores_mtime_rule": ("sqlite", LAZY_FIELDS),
+    "test_people_by_id_tree": ("sqlite", LAZY_FIELDS),
+    "test_service_smart_rename": ("sqlite", LAZY_FIELDS),
+    "test_service_tags": ("sqlite", LAZY_FIELDS),
+    "test_thumbnails": ("sqlite", LAZY_FIELDS),
     "test_background_tasks": ("sqlite", "opens a library two modules deep (counted by the audit hook, #3375; "
                               "`--size pure` ran it and touched SQLite)"),
     "test_jobs_indexing": ("sqlite", "opens a library two modules deep (counted by the audit hook, #3375; "

@@ -12,6 +12,7 @@ import unittest
 from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import exiftool_fields  # noqa: E402
 from test_file_journal import EXIFTOOL, Crash, crash_at  # noqa: E402
 from test_rotate_is_journaled import BOX, HEIGHT, MODEL, WIDTH, RotationCase, picture  # noqa: E402
 
@@ -148,7 +149,7 @@ class ManyPhotos(RotationCase):
             claimed.append(args[1:3])
             return real(*args, **kwargs)
         with mock.patch.object(batches, "claim", side_effect=claim):
-            result = photo_actions.rotate_photos(self.library, photos, "right", EXIFTOOL)
+            result = photo_actions.rotate_photos(self.library, photos, "right", exiftool_fields.opened(self, EXIFTOOL))
         self.assertEqual((result.ok, result.changed), (True, len(photos)))
         self.assertEqual(claimed, [("rotate", len(photos))])
         self.assertEqual(set(self.orientations(photos)), {3})
@@ -161,7 +162,7 @@ class ManyPhotos(RotationCase):
         photos = [self.make("p%02d.jpg" % n) for n in range(batches.CHUNK + 5)]
         # Cancel is asked for at the first chunk's end.
         with mock.patch.object(file_changes, "between_chunks", return_value=False):
-            result = photo_actions.rotate_photos(self.library, photos, "left", EXIFTOOL)
+            result = photo_actions.rotate_photos(self.library, photos, "left", exiftool_fields.opened(self, EXIFTOOL))
         self.assertIn("Stopped", result.refused)
         self.assertEqual(result.changed, batches.CHUNK)
         self.assertEqual(self.orientations(photos).count(8), batches.CHUNK)

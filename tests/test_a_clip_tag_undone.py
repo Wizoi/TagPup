@@ -19,6 +19,7 @@ import unittest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import exiftool_fields  # noqa: E402
 import test_a_clip_tagged_through_the_journal as tagged  # noqa: E402
 
 from tagpup.services import journal  # noqa: E402
@@ -36,7 +37,7 @@ class AClipTagUndone(tagged.ALibraryHoldingAClip):
         return change
 
     def undo(self, change, apply=True):
-        return journal.undo(self.vl.library, change, apply=apply, exiftool_path=EXIFTOOL)
+        return journal.undo(self.vl.library, change, apply=apply, fields=exiftool_fields.opened(self, EXIFTOOL))
 
     def states(self, change):
         status, = self.vl.rows("SELECT status FROM changes WHERE id = ?", change)

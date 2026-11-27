@@ -165,7 +165,7 @@ def duplicate_candidates(library):
     return found, counts
 
 
-def clear_duplicate_captions(library, exiftool_path, apply=False, on_planned=None, on_chunk=None):
+def clear_duplicate_captions(library, fields, apply=False, on_planned=None, on_chunk=None):
     """The one-off sweep (scripts/clear_duplicate_captions.py): clear each of DUPLICATE_FIELDS that holds the photo's
     own title exactly (duplicate_captions), in every photo the index names (duplicate_candidates). A caption that differs
     is kept, Windows' Comment (XPComment) is never written, a clip never read. The title and the caption are two values (DECISIONS
@@ -190,7 +190,7 @@ def clear_duplicate_captions(library, exiftool_path, apply=False, on_planned=Non
                 return file_changes.skip(NO_DUPLICATE)
             return file_changes.Plan(after={field: "" for field in repeated}, detail=repeated)
 
-        result = file_changes.write_fields(library, CLEAR_DUPLICATES, exiftool_path, found, list(DUPLICATE_READ), plan_one,
+        result = file_changes.write_fields(library, CLEAR_DUPLICATES, fields, found, list(DUPLICATE_READ), plan_one,
                                            summary={"photos": len(found)}, unreadable="skip", uncapped=True, patient=True,
                                            on_planned=on_planned, on_chunk=on_chunk)
     # Why each photo was left alone: a share that did not answer is not "nothing to clear" (#2622).
@@ -205,7 +205,7 @@ def clear_duplicate_captions(library, exiftool_path, apply=False, on_planned=Non
 
 @file_changes.exclusively()
 @roots_service.canonical_args("photo_path")
-def save_photo(library, photo_path, title, tags, date_taken, exiftool_path, rename_format, stamp=None, *, base):
+def save_photo(library, photo_path, title, tags, date_taken, fields, rename_format, stamp=None, *, base):
     """Save one photo's title, tags and Date Taken -- the photo panel -- and rename it
     after its new title if Smart Rename named it.
 
@@ -290,7 +290,7 @@ def save_photo(library, photo_path, title, tags, date_taken, exiftool_path, rena
     # kept; one deadline from the read to the write's end (Fields.together).
     read = list(dict.fromkeys(SAVE_READ + BASE_READ + (DATE_READ if "date_taken" in base else ()) + tuple(wanted)
                               + tuple(core_fields.caption_fields(""))))
-    with field_values.opened(exiftool_path) as fields, fields.together():
+    with fields.together():
         now = fields.read_one(photo_path, read)
         if _differs_from_base(now, base, photo_path):
             result.refuse(CHANGED_ON_DISK_SENTENCE, CHANGED_ON_DISK)
@@ -298,7 +298,7 @@ def save_photo(library, photo_path, title, tags, date_taken, exiftool_path, rena
         held = set(_tags_held(now))
         problem = (validation.first_problem("tag", (t for t in tags if t not in held))
                    or (None if files_only else refuse_under_people(library, [t for t in tags if t not in held]))
-                   or _caption_problem(exiftool_path, photo_path, title))
+                   or _caption_problem(fields, photo_path, title))
         if problem:
             result.refuse(problem)
             return result
@@ -311,13 +311,11 @@ def save_photo(library, photo_path, title, tags, date_taken, exiftool_path, rena
         after.update(_caption_moved(photo_path, now))
         plan = lambda _path, _held: file_changes.Plan(after=after)   # noqa: E731
         if files_only:
-            written = file_only.write_fields(exiftool_path, [photo_path], list(after), plan, fields=fields,
-                                             held={paths.key(photo_path): now})
+            written = file_only.write_fields(fields, [photo_path], list(after), plan, held={paths.key(photo_path): now})
         else:
             # Read back whole and recorded so, stamped, as the file is marked done: the save's row, once.
-            written = file_changes.write_fields(library, "save photo", exiftool_path, [photo_path],
-                                                _save_read(after), plan, summary={"photos": 1}, fields=fields,
-                                                held={paths.key(photo_path): now}, whole=True)
+            written = file_changes.write_fields(library, "save photo", fields, [photo_path], _save_read(after), plan,
+                                                summary={"photos": 1}, held={paths.key(photo_path): now}, whole=True)
         if not written.ok:
             result.errors.extend(written.errors)
             result.changed = written.changed
@@ -402,19 +400,17 @@ def _rename_after_caption(library, photo_path, wanted, files_only):
     return paths.stored(done.done.get(photo_path, wanted)), done.skipped or [], None
 
 
-def _caption_problem(exiftool_path, photo_path, caption):
+def _caption_problem(fields, photo_path, caption):
     """Why `caption` cannot be set on the photo, or None. A caption the file holds
     already is not being set: one another program wrote is kept, as a tag is. The file
     is read for it only when the caption breaks a rule -- every field a caption is held
-    in, EXIF's too -- by a read of its own (field_values.opened), and the caption is compared as the reader trims the
+    in, EXIF's too -- by a read of its own (through the save's `fields`), and the caption is compared as the reader trims the
     file's."""
     problem = validation.problem("caption", caption or "")
     if not problem:
         return None
     records = {}
-    with field_values.opened(exiftool_path) as reader:
-        reader.read([photo_path], [], also=[field for field in core_fields.HELD_CAPTION_FIELDS if ":" in field],
-                    records=records)
+    fields.read([photo_path], [], also=[field for field in core_fields.HELD_CAPTION_FIELDS if ":" in field], records=records)
     held = core_fields.captions_held(records.get(paths.key(photo_path), {}))
     return None if core_fields.trimmed(caption) in held else problem
 
@@ -442,26 +438,25 @@ def leave_out_missing(photo_paths):
 ADD_TO_ALL = "add to all selected"
 
 
-def change_tags(library, photo_paths, add, remove, exiftool_path, operation=ADD_TO_ALL, stop_at_first_error=True,
-                persons=None, fields=None, group=None):
+def change_tags(library, photo_paths, add, remove, fields, operation=ADD_TO_ALL, stop_at_first_error=True,
+                persons=None, group=None):
     """Add the same tags to many photos and take the same tags off them: change_tags_of, each photo given `add` and
     `remove`. A bulk edit of a selection (tagpup.services.bulk_edit) passes its own `operation` and
     `stop_at_first_error=False`."""
-    return change_tags_of(library, {path: (add, remove) for path in photo_paths}, exiftool_path, operation=operation,
-                          stop_at_first_error=stop_at_first_error, persons=persons, fields=fields, group=group)
+    return change_tags_of(library, {path: (add, remove) for path in photo_paths}, fields, operation=operation,
+                          stop_at_first_error=stop_at_first_error, persons=persons, group=group)
 
 
 @roots_service.canonical_args("changes")
-def change_tags_of(library, changes, exiftool_path, operation=ADD_TO_ALL, stop_at_first_error=True, persons=None,
-                   fields=None, group=None):
+def change_tags_of(library, changes, fields, operation=ADD_TO_ALL, stop_at_first_error=True, persons=None,
+                   group=None):
     """Give each photo in `changes` (path -> (tags to add, tags to take off)) its own tags added and taken off, as ONE
     change of photo files (change_each). A page's tag write (POST /api/photos/write, op `tags`) sends each file's own.
 
     `operation` names the change in the journal. `stop_at_first_error=False` (a bulk edit's): a photo that cannot be
     read or written is an error and the others are written all the same. `persons` ({paths.key(path): the tags added
-    that are people}): a person the file already names is not added again (_change_each). `fields`: a Fields
-    the caller opened (a bulk edit gets its own, with a deadline of its own), used instead of one per write. `group`:
-    as change_each's.
+    that are people}): a person the file already names is not added again (_change_each). `fields`: the operation's
+    Fields (field_values.opened), which every file is read and written through. `group`: as change_each's.
 
     A photo whose file is gone is left out and listed in the result's skips (details[SKIPPED_MISSING] says how many);
     the photos after it are written. Only a read or write ERROR of a present file stops the run
@@ -477,7 +472,7 @@ def change_tags_of(library, changes, exiftool_path, operation=ADD_TO_ALL, stop_a
     present, gone = leave_out_missing(list(changes))
     result = (change_each(library, {path: ([vocabulary.normalize(tag) for tag in changes[path][0]], changes[path][1])
                                     for path in present},
-                          exiftool_path, operation, persons=persons, fields=fields, stop_at_first_error=stop_at_first_error,
+                          fields, operation, persons=persons, stop_at_first_error=stop_at_first_error,
                           group=group)
               if present else _refused(0, None))
     if not result.refused:
@@ -491,7 +486,7 @@ def change_tags_of(library, changes, exiftool_path, operation=ADD_TO_ALL, stop_a
 
 
 @roots_service.canonical_args("additions")
-def add_tags(library, additions, exiftool_path, persons=None):
+def add_tags(library, additions, fields, persons=None):
     """Add each photo in `additions` (path -> tags) its own tags. Apply All on a folder's
     suggestions: suggestions deal in people's bare names, which are written as the tags
     they are filed under. A photo with nothing to add is left alone. See change_each.
@@ -499,12 +494,12 @@ def add_tags(library, additions, exiftool_path, persons=None):
 
     `persons` ({paths.key(path): the tags of `additions` that are people}): a person the file already
     names is not added again (_change_each)."""
-    return change_each(library, {path: (tags, ()) for path, tags in additions.items()}, exiftool_path,
+    return change_each(library, {path: (tags, ()) for path, tags in additions.items()}, fields,
                        "apply all suggestions", persons=persons)
 
 
 @roots_service.canonical_args("changes")
-def change_each(library, changes, exiftool_path, operation, persons=None, fields=None, stop_at_first_error=True,
+def change_each(library, changes, fields, operation, persons=None, stop_at_first_error=True,
                 unpooled=None, on_planned=None, group=None):
     """Give each photo in `changes` (path -> (tags to add, tags to take off)) its own, as ONE change of
     photo files named `operation` in the journal. A photo with nothing to add or take off is left alone.
@@ -514,8 +509,7 @@ def change_each(library, changes, exiftool_path, operation, persons=None, fields
     so a person or tag the tree does not hold is written as it is offered. The library's own answer
     decides, per photo, now. What is added is checked (tagpup.core.validation); what is taken off is not.
 
-    `persons`: as add_tags'. `fields`: a Fields the caller opened (with a deadline of its own), as
-    change_tags'. `stop_at_first_error` False: a photo that cannot be read or written is an error and the others are
+    `persons`: as add_tags'. `fields`: as change_tags'. `stop_at_first_error` False: a photo that cannot be read or written is an error and the others are
     written, as a bulk edit does. Apply All's own is add_tags; the faces' (tagpup.services.face_people) adds and takes
     off a person per photo. `unpooled`: the caller asks which faces the held photos' records take out of identity work;
     `on_planned` is told the id of the held photos' change (file_changes.write_fields).
@@ -535,7 +529,7 @@ def change_each(library, changes, exiftool_path, operation, persons=None, fields
         return [(path, list(changes[path][0]), changes[path][1]) for path in chosen]
     done = None
     if held or not loose:
-        done = _change_each(library, plan_of(held), exiftool_path, operation, persons=persons, fields=fields,
+        done = _change_each(library, plan_of(held), fields, operation, persons=persons,
                             stop_at_first_error=stop_at_first_error, unpooled=unpooled, on_planned=on_planned,
                             group=group)
     if not loose:
@@ -545,8 +539,8 @@ def change_each(library, changes, exiftool_path, operation, persons=None, fields
         for path in loose:
             done.skip(path, "not written: an earlier photo failed")
         return file_only.combined(done, None)
-    files = _change_each(library, plan_of(loose), exiftool_path, operation, files_only=True, persons=persons,
-                         fields=fields, stop_at_first_error=stop_at_first_error)
+    files = _change_each(library, plan_of(loose), fields, operation, files_only=True, persons=persons,
+                         stop_at_first_error=stop_at_first_error)
     return file_only.combined(done, files)
 
 
@@ -589,7 +583,7 @@ def person_filer(library):
     return PersonFiler(library)
 
 
-def apply_suggestions(library, suggestions, exiftool_path):
+def apply_suggestions(library, suggestions, fields):
     """Apply All: write each photo of `suggestions` ({path: its entry}, what Suggest offered) the tags and
     people the panel showed (tagpup.core.suggesting.offered_tags), and nothing else. A person is filed as a click on
     their chip files them (person_filer) and is left out when the file already names them by the id of their node
@@ -605,8 +599,7 @@ def apply_suggestions(library, suggestions, exiftool_path):
     unfiled = set()
     if any(asked.values()):
         known = taxonomy.people_vocabulary(library.path)
-        with field_values.opened(exiftool_path) as reader:
-            read = reader.read([path for path, names in asked.items() if names], KEYWORD_READ)
+        read = fields.read([path for path, names in asked.items() if names], KEYWORD_READ)
         held = {key: ([] if isinstance(fields_, Exception) else list(_tags_held(fields_))) for key, fields_ in read.items()}
         unfiled = {name for path, names in asked.items() for name in names
                    if not file_person.names_already(held.get(paths.key(path), []), name, known)}
@@ -619,7 +612,7 @@ def apply_suggestions(library, suggestions, exiftool_path):
         offered = {file_person(person["name"]) for person in entry["people"]
                    if (person.get("name") or "").strip()} - {None}
         persons[paths.key(path)] = offered
-    return add_tags(library, additions, exiftool_path, persons=persons)
+    return add_tags(library, additions, fields, persons=persons)
 
 
 def _refused(attempted, problem):
@@ -672,8 +665,8 @@ def keywords_planner(library, edit):
     return plan_one
 
 
-def _change_each(library, plan, exiftool_path, operation, files_only=False, persons=None, stop_at_first_error=True,
-                 fields=None, unpooled=None, on_planned=None, group=None):
+def _change_each(library, plan, fields, operation, files_only=False, persons=None, stop_at_first_error=True,
+                 unpooled=None, on_planned=None, group=None):
     """Write each photo in `plan` -- (path, tags to add, tags to take off) -- as one change
     of photo files (tagpup.services.file_changes): planned from what every file holds,
     committed, then written a file at a time, each recorded in its row as it is marked
@@ -709,17 +702,17 @@ def _change_each(library, plan, exiftool_path, operation, files_only=False, pers
     plan_one = keywords_planner(library, edit)
 
     if files_only:
-        return file_only.write_fields(exiftool_path, [path for path, _a, _r in plan], KEYWORD_READ, plan_one,
-                                      stop_at_first_error=stop_at_first_error, fields=fields)
-    return file_changes.write_fields(library, operation, exiftool_path, [path for path, _a, _r in plan],
+        return file_only.write_fields(fields, [path for path, _a, _r in plan], KEYWORD_READ, plan_one,
+                                      stop_at_first_error=stop_at_first_error)
+    return file_changes.write_fields(library, operation, fields, [path for path, _a, _r in plan],
                                      KEYWORD_READ, plan_one,
                                      summary={"photos": len(plan), **({journal.GROUP: group} if group else {})},
-                                     stop_at_first_error=stop_at_first_error, fields=fields, unpooled=unpooled,
+                                     stop_at_first_error=stop_at_first_error, unpooled=unpooled,
                                      on_planned=on_planned)
 
 
 @roots_service.canonical_args("photo_paths")
-def replace_tag(library, photo_paths, old, new, exiftool_path):
+def replace_tag(library, photo_paths, old, new, fields):
     """Rename the tag `old` to `new` -- and every tag under it -- on each photo in
     `photo_paths`, or take it off without `new`: in the file, then in the index.
 
@@ -754,7 +747,7 @@ def replace_tag(library, photo_paths, old, new, exiftool_path):
     # back. One that is there and cannot be written (a share that does not answer, a locked file) is an error that does.
     present, gone = leave_out_missing([path for path, _t, _r in rows])
     # The tag tree's rewrite has no cap (owner, 2026-10-11): it has progress, and Cancel, as every batch.
-    result = file_changes.write_fields(library, operation, exiftool_path, present, KEYWORD_READ, plan_one,
+    result = file_changes.write_fields(library, operation, fields, present, KEYWORD_READ, plan_one,
                                        summary={"photos": len(present)}, uncapped=True)
     result.skipped.extend(gone)
     return result

@@ -46,6 +46,7 @@ import unittest
 from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import exiftool_fields  # noqa: E402
 import corpus  # noqa: E402
 import damaged_photos  # noqa: E402
 import face_rows  # noqa: E402
@@ -56,7 +57,7 @@ import test_stale_record_precondition as S  # noqa: E402
 from test_a_file_holds_what_exiftool_kept import ReadFilesCase, flip_a_picture_byte, rewritten  # noqa: E402
 from test_file_journal import EXIFTOOL, ExifToolSession, field_of, keywords_of, write_outside  # noqa: E402
 
-from tagpup.files import exiftool_session, names  # noqa: E402
+from tagpup.files import exiftool_session, field_values, names  # noqa: E402
 from tagpup.services import file_changes, photos as photo_actions, sync, tagging  # noqa: E402
 from tagpup.store import db, photos as store_photos  # noqa: E402
 
@@ -92,7 +93,7 @@ class TaggingAPhoto(ReadFilesCase):
         a, b = self.make_read("a.jpg", ("Places/Harbour",)), self.make_read("b.jpg", ("Beach", "Relay"))
         captions = {path: field_of(path, "XMP:Description") for path in (a, b)}
 
-        result = tagging.change_tags(self.library, [a, b], ["Activity/Rowing", "People/Rowan Thackeray"], [], EXIFTOOL)
+        result = tagging.change_tags(self.library, [a, b], ["Activity/Rowing", "People/Rowan Thackeray"], [], exiftool_fields.opened(self, EXIFTOOL))
 
         self.assertEqual([], result.errors)
         with ExifToolSession(executable=EXIFTOOL) as et:
@@ -124,12 +125,12 @@ class TaggingAPhoto(ReadFilesCase):
     def test_a_remove_takes_off_only_what_it_names_and_a_save_with_no_tags_clears_the_photo(self):
         a, b = self.make_read("a.jpg", ("Beach", "Relay")), self.make_read("b.jpg", ("Beach",))
 
-        result = tagging.change_tags(self.library, [a, b], [], ["Beach"], EXIFTOOL)
+        result = tagging.change_tags(self.library, [a, b], [], ["Beach"], exiftool_fields.opened(self, EXIFTOOL))
 
         self.assertEqual([], result.errors)
         self.assertEqual((["Relay"], []), (keywords_of(a), keywords_of(b)))
         self.assertEqual(["Relay"], self.indexed(a))
-        self.assertTrue(tagging.save_photo(self.library, a, "", [], None, EXIFTOOL, "",
+        self.assertTrue(tagging.save_photo(self.library, a, "", [], None, exiftool_fields.opened(self, EXIFTOOL), "",
                                            base=page_writes.base(self.library, a)).ok)
         self.assertEqual([], keywords_of(a))
 
@@ -160,14 +161,14 @@ class TaggingAPhoto(ReadFilesCase):
     def takes_a_tag(self, cut, whole):
         picture = picture_of(cut)
 
-        result = tagging.change_tags(self.library, [cut, whole], ["Activity/Rowing"], [], EXIFTOOL)
+        result = tagging.change_tags(self.library, [cut, whole], ["Activity/Rowing"], [], exiftool_fields.opened(self, EXIFTOOL))
 
         self.assertEqual((2, [], []), (result.changed, result.errors, result.skipped), result.message())
         self.assertEqual(["Activity/Rowing", "Beach"], keywords_of(cut), "read back from the file")
         self.assertEqual(["Activity/Rowing", "Beach"], self.indexed(cut), "the row says what the file says")
         self.assertEqual(picture, picture_of(cut), "the picture data after the start of scan changed")
         self.assert_row_describes_file(cut)
-        saved = tagging.save_photo(self.library, cut, "", ["Activity/Rowing", "Beach", "Places/Quay"], None, EXIFTOOL, "",
+        saved = tagging.save_photo(self.library, cut, "", ["Activity/Rowing", "Beach", "Places/Quay"], None, exiftool_fields.opened(self, EXIFTOOL), "",
                                    base=page_writes.base(self.library, cut))
         self.assertEqual((True, 1), (saved.ok, saved.changed), saved.message())
         self.assertEqual(["Activity/Rowing", "Beach", "Places/Quay"], keywords_of(cut))
@@ -190,7 +191,7 @@ class TaggingAPhoto(ReadFilesCase):
             held = handle.read()
         row = self.rows("SELECT tags, mtime, size FROM photos WHERE path = ?", (b,))
 
-        result = tagging.change_tags(self.library, [a, b, c], ["Activity/Rowing"], [], EXIFTOOL, stop_at_first_error=False)
+        result = tagging.change_tags(self.library, [a, b, c], ["Activity/Rowing"], [], exiftool_fields.opened(self, EXIFTOOL), stop_at_first_error=False)
 
         self.assertEqual(2, result.changed, result.message())
         self.assertEqual([b], [path for path, _why in result.errors], "the photo it failed, by itself")
@@ -220,7 +221,7 @@ class TaggingAPhoto(ReadFilesCase):
         os.chmod(b, stat.S_IREAD)
         self.addCleanup(self.writable_again)
 
-        result = tagging.change_tags(self.library, [a, b, c], ["Activity/Rowing"], [], EXIFTOOL)
+        result = tagging.change_tags(self.library, [a, b, c], ["Activity/Rowing"], [], exiftool_fields.opened(self, EXIFTOOL))
 
         self.assertEqual((1, [b]), (result.changed, [path for path, _why in result.errors]), result.message())
         self.assertEqual(["Activity/Rowing", "Beach"], keywords_of(a))
@@ -255,7 +256,7 @@ class TaggingAPhoto(ReadFilesCase):
             return real(session, files, *args, **kwargs)
 
         with rewritten(), mock.patch.object(ExifToolSession, "set_tags", failing_after_deleting):
-            result = tagging.change_tags(self.library, [a, b], ["Activity/Rowing"], [], EXIFTOOL,
+            result = tagging.change_tags(self.library, [a, b], ["Activity/Rowing"], [], exiftool_fields.opened(self, EXIFTOOL),
                                          stop_at_first_error=False)
 
         self.assertEqual(([b], 1), ([path for path, _why in result.errors], result.changed), result.message())
@@ -284,7 +285,7 @@ class TaggingAPhoto(ReadFilesCase):
         base = page_writes.base(self.library, a)
         with mock.patch.object(exiftool_session, "ExifToolSession", side_effect=counted):
             result = tagging.save_photo(self.library, a, "Quay at dusk", ["Beach", "Places/Quay/Pier"],
-                                        "2019-06-15T10:30:00", EXIFTOOL, "", base=base)
+                                        "2019-06-15T10:30:00", exiftool_fields.opened(self, EXIFTOOL), "", base=base)
 
         self.assertEqual((True, 1), (result.ok, result.changed), result.message())
         self.assertEqual("2019:06:15 10:30:00", str(field_of(a, "EXIF:DateTimeOriginal")))
@@ -317,7 +318,7 @@ class TaggingAPhoto(ReadFilesCase):
             (json.dumps(dict(raw, Title="Quay at noon", **{"XMP:Title": "Quay at noon"})), a)))
         with self.assertNoLogs(file_changes.logger.name, level="WARNING"):
             again = tagging.save_photo(self.library, a, "Quay at dusk", ["Beach", "Places/Quay/Pier"],
-                                       "2019-06-15T10:30:00", EXIFTOOL, "", base=result.details["base"])
+                                       "2019-06-15T10:30:00", exiftool_fields.opened(self, EXIFTOOL), "", base=result.details["base"])
         self.assertEqual((True, 0, None, written), (again.ok, again.changed, again.details["change"],
                                                     os.stat(a).st_mtime_ns), "a file holding it all was written")
         followed = json.loads(self.rows("SELECT raw_metadata FROM photos WHERE path = ?", (a,))[0][0])
@@ -338,15 +339,15 @@ class TaggingAPhoto(ReadFilesCase):
     def test_a_save_takes_a_date_refuses_a_tag_it_may_not_set_and_answers_a_write_that_fails(self):
         a = self.make_read("a.jpg")
         base = page_writes.base(self.library, a)
-        refused = tagging.save_photo(self.library, a, "Start", ["Beach", "Places|Harbour"], None, EXIFTOOL, "", base=base)
+        refused = tagging.save_photo(self.library, a, "Start", ["Beach", "Places|Harbour"], None, exiftool_fields.opened(self, EXIFTOOL), "", base=base)
         self.assertIn('"|"', refused.refused)
         self.assertEqual((["Beach"], None), (keywords_of(a), field_of(a, "XMP:Title")), "a refused save wrote")
-        timed = tagging.save_photo(self.library, a, "Start", ["Beach"], "2019-06-15T10:30:07", EXIFTOOL, "", base=base)
+        timed = tagging.save_photo(self.library, a, "Start", ["Beach"], "2019-06-15T10:30:07", exiftool_fields.opened(self, EXIFTOOL), "", base=base)
         self.assertTrue(timed.ok, timed.message())
         self.assertEqual("2019:06:15 10:30:07", str(field_of(a, "EXIF:DateTimeOriginal")), "the date in the same write")
         os.chmod(a, stat.S_IREAD)
         self.addCleanup(self.writable_again)
-        failed = tagging.save_photo(self.library, a, "Finish", ["Beach"], None, EXIFTOOL, "", base=timed.details["base"])
+        failed = tagging.save_photo(self.library, a, "Finish", ["Beach"], None, exiftool_fields.opened(self, EXIFTOOL), "", base=timed.details["base"])
         # #299: the route answers from the Result: a write that fails is in it, not raised.
         self.assertEqual((False, 0, None), (failed.ok, failed.changed, failed.refused))
         self.assertIn("the new file was removed and the photo is as it was", failed.message())
@@ -361,7 +362,7 @@ class TaggingAPhoto(ReadFilesCase):
                 raise KeyboardInterrupt("the server was closed")
 
         with mock.patch.object(file_changes, "_reached", side_effect=stopped), self.assertRaises(KeyboardInterrupt):
-            tagging.save_photo(self.library, a, "Quay at dusk", ["Beach", "Places/Quay"], "2019-06-15T10:30:00", EXIFTOOL, "",
+            tagging.save_photo(self.library, a, "Quay at dusk", ["Beach", "Places/Quay"], "2019-06-15T10:30:00", exiftool_fields.opened(self, EXIFTOOL), "",
                                base=page_writes.base(self.library, a))
 
         raw = json.loads(self.rows("SELECT raw_metadata FROM photos WHERE path = ?", (a,))[0][0])
@@ -377,7 +378,7 @@ class TaggingAPhoto(ReadFilesCase):
         write_outside(a, {"XMP-xmpMM:DocumentID": "xmp.did:5b2c-quay"})
         photo_id = self.rows("SELECT id FROM photos WHERE path = ?", (a,))[0][0]
 
-        self.assertTrue(tagging.save_photo(self.library, a, "Quay at dusk", ["Beach"], None, EXIFTOOL, "",
+        self.assertTrue(tagging.save_photo(self.library, a, "Quay at dusk", ["Beach"], None, exiftool_fields.opened(self, EXIFTOOL), "",
                                            base=page_writes.base(self.library, a)).ok)
 
         self.assertEqual([("xmp.did:5b2c-quay",)], self.rows("SELECT document_id FROM photos WHERE path = ?", (a,)),
@@ -385,17 +386,18 @@ class TaggingAPhoto(ReadFilesCase):
         renamed = os.path.join(self.folder, "Quay.jpg")
         os.rename(a, renamed)   # another program renames it
 
-        result = sync.sync(self.library, folder=self.folder, apply=True, exiftool_path=EXIFTOOL)
+        with field_values.opened(EXIFTOOL) as fields:
+            result = sync.sync(self.library, folder=self.folder, apply=True, fields=fields)
 
         self.assertEqual([(photo_id, renamed)], self.rows("SELECT id, path FROM photos"), result.message())
 
     def test_a_caption_that_renames_the_photo_is_a_change_that_undo_reverses_with_the_row(self):
         a = self.make_read("IMG_0001.jpg")
         renamed = photo_actions.smart_rename(self.library, [a], "Regatta", "{grouping} - {index}",
-                                             EXIFTOOL).details["updated_paths"][a]
+                                             exiftool_fields.opened(self, EXIFTOOL)).details["updated_paths"][a]
         db.write_with_connection(self.library.path, lambda conn: face_rows.add_face(conn, renamed, name="Rowan Thackeray",
                                                                                  name_source="manual"))
-        result = tagging.save_photo(self.library, renamed, "Start", ["Beach"], None, EXIFTOOL,
+        result = tagging.save_photo(self.library, renamed, "Start", ["Beach"], None, exiftool_fields.opened(self, EXIFTOOL),
                                     "{grouping} - {index} - {caption}", base=page_writes.base(self.library, renamed))
         new = os.path.join(self.folder, "Regatta - 1 - Start.jpg")
         self.assertEqual((new, True), (result.details["new_path"], result.details["renamed"]))
@@ -631,7 +633,7 @@ class TheUndoOrder(ReadFilesCase):
 
     def test_a_tag_change_after_the_kept_name_refuses_the_undo_until_it_is_undone(self):
         a = self.make_read("a.jpg")
-        kept = photo_actions.preserve_names(self.library, [a], EXIFTOOL).details["change"]
+        kept = photo_actions.preserve_names(self.library, [a], exiftool_fields.opened(self, EXIFTOOL)).details["change"]
         tagged = self.add([a]).details["change"]
         refused = self.undo(kept)
         self.assertEqual(0, refused.changed)
@@ -643,7 +645,7 @@ class TheUndoOrder(ReadFilesCase):
     def test_smart_rename_keeps_each_original_name_as_its_own_change_that_waits_for_the_rename(self):
         a, b = self.make_read("IMG_0001.jpg"), self.make_read("IMG_0002.jpg")
         write_outside(b, {PRESERVED: "DSC_0100.JPG"})
-        result = photo_actions.smart_rename(self.library, [a, b], "Regatta", "{grouping} - {index}", EXIFTOOL)
+        result = photo_actions.smart_rename(self.library, [a, b], "Regatta", "{grouping} - {index}", exiftool_fields.opened(self, EXIFTOOL))
         self.assertEqual((True, 2), (result.ok, result.changed))
         kept, renamed = self.change_named("smart rename: original names"), self.change_named("smart rename")
         files = self.rows("SELECT path, fields_before, fields_after, state FROM change_files WHERE change_id = ?",

@@ -4,7 +4,7 @@ import json
 import logging
 import os
 
-from tagpup.core import dates, fields, paths, photo_meta, renaming, validation, vocabulary
+from tagpup.core import dates, fields as core_fields, paths, photo_meta, renaming, validation, vocabulary
 from tagpup.core.result import Conflict, NotFound, Refused, Result, Unavailable
 from tagpup.files import convertible, field_values, images, names, recycle_bin, shares, video_frames
 from tagpup.services import batches, file_changes, file_only, libraries, rotation, thumbnails
@@ -61,7 +61,7 @@ def page_record(path, meta, mtime=0.0, size=0):
         # The title by the one rule the save compares by (fields.title_of over what the file holds), never the
         # stored `captions`, whose order is the indexer's of the day: a row stored before the title came first showed
         # its Description while the save read its Title, and every save of it was refused as changed on disk (#2582).
-        "title": fields.title_of(raw_meta),
+        "title": core_fields.title_of(raw_meta),
         "mtime": mtime,
         "size": size,
         "year": year,
@@ -124,12 +124,12 @@ def changed_on_disk(path, stamp):
     return not photos.describes(stamp[0], stamp[1], file_stamp(path))
 
 
-def read_file(library, path, exiftool_path, stamp=None):
+def read_file(library, path, fields, stamp=None):
     """The page record of one photo read from its FILE with ExifTool, as the folder scan reads a photo whose row
     does not describe it (the library's people vocabulary told to the reader). mtime and size are the file's:
     `stamp`, (mtime, size), when the caller has just taken it."""
     stamp = stamp or file_stamp(path) or (None, None)
-    return _read(library, [(path, stamp[0], stamp[1])], exiftool_path)[paths.key(path)]
+    return _read(library, [(path, stamp[0], stamp[1])], fields)[paths.key(path)]
 
 
 def taken_order(record):
@@ -157,7 +157,7 @@ def scan_stamp(library):
         return None
 
 
-def scan_folder(library, folder, exiftool_path):
+def scan_folder(library, folder, fields):
     """The photos under `folder`, at any depth, as page records keyed by paths.key:
     opening a folder in TagPup.
 
@@ -189,7 +189,7 @@ def scan_folder(library, folder, exiftool_path):
     if to_read:
         logger.info("Scan found %d new/modified files in %s. Running ExifTool...", len(to_read), folder)
         try:
-            found.update(_read(library, [(f, mt, sz) for f, mt, sz in to_read], exiftool_path))
+            found.update(_read(library, [(f, mt, sz) for f, mt, sz in to_read], fields))
         except Exception as e:
             logger.error("Error running ExifTool during scan: %s", e)
     return _with_posters(found, known)
@@ -230,18 +230,16 @@ def _with_posters(found, known):
     return found
 
 
-def _read(library, files, exiftool_path):
+def _read(library, files, fields):
     """{paths.key: page record} of `files`, each (path, mtime, size), mtime and size the
     reader's when None, read with ExifTool in batches of READ_BATCH."""
     people = taxonomy.people_vocabulary(library.path)
     found = {}
-    with field_values.opened(exiftool_path) as reader:
-        for start in range(0, len(files), READ_BATCH):
-            batch = files[start:start + READ_BATCH]
-            for (file, mtime, size), meta in zip(batch, reader.whole([f for f, _, _ in batch], people=people)):
-                found[paths.key(file)] = page_record(
-                    file, meta, meta["mtime"] if mtime is None else mtime,
-                    meta["size"] if size is None else size)
+    for start in range(0, len(files), READ_BATCH):
+        batch = files[start:start + READ_BATCH]
+        for (file, mtime, size), meta in zip(batch, fields.whole([f for f, _, _ in batch], people=people)):
+            found[paths.key(file)] = page_record(
+                file, meta, meta["mtime"] if mtime is None else mtime, meta["size"] if size is None else size)
     return found
 
 
@@ -260,11 +258,11 @@ def record_written(library, record, path, tags, flat, hierarchical, dates_writte
     Every keyword field, not just the XMP pair: the page re-derives tags from the raw
     metadata, and a stale IPTC:Keywords brought a removed tag straight back.
     """
-    raw_meta = fields.record_keyword_fields(record.setdefault("raw_metadata", {}), flat, hierarchical)
+    raw_meta = core_fields.record_keyword_fields(record.setdefault("raw_metadata", {}), flat, hierarchical)
     record["tags"] = list(tags)
     record["people"] = people_of(library, tags, path)
     if dates_written:
-        fields.record_dates(raw_meta, dates_written)
+        core_fields.record_dates(raw_meta, dates_written)
         rederive_dates(record, path)
     return raw_meta
 
@@ -440,7 +438,7 @@ def face_crop(library, face_id):
 
 
 @roots_service.canonical_args("photo_paths")
-def preserve_names(library, photo_paths, exiftool_path, split=None):
+def preserve_names(library, photo_paths, fields, split=None):
     """Write each photo's current name into its XMP-xmpMM:PreservedFileName where it holds
     none -- the name it had before Smart Rename first renamed it, which later renames
     leave alone, and which relink_photos finds a renamed photo by -- as one change of
@@ -460,9 +458,9 @@ def preserve_names(library, photo_paths, exiftool_path, split=None):
     """
     def plan_one(path, held):
         # A clip's is patched into its XMP, as its tags are (fields.CLIP_WRITES, "name"; field_values.write).
-        if held.get(fields.PRESERVED_NAME):
+        if held.get(core_fields.PRESERVED_NAME):
             return file_changes.skip("keeps the name it had before it was first renamed")
-        return file_changes.Plan(after={fields.PRESERVED_NAME: os.path.basename(path)})
+        return file_changes.Plan(after={core_fields.PRESERVED_NAME: os.path.basename(path)})
 
     if split is None:
         held, loose = libraries.split(library, photo_paths)
@@ -470,14 +468,14 @@ def preserve_names(library, photo_paths, exiftool_path, split=None):
         wanted = {paths.key(path) for path in photo_paths}
         held, loose = [[path for path in side if paths.key(path) in wanted] for side in split]
     journaled = file_changes.write_fields(
-        library, "smart rename: original names", exiftool_path, held, list(_PRESERVE_READ), plan_one,
+        library, "smart rename: original names", fields, held, list(_PRESERVE_READ), plan_one,
         summary={"photos": len(held)}, unreadable="skip") if held else None
-    files = file_only.write_fields(exiftool_path, loose, list(_PRESERVE_READ), plan_one) if loose else None
+    files = file_only.write_fields(fields, loose, list(_PRESERVE_READ), plan_one) if loose else None
     return file_only.combined(journaled, files)
 
 
 #: What preserve_names reads and writes of each file: the name it had before its first rename.
-_PRESERVE_READ = (fields.PRESERVED_NAME,)
+_PRESERVE_READ = (core_fields.PRESERVED_NAME,)
 
 
 def _renamable(result, photo_paths, held, loose):
@@ -505,7 +503,7 @@ def _refused_clips(kept):
 
 @roots_service.canonical_args("photo_paths")
 @file_changes.exclusively()
-def smart_rename(library, photo_paths, grouping, rename_format, exiftool_path):
+def smart_rename(library, photo_paths, grouping, rename_format, fields):
     """Number photos in the order given and name each for it: "<grouping> - <index> -
     <caption>" in `rename_format`, the caption being the one on the photo. Smart Rename.
 
@@ -546,13 +544,13 @@ def smart_rename(library, photo_paths, grouping, rename_format, exiftool_path):
         return result
     width = len(str(len(photo_paths)))
     numbers = {path: str(index).zfill(width) for index, path in enumerate(photo_paths, start=1)}
-    return _rename_numbered(library, result, photo_paths, validation.trim(grouping), rename_format, exiftool_path,
+    return _rename_numbered(library, result, photo_paths, validation.trim(grouping), rename_format, fields,
                             numbers, move_aside=True)
 
 
 @roots_service.canonical_args("photo_path")
 @file_changes.exclusively()
-def smart_rename_one(library, photo_path, grouping, rename_format, exiftool_path):
+def smart_rename_one(library, photo_path, grouping, rename_format, fields):
     """Smart Rename of the one photo `photo_path` (the photo screen's button beside its file name): smart_rename's
     renaming, journal, index rows and undo, but the number is the one its name holds (renaming.parts_of: kept when the
     grouping changes, DECISIONS 2026-11-05), and a photo whose name holds none takes the next after the highest its
@@ -584,7 +582,7 @@ def smart_rename_one(library, photo_path, grouping, rename_format, exiftool_path
     if refusal:
         result.refuse(refusal.refused, refusal.refused_kind)
         return result
-    _rename_numbered(library, result, [photo_path], grouping, rename_format, exiftool_path, {photo_path: number},
+    _rename_numbered(library, result, [photo_path], grouping, rename_format, fields, {photo_path: number},
                      move_aside=False)
     if result.details.pop(LEFT_OUT, None):
         # The one clip asked for is left out because its writer refused it (CLIP_NOT_PATCHED, in_place.OPEN_ELSEWHERE):
@@ -616,7 +614,7 @@ def _number_of(photo_path, grouping, rename_format):
     return str(int(highest) + 1).zfill(len(highest)), None
 
 
-def _rename_numbered(library, result, photo_paths, grouping, rename_format, exiftool_path, numbers, move_aside):
+def _rename_numbered(library, result, photo_paths, grouping, rename_format, fields, numbers, move_aside):
     """smart_rename's renaming of `photo_paths`, each to the number `numbers` gives it, into `result`. `move_aside`: a
     file outside them holding a new name is moved aside (names.aside_for); without it, the rename is refused."""
     held, loose = libraries.split(library, photo_paths)
@@ -624,7 +622,7 @@ def _rename_numbered(library, result, photo_paths, grouping, rename_format, exif
     # A clip of a folder the library does not hold is not renamed (_renamable): its error, its number left unused as a
     # photo's no longer on disk is. Asked here, not left to the names kept: their failure would stop every rename.
     present = [p for p in _renamable(result, photo_paths, held, loose) if shares.there(p)]
-    captions = names.read_for_renaming(exiftool_path, present)
+    captions = names.read_for_renaming(fields, present)
     renames = {}
     for old_path in photo_paths:
         if old_path not in captions:
@@ -636,7 +634,7 @@ def _rename_numbered(library, result, photo_paths, grouping, rename_format, exif
         if refusal:
             result.refuse(refusal.refused, refusal.refused_kind)
             return result
-    kept = preserve_names(library, present, exiftool_path, split=(held, loose))
+    kept = preserve_names(library, present, fields, split=(held, loose))
     if kept.refused:
         result.refuse(kept.refused)
         return result
@@ -678,7 +676,7 @@ def _rename_numbered(library, result, photo_paths, grouping, rename_format, exif
             # aside and renamed into their names in one call, so each frees its name for the
             # next within it.
             outcome = file_changes.rename(library, "smart rename", held_renames, aside_for(held_renames),
-                                          exiftool_path, summary={"photos": len(held_renames)})
+                                          fields, summary={"photos": len(held_renames)})
             done.update(outcome.done)
             moved_aside.update(outcome.moved_aside)
             skipped, moved, change = list(outcome.skipped or []), outcome.moved, outcome.change_id
@@ -749,7 +747,7 @@ def date_shift_plan(minutes):
 
 
 @roots_service.canonical_args("photo_paths")
-def shift_date_taken(library, photo_paths, minutes, exiftool_path, group=None):
+def shift_date_taken(library, photo_paths, minutes, fields, group=None):
     """Move Date Taken in each photo by `minutes`, and tell the index. Time Shift.
 
     One change of photo files (tagpup.services.file_changes): every photo's dates read,
@@ -781,20 +779,18 @@ def shift_date_taken(library, photo_paths, minutes, exiftool_path, group=None):
 
     try:
         journaled = file_changes.write_fields(
-            library, "time shift", exiftool_path, held, dates.SHIFTED_FIELDS, plan_one,
+            library, "time shift", fields, held, dates.SHIFTED_FIELDS, plan_one,
             summary={"photos": len(held), "minutes": minutes, **({store_journal.GROUP: group} if group else {})},
             unreadable="skip") if held else None
-        files = file_only.write_fields(exiftool_path, loose, dates.SHIFTED_FIELDS, plan_one,
-                                       unreadable="skip") if loose else None
+        files = file_only.write_fields(fields, loose, dates.SHIFTED_FIELDS, plan_one, unreadable="skip") if loose else None
         result = file_only.combined(journaled, files)
     except Exception as e:
         result = Result(attempted=len(photo_paths))
         result.fail("time shift", e)
         return result
     # Only reading, for the page: minting a DocumentID here would write the files again.
-    with field_values.opened(exiftool_path) as reader:
-        result.details["records"] = [meta for meta in reader.whole(
-            photo_paths, people=taxonomy.people_vocabulary(library.path)) if not meta.get("read_error")]
+    result.details["records"] = [meta for meta in fields.whole(
+        photo_paths, people=taxonomy.people_vocabulary(library.path)) if not meta.get("read_error")]
     result.details[TAKEN_OF] = {
         paths.key(meta["path"]): dates.date_taken(meta.get("raw_metadata", {}), meta["path"], images.kind_of(meta["path"]))
         for meta in result.details["records"]}
@@ -802,7 +798,7 @@ def shift_date_taken(library, photo_paths, minutes, exiftool_path, group=None):
 
 
 @roots_service.canonical_args("photo_path")
-def delete(library, photo_path, exiftool_path, for_good=False, fresh=True):
+def delete(library, photo_path, fields, for_good=False, fresh=True):
     """Send a photo or a clip to the Recycle Bin, and forget it: its row, faces, cached
     embedding (a clip's frames with it) and thumbnail or poster. Clicking Delete in Organize's
     panel (a library view's bulk Delete is delete_in_chunks).
@@ -840,7 +836,7 @@ def delete(library, photo_path, exiftool_path, for_good=False, fresh=True):
     with file_changes.exclusively():
         held, loose = libraries.split(library, [photo_path])
         if held:
-            settle_before_delete(library, exiftool_path)
+            settle_before_delete(library, fields)
         why = recycle_bin.problem(photo_path)
         if why:
             result.refuse(why)
@@ -889,11 +885,11 @@ DELETED_WHEN_TAGPUP_STARTS = "stopped for an update: it is deleted when TagPup s
 LEFT_FOR_THE_NEXT_START = "left for the next start"
 
 
-def settle_before_delete(library, exiftool_path):
+def settle_before_delete(library, fields):
     """What a process no longer running left half done on a photo is finished (file_changes.settle, as a write and a rename
     do) before a Delete, single or bulk, looks at its files, so it never plans over a change left on one (#3263, #3279); a
     share that does not answer leaves that change for the next settle. The caller holds the lock of changes of photo files."""
-    file_changes.settle(library, exiftool_path)
+    file_changes.settle(library, fields)
 
 
 def _reached(step):
@@ -1138,7 +1134,7 @@ def rotate_plan(direction):
 
 
 @roots_service.canonical_args("photo_paths")
-def rotate_photos(library, photo_paths, direction, exiftool_path):
+def rotate_photos(library, photo_paths, direction, fields):
     """Turn photos a quarter left or right, or mirror them left to right ("mirror"), as ONE journaled change "rotate" (tagpup.services.file_changes.write_fields):
     each photo's Orientation planned from what the file holds, written, and its row recorded as it is marked done -- with
     the face boxes the turn moves and the vectors it makes stale (tagpup.services.rotation), in the same transaction. A crash
@@ -1164,9 +1160,9 @@ def rotate_photos(library, photo_paths, direction, exiftool_path):
     held, loose = libraries.split(library, photo_paths)
     try:
         journaled = file_changes.write_fields(
-            library, "rotate", exiftool_path, held, [rotation.FIELD], rotate_plan(direction),
+            library, "rotate", fields, held, [rotation.FIELD], rotate_plan(direction),
             summary={"photos": len(held), "direction": direction}) if held else None
-        files = file_only.write_fields(exiftool_path, loose, [rotation.FIELD], rotate_plan(direction)) if loose else None
+        files = file_only.write_fields(fields, loose, [rotation.FIELD], rotate_plan(direction)) if loose else None
         return file_only.combined(journaled, files)
     except Exception as e:
         result = Result(attempted=len(photo_paths))
@@ -1174,7 +1170,7 @@ def rotate_photos(library, photo_paths, direction, exiftool_path):
         return result
 
 
-def rotate(library, photo_path, direction, exiftool_path):
+def rotate(library, photo_path, direction, fields):
     """Turn a photo a quarter left or right, or mirror it. Clicking Rotate Left, Rotate Right or Mirror: rotate_photos of one
     photo.
 
@@ -1182,7 +1178,7 @@ def rotate(library, photo_path, direction, exiftool_path):
     day), its `orientation`, `faces_turned`, and `change` (History's id of the turn; None for a photo of a folder the library
     does not hold). A photo left alone is an error here, not a quiet nothing.
     """
-    result = rotate_photos(library, [photo_path], direction, exiftool_path)
+    result = rotate_photos(library, [photo_path], direction, fields)
     if result.refused or result.errors:
         return result
     turned = next((detail for key, detail in result.details.get("written", {}).items()

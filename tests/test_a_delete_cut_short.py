@@ -28,6 +28,7 @@ import unittest
 from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import exiftool_fields  # noqa: E402
 import face_rows  # noqa: E402
 import web_client  # noqa: E402
 from view_library import ViewLibrary, make_jpeg  # noqa: E402
@@ -110,10 +111,10 @@ class ADeleteCutShort(unittest.TestCase):
         self.vl.conn.commit()
 
     def settle(self):
-        return file_changes.settle(self.library, None)
+        return file_changes.settle(self.library, exiftool_fields.opened(self, None))
 
     def delete(self, path):
-        return photo_actions.delete(self.library, path, None)
+        return photo_actions.delete(self.library, path, exiftool_fields.opened(self, None))
 
     # ---- the scenarios ----------------------------------------------------------------------
 
@@ -158,7 +159,7 @@ class ADeleteCutShort(unittest.TestCase):
             with self.assertRaises(Crash):
                 self.delete(self.local)
         self.died()
-        out = bulk_edit.run(self.library, bulk_edit.Edit(bulk_edit.DELETE), [self.local_id], None)
+        out = bulk_edit.run(self.library, bulk_edit.Edit(bulk_edit.DELETE), [self.local_id], exiftool_fields.opened(self, None))
         self.assertEqual(1, out.skipped_missing, "the settle sent it: the bulk Delete finds it gone")
         self.assertEqual([self.local], self.binned, "sent once, by the settle")
         self.assertEqual(([], []), (self.changes(), self.files()), "the dead change is finished, not left beside a new one")

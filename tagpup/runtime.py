@@ -638,10 +638,6 @@ class Runtime:
         """The library's words CLIP is asked about a photo, before the tree's."""
         return self.settings(library).candidate_words
 
-    def exiftool(self, library):
-        """The ExifTool program to run for `library`."""
-        return tagpup_config.exiftool_path(self.settings(library).exiftool)
-
     def sync(self, library, folder=None, apply=False, index_new=True):
         """Bring `library` in step with its folders, or with `folder` (tagpup.services.sync):
         a dry run unless `apply`, with the ExifTool the library names. A dry run reads the
@@ -669,8 +665,8 @@ class Runtime:
             def queue(folders):
                 return self.index_queues.of(library).start(folders, index_folder(library, subfolders=False),
                                                            together=True)
-        return sync_service.sync(library, folder, apply, exiftool(library, settings), queue,
-                                 roots=settings.roots, ignored=settings.ignored)
+        with fields(library, settings) as opened:
+            return sync_service.sync(library, folder, apply, opened, queue, roots=settings.roots, ignored=settings.ignored)
 
     def include(self, library, folder):
         """Index a folder to review, with its subfolders, on this runtime's index queue

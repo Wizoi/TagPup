@@ -521,7 +521,7 @@ def index(ctx, directories, force_reembed: bool, reset: bool, skip_faces: bool, 
                 console.print(f"  • {root}: {count} path(s)")
         photo_index.close()
         if bake_only and not skip_faces:
-            _bake_after_index(Library(db_path), exiftool_path, face_records.detector_named(settings.faces),
+            _bake_after_index(Library(db_path), settings, face_records.detector_named(settings.faces),
                               list(bake_only.values()), {}, os.environ.get(indexing_service.STOP_FILE))
         return
 
@@ -592,7 +592,7 @@ def index(ctx, directories, force_reembed: bool, reset: bool, skip_faces: bool, 
             console.print("[yellow]No photos found to index.[/yellow]")
         photo_index.close()
         if bake_only and not skip_faces:
-            _bake_after_index(Library(db_path), exiftool_path, face_records.detector_named(settings.faces),
+            _bake_after_index(Library(db_path), settings, face_records.detector_named(settings.faces),
                               list(bake_only.values()), {}, os.environ.get(indexing_service.STOP_FILE))
         return
 
@@ -878,7 +878,7 @@ def index(ctx, directories, force_reembed: bool, reset: bool, skip_faces: bool, 
 
                 # Save progress incrementally in batches of PHOTO_CHUNK
                 if len(batch_embeddings) >= PHOTO_CHUNK:
-                    _read_again(photo_index.conn, batch_metas, given, exiftool_path)
+                    _read_again(photo_index.conn, batch_metas, given, Library(db_path), settings)
                     photo_index.build_or_update(batch_embeddings, batch_metas, dim=len(batch_embeddings[0]))
                     _recorded(batch_metas, touched, handed)
 
@@ -916,7 +916,7 @@ def index(ctx, directories, force_reembed: bool, reset: bool, skip_faces: bool, 
         # Rebuild or update the FAISS index for the final batch
         if batch_embeddings:
             # Not reloaded: nothing below searches this index, and a reload reads every vector again.
-            _read_again(photo_index.conn, batch_metas, given, exiftool_path)
+            _read_again(photo_index.conn, batch_metas, given, Library(db_path), settings)
             photo_index.build_or_update(batch_embeddings, batch_metas, dim=len(batch_embeddings[0]))
             _recorded(batch_metas, touched, handed)
 
@@ -1026,7 +1026,7 @@ def index(ctx, directories, force_reembed: bool, reset: bool, skip_faces: bool, 
     # The files of the folders it recorded are written from the library (docs/PLAN_KEEP_IN_STEP.md, cut 2), the card let
     # go above: every way of indexing does it, and the owner runs no bake. Not with --skip-faces: no face was looked for.
     if touched and not skip_faces:
-        _bake_after_index(Library(db_path), exiftool_path, face_records.detector_named(settings.faces),
+        _bake_after_index(Library(db_path), settings, face_records.detector_named(settings.faces),
                           list(touched.values()), handed, stop_file)
 
 
@@ -1209,13 +1209,14 @@ def _say(fact, person=None):
         _stop_saying(error)
 
 
-def _bake_after_index(library, exiftool_path, detector, folders, handed, stop_file):
+def _bake_after_index(library, settings, detector, folders, handed, stop_file):
     """The bake after an index (tagpup.services.bake_after_index), its line said in counts. One that fails is logged
     and said, and the index stands: the next index of the folder bakes it. A Ctrl+C keeps what was written. Each
     folder's line is a fact for the server; by hand the log alone shows it."""
     try:
-        baked = bake_after_index.bake_folders(library, exiftool_path, detector, folders, handed,
-                                              stop=lambda: bool(stop_file) and os.path.exists(stop_file), each=_say)
+        with runtimes.fields(library, settings) as fields:
+            baked = bake_after_index.bake_folders(library, fields, detector, folders, handed,
+                                                  stop=lambda: bool(stop_file) and os.path.exists(stop_file), each=_say)
     except Exception as error:
         logger.exception("The bake after the index stopped")
         line = (bake_after_index.SAID + "stopped (%s); the photos are indexed, and the next index of their folders "
@@ -1225,7 +1226,7 @@ def _bake_after_index(library, exiftool_path, detector, folders, handed, stop_fi
     _say(baked.fact(), baked.said())
 
 
-def _read_again(conn, metas, given, exiftool_path):
+def _read_again(conn, metas, given, library, settings):
     """The fields of each photo of `metas` that was `given` its identity, read from the file again (refresh_rows.
     read_files, stamped before its own read), so its row is recorded as the file is after the write: the next index
     finds it current and reads nothing, and its vector and faces are kept. The batch read was up to 500 photos
@@ -1235,7 +1236,8 @@ def _read_again(conn, metas, given, exiftool_path):
     again = [meta["path"] for meta in metas if meta["path"] in given]
     if not again:
         return
-    records = refresh_rows.read_files(conn, again, exiftool_path)
+    with runtimes.fields(library, settings) as fields:
+        records = refresh_rows.read_files(conn, again, fields)
     for meta in metas:
         record = records.get(meta["path"])
         if record is not None and record["mtime"] is not None:
@@ -1404,8 +1406,8 @@ def undo(ctx, change_id, apply_):
     every row is still what the change left, and no newer change touched the same rows.
     A rehearsal unless --apply."""
     library = _existing_library(ctx)
-    result = library_journal.undo(library, change_id, apply=apply_,
-                                  exiftool_path=get_exiftool_path(library.path, read_only=True))
+    with runtimes.fields(library, runtimes.peek_settings(library)) as fields:
+        result = library_journal.undo(library, change_id, apply=apply_, fields=fields)
     _say_rehearsal(result)
     if result.refused:
         raise SystemExit(1)

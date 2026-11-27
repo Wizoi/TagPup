@@ -37,6 +37,7 @@ from click.testing import CliRunner
 from PIL import Image
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import exiftool_fields  # noqa: E402
 import baked_files  # noqa: E402
 import page_writes  # noqa: E402
 import own_home  # noqa: E402
@@ -137,7 +138,7 @@ class ACroppedPictureGetsNewFaces(unittest.TestCase):
         library = Library(db_path)
         person = face_people.made(library, PERSON)
         tag = people_service.resolve(library, person).tag
-        saved = tagging.save_photo(library, self.photo, "", [tag], None, EXIFTOOL, "",
+        saved = tagging.save_photo(library, self.photo, "", [tag], None, exiftool_fields.opened(self, EXIFTOOL), "",
                                    base=page_writes.base(library, self.photo))
         self.assertEqual(1, saved.changed, saved.errors)
         (_, left, *_), (_, right, *_) = self.faces(db_path)

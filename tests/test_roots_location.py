@@ -27,6 +27,7 @@ from unittest import mock
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
+import exiftool_fields  # noqa: E402
 import own_home  # noqa: E402
 import photo_rows  # noqa: E402
 import roots_library as rl  # noqa: E402
@@ -630,7 +631,7 @@ class AWriteStoppedHalfWay(BeforeAMove):
             return real(*args, **kwargs)
 
         with mock.patch.object(file_changes, "_carry", stop_after_the_first):
-            result = tagging.change_tags(self.library, self.side.real[:3], ["Harbour"], [], rl.EXIFTOOL)
+            result = tagging.change_tags(self.library, self.side.real[:3], ["Harbour"], [], exiftool_fields.opened(self, rl.EXIFTOOL))
         self.assertIn(roots_service.STOPPED, result.refused)
         self.assertIn("Before it stopped 1 file(s) were written", result.refused)
         self.assertEqual(1, result.changed)

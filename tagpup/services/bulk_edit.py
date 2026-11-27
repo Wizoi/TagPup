@@ -198,7 +198,7 @@ class Outcome:
                            for photo_id, name, why in self.errors[:MOST_ERRORS]]}
 
 
-def run(library, edit, ids, exiftool_path):
+def run(library, edit, ids, fields):
     """Do `edit` to the photos `ids` (resolved, in order, at most batches.MAX_BATCH) and say what became of each (Outcome). It waits
     its turn behind the batches ahead of it (batches.claim; Conflict, nothing done, when too many wait). An exception that escapes
     is not one photo's -- ExifTool that cannot start, a library that cannot be read; the photos written before it keep the edit,
@@ -206,17 +206,17 @@ def run(library, edit, ids, exiftool_path):
     if not ids:
         raise Refused("The selection holds no photos.")
     with batches.claim(library, OPERATIONS[edit.op], len(ids)):
-        return _write(library, edit, list(ids), exiftool_path)
+        return _write(library, edit, list(ids), fields)
 
 
-def _write(library, edit, ids, exiftool_path):
+def _write(library, edit, ids, fields):
     found = selection.paths_of(library, ids)
     present = [(photo_id, found[photo_id]) for photo_id in ids if photo_id in found]
     out = Outcome(skipped_missing=len(ids) - len(present))
     if not present:
         return out
     if edit.op == DELETE:
-        return _delete(library, edit, present, out, exiftool_path)
+        return _delete(library, edit, present, out, fields)
     by_key = {paths.key(path): photo_id for photo_id, path in present}
     chosen = [path for _photo_id, path in present]
     # Read, planned and written by file_changes.write_fields: one change, a chunk at a time, others let in between the chunks.
@@ -224,7 +224,7 @@ def _write(library, edit, ids, exiftool_path):
     # lock held here: each chunk takes it, and a save that waits is let in between them (photo_writes' docstring).
     result = photo_writes.write(
         library, photo_writes.TAGS, {path: (None, {"add": edit.add, "remove": edit.remove}) for path in chosen},
-        exiftool_path, None, operation=OPERATIONS[edit.op],
+        fields, None, operation=OPERATIONS[edit.op],
         persons={paths.key(path): set(edit.persons) for path in chosen} if edit.persons else None)
     _count(out, result, present, by_key)
     return out
@@ -282,7 +282,7 @@ def refuse_if_changed(edit, photo_ids, token_of, deleted_for_good):
     edit.for_good_ids = confirmed
 
 
-def _delete(library, edit, present, out, exiftool_path):
+def _delete(library, edit, present, out, fields):
     """Delete the photos `present` ([(id, path)], reachable) as Organize's Delete does each (photos.delete: the file to the
     Recycle Bin -- through this PC's where its place has none, #694 -- then its row, faces and thumbnail), under the one lock of
     changes of photo files, so that no write of one of them runs while it goes. A file gone already is counted missing and its
@@ -295,7 +295,7 @@ def _delete(library, edit, present, out, exiftool_path):
     The photos that go are ONE change, carried out a chunk at a time, each with the look this start took of it
     (photos.delete_in_chunks: a stop between chunks, the rest not deleted, or, an update's, deleted at the next start)."""
     with file_changes.exclusively():
-        photo_actions.settle_before_delete(library, exiftool_path)
+        photo_actions.settle_before_delete(library, fields)
         # Where each file is, and its size, by one bounded stat of each (file_changes.file_stamps): one on a share that did
         # not answer is its error, one gone missing.
         stamps = file_changes.file_stamps([path for _id, path in present])

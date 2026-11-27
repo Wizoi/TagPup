@@ -12,6 +12,7 @@ import sys
 import unittest
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import exiftool_fields  # noqa: E402
 import own_home  # noqa: E402
 import photo_rows  # noqa: E402
 import web_client  # noqa: E402
@@ -140,7 +141,7 @@ class UndoingAChangeOfPhotoFiles(HistoryCase):
                     conn.commit()
                 finally:
                     conn.close()
-                change = tagging.change_tags(library, [photo], ["Regatta"], [], EXIFTOOL).details["change"]
+                change = tagging.change_tags(library, [photo], ["Regatta"], [], exiftool_fields.opened(self, EXIFTOOL)).details["change"]
                 newest = self.listed(client)["changes"][0]
                 self.assertEqual((change, "add to all selected", {"done": 1}, True),
                                  (newest["id"], newest["operation"], newest["files"], newest["undoable"]))

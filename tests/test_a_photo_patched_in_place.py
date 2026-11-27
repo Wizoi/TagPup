@@ -25,6 +25,7 @@ import unittest
 from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import exiftool_fields  # noqa: E402
 import photo_rows  # noqa: E402
 from test_a_crash_part_way_is_settled_at_the_next_start import start_again  # noqa: E402
 from test_file_journal import EXIFTOOL, FilesCase, field_of, keywords_of, requires_exiftool, write_outside  # noqa: E402
@@ -108,7 +109,7 @@ def away_at(nth):
 @requires_exiftool
 class APhotoPatchedInPlace(FilesCase):
     def replace(self, photo_paths, old="Beach", new="Shore"):
-        return tagging.replace_tag(self.library, photo_paths, old, new, EXIFTOOL)
+        return tagging.replace_tag(self.library, photo_paths, old, new, exiftool_fields.opened(self, EXIFTOOL))
 
     def test_a_keyword_renamed_writes_only_its_bytes_and_leaves_no_file_beside_it(self):
         a = self.make("a.jpg")
@@ -229,7 +230,7 @@ class APhotoPatchedInPlace(FilesCase):
                 finally:
                     conn.close()
                 with saves_counted() as saved:
-                    result = tagging.change_tags(self.library, [a], [], list(tags), EXIFTOOL)
+                    result = tagging.change_tags(self.library, [a], [], list(tags), exiftool_fields.opened(self, EXIFTOOL))
                 self.assertEqual((1, [], 1), (result.changed, result.errors, saved.call_count), "not a patch")
                 held = read(a)
                 flags = [each for each in containers.read(io.BytesIO(held)).of_kind("iptc")[0].resources

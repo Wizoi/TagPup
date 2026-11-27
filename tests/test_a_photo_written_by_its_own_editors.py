@@ -45,6 +45,7 @@ import unittest
 from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import exiftool_fields  # noqa: E402
 import photo_rows  # noqa: E402
 from test_a_crash_part_way_is_settled_at_the_next_start import start_again  # noqa: E402
 from test_a_photo_patched_in_place import PRINT_FLAGS, away_at, open_elsewhere, read, saves_counted  # noqa: E402
@@ -260,7 +261,7 @@ class APhotoWrittenByItsOwnEditors(FilesCase):
         write_outside(a, values)
         self.seed(a, values)
         with saves_counted() as saved:
-            result = tagging.change_tags(self.library, [a], ["People/Wren Calloway"], [], EXIFTOOL)
+            result = tagging.change_tags(self.library, [a], ["People/Wren Calloway"], [], exiftool_fields.opened(self, EXIFTOOL))
         self.assertEqual((1, [], 1), (result.changed, result.errors, saved.call_count), result.message())
         self.assert_patched_xmp_alone(a, ["Beach", "People/Wren Calloway"], result.details["change"])
 
@@ -270,7 +271,7 @@ class APhotoWrittenByItsOwnEditors(FilesCase):
             with self.subTest(tag=tag):
                 a = self.make("%s.jpg" % tag, tags=(tag,))
                 with saves_counted() as saved:
-                    result = tagging.change_tags(self.library, [a], [], [tag], EXIFTOOL)
+                    result = tagging.change_tags(self.library, [a], [], [tag], exiftool_fields.opened(self, EXIFTOOL))
                 self.assertEqual((1, []), (result.changed, result.errors), result.message())
                 self.assertEqual(([], None, None, []), (keywords_of(a), field_of(a, "IPTC:Keywords"),
                                                         field_of(a, "EXIF:XPKeywords"), self.indexed(a)))
@@ -310,10 +311,10 @@ class APhotoWrittenByItsOwnEditors(FilesCase):
         # as it was and every byte outside the EXIF, IPTC and XMP segments the photo's own (the XMP editor may lay a
         # property it put back elsewhere in the packet).
         saves = {
-            "caption": lambda a: tagging.save_photo(self.library, a, "Harbour at dusk", ["Beach"], None, EXIFTOOL, "",
+            "caption": lambda a: tagging.save_photo(self.library, a, "Harbour at dusk", ["Beach"], None, exiftool_fields.opened(self, EXIFTOOL), "",
                                                     base=page_writes.base(self.library, a)),
-            "date taken": lambda a: photo_actions.shift_date_taken(self.library, [a], 90, EXIFTOOL),
-            "turn": lambda a: photo_actions.rotate_photos(self.library, [a], "right", EXIFTOOL),
+            "date taken": lambda a: photo_actions.shift_date_taken(self.library, [a], 90, exiftool_fields.opened(self, EXIFTOOL)),
+            "turn": lambda a: photo_actions.rotate_photos(self.library, [a], "right", exiftool_fields.opened(self, EXIFTOOL)),
         }
         for label, save in saves.items():
             with self.subTest(label):
@@ -340,9 +341,9 @@ class APhotoWrittenByItsOwnEditors(FilesCase):
         ids = [self.photo_id(path) for path in made]
         operations = (
             ("bulk tags", lambda: bulk_edit.run(self.library, bulk_edit.prepare(self.library, "tags",
-                                                                                {"add": ["Trips/Coast"]}), ids, EXIFTOOL)),
-            ("time shift", lambda: photo_actions.shift_date_taken(self.library, made, 90, EXIFTOOL)),
-            ("rotate", lambda: photo_actions.rotate_photos(self.library, made, "right", EXIFTOOL)),
+                                                                                {"add": ["Trips/Coast"]}), ids, exiftool_fields.opened(self, EXIFTOOL))),
+            ("time shift", lambda: photo_actions.shift_date_taken(self.library, made, 90, exiftool_fields.opened(self, EXIFTOOL))),
+            ("rotate", lambda: photo_actions.rotate_photos(self.library, made, "right", exiftool_fields.opened(self, EXIFTOOL))),
         )
         for label, operation in operations:
             with self.subTest(label), saves_counted() as saved, \
@@ -415,7 +416,7 @@ class APhotoWrittenByItsOwnEditors(FilesCase):
         before = orientations(a)
         self.assertEqual({"IFD0:Orientation", "IFD1:Orientation", "XMP-tiff:Orientation"}, set(before))
         with saves_counted() as saved:
-            result = photo_actions.rotate_photos(self.library, [a], "right", EXIFTOOL)
+            result = photo_actions.rotate_photos(self.library, [a], "right", exiftool_fields.opened(self, EXIFTOOL))
         self.assertEqual((1, [], 1), (result.changed, result.errors, saved.call_count), result.message())
         turned = json.loads(self.rows("SELECT fields_after FROM change_files")[0][0])[fields.ORIENTATION]
         with ExifToolSession(executable=EXIFTOOL) as et:
@@ -431,12 +432,12 @@ class APhotoWrittenByItsOwnEditors(FilesCase):
         # changed nothing.
         a = self.make("a.jpg")
         original = read(a)
-        first = tagging.save_photo(self.library, a, "", ["Beach", "Harbour"], None, EXIFTOOL, "",
+        first = tagging.save_photo(self.library, a, "", ["Beach", "Harbour"], None, exiftool_fields.opened(self, EXIFTOOL), "",
                                    base=page_writes.base(self.library, a))
         self.assertEqual((1, []), (first.changed, first.errors), first.message())
         change, held = first.details["change"], read(a)
         with mock.patch.object(field_values, "_write", wraps=field_values._write) as wrote, saves_counted() as saved:
-            again = tagging.save_photo(self.library, a, "", ["Beach", "Harbour"], None, EXIFTOOL, "",
+            again = tagging.save_photo(self.library, a, "", ["Beach", "Harbour"], None, exiftool_fields.opened(self, EXIFTOOL), "",
                                        base=first.details["base"])   # the page's next base: the first save's reply
             tagged = self.add([a])
         self.assertEqual(((0, [], None), (0, [], None)),
@@ -464,9 +465,9 @@ class APhotoWrittenByItsOwnEditors(FilesCase):
         with ExifToolSession(executable=EXIFTOOL) as et:
             self.seed(a, field_values._read(et, [a], metadata_check.READ)[paths.key(a)])
         writes = (lambda: self.add([a]),
-                  lambda: photo_actions.shift_date_taken(self.library, [a], 60, EXIFTOOL),
-                  lambda: photo_actions.rotate_photos(self.library, [a], "right", EXIFTOOL),
-                  lambda: tagging.change_tags(self.library, [a], [], IFD0_KEYWORDS + ["Harbour"], EXIFTOOL))
+                  lambda: photo_actions.shift_date_taken(self.library, [a], 60, exiftool_fields.opened(self, EXIFTOOL)),
+                  lambda: photo_actions.rotate_photos(self.library, [a], "right", exiftool_fields.opened(self, EXIFTOOL)),
+                  lambda: tagging.change_tags(self.library, [a], [], IFD0_KEYWORDS + ["Harbour"], exiftool_fields.opened(self, EXIFTOOL)))
         patches, reads = [], []
         for write in writes:
             with saves_counted() as saved:
