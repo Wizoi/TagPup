@@ -479,17 +479,6 @@ describe("V32: the index's new faces offer Re-examine, a link to TagTuner's", ()
     assert.deepEqual(ctx.links(), [{ text: "Re-examine", href: reexamineOf(HEAT_1), target: "_blank" }]);
   });
 
-  test("a sentence offering Re-examine without the word: the link follows it", async (t) => {
-    const q = queueOf();
-    const ctx = await page(t, q);
-    await addFromOrganize(ctx, HEAT_1);
-    q.finish("completed", "Folder indexed. 3 new faces wait.", HEAT_1);
-    await ctx.tick();
-    await ctx.tick(200);
-    assert.equal(ctx.status(), "Heat 1: Folder indexed. 3 new faces wait. Re-examine");
-    assert.deepEqual(ctx.links().map((link) => link.href), [reexamineOf(HEAT_1)]);
-  });
-
   test("the words without the status's field link nothing: the field is the offer (#3423)", async (t) => {
     const q = queueOf();
     const ctx = await page(t, q);

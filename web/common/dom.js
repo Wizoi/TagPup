@@ -45,14 +45,12 @@ export function buildElement(tag, options = {}, children = []) {
 
 /**
  * `text` as the pieces a line is made of, `word` in it (its first) the element `makeAction()` makes: [the words before,
- * the element, the words after]. A text without `word` keeps its words, the element after them. The element says `word`:
- * an index's Re-examine, on both pages (web/tagpup/suggestions.js, web/tuner/indexing.js).
+ * the element, the words after]. The element says `word`: an index's Re-examine, on both pages
+ * (web/tagpup/suggestions.js, web/tuner/indexing.js); every sentence offering it holds the word.
  */
 export function withAction(text, word, makeAction) {
-    const said = String(text || '');
-    const at = said.indexOf(word);
-    if (at < 0) return [said, said ? ' ' : null, makeAction()];
-    return [said.slice(0, at), makeAction(), said.slice(at + word.length)];
+    const [before, ...after] = String(text || '').split(word);
+    return [before, makeAction(), after.join(word)];
 }
 
 /** Show `children` -- elements or strings, a string as text -- in place of what `container` held. */
