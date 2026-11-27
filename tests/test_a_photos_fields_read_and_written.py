@@ -487,10 +487,12 @@ class AFilesFieldsReadAndWritten(test_file_journal.FilesCase):
             self.fields.read([tagged, x, camera], GROUPED)
             self.assertIsInstance(self.fields.read([camera], GROUPED)[paths.key(camera)], field_values.NotAnswered)
         self.assertEqual(alone[camera], self.fields.read([camera], GROUPED)[paths.key(camera)], "after the block")
-        for path in (x, clip):
-            how, _stale, error = metadata_check.written(self.fields, path, {"XMP:Subject": ["Trips/Dune"]}, True)
-            self.assertEqual(("failed", True), (how, "did not answer" in (error or "")), error)
-            self.assertEqual(data[path], bytes_of(path), "a write of X leaves it as it was")
+        # A write of X on each side a write takes (a clip's is journaled alone: S2.1's outside case is Refused).
+        for path, own in ((x, False), (x, True), (clip, True)):
+            how, _stale, error = metadata_check.written(self.fields, path, {"XMP:Subject": ["Trips/Dune"]}, own)
+            self.assertEqual(("failed", True), (how, "did not answer" in (error or "")), (own, error))
+            self.assertEqual((data[path], [os.path.basename(path)]), (bytes_of(path), os.listdir(os.path.dirname(path))),
+                             "a write of X leaves it as it was, nothing beside it")
 
     # ---- S4: a format moved to TagPup's own writer starts no ExifTool for a write it refuses ----
 
