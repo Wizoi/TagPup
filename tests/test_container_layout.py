@@ -13,9 +13,9 @@ import unittest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from test_a_clip_dated_through_the_journal import (  # noqa: E402
-    DISAGREEING, SHAPES, THREE_TRACKS, VERSION_ONE, ZERO_HEADERS, clip_of)
-from corpus import exif_segment, iptc_segment, resource, segment, xmp_segment  # noqa: E402
+from corpus import (  # noqa: E402
+    DISAGREEING, SHAPES, THREE_TRACKS, VERSION_ONE, ZERO_HEADERS, clip_of, exif_segment, iptc_segment, resource, segment,
+    xmp_segment)
 from tagpup.files import containers  # noqa: E402
 
 XMP_UUID = bytes.fromhex("BE7ACFCB97A942E89C71999491E3AFAC")
