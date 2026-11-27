@@ -51,7 +51,7 @@ class AClipBesideAPhoto(unittest.TestCase):
         self.app, self.home = web_client.app_for(self, "tagpup")
         self.client = self.app.test_client()
         self.vl = ViewLibrary(self, "library", home=self.home)
-        patcher = mock.patch("tagpup.web.state.exiftool", return_value=EXIFTOOL)
+        patcher = mock.patch("tagpup.runtime.exiftool", return_value=EXIFTOOL)
         patcher.start()
         self.addCleanup(patcher.stop)
         self.vl.tree("Trips/Coast")

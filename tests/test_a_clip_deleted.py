@@ -77,7 +77,7 @@ class APhotoAndAClip(unittest.TestCase):
                          "the clip's row is of kind video, as the indexer records it")
         self.clip_bytes = digest(self.clip_path)
         self.events = []           # ("bin", name, the copy's digest) as each copy went to the Bin; ("turn",) at each let-go
-        for patcher in (mock.patch("tagpup.web.state.exiftool", return_value=EXIFTOOL),
+        for patcher in (mock.patch("tagpup.runtime.exiftool", return_value=EXIFTOOL),
                         mock.patch.object(recycle_bin, "no_bin_reason", side_effect=self.reason),
                         mock.patch("tagpup.files.recycle_bin.send_to_recycle_bin", side_effect=self.recycle),
                         mock.patch.object(recycle_bin, "mirror_root", return_value=os.path.join(self.home.root, "Mirror"))):

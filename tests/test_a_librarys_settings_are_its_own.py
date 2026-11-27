@@ -20,9 +20,13 @@ import unittest
 from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import fake_exiftool  # noqa: E402
+import page_writes  # noqa: E402
 import stand_in_models  # noqa: E402
 import web_client  # noqa: E402
+from view_library import ViewLibrary  # noqa: E402
 
+from tagpup import config as tagpup_config  # noqa: E402
 from tagpup import runtime as runtimes  # noqa: E402
 from tagpup.core import validation  # noqa: E402
 from tagpup.core.library import Library  # noqa: E402
@@ -161,17 +165,41 @@ class TheGearDialog(unittest.TestCase):
                     self.assertEqual({"suggest", "renaming"}, set(groups))
                     self.assertFalse(any(g["locked"] for g in groups.values()))
 
-    def test_the_file_routes_use_the_librarys_own_exiftool(self):
-        from tagpup.web import state
+
+class TheLibrarysExifTool(unittest.TestCase):
+    """The ExifTool a library names in its settings (paths.exiftool) is the one its file routes start: a tag added on
+    the TagPup page (POST /api/photos/write) of a library naming its own, and of one naming none, the machine's.
+    ExifTool is a table (tests/fake_exiftool.py) that keeps the program each session was started with."""
+
+    def setUp(self):
+        self.app, self.home = web_client.app_for(self, "tagpup")
+        self.client = self.app.test_client()
+        self.files = fake_exiftool.standing_in(self)
+
+    def tagged(self, name):
+        """The program the sessions of a tag added to a photo of the library `name` were started with."""
+        vl = ViewLibrary(self, name, home=self.home)
+        vl.tree("Trips/Coast")
+        path = vl.path_of(vl.photo("Harbour", "pier.jpg", real=True, size=(16, 16)))
+        self.files.keep_tags(path, [])
+        return vl, path
+
+    def started_by(self, name, path):
+        del self.files.sessions[:]
+        reply = self.client.post("/%s%s" % (name, page_writes.ROUTE),
+                                 json=page_writes.tags({path: {"add": ["Trips/Coast"]}}))
+        self.assertEqual(200, reply.status_code, reply.get_json())
+        self.assertEqual(["Trips/Coast"], self.files.tags_of(path))
+        return {session.get("executable") for session in self.files.sessions}
+
+    def test_a_file_route_starts_the_exiftool_the_library_names_else_the_machines(self):
+        quarry, in_quarry = self.tagged("quarry")
         named = os.path.join(self.home.root, "exiftool-own.exe")
         open(named, "w").close()
-        self.client.get(self.url)
-        self.assertEqual(200, self.post({"paths.exiftool": named}, acknowledged=["exiftool"]).status_code)
-        with self.app.test_request_context():
-            self.assertEqual(named, state.exiftool(self.quarry))
-            with mock.patch("tagpup.config.default_exiftool", return_value=named + ".missing"), \
-                    mock.patch("shutil.which", return_value=None):
-                self.assertEqual(named + ".missing", state.exiftool(self.other))
+        self.assertEqual(1, settings.change(quarry.library, {"paths.exiftool": named}, acknowledged=["exiftool"]).changed)
+        self.assertEqual({named}, self.started_by("quarry", in_quarry))
+        _other, in_other = self.tagged("library")
+        self.assertEqual({tagpup_config.exiftool_path("")}, self.started_by("library", in_other))
 
 
 class WhatEachLibraryHolds(unittest.TestCase):
