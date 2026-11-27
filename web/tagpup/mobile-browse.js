@@ -265,7 +265,11 @@ function showTop() {
 
 // ---- A level ---------------------------------------------------------------------------------------
 
-/** A row of a level: a tap opens the level under it, or, for a row with nothing under it, its photos. */
+/**
+ * A row of a level: a tap opens the level under it, or, for a row with nothing under it, its photos. Its hint beside the
+ * count is the model's, as the desktop's row draws it (navigator-tree.js): a folder the library's index queue holds says
+ * queued or indexing, its count filling.
+ */
 function rowButton(row, place, tree) {
     const button = buildElement('button', {
         className: row.expandable ? 'browse-item opens' : 'browse-item',
@@ -273,6 +277,7 @@ function rowButton(row, place, tree) {
     }, [
         coverBox(place[0], row.id, tree),
         buildElement('span', { className: 'browse-item-label', text: row.label }),
+        ...(row.hint ? [buildElement('span', { className: 'browse-item-hint', text: row.hint })] : []),
         buildElement('span', { className: 'browse-item-count', text: row.count.toLocaleString() }),
     ]);
     button.addEventListener('click', () => {

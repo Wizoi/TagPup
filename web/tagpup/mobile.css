@@ -435,6 +435,13 @@ button:disabled {
     overflow-wrap: anywhere;
 }
 
+/* A folder the library's index queue holds: queued, indexing (the desktop's .nav-hint). */
+.browse-item-hint {
+    flex: none;
+    font-size: var(--text-small);
+    color: var(--text-secondary);
+}
+
 .browse-item-count {
     margin-left: auto;
     font-size: var(--text-small);

@@ -133,6 +133,21 @@ describe("browsing a library on the phone", () => {
     assert.ok(!navigated(ctx));
   });
 
+  test("a folder the library's index queue holds says so beside its count, as the desktop's Folders tab does", async (t) => {
+    // The server's marks (services/library_view.py _folders): one added and waiting, holding no photo yet; one being indexed.
+    const marked = { folders: [...FOLDERS.folders.map((each) => (each.path === `${YEAR}\\Spring Day` ? { ...each, queue: "indexing" } : each)),
+      { path: `${YEAR}\\Relay Day`, name: "Relay Day", parent: YEAR, direct: 0, recursive: 0, queue: "queued" }] };
+    const ctx = await loadApp("phone", { t, server: library().first("/api/library/navigator?section=folders", marked), url: PAGE });
+    await tap(ctx, section(ctx, "folders"));
+    await tap(ctx, row(ctx, "Pictures"));
+    await tap(ctx, row(ctx, "2019"));
+    const hints = () => rows(ctx).map((r) => [r.querySelector(".browse-item-label").textContent,
+      (r.querySelector(".browse-item-hint") || { textContent: "" }).textContent, r.querySelector(".browse-item-count").textContent]);
+    assert.deepEqual(hints(), [["Rowan's Meet", "", "15"], ["Spring Day", "indexing", "3"], ["Relay Day", "queued", "0"]]);
+    assert.match(row(ctx, "Relay Day").getAttribute("aria-label"), /waiting to be indexed/);
+    assert.equal(rows(ctx).filter((r) => r.querySelector(".browse-item-hint")).length, 2, "a row the queue does not hold has a hint");
+  });
+
   test("a folder read that fails says so with Try again, never an empty list", async (t) => {
     const server = library().first("/api/library/navigator?section=folders", { error: "The library is busy." }, { status: 503 });
     const ctx = await loadApp("phone", { t, server, url: PAGE });
