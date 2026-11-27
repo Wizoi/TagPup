@@ -339,7 +339,7 @@ describe("V33: closing the tab while a refused save is read again and sent once 
     assert.equal(leaving(ctx), false, "a save written still asked");
   });
 
-  test("refused the second time: it stops waiting, the refusal said; only the text given back asks, and Escape lets it go", async (t) => {
+  test("refused the second time: not sent again, the refusal said; it waits for Retry, and Dismiss lets it go", async (t) => {
     const ctx = await page(t);
     const file = ctx.disk.get(A.path);
     ctx.disk.set(A.path, { ...file, tags: ["Trips/Coast", "Activity/Sailing"], mtime: file.mtime + 300 });
@@ -350,11 +350,13 @@ describe("V33: closing the tab while a refused save is read again and sent once 
     await flush(ctx.window, 12);
     assert.equal(ctx.saves().length, 2, "no third send");
     assert.equal(ctx.document.querySelector(".write-queue-entry").dataset.status, "failed");
-    assert.equal(line(ctx), "", "a refused save still said it waited in the page");
+    assert.equal(line(ctx), "1 photo waiting in this page for Retry: lost if you leave");
     const box = ctx.document.getElementById("input-add-tag");
     assert.equal(box.value, "Trips/Lakes", "the text typed was given back");
-    assert.equal(leaving(ctx), true, "the text given back is unsaved: closing asks for it");
     box.dispatchEvent(new ctx.window.KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }));
+    assert.equal(leaving(ctx), true, "the failed save's Retry is in the page: closing asks for it");
+    ctx.document.querySelector(".write-queue-entry[data-status='failed'] .write-queue-dismiss").click();
+    assert.equal(line(ctx), "");
     assert.equal(leaving(ctx), false, "closing the tab asked forever");
   });
 

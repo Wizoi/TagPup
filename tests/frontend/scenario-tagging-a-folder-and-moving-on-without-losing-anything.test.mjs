@@ -5,7 +5,8 @@
  *
  * What the owner lives through: the write line under the status says which writes are sent (the server finishes them
  * whatever the page does) and which wait in this page (lost if it goes), and nothing once everything is written; the
- * browser's own Leave prompt asks only while something waits in the page, never for a write already sent. Opening
+ * browser's own Leave prompt asks only while something waits in the page, never for a write already sent; a save that
+ * failed waits for its Retry in the page, the next photo opened, until it is written or dismissed. Opening
  * another folder with changes waiting asks, in the page's own dialog, Keep writing (first: Enter), Discard them or Stay
  * (Escape): Keep writing opens the folder and writes them in the background, every scan kept of the folder left
  * following the writes; another folder opened before they are sent does not ask again; rapid switches while it asks give
@@ -23,7 +24,7 @@
 import { test, describe, beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";
 import {
-  loadApp, FakeServer, photoRecord, flush, openFolder, closeAllApps, pageExports, SAVE, saved, saveCalls, TAGS, taggedAs,
+  loadApp, FakeServer, photoRecord, flush, openFolder, closeAllApps, pageExports, SAVE, notSaved, saved, saveCalls, TAGS, taggedAs,
   tagFiles, testClock,
 } from "./harness.mjs";
 
@@ -59,7 +60,7 @@ async function taggingAFolder(t, { ids = {} } = {}) {
     .on("/api/library/photo", () => new Promise((resolve) => reads.push((photo) => resolve({ photo }))))
     .on("/api/photo-faces", { faces: [], total: 0, unmatched: 0 })
     .on(TAGS, (url, body) => new Promise((resolve) => held.push({ resolve, body })))
-    .on(SAVE, (url, body) => new Promise((resolve) => saves.push(() => resolve(saved()(url, body)))))
+    .on(SAVE, (url, body) => new Promise((resolve) => saves.push((reply = saved()) => resolve(reply(url, body)))))
     .on("/api/taxonomy/create", { success: true })
     .on("/api/folder/suggest-status", { status: "completed", suggestions: {} });
   const ctx = await loadApp("tagpup", { t, url: "http://localhost:8090/alpha/", server });
@@ -152,6 +153,57 @@ describe("the write line says what leaving does", () => {
     ctx.saves.shift()();
     await flush(ctx.window, 8);
     assert.equal(line(ctx), "");
+  });
+});
+
+describe("a single save that failed", () => {
+  test("waits for its Retry: the next photo opened, closing the tab asks; Retry written, nothing", async (t) => {
+    const ctx = await taggingAFolder(t);
+    const down = () => ctx.document.dispatchEvent(new ctx.window.KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true, cancelable: true }));
+    down();
+    await flush(ctx.window, 8);
+    const box = ctx.document.getElementById("input-add-tag");
+    box.value = "Places/Harbour";
+    box.dispatchEvent(new ctx.window.Event("input", { bubbles: true }));
+    ctx.document.getElementById("btn-save-details").click();
+    await flush(ctx.window, 8);
+    // Another program holds the file: nothing written, and not refused as changed on disk.
+    ctx.saves.shift()(notSaved("The file is in use by another program."));
+    await flush(ctx.window, 8);
+    assert.equal(ctx.document.querySelector(".write-queue-entry").dataset.status, "failed");
+    box.dispatchEvent(new ctx.window.KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }));
+    const first = ctx.state.activePhotoPath;
+    down();
+    await flush(ctx.window, 8);
+    assert.notEqual(ctx.state.activePhotoPath, first, "the next photo did not open");
+    assert.equal(line(ctx), "1 photo waiting in this page for Retry: lost if you leave");
+    assert.equal(leaving(ctx), true, "closing the tab asked nothing, and the failed save's Retry was lost");
+    ctx.document.querySelector(".write-queue-entry[data-status='failed'] .write-queue-retry").click();
+    await flush(ctx.window, 8);
+    assert.equal(saveCalls(ctx.server).length, 2, "Retry did not send it");
+    assert.ok(saveCalls(ctx.server)[1].body.tags.includes("Places/Harbour"), "Retry sent other text");
+    ctx.saves.shift()();
+    await flush(ctx.window, 8);
+    assert.equal(line(ctx), "");
+    assert.equal(leaving(ctx), false, "a save Retry wrote still asked");
+  });
+
+  test("dismissed, it is let go: closing the tab asks nothing", async (t) => {
+    const ctx = await taggingAFolder(t);
+    ctx.document.dispatchEvent(new ctx.window.KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true, cancelable: true }));
+    await flush(ctx.window, 8);
+    const box = ctx.document.getElementById("input-add-tag");
+    box.value = "Places/Harbour";
+    box.dispatchEvent(new ctx.window.Event("input", { bubbles: true }));
+    ctx.document.getElementById("btn-save-details").click();
+    await flush(ctx.window, 8);
+    ctx.saves.shift()(notSaved("The file is in use by another program."));
+    await flush(ctx.window, 8);
+    box.dispatchEvent(new ctx.window.KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }));
+    assert.equal(leaving(ctx), true);
+    ctx.document.querySelector(".write-queue-entry[data-status='failed'] .write-queue-dismiss").click();
+    assert.equal(line(ctx), "");
+    assert.equal(leaving(ctx), false);
   });
 });
 

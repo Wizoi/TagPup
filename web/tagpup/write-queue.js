@@ -113,13 +113,16 @@ export function photosOut() {
 
 /**
  * How many photos have a write still in this page, not sent: one queued behind the write out (a save, Apply All, a
- * rename; a tag drain's names nothing until its turn), a save refused and being read again to be sent once more
- * (markBackInPage), and the tag changes waiting to be taken into a write (pending.js, `state.pending.files`, a drain
- * stopped by a failure's too). Closing the page loses them; a write sent is the server's.
+ * rename; a tag drain's names nothing until its turn), one refused and being read again to be sent once more
+ * (markBackInPage), one that failed holding its Retry (until the Retry is written or the row dismissed: retryEntry and
+ * dismissEntry take it off), and the tag changes waiting to be taken into a write (pending.js, `state.pending.files`, a
+ * drain stopped by a failure's too: its failed row names no photos once its chunk is given back). Closing the page loses
+ * them; a write sent is the server's.
  */
 export function waitingInPage() {
     const keys = new Set(state.pending.files.keys());
-    state.writeQueue.entries.filter(e => e.status === 'waiting' || (e.status === 'writing' && e.backInPage))
+    state.writeQueue.entries.filter(e => e.status === 'waiting' || (e.status === 'writing' && e.backInPage)
+        || (e.status === 'failed' && e.retry))
         .forEach(e => e.photos().forEach(path => keys.add(pathKey(path))));
     return keys.size;
 }
