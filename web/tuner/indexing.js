@@ -3,7 +3,6 @@
 // indexingQueued once folders are queued.
 import { api } from './common/api.js';
 import { buildElement, replaceContent, withAction } from './common/dom.js';
-import { samePath } from './common/paths.js';
 import { state } from './state.js';
 import { refreshSidebarQuietly } from './sidebar.js';
 import { REEXAMINE_TITLE, reexamineFolderAt } from './reexamine.js';
@@ -100,7 +99,10 @@ function renderQueueSummary(data) {
 }
 
 // Once the running folder finishes, the next one starts on the server without
-// being asked. The page has to notice that and follow it.
+// being asked. The page has to notice that and follow it -- the same folder too, indexed
+// again for the files that arrived while it ran (tagpup/jobs/indexing.py
+// _queue_what_was_missed, #3422): a run the queue lists is running, as its status says,
+// both read from the one status the queue keeps of it.
 function followQueue(delay) {
     if (state.followQueueTimer) clearTimeout(state.followQueueTimer);
     state.followQueueTimer = setTimeout(() => {
@@ -110,9 +112,9 @@ function followQueue(delay) {
             .then(data => {
                 renderQueueSummary(data);
                 const job = (data.active || [])[0];
-                // Not the folder we just watched finish: that one is done
-                // whatever this reply still says about it.
-                if (job && !samePath(job.folder, state.lastFinishedFolder)) {
+                if (job) {
+                    // Another index under way: the last one's closing sentence is not kept past it.
+                    state.indexEnding = null;
                     indexProgressContainer.classList.remove('hidden');
                     pollIndexStatus(job.folder);
                     return;
@@ -126,7 +128,6 @@ function followQueue(delay) {
 
 function pollIndexStatus(folderPath) {
     if (state.indexPollTimer) clearInterval(state.indexPollTimer);
-    if (!samePath(folderPath, state.lastFinishedFolder)) state.lastFinishedFolder = null;
 
     const query = () => {
         api.json(`/api/folder/index-status?path=${encodeURIComponent(folderPath)}`)
@@ -143,7 +144,6 @@ function pollIndexStatus(folderPath) {
                 // terminal is how a dead worker turns into a spinner that never ends.
                 clearInterval(state.indexPollTimer);
                 state.indexPollTimer = null;
-                state.lastFinishedFolder = folderPath;
                 // Its closing sentence stays on the bar when it offers Re-examine (`reexamine`, the folder it offers
                 // it of): the button there is the way to it.
                 state.indexEnding = data.status === 'completed' && data.reexamine
@@ -174,10 +174,6 @@ export function indexingQueued() {
     state.indexEnding = null;
     indexProgressContainer.classList.remove('hidden');
     sayOnTheBar('Starting...');
-    // A folder that finished earlier and has just been queued again is a new
-    // job. Left set, followQueue took it for the finished one and stopped
-    // following: no progress shown while it indexed.
-    state.lastFinishedFolder = null;
     followQueue();
 }
 

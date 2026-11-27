@@ -141,6 +141,37 @@ describe("Re-examine from an index's closing sentence", () => {
     assert.ok(line.querySelector(".btn-index-reexamine"), "the failure's Re-examine is not something to press");
   });
 
+  test("the folder indexed again as it ends (files arrived meanwhile): the ended sentence goes, the rerun is followed (#3422)",
+    async (t) => {
+      // The server's queue (tagpup/jobs/indexing.py _queue_what_was_missed): MEET's index ends offering Re-examine, and
+      // MEET is at once indexed again; then that rerun ends, its own new faces with no likely name.
+      let stage = "first";
+      const running = (message, percent) => ({ active: [{ folder: MEET, name: "Meet", percent, message }], queued: [],
+        busy: true, remaining: 1 });
+      const s = server()
+        .first("/api/folder/index-active", () => (stage === "first" ? running("Matching", 45)
+          : stage === "again" ? running(AGAIN, 5) : { active: [], queued: [], busy: false, remaining: 0 }))
+        .first("/api/folder/index-status", () => {
+          if (stage === "first") {
+            stage = "again";
+            return { status: "completed", percent: 100, folder: MEET, message: LIKELY, reexamine: MEET };
+          }
+          return stage === "again" ? { status: "running", percent: 5, folder: MEET, message: AGAIN }
+            : { status: "completed", percent: 100, folder: MEET, message: NONE_LIKELY };
+        });
+      const ctx = await open(t, { server: s });
+      await settle(ctx.window, 700);
+      const line = ctx.document.getElementById("index-progress-text");
+      assert.equal(line.textContent, AGAIN, "the ended index's sentence stayed while the folder is indexed again");
+      assert.equal(ctx.document.querySelector(".btn-index-reexamine"), null, "a button left live during the rerun");
+      assert.equal(ctx.document.getElementById("index-progress-bar").style.width, "5%");
+      stage = "done";
+      await settle(ctx.window, 1600);
+      assert.ok(ctx.document.getElementById("index-progress-container").classList.contains("hidden"),
+        "the rerun's end, offering nothing, left the bar");
+      assert.equal(ctx.document.querySelector(".btn-index-reexamine"), null);
+    });
+
   test("the words without the status's field: nothing to press, the field is the offer (#3423)", async (t) => {
     const ctx = await open(t, { server: endingIndex(LIKELY) });
     await settle(ctx.window, 700);

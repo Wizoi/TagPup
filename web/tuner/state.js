@@ -82,12 +82,6 @@ export const state = {
     // (`busy`, so a second press of Move does nothing).
     roots: { modal: null, body: null, status: null, open: false, token: 0, busy: false },
 
-    // The last folder whose poll reached a terminal status. index-active and
-    // index-status are two reads of state that moves between them, so the first can
-    // still name a folder the second has already called finished. Following that
-    // answer would start the poll again, which would finish again, with nothing
-    // between the two -- a spin, not a wait. Remembering the folder breaks it.
-    lastFinishedFolder: null,
     followQueueTimer: null,
     indexPollTimer: null,
     // The closing sentence of the index that ended last, `{ message, folder }`, kept on the bar while nothing else is
