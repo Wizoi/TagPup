@@ -50,6 +50,10 @@ def caption_in(path):
     return (fields.field_values(in_file(path, "XMP:Description").get("XMP:Description")) or [""])[0]
 
 
+def date_in(path):
+    return (fields.field_values(in_file(path, "EXIF:DateTimeOriginal").get("EXIF:DateTimeOriginal")) or [""])[0]
+
+
 def title_in(path):
     return (fields.field_values(in_file(path, "XMP:Title").get("XMP:Title")) or [""])[0]
 
@@ -324,6 +328,30 @@ class TheFileIsComparedWithWhatThePageRead(Fresh):
         reply = self.save(record, tags=["Trips/Coast", "Activity/Sailing"], stamp=stamp_of(path))
         self.assertSaved(reply)
         self.assertEqual(["Activity/Sailing", "Trips/Coast"], sorted(tags_in(path)))
+
+    def test_a_date_another_program_changed_is_refused_and_one_it_left_alone_is_not(self):
+        """#3425: a save of a Date Taken names the date the page read, as a save of tags names its tags."""
+        path, photo_id = self.make("a.jpg", 30, ["Trips/Coast"])
+        write_into(path, DateTimeOriginal="2020:01:02 03:04:05")
+        record = self.record(photo_id)
+        self.assertEqual("2020:01:02 03:04:05", record["taken"])
+        write_into(path, Rating=4)                                      # the bake: a field that is not a date
+        self.assertSaved(self.save(record, date_taken="2021-05-06T07:08:09", stamp=stamp_of(path)))
+        self.assertEqual("2021:05:06 07:08:09", date_in(path))
+        write_into(path, DateTimeOriginal="2022:02:02 02:02:02")       # another tab, after the page read it
+        reply = self.save(record, date_taken="2023-03-03T03:03:03", stamp=stamp_of(path),
+                          base=page_writes.base_of(record) | {"date_taken": "2021:05:06 07:08:09"})
+        self.assertEqual(409, reply.status_code, reply.data)
+        self.assertEqual("2022:02:02 02:02:02", date_in(path), "the date it holds is not written over")
+
+    def test_a_photo_the_page_read_without_a_date_is_refused_when_another_program_dated_it(self):
+        path, photo_id = self.make("a.jpg", 31, ["Trips/Coast"])
+        record = self.record(photo_id)
+        self.assertFalse(record["taken"])
+        write_into(path, DateTimeOriginal="2020:01:02 03:04:05")
+        reply = self.save(record, date_taken="2021-05-06T07:08:09", stamp=stamp_of(path))
+        self.assertEqual(409, reply.status_code, reply.data)
+        self.assertEqual("2020:01:02 03:04:05", date_in(path))
 
     def test_a_foreign_tag_is_refused_with_the_stamp_restored_to_what_the_page_has(self):
         path, photo_id = self.make("a.jpg", 24, ["Trips/Coast"])

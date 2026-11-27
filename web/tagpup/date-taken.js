@@ -12,8 +12,8 @@ import { setStatus } from './status.js';
 import { whereWritten } from './write-queue.js';
 import { recordsWritten } from './cache.js';
 import { exifDateToIso, getCurrentDateTimeIso, takenOf, takenSaid } from './format.js';
-import { photoChangedOnDisk, queueWriteOf } from './edits.js';
-import { postPhotoMetadata } from './common/photo-write.js';
+import { onThisPage, queueWriteOf, saidOfSave } from './edits.js';
+import { postOrSendAgain } from './common/photo-write.js';
 import { renderFileList } from './folder.js';
 import { isVideo } from './media.js';
 
@@ -67,7 +67,7 @@ export function wireDateTakenModal() {
                 let saved;
                 setStatus('busy', 'Saving date taken...');
                 try {
-                    saved = await postPhotoMetadata(photo, { date_taken: newDateVal }, photoChangedOnDisk);
+                    saved = await postOrSendAgain(photo, { date_taken: newDateVal }, onThisPage);
                 } catch (err) {
                     console.error(err);
                     setStatus('error', 'Error');
@@ -86,7 +86,7 @@ export function wireDateTakenModal() {
                 // Format and display in UI -- if this photo is still the one shown.
                 if (state.activePhotoPath === photo.path) detailDateTaken.textContent = takenSaid(formattedDate);
 
-                setStatus('ready', 'Saved the date taken.' + whereWritten(saved));
+                setStatus('ready', saidOfSave(saved, 'Saved the date taken') + '.' + whereWritten(saved));
                 renderFileList();
                 upper.renderThumbnails();
                 return true;

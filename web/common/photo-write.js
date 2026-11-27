@@ -27,6 +27,17 @@ export function baseOf(photo) {
     return photo.base;
 }
 
+/**
+ * The base a save sends: baseOf, and for a save of a Date Taken the date the page read (`taken`, the form the index stores),
+ * which the server compares with the file's as it does the tags (tagpup/services/tagging.py _differs_from_base). A base
+ * that holds one already (postOrSendAgain's, from before the first send) is kept.
+ */
+function baseSent(photo, extra) {
+    const base = baseOf(photo);
+    if (!extra.date_taken || base.date_taken !== undefined) return base;
+    return { ...base, date_taken: photo.taken || '' };
+}
+
 // The one sentence of a save refused because the photo could not be read when it was opened: the page's own, said before
 // anything is sent (#3298).
 export const UNREADABLE_SAVE = 'This photo could not be read just now: reopen it.';
@@ -109,7 +120,7 @@ export async function postPhotoMetadata(photo, { title = photo.title, tags = pho
     request = {}) {
     if (photo.unreadable) throw new Error(UNREADABLE_SAVE);
     const path = photo.path;
-    const own = { id: Number.isInteger(photo.id) ? photo.id : null, title, tags, stamp: stampOf(photo), base: baseOf(photo), ...extra };
+    const own = { id: Number.isInteger(photo.id) ? photo.id : null, title, tags, stamp: stampOf(photo), base: baseSent(photo, extra), ...extra };
     const res = await api.fetch('/api/photos/write', {
         ...request,
         method: 'POST',
@@ -138,8 +149,7 @@ export async function postPhotoMetadata(photo, { title = photo.title, tags = pho
  * `photo` takes the record read again (keeping its own id and path), with the write's stamp and base, so the page goes
  * on with the file as it is now, and the reply is marked `readAgain` for the page to say so.
  *
- * Not sent again, it is the refusal as before: a save that sends a Date Taken (its base holds no date, so the server could
- * not tell another program's date from the bake's), the library holding no photo at its path, its file gone (`missing`)
+ * Not sent again, it is the refusal as before: the library holding no photo at its path, its file gone (`missing`)
  * or one ExifTool could not read (`unreadable`), the read failing, or `stillListed(photo)` false (the page's own: does it
  * still hold the photo?). Then, or refused the second time, `changed(photo)` -- the page's way of reading it again to
  * show it -- and it rejects with the refusal (`changedOnDisk`); it is never sent a third time. Nothing is merged.
@@ -151,8 +161,8 @@ export async function postOrSendAgain(photo, changes = {}, { changed = () => {},
         return await postPhotoMetadata(photo, asked, () => {}, request);
     } catch (err) {
         if (!err.changedOnDisk) throw err;
-        const before = { ...baseOf(photo) };
-        const now = asked.date_taken ? null : await readAgain(photo).catch((why) => {
+        const before = { ...baseSent(photo, asked) };
+        const now = await readAgain(photo).catch((why) => {
             console.error('Could not read the photo again:', why);
             return null;
         });

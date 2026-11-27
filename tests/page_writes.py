@@ -60,6 +60,8 @@ def set_from(found, title=None, tags=None, date_taken=None, path=None, **named):
            "base": base_of(found), **named}
     if date_taken is not None:
         own["date_taken"] = date_taken
+        if "base" not in named:    # a save of a date names the date the page read (photo-write.js baseSent)
+            own["base"] = {**own["base"], "date_taken": found.get("taken") or ""}
     return {"op": "set", "changes": {path or found["path"]: own}}
 
 

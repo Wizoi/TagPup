@@ -1006,10 +1006,14 @@ def _base_of(sent):
     refused as a shape: a page refuses a save from a photo it could not read before sending it, in its own words
     (web/common/photo-write.js UNREADABLE_SAVE)."""
     ok = (isinstance(sent, dict) and isinstance(sent.get("tags", []), list)
-          and all(isinstance(tag, str) for tag in sent.get("tags", [])) and isinstance(sent.get("title", ""), str))
+          and all(isinstance(tag, str) for tag in sent.get("tags", [])) and isinstance(sent.get("title", ""), str)
+          and isinstance(sent.get("date_taken", ""), str))
     if not ok:
-        return None, 'base must be {"tags": [text], "title": text}.'
-    return {"tags": sent.get("tags", []), "title": sent.get("title", "")}, None
+        return None, 'base must be {"tags": [text], "title": text, "date_taken": text (a save of a date)}.'
+    base = {"tags": sent.get("tags", []), "title": sent.get("title", "")}
+    if "date_taken" in sent:
+        base["date_taken"] = sent["date_taken"]
+    return base, None
 
 
 def _stamp_reply(stamp):

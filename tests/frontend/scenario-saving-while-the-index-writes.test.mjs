@@ -9,8 +9,9 @@
  * rename; two refusals in a row each go once more; a library view's photo, read by its own id, goes the same way. A read
  * again that finds the file gone (`missing`) or that ExifTool could not read (`unreadable`) is not sent again either.
  * Every save of the page's that names a base goes by the one rule (web/common/photo-write.js postOrSendAgain): the
- * panel's, a card's title in the grid, Carry forward, a suggestion taken one or all at once; the owner opening the next
- * photo while one is read again waits for it. The phone's Save: scenario-editing-a-photo-on-the-phone (V26).
+ * panel's, a card's title in the grid, Carry forward, a suggestion taken one or all at once, the Edit Date Taken dialog's
+ * (its base names the date the page read, which the server compares with the file's, #3425: another program's date is
+ * refused, never written over); the owner opening the next photo while one is read again waits for it. The phone's Save: scenario-editing-a-photo-on-the-phone (V26).
  *
  * The server is a fake of the files as they are now (`disk`, each with its row's id), which a save that wrote changes, and
  * which refuses a save as the real one does (tagging.py save_photo): its stamp not the file's, or its base not the file's
@@ -40,19 +41,27 @@ const A = photoRecord({ filename: "a.jpg", path: `${FOLDER}\\a.jpg`, mtime: 1700
 const B = photoRecord({ filename: "b.jpg", path: `${FOLDER}\\b.jpg`, mtime: 1700000100.5, size: 4096, tags: ["Activity/Sailing"] });
 const IDS = { [A.path]: 31, [B.path]: 32 };
 
+/** A date typed in the dialog, as the server writes it ("2021-05-06T07:08" is "2021:05:06 07:08:00"). */
+function spelled(date) {
+  const text = date.replace("T", " ").replace(/\.000$/, "");
+  const whole = text.slice(0, 10).replace(/-/g, ":") + text.slice(10);
+  return whole.length === 16 ? `${whole}:00` : whole;
+}
+
 /** Would the real server refuse `sent` (savedPhoto) over `file`: gone, or the stamp or the base not the file's? */
 function refused(file, sent) {
   if (!file || file.missing) return true;
   const held = new Set(file.tags || []);
   const base = new Set(sent.base.tags);
   return !sent.stamp || sent.stamp.mtime !== file.mtime || sent.stamp.size !== file.size
-    || held.size !== base.size || [...base].some((tag) => !held.has(tag)) || (file.title || "") !== sent.base.title;
+    || held.size !== base.size || [...base].some((tag) => !held.has(tag)) || (file.title || "") !== sent.base.title
+    || (sent.base.date_taken !== undefined && (file.taken || "") !== sent.base.date_taken);
 }
 
 /** The page on FOLDER, its server's files in `ctx.disk` (path -> record with its id); `ctx.replies` answers the next saves. */
-async function page(t, { view = false, open = true } = {}) {
+async function page(t, { view = false, open = true, taken = null } = {}) {
   const ctx = { replies: [], held: null, alerts: [] };
-  const disk = new Map([A, B].map((record) => [record.path, { ...record, id: IDS[record.path] }]));
+  const disk = new Map([A, B].map((record) => [record.path, { ...record, id: IDS[record.path], ...(taken && record === A ? { taken } : {}) }]));
   const byId = (id) => [...disk.values()].find((file) => file.id === id);
   const server = new FakeServer()
     .on("/api/tags", [])
@@ -81,8 +90,10 @@ async function page(t, { view = false, open = true } = {}) {
         Object.entries(reply.written).forEach(([path, own]) => {
           const file = disk.get(path);
           disk.delete(path);
+          const dated = savedPhoto(body).date_taken;
+          if (dated) own.taken = spelled(dated);   // as the server spells it (fields.date_taken_value)
           disk.set(own.new_path, { ...file, path: own.new_path, filename: own.new_path.split("\\").pop(), tags: own.tags,
-            title: own.base.title, mtime: own.mtime, size: own.size });
+            title: own.base.title, mtime: own.mtime, size: own.size, ...(dated ? { taken: own.taken } : {}) });
         });
       }
       return reply;
@@ -273,6 +284,76 @@ describe("V33: a save refused because the index wrote to the file", () => {
     assert.equal(ctx.finds(), 0, "a view's photo has its id: nothing to find");
     assert.deepEqual(ctx.saves()[1].stamp, { mtime: A.mtime + 300, size: A.size + 512 });
     assert.match(ctx.status(), /after reading its file again/);
+  });
+});
+
+describe("V33: a Date Taken saved from the dialog goes by the same rule (#3425)", () => {
+  /** The owner types `date` in the Edit Date Taken dialog of the open photo and saves. */
+  function saveDate(ctx, date) {
+    ctx.document.getElementById("btn-edit-date-taken").click();
+    ctx.document.getElementById("input-date-taken").value = date;
+    click(ctx.window, ctx.document.getElementById("btn-save-date-modal"));
+  }
+
+  test("the bake wrote its own fields only: the date is sent once more naming the date the page read", async (t) => {
+    const ctx = await page(t, { taken: "2020:01:02 03:04:05" });
+    ctx.bake(A.path);
+    saveDate(ctx, "2021-05-06T07:08:09");
+    await until(ctx, () => /^Saved the date taken/.test(ctx.status()), () => `the save (${ctx.status()})`);
+    const [first, second] = ctx.saves();
+    assert.equal(ctx.saves().length, 2);
+    assert.equal(first.base.date_taken, "2020:01:02 03:04:05", "the first names the date the page read");
+    assert.equal(second.base.date_taken, "2020:01:02 03:04:05", "and so does the second, not the file's read again");
+    assert.equal(second.date_taken, first.date_taken, "the same save");
+    assert.deepEqual(second.stamp, { mtime: A.mtime + 300, size: A.size + 512 });
+    assert.match(ctx.status(), /^Saved the date taken after reading its file again/);
+    assert.equal(ctx.disk.get(A.path).taken, "2021:05:06 07:08:09");
+    assert.equal(ctx.record(A.path).taken, "2021:05:06 07:08:09");
+    assert.deepEqual(ctx.alerts, []);
+  });
+
+  test("a photo the page read without a date: its base names none, an empty one", async (t) => {
+    const ctx = await page(t);
+    ctx.bake(A.path);
+    saveDate(ctx, "2021-05-06T07:08:09");
+    await until(ctx, () => /^Saved the date taken/.test(ctx.status()), () => `the save (${ctx.status()})`);
+    assert.equal(ctx.saves().length, 2);
+    assert.equal(ctx.saves()[1].base.date_taken, "");
+  });
+
+  test("another program dated the file meanwhile: the second send is refused too, nothing is written over its date", async (t) => {
+    const ctx = await page(t, { taken: "2020:01:02 03:04:05" });
+    const file = ctx.disk.get(A.path);
+    ctx.disk.set(A.path, { ...file, taken: "2022:02:02 02:02:02", mtime: file.mtime + 300 });
+    saveDate(ctx, "2021-05-06T07:08:09");
+    await until(ctx, () => /changed on disk since you opened it/.test(ctx.status()), () => `the sentence (${ctx.status()})`);
+    await flush(ctx.window, 12);
+    assert.equal(ctx.saves().length, 2, "sent once more, and not a third time");
+    assert.equal(ctx.saves()[1].base.date_taken, "2020:01:02 03:04:05");
+    assert.ok(ctx.alerts.some((message) => /changed on disk/.test(message)), ctx.alerts.join("|"));
+    assert.equal(ctx.disk.get(A.path).taken, "2022:02:02 02:02:02", "nothing written over it");
+  });
+
+  test("two dates saved in a row: each goes once, the second naming the first's date", async (t) => {
+    const ctx = await page(t, { taken: "2020:01:02 03:04:05" });
+    saveDate(ctx, "2021-05-06T07:08:09");
+    await until(ctx, () => /^Saved the date taken/.test(ctx.status()), () => `the first (${ctx.status()})`);
+    saveDate(ctx, "2022-06-07T08:09:10");
+    await until(ctx, () => ctx.saves().length === 2, "the second send");
+    await flush(ctx.window, 12);
+    assert.equal(ctx.saves().length, 2, "no resend: the file is as the first save left it");
+    assert.equal(ctx.saves()[1].base.date_taken, "2021:05:06 07:08:09");
+    assert.equal(ctx.disk.get(A.path).taken, "2022:06:07 08:09:10");
+  });
+
+  test("the photo gone when it is read again: the refusal as before, not sent again", async (t) => {
+    const ctx = await page(t, { taken: "2020:01:02 03:04:05" });
+    ctx.bake(A.path);
+    ctx.disk.set(A.path, { ...ctx.disk.get(A.path), missing: true });
+    saveDate(ctx, "2021-05-06T07:08:09");
+    await until(ctx, () => ctx.alerts.length, "the refusal said");
+    await flush(ctx.window, 12);
+    assert.equal(ctx.saves().length, 1);
   });
 });
 

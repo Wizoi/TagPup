@@ -81,7 +81,7 @@ async function phone(t, file = {}) {
     .on(SAVE, (url, sent) => {
       const body = lastSave(server);
       if (body.stamp.mtime !== held.mtime || JSON.stringify(body.base.tags) !== JSON.stringify(held.tags)
-        || body.base.title !== held.title) {
+        || body.base.title !== held.title || (body.base.date_taken !== undefined && body.base.date_taken !== held.taken)) {
         return changedOnDisk("The file changed on disk.")();
       }
       held.title = body.title;
@@ -289,8 +289,8 @@ describe("editing a photo on the phone", () => {
     await settle(ctx);
 
     assert.deepEqual(saveCalls(ctx.server).map((c) => c.body), [{ path: PATH, id: 1, title: "Wren's Last Lap",
-      tags: [WREN, COAST], stamp: { mtime: 1718000000.5, size: 204800 }, base: { tags: [WREN, COAST], title: "Finish line" },
-      date_taken: "2024-06-02T09:30:00" }]);
+      tags: [WREN, COAST], stamp: { mtime: 1718000000.5, size: 204800 }, base: { tags: [WREN, COAST], title: "Finish line",
+        date_taken: "2024:06:01 10:00:00" }, date_taken: "2024-06-02T09:30:00" }]);
     assert.equal(said(ctx), "Saved.");
     const card = pageState(ctx).photos.cards.get(1);
     assert.equal(card.path, renamed, "the grid's card names the file as it is now");
@@ -352,16 +352,30 @@ describe("editing a photo on the phone", () => {
     assert.equal(said(ctx), "Saved.");
   });
 
-  test("the folder indexed since the sheet read it, and a Date Taken typed: not sent again, the sheet says so", async (t) => {
+  test("the folder indexed since the sheet read it, and a Date Taken typed: sent once more naming the date read (#3425)", async (t) => {
     const ctx = await phone(t);
     await openSheet(ctx);
     ctx.held.mtime += 300;
     type(ctx, "edit-date", "2024-06-02");
     click(ctx.window, el(ctx, "edit-save"));
     await settle(ctx);
-    assert.equal(saveCalls(ctx.server).length, 1, "a date the server does not compare is not sent again over the file");
+    const sent = saveCalls(ctx.server).map((c) => c.body);
+    assert.equal(sent.length, 2);
+    assert.equal(sent[1].base.date_taken, "2024:06:01 10:00:00", "the date the sheet read, not the file's read again");
+    assert.equal(ctx.held.taken, "2024:06:02 10:00:00");
+    assert.match(said(ctx), /^Saved, after reading the photo again/);
+  });
+
+  test("a Date Taken typed, the file dated by another program meanwhile: refused again, never written over", async (t) => {
+    const ctx = await phone(t);
+    await openSheet(ctx);
+    ctx.held.mtime += 300;
+    ctx.held.taken = "2022:02:02 02:02:02";      // dated by another program after the sheet read it
+    type(ctx, "edit-date", "2024-06-02");
+    click(ctx.window, el(ctx, "edit-save"));
+    await settle(ctx);
+    assert.equal(ctx.held.taken, "2022:02:02 02:02:02", "nothing written over it");
     assert.match(said(ctx), /changed on the PC since it was read/);
-    assert.equal(el(ctx, "edit-date").value, "2024-06-02", "the date typed kept");
   });
 
   test("the photo left while its refused Save is read again: it is still sent once more, and the draft let go", async (t) => {
