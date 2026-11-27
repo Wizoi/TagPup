@@ -36,6 +36,7 @@ import time
 from tagpup.core import gpu_turns, paths, runs
 from tagpup.core.result import Result
 from tagpup.services import bake_after_index, job_runs
+from tagpup.services import indexing as indexing_service
 from tagpup.services import photos as photo_actions
 
 logger = logging.getLogger(__name__)
@@ -466,6 +467,9 @@ class IndexQueue:
         elif result.ok:
             status.update(status="completed", percent=result.details.get("percent", 100),
                           message=result.details.get("message", "Folder indexed."))
+            if result.details.get(indexing_service.REEXAMINE):
+                # The folder its closing sentence offers Re-examine of: the pages' action (index_folder).
+                status[indexing_service.REEXAMINE] = result.details[indexing_service.REEXAMINE]
         else:
             status.update(status="failed", percent=result.details.get("percent", 0),
                           message=result.message())

@@ -21,8 +21,9 @@ ASKED = "TAGPUP_PROGRESS_LINES"
 
 #: Each kind of fact, and the fields it must have: a phase's progress (`phase`, one of job_runs.PHASES, and its counts);
 #: the line of a wait for the graphics card; the bake's line of what it wrote (`baked`, with its counts when it ran);
-#: what the index read from the photos' bakes (`bake_read`); what it says of the faces it made (`new_faces`); how many
-#: photos failed (`failed`).
+#: what the index read from the photos' bakes (`bake_read`); what it says of the faces it made (`new_faces`, with how
+#: many of them have a likely name, `likely`, or `matching_failed` 1 when the matching failed:
+#: tagpup.services.indexing.new_faces_fact); how many photos failed (`failed`).
 KINDS = {
     "phase": ("phase", "sentence"),
     "waiting": ("sentence",),

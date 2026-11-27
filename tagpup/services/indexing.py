@@ -50,6 +50,14 @@ CANCELLED_WAITING = "Cancelled while it waited for the graphics card; nothing wa
 #: 2026-10-23; tagpup.services.faces.automatch_new), as new_faces_said says it, or that the matching failed. To the server
 #: it is a `new_faces` fact (tagpup.core.progress_line), whose sentence ends the message.
 NEW_FACES = "New faces: "
+#: What the matching of an index's new faces says when it failed (matching_failed_fact): the photos are indexed.
+MATCHING_FAILED = ("The photos are indexed, but matching their faces failed: %s: %s. Open Re-examine on their folder, "
+                   "or run %s.")
+#: The field of an index's status (tagpup.jobs.indexing, its Result's details here) naming the folder its closing sentence
+#: offers Re-examine of: some of its new faces have a likely name, or their matching failed (offers_reexamine). Both pages
+#: make their Re-examine of it from this field, never from the sentence's words; a batch's is its first folder, as its
+#: status is named.
+REEXAMINE = "reexamine"
 #: The line the CLI prints by hand when photos failed in its per-photo loop (#1995); the server hears a `failed` fact,
 #: and the message says how many, since a run whose every photo failed exits 0 having recorded nothing.
 FAILED = "Photos that failed: "
@@ -94,6 +102,27 @@ def new_faces_said(matched):
                  % (keyword, CLUSTER_ELSEWHERE, CLUSTER_AGAIN))
     return said
 
+
+def new_faces_fact(matched):
+    """The `new_faces` fact (tagpup.core.progress_line) the CLI's `index` says of the faces it made, from
+    tagpup.services.faces.automatch_new's Result: its sentence (new_faces_said) and how many of them have a likely name
+    (`likely`), which Re-examine would name."""
+    return progress_line.fact("new_faces", sentence=new_faces_said(matched), likely=matched.details["faces"])
+
+
+def matching_failed_fact(error):
+    """The `new_faces` fact of a matching of the new faces that raised `error`: the photos are indexed, and Re-examine or
+    cluster-faces matches them (`matching_failed` 1)."""
+    return progress_line.fact("new_faces", sentence=MATCHING_FAILED % (type(error).__name__, error, CLUSTER_AGAIN),
+                              matching_failed=1)
+
+
+def offers_reexamine(fact):
+    """Does a `new_faces` fact offer Re-examine of the index's folder: some new face has a likely name, or the matching
+    failed. Its sentence then says Re-examine (tests/test_new_faces_are_matched_after_an_index.py holds the two
+    together)."""
+    return fact.get("likely", 0) > 0 or fact.get("matching_failed", 0) > 0
+
 #: Each phase of an index (job_runs.PHASES) in the words the Activity page shows it in (tagpup.services.activity.PHASE_SAID).
 PHASE_SAID = {"metadata": "reading metadata", "embeddings": "making each photo's vector",
               "faces": "matching the new faces with the named ones", "bake": "writing the tags into the files"}
@@ -127,7 +156,8 @@ def index_folder(library, folder, code_folder, report=None, subfolders=True):
     thread, when one is recorded (job_runs.recording: the index queue's), is told each phase fact's phase and counts,
     never a path (job_runs.tell).
 
-    details: `message`, what to tell the person; `percent`, where the bar stops;
+    details: `message`, what to tell the person; `percent`, where the bar stops; REEXAMINE, the first folder, when
+    the last `new_faces` fact offers Re-examine (offers_reexamine);
     `cancelled`, true when the indexer was stopped while it waited for the graphics card; and, as counts, what the CLI
     said it did: `photos_read` (its embeddings fact's `of`), `baked_written`, `baked_current`, `baked_conflicts` (its
     `baked` fact's), `failed_photos` (its `failed` fact's).
@@ -167,7 +197,7 @@ def index_folder(library, folder, code_folder, report=None, subfolders=True):
     if hasattr(report, "stop_file"):
         report.stop_file = stop_file
 
-    said, baked, wrote, failed = [], [], [], []
+    said, offered, baked, wrote, failed = [], [], [], [], []
     # What the CLI said it did, as counts: the result's details, which the run's row keeps (tagpup.jobs.indexing).
     counted = {}
 
@@ -205,6 +235,7 @@ def index_folder(library, folder, code_folder, report=None, subfolders=True):
                         counted["photos_read"] = counts["of"]
                 elif kind == "new_faces":
                     said.append(fact["sentence"])
+                    offered.append(offers_reexamine(fact))
                 elif kind == "failed":
                     failed.append(counts["photos"])
                     counted["failed_photos"] = counts["photos"]
@@ -253,4 +284,6 @@ def index_folder(library, folder, code_folder, report=None, subfolders=True):
     if failed:
         message = "%s photo(s) failed and were not indexed (the indexer's log says why). %s" % (failed[-1], message)
     result.details.update(percent=100, message=message)
+    if said and offered[-1]:
+        result.details[REEXAMINE] = folders[0]
     return result

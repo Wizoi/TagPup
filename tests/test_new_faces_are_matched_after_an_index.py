@@ -15,6 +15,9 @@ it by hand for long indexes:
   are indexed;
 - two libraries holding one folder each count only the faces their own index made;
 - an index that recorded nothing says nothing of faces; stopped while it waited for the card, it indexed nothing;
+- the index's status names the folder its sentence offers Re-examine of (`reexamine`) exactly when the sentence says
+  Re-examine: some new face has a likely name, or their matching failed; a batch's is its first folder, and a rerun of
+  the folder says only its own (both pages make their action from the field, never the words: #3420, #3423);
 - the roots changed while it indexes is the one roots stop.
 
 The server's half stands in for the CLI's process (its stdout's facts are the interface, contract row 16), its lines
@@ -26,6 +29,8 @@ cancelled one.
 Gone with the clustering: its exit code (77), the bar at 95 while it ran, the flag that refused writes of faces from
 its line on, and the clustering run once with the card's turn let go.
 """
+import contextlib
+import io
 import os
 import sys
 import unittest
@@ -46,6 +51,7 @@ from PIL import Image  # noqa: E402
 import tagpup_cli  # noqa: E402
 from tagpup.core import fields, gpu_turns, paths, progress_line  # noqa: E402
 from tagpup.core.library import Library  # noqa: E402
+from tagpup.core.result import Result  # noqa: E402
 from tagpup.files.exiftool_session import ExifToolSession  # noqa: E402
 from tagpup.jobs import indexing as indexing_jobs  # noqa: E402
 from tagpup.ml import clip  # noqa: E402
@@ -183,6 +189,109 @@ class EveryEntryPointOfTheServer(unittest.TestCase):
                 result = indexing.index_folder(self.library, self.folder, self.home.root)
             self.assertEqual("Folder indexed. " + MATCHED + " " + fact["sentence"], result.details["message"])
         self.assertEqual("Bake: 2 file(s) written, 1 already held it.", bake_after_index.Baked(written=2, current=1).said())
+
+
+class TheReexamineTheSentenceOffersIsTheStatusField(unittest.TestCase):
+    """The pages make their Re-examine from the index's status (indexing.REEXAMINE), so the field is set exactly when the
+    closing sentence offers it. The CLI's own `_match_new_faces` says the line (its matching stood in for), and the
+    library's queue reads it through index_folder as the server does. Run against the code before the field: each
+    case that offers Re-examine failed there (no field)."""
+
+    def setUp(self):
+        self.home = own_home.for_test(self, prefix="index_reexamine_")
+        self.library = Library(self.home.library("harbour.db"))
+        library_actions.create(self.library.path)
+        self.folders = [paths.stored(os.path.join(self.home.root, "Meet 2026", name)) for name in ("Heat 1", "Heat 2")]
+        for each in self.folders:
+            os.makedirs(each)
+        self.queue = indexing_jobs.IndexQueue(self.library.name)
+        runner = mock.patch.object(indexing_jobs.IndexQueue, "_ensure_runner")
+        runner.start()
+        self.addCleanup(runner.stop)
+
+    def said(self, looked=0, decided=0, keyword=0, error=None):
+        """The line the CLI's index says of its new faces to the server that asked for facts."""
+        matched = Result(attempted=looked, details={"faces": decided, "keyword_photos": keyword})
+        out = io.StringIO()
+        with mock.patch.object(face_service, "automatch_new", return_value=matched, side_effect=error), \
+                mock.patch.object(tagpup_cli.logger, "exception"), \
+                mock.patch.dict(os.environ, {progress_line.ASKED: "1"}), contextlib.redirect_stdout(out):
+            tagpup_cli._match_new_faces(self.library.path, 0, 9)
+        return [out.getvalue()]
+
+    def index(self, lines, folders=None, together=False, during=None):
+        """The queue's status of the first folder after an index whose CLI says `lines`."""
+        folders = folders or self.folders[:1]
+        with mock.patch("subprocess.Popen", side_effect=_TheCli([INDEXED[0]] + lines, during=during)):
+            self.assertTrue(self.queue.start(folders, lambda each, report: indexing.index_folder(
+                self.library, each, self.home.root, report), together=together).ok)
+            self.queue.run_pending()
+        return self.queue.status(folders[0])
+
+    def assert_offers(self, status, folder):
+        self.assertEqual("completed", status["status"], status)
+        self.assertIn("Re-examine", status["message"])
+        self.assertEqual(folder, status.get(indexing.REEXAMINE), status)
+
+    def assert_offers_nothing(self, status):
+        self.assertEqual("completed", status["status"], status)
+        self.assertNotIn("Re-examine", status["message"])
+        self.assertNotIn(indexing.REEXAMINE, status)
+
+    def test_new_faces_with_a_likely_name_offer_their_folder(self):
+        self.assert_offers(self.index(self.said(looked=5, decided=3, keyword=1)), self.folders[0])
+
+    def test_a_matching_that_failed_offers_their_folder(self):
+        self.assert_offers(self.index(self.said(error=RuntimeError("out of memory"))), self.folders[0])
+
+    def test_no_likely_name_no_new_face_or_nothing_recorded_offers_nothing(self):
+        for name, lines in (("none likely", self.said(looked=4, keyword=2)), ("no new face", self.said()),
+                            ("nothing recorded", None)):
+            with self.subTest(name):
+                self.queue = indexing_jobs.IndexQueue(self.library.name)
+                if lines is None:
+                    with mock.patch("subprocess.Popen", side_effect=_TheCli(NOTHING_NEW)):
+                        self.queue.start(self.folders[:1], lambda each, report: indexing.index_folder(
+                            self.library, each, self.home.root, report))
+                        self.queue.run_pending()
+                    status = self.queue.status(self.folders[0])
+                else:
+                    status = self.index(lines)
+                self.assert_offers_nothing(status)
+
+    def test_a_batch_offers_its_first_folder_on_every_folder_of_it(self):
+        self.index(self.said(looked=5, decided=3), folders=self.folders, together=True)
+        for each in self.folders:
+            self.assert_offers(self.queue.status(each), self.folders[0])
+
+    def test_a_rerun_of_the_folder_says_only_its_own(self):
+        # Files arrive while the folder is indexed (a watcher's sync asks for it again): it is run once more when it ends,
+        # and that index adds a face nobody is like.
+        asked = []
+
+        def files_arrive():
+            if not asked:
+                asked.append(True)
+                self.queue.start(self.folders[:1], lambda each, report: indexing.index_folder(
+                    self.library, each, self.home.root, report))
+        clis = [_TheCli([INDEXED[0]] + self.said(looked=5, decided=3), during=files_arrive),
+                _TheCli([INDEXED[0]] + self.said(looked=1))]
+        runs = iter(clis)
+        ended = []
+        real = indexing_jobs.IndexQueue._queue_what_was_missed
+
+        def run_ended(queue, job, status):
+            ended.append(dict(status))
+            return real(queue, job, status)
+        with mock.patch("subprocess.Popen", side_effect=lambda command, **kwargs: next(runs)(command, **kwargs)), \
+                mock.patch.object(indexing_jobs.IndexQueue, "_queue_what_was_missed", run_ended):
+            self.assertTrue(self.queue.start(self.folders[:1], lambda each, report: indexing.index_folder(
+                self.library, each, self.home.root, report)).ok)
+            self.queue.run_pending()
+        self.assertEqual(2, len(ended), "the folder was not run again")
+        self.assert_offers(ended[0], self.folders[0])
+        self.assert_offers_nothing(ended[1])
+        self.assert_offers_nothing(self.queue.status(self.folders[0]))
 
 
 class _Hold:

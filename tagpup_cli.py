@@ -1246,14 +1246,14 @@ def _match_new_faces(db_path, after, upto):
     """Say what Re-examine would name among the faces this index made, those whose ids are above `after` and at most
     `upto` (tagpup.services.faces.automatch_new), on a line of its own that the server's index queue ends its message with
     (tagpup.services.indexing.NEW_FACES). It writes nothing, so a failure is said on the same line and the run still
-    exits 0: the photos are indexed, and their faces wait for Re-examine or cluster-faces."""
+    exits 0: the photos are indexed, and their faces wait for Re-examine or cluster-faces. Its fact carries whether it
+    offers Re-examine (tagpup.services.indexing.new_faces_fact, matching_failed_fact)."""
     try:
-        said = indexing_service.new_faces_said(face_records.automatch_new(Library(db_path), after, upto))
+        made = indexing_service.new_faces_fact(face_records.automatch_new(Library(db_path), after, upto))
     except Exception as e:
         logger.exception("Matching the new faces after the index failed")
-        said = ("The photos are indexed, but matching their faces failed: %s: %s. Open Re-examine on their folder, or run %s."
-                % (type(e).__name__, e, indexing_service.CLUSTER_AGAIN))
-    _say(progress_line.fact("new_faces", sentence=said), indexing_service.NEW_FACES + said)
+        made = indexing_service.matching_failed_fact(e)
+    _say(made, indexing_service.NEW_FACES + made["sentence"])
 
 @cli.command()
 @click.option("--apply", "apply_", is_flag=True, help="Back the library up, then compact it. Without it, only says how much would be freed.")
