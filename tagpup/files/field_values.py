@@ -117,6 +117,10 @@ NO_PICTURE = ("it starts as a JPEG but holds no picture data that could be found
 NOT_MOVED = ("its new file could not be put in place of it (%s): the photo may be marked read-only or open in another "
              "program; the new file was removed and the photo is as it was")
 
+#: Why a patch in place failed whose photo's folder did not answer (in_place.Away) in in_place.SECONDS: the file is
+#: settled by its bytes (file_changes._by_bytes).
+PATCH_NOT_ANSWERED = "its folder did not answer the patch of its fields in %d s; it is settled by its bytes the next time"
+
 
 class Unreadable(Exception):
     """A photo whose fields could not be read: missing, locked, or not a photo."""
@@ -614,8 +618,7 @@ def _write(et, photo_path, values, saving=None, scratch_written=None):
         try:
             stale = in_place.patch_jpeg(photo_path, new_header, saving)
         except in_place.Away:
-            raise NotAnswered("its folder did not answer the patch of its fields in %d s; it is settled by its bytes "
-                              "the next time" % in_place.SECONDS) from None
+            raise NotAnswered(PATCH_NOT_ANSWERED % in_place.SECONDS) from None
         if stale is not None:
             return stale
     _command(et, photo_path, scratch, params, clear)
@@ -714,8 +717,7 @@ def _clip_written(photo_path, values, saving):
         stale = in_place.patch_clip(photo_path, lambda old: segment_edits.new_packet(old, values), saved_first,
                                     title=title, category=category, dates=headers)
     except in_place.Away:
-        raise NotAnswered("its folder did not answer the patch of its fields in %d s; it is settled by its bytes "
-                          "the next time" % in_place.SECONDS) from None
+        raise NotAnswered(PATCH_NOT_ANSWERED % in_place.SECONDS) from None
     except OSError as error:
         if saved:
             raise

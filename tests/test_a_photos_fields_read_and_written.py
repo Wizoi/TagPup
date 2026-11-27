@@ -214,7 +214,10 @@ class AFilesFieldsReadAndWritten(test_file_journal.FilesCase):
 
         def execute(session, *params, **kwargs):
             if self.away and any(paths.key(str(each)) in self.away for each in params):
-                raise exiftool_session.ExifToolTimeout("ExifTool did not answer in its deadline (the test's share away)")
+                # The share away: the command sent with no time to answer, so the session's own deadline passes (its
+                # process killed, the next command starting another), saying what it says (NOT_ANSWERED).
+                with mock.patch.object(session, "timeout", 0):
+                    return real_execute(session, *params, **kwargs)
             if self.seen is not None and not session._starting:
                 self.seen.append(params)
             return real_execute(session, *params, **kwargs)
@@ -507,10 +510,13 @@ class AFilesFieldsReadAndWritten(test_file_journal.FilesCase):
             self.fields.read([tagged, x, camera], GROUPED)
             self.assertIsInstance(self.fields.read([camera], GROUPED)[paths.key(camera)], field_values.NotAnswered)
         self.assertEqual(alone[camera], self.fields.read([camera], GROUPED)[paths.key(camera)], "after the block")
-        # A write of X on each side a write takes (a clip's is journaled alone: S2.1's outside case is Refused).
-        for path, own in ((x, False), (x, True), (clip, True)):
+        self.assertEqual(alone[tagged], self.fields.read([tagged], GROUPED)[paths.key(tagged)], "the file before X")
+        # A write of X on each side a write takes (a clip's is journaled alone: S2.1's outside case is Refused):
+        # ExifTool's rewrite its command's deadline passed, the own patch its folder not answering.
+        rewrite, patch = exiftool_session.NOT_ANSWERED % 0, field_values.PATCH_NOT_ANSWERED % in_place.SECONDS
+        for path, own, words in ((x, False, rewrite), (x, True, patch), (clip, True, patch)):
             how, _stale, error = metadata_check.written(self.fields, path, {"XMP:Subject": ["Trips/Dune"]}, own)
-            self.assertEqual(("failed", True), (how, "did not answer" in (error or "")), (own, error))
+            self.assertEqual(("failed", True), (how, words in (error or "")), (own, error))
             self.assertEqual((data[path], [os.path.basename(path)]), (bytes_of(path), os.listdir(os.path.dirname(path))),
                              "a write of X leaves it as it was, nothing beside it")
 
