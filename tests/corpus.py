@@ -466,3 +466,83 @@ def clip_of(shape, moov_after_mdat=False):
     brand = b"qt  \0\0\0\0qt  " if shape.startswith("mov") else b"isom\0\0\2\0isomiso2mp41"
     mdat = _box("mdat", bytes(64))
     return _box("ftyp", brand) + (mdat + moov if moov_after_mdat else moov + mdat)
+
+
+# An EXIF segment's body laid by hand as cameras lay one out: its IFDs, a MakerNote, a thumbnail and slack.
+
+THUMB = b"\xff\xd8\xff\xdb" + bytes(range(40)) + b"\xff\xd9"
+
+
+def text(value):
+    return value.encode("utf-8") + b"\0"
+
+
+def ucs2(value):
+    return value.encode("utf-16-le") + b"\0\0"
+
+
+def layout_tiff(order, groups, slack, tail):
+    """The TIFF bytes of `groups` ((name, entries, bytes after its values), laid in that order), `slack` zero bytes and
+    `tail`. An entry is (tag, type, data); data may be a function of (the groups' offsets, its own offset)."""
+    from tagpup.files import containers
+    pos = {}
+    for _pass in range(2):  # the first measures, the second points: no size depends on a pointer
+        out = bytearray(b"II*\0" if order == "<" else b"MM\0*") + struct.pack(order + "I", 8)
+        for name, entries, extra in groups:
+            pos[name] = len(out)
+            values_at = len(out) + 2 + 12 * len(entries) + 4
+            table, values = struct.pack(order + "H", len(entries)), b""
+            for tag, kind, data in entries:
+                if callable(data):
+                    data = data(pos, values_at + len(values))
+                head = struct.pack(order + "HHI", tag, kind, len(data) // containers.TIFF_TYPE_SIZES[kind])
+                if len(data) <= 4:
+                    table += head + data.ljust(4, b"\0")
+                else:
+                    table += head + struct.pack(order + "I", values_at + len(values))
+                    values += data + bytes(len(data) & 1)
+            out += table + struct.pack(order + "I", pos.get("ifd1", 0) if name == "ifd0" else 0) + values
+            pos[name + "+"] = len(out)
+            out += extra
+        out += bytes(slack) + tail
+    return bytes(out)
+
+
+def block(order="<", ifd0=None, exif=None, slack=64, tail=b"", make=b"TestCam", sort=True, thumb=True, note=None):
+    """An EXIF segment's body: IFD0, Exif (exif=False: none), GPS, IFD1 and its thumbnail, as a camera lays them out,
+    then the slack. `sort=False` puts the owned IFD0 tags after the others, out of tag order."""
+    u16, u32 = (lambda v: struct.pack(order + "H", v)), (lambda v: struct.pack(order + "I", v))
+    if ifd0 is None:
+        ifd0 = {0x010E: (2, text("A day at the lake")), 0x0112: (3, u16(1)), 0x9C9C: (1, ucs2("Kites")),
+                0x9C9E: (1, ucs2("Beach;Kites"))}
+    if exif is None:
+        exif = {0x9003: (2, text("2019:07:14 10:22:31")), 0x9004: (2, text("2019:07:14 10:22:31")),
+                0x9290: (2, text("42")), 0x9291: (2, text("042")), 0x9292: (2, text("0420"))}
+    zero = [(0x010F, 2, text(make.decode())), (0x0131, 2, text("Darkroom 2.1")),
+            (0x8825, 4, lambda p, _at: u32(p.get("gps", 0)))]
+    if exif is not False:
+        zero.append((0x8769, 4, lambda p, _at: u32(p.get("exif", 0))))
+    zero = sorted(zero, key=lambda e: e[0]) + [(tag, kind, data) for tag, (kind, data) in ifd0.items()]
+    groups = [("ifd0", sorted(zero, key=lambda e: e[0]) if sort else zero, b"")]
+    if exif is not False:
+        sub = [(0x829A, 5, u32(1) + u32(250)), (0x9000, 7, b"0232")]
+        sub += [(tag, kind, data) for tag, (kind, data) in exif.items()] + ([(0x927C, 7, note)] if note else [])
+        groups.append(("exif", sorted(sub, key=lambda e: e[0]), b""))
+    groups.append(("gps", [(0x0000, 1, b"\2\3\0\0")], b""))
+    if thumb:
+        groups.append(("ifd1", [(0x0103, 3, u16(6)), (0x0201, 4, lambda p, _at: u32(p.get("ifd1+", 0))),
+                                (0x0202, 4, u32(len(THUMB)))], THUMB))
+    return b"Exif\0\0" + layout_tiff(order, groups, slack, tail)
+
+
+def note_ifd(order, shift=0, footer=False, told=None):
+    """A MakerNote with one IFD whose one value lies inside it, counted from the TIFF header as if it had been written
+    `shift` bytes before where it lies (Canon's form; `footer`: ending in Canon's record of where it was written, or
+    of where it was `told` it was written, `told` bytes before where it lies)."""
+    def made(_pos, at):
+        base = at - shift
+        data = (struct.pack(order + "H", 1) + struct.pack(order + "HHII", 0x0007, 2, 8, base + 18) + bytes(4)
+                + b"FW 1.0.0")
+        said = base if told is None else at - told
+        return data + ((b"II*\0" if order == "<" else b"MM\0*") + struct.pack(order + "I", said) if footer else b"")
+    return made
