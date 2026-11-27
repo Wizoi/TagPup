@@ -638,10 +638,6 @@ class Runtime:
         """The library's words CLIP is asked about a photo, before the tree's."""
         return self.settings(library).candidate_words
 
-    def exiftool(self, library):
-        """The ExifTool program to run for `library`."""
-        return tagpup_config.exiftool_path(self.settings(library).exiftool)
-
     def sync(self, library, folder=None, apply=False, index_new=True):
         """Bring `library` in step with its folders, or with `folder` (tagpup.services.sync):
         a dry run unless `apply`, with the ExifTool the library names. A dry run reads the
