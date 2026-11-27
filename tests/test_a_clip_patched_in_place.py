@@ -857,7 +857,7 @@ class AClipSavedInPlace(FfmpegClips):
             handle.flush()
             raise Crash("killed half way")
 
-        for shape, how in ((shapes.premiere(), clip_patch.IN_PLACE), (shapes.BARE, clip_patch.GROWN)):
+        for shape, how in ((corpus.premiere(), clip_patch.IN_PLACE), (shapes.BARE, clip_patch.GROWN)):
             with self.subTest(how):
                 path, self.saved = self.clip("last.mp4"), []
                 with open(path, "ab") as handle:

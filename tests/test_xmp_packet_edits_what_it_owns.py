@@ -19,6 +19,9 @@ sys.path.insert(0, WORKSPACE_DIR)
 from tagpup.files import containers  # noqa: E402
 from tagpup.files import xmp_packet as xp  # noqa: E402
 
+sys.path.insert(0, os.path.join(WORKSPACE_DIR, "tests"))
+from corpus import PREMIERE, premiere  # noqa: E402
+
 BOM = chr(0xFEFF).encode("utf-8")
 CR = chr(13)
 BEGIN = b"<?xpacket begin='" + BOM + b"' id='W5M0MpCehiHzreSzNTczkc9d'?>"
@@ -265,41 +268,6 @@ class AnExifToolPacketReadAndWritten(unittest.TestCase):
         self.assertIsInstance(xp.edit(lake, {"dc:shiny": "x"}), containers.Refusal)
 
 
-ADOBE_BEGIN = b'<?xpacket begin="' + BOM + b'" id="W5M0MpCehiHzreSzNTczkc9d"?>'
-#: A clip's packet as Adobe Premiere and Media Encoder write it (40 live): its text properties attributes of the one
-#: Description, element children after them, wrapped, with padding.
-PREMIERE = ADOBE_BEGIN + b"""
-<x:xmpmeta xmlns:x="adobe:ns:meta/" x:xmptk="Adobe XMP Core 5.6-c148 79.164036, 2019/08/13-01:06:57        ">
- <rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">
-  <rdf:Description rdf:about=""
-    xmlns:xmp="http://ns.adobe.com/xap/1.0/"
-    xmlns:xmpDM="http://ns.adobe.com/xmp/1.0/DynamicMedia/"
-    xmlns:tiff="http://ns.adobe.com/tiff/1.0/"
-    xmlns:xmpMM="http://ns.adobe.com/xap/1.0/mm/"
-    xmlns:stEvt="http://ns.adobe.com/xap/1.0/sType/ResourceEvent#"
-    xmlns:dc="http://purl.org/dc/elements/1.1/"
-   xmp:CreateDate="2018-06-02T14:03:11Z"
-   xmp:MetadataDate="2018-06-02T15:00:00-07:00"
-   xmpDM:videoFrameRate="29.970030"
-   tiff:Orientation="1"
-   xmpMM:InstanceID="xmp.iid:7c2d0e4a"
-   xmpMM:DocumentID="xmp.did:7c2d0e4a"
-   dc:format="H.264">
-   <xmpDM:duration
-    xmpDM:value="1001"
-    xmpDM:scale="1/30000"/>
-   <xmpMM:History>
-    <rdf:Seq>
-     <rdf:li
-      stEvt:action="saved"
-      stEvt:instanceID="xmp.iid:7c2d0e4a"
-      stEvt:softwareAgent="Adobe Media Encoder 2020.0 (Windows)"
-      stEvt:changed="/"/>
-    </rdf:Seq>
-   </xmpMM:History>
-  </rdf:Description>
- </rdf:RDF>
-</x:xmpmeta>""" + xp.padding(2400) + b'<?xpacket end="w"?>'
 #: A clip's packet as Adobe XMP Core 5.1.0-jc003 writes it (39 live): no wrapper, a self-closing Description.
 BARE = b"""<x:xmpmeta xmlns:x="adobe:ns:meta/" x:xmptk="Adobe XMP Core 5.1.0-jc003">
   <rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">
@@ -310,46 +278,6 @@ BARE = b"""<x:xmpmeta xmlns:x="adobe:ns:meta/" x:xmptk="Adobe XMP Core 5.1.0-jc0
   </rdf:RDF>
 </x:xmpmeta>
 """
-_EVENT = b"""
-     <rdf:li
-      stEvt:action="%s"
-      stEvt:instanceID="xmp.iid:%08x-4b1e-4c2a-9d3f-%012x"
-      stEvt:when="2018-06-%02dT14:%02d:%02d-07:00"
-      stEvt:softwareAgent="Adobe Premiere Pro CC 2018.1 (Windows)"
-      stEvt:changed="/"
-      stEvt:parameters="from application/vnd.adobe.premiere-project to video/mp4 (H.264, Match Source - High bitrate, VBR 2 pass)"/>"""
-_PANTRY = b"""
-     <rdf:li>
-      <rdf:Description
-       xmpMM:InstanceID="xmp.iid:%08x-0d2e-4f61-8a17-000000000000"
-       xmpMM:DocumentID="xmp.did:%08x-0d2e-4f61-8a17-000000000000"
-       xmpMM:OriginalDocumentID="xmp.did:%08x-0d2e-4f61-8a17-000000000000"
-       xmp:CreateDate="2018-06-02T14:03:11Z"
-       xmpDM:videoFrameRate="29.970030"/>
-     </rdf:li>"""
-
-
-def premiere(events=515, pantry=15):
-    """A clip's packet as Premiere writes one after many saves, PREMIERE grown as the 1 live packet over 64 KB is
-    (counted 2026-11-12: 206,986 bytes, of which 204,918 XML, 16 rdf:Descriptions, 530 rdf:li, 2,068 of padding):
-    `events` saves in its xmpMM:History and `pantry` Descriptions in its xmpMM:Pantry, mostly XML. lr is declared, as
-    in a packet TagPup saved a keyword into once, so a keyword added and taken off gives its bytes back."""
-    history = b"".join(_EVENT % ((b"saved", b"converted")[n % 2], n, n, 1 + n % 28, n % 60, n * 7 % 60)
-                       for n in range(events))
-    stored = b"".join(_PANTRY % (n, n, n) for n in range(pantry))
-    grown = PREMIERE.replace(b"""
-     <rdf:li
-      stEvt:action="saved"
-      stEvt:instanceID="xmp.iid:7c2d0e4a"
-      stEvt:softwareAgent="Adobe Media Encoder 2020.0 (Windows)"
-      stEvt:changed="/"/>""", history).replace(
-        b"   </xmpMM:History>\n", b"   </xmpMM:History>\n   <xmpMM:Pantry>\n    <rdf:Bag>" + stored
-        + b"\n    </rdf:Bag>\n   </xmpMM:Pantry>\n").replace(
-        b'    xmlns:dc="http://purl.org/dc/elements/1.1/"\n',
-        b'    xmlns:dc="http://purl.org/dc/elements/1.1/"\n    xmlns:lr="http://ns.adobe.com/lightroom/1.0/"\n')
-    return grown.replace(xp.padding(2400), xp.padding(2068))
-
-
 class AClipsPacketWithItsPropertiesAsAttributes(unittest.TestCase):
     """The live clips' packets (docs/domains/files.md, "The XMP packet editor"): a text property written as an
     attribute reads as its element would, is changed where it stands, and a self-closing Description is opened to take
