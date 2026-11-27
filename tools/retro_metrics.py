@@ -72,6 +72,9 @@ OTHER_BRANCH = "(not a worktree-agent branch)"
 #: The state row of worker runs whose transcript names no branch (a worker the harness did not tag).
 NO_BRANCH = "worker run tied to no branch"
 MERGED_BRANCH = re.compile(r"^Merge (?:branch ')?(worktree-agent-[0-9a-f]+)")
+#: The trunk's reflog entry of a `git merge` of a worker's branch, a fast-forward (a branch rebased onto the trunk) or a
+#: merge whose message names something else (retro 2026-11-26, #3450).
+REFLOG_MERGE = re.compile(r"^merge (worktree-agent-[0-9a-f]+):")
 #: A line of a merge's message that ties it to the worker's worktree when the branch merged has a name of its own
 #: (`--branch` prints it; retro 2026-10-18, action 2).
 WORKTREE_LINE = re.compile(r"^Worktree: (?:worktree-)?(agent-[0-9a-f]+)\s*$", re.M)
@@ -383,8 +386,9 @@ def tally(records):
 
 def branch_states(repo, rev, started):
     """{branch: state} at `rev` of each branch of `started` ({branch: when its run began, epoch seconds}). merged: a
-    merge on `rev` names it (`Merge worktree-agent-<id>`), or its ref is in `git branch --merged` off the first-parent
-    line. fast-forward: its tip is on the first-parent line and was committed after its run began. nothing to merge:
+    merge on `rev` names it (`Merge worktree-agent-<id>`), the reflog of `rev` names a merge of it that left a commit
+    still on the first-parent line (`merge worktree-agent-<id>: Fast-forward`: a branch rebased onto the trunk, its ref
+    deleted since), or its ref is in `git branch --merged` off the first-parent line. fast-forward: its tip is on the first-parent line and was committed after its run began. nothing to merge:
     its tip is on the first-parent line, from before its run (it committed nothing on its own branch; a brief may
     have named another worktree). open: its ref is kept, unmerged.
     no merge found: no ref and no merge names it (never merged, or merged under another name: an upper bound)."""
@@ -398,6 +402,11 @@ def branch_states(repo, rev, started):
     merged = set(git(repo, "branch", "--merged", rev, "--list", "worktree-agent-*",
                      "--format=%(refname:short)").split())
     line = set(git(repo, "rev-list", "--first-parent", rev).split())
+    for entry in git(repo, "reflog", "show", "--format=%H %gs", rev, "--", ok=(0, 128)).splitlines():
+        sha, _, said = entry.partition(" ")
+        found = REFLOG_MERGE.match(said)
+        if found and sha in line:
+            named.add(found.group(1))
 
     def state(name):
         if name in named:
@@ -713,7 +722,8 @@ def agents_markdown(a, split, other_merges):
                "first-parent line, committed after the run began), nothing to merge (its tip is on the first-parent "
                "line, from before the run: nothing committed on its own branch, its work may be on a worktree its brief "
                "named), open (its ref is kept, unmerged), no merge found (no ref and no merge names "
-               "it: never merged, or merged under another branch name, so an upper bound; %d trunk merges in the window "
+               "it, not even the trunk's reflog: never merged, or merged under another branch name, so an upper bound; "
+               "%d trunk merges in the window "
                "name another branch).\n\n" % other_merges)
     out.append(table(["branch", "state", "review runs"] + head[1:],
                      [[b, v["state"], v["review_runs"]] + row(b, v)[1:] for b, v in list(a["by_branch"].items())[:15]]))

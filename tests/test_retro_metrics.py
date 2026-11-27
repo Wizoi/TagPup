@@ -335,6 +335,26 @@ class AWorkerMergedUnderItsOwnBranchName(unittest.TestCase):
         self.repo.git("branch", "elsewhere")
         self.assertEqual("", retro_metrics.worktree_line(self.repo.folder, "elsewhere"))
 
+    def test_a_worker_branch_rebased_onto_the_trunk_and_fast_forwarded_is_merged(self):
+        # Retro 2026-11-26 (#3450): 34 branches "no merge found", 45.1% of the tokens, most of them rebased onto the trunk
+        # and fast-forwarded (no merge commit to name them), their refs deleted with their worktrees. The trunk's reflog
+        # still says `merge worktree-agent-<id>: Fast-forward`.
+        self.repo.git("worktree", "remove", "--force", self.tree)
+        self.repo.git("branch", "-D", "perf/thing")
+        self.repo.git("branch", "worktree-agent-cafe")
+        self.repo.commit("2026-10-02", "the trunk moves on", ("b.txt", "b\n"))
+        self.repo.git("checkout", "-q", "worktree-agent-cafe")
+        self.repo.commit("2026-10-02", "a worker's change", ("c.txt", "c\n"))
+        self.repo.git("rebase", "-q", "main")
+        self.repo.git("checkout", "-q", "main")
+        self.repo.git("merge", "-q", "--ff-only", "worktree-agent-cafe")
+        self.repo.git("branch", "-D", "worktree-agent-cafe")
+        self.repo.git("branch", "worktree-agent-f00d")   # its ref deleted below, never merged
+        self.repo.git("branch", "-D", "worktree-agent-f00d")
+        started = {"worktree-agent-cafe": 0, "worktree-agent-f00d": 0}
+        self.assertEqual({"worktree-agent-cafe": "merged", "worktree-agent-f00d": "no merge found"},
+                         retro_metrics.branch_states(self.repo.folder, "main", started))
+
 
 if __name__ == "__main__":
     unittest.main()
