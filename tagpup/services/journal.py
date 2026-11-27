@@ -348,14 +348,14 @@ def refusals(library, entries):
         conn.close()
 
 
-def rehearse(library, change_id, exiftool_path=None):
+def rehearse(library, change_id, fields=None):
     """Undo change `change_id` and apply it again inside a transaction rolled back. A
     Result: `attempted` is the rows the undo would write; details["rehearsal"] says
     whether the round trip restored every row exactly. Refused, before a row is read,
     when why_not says so. A change of photo files is rehearsed by reading them
     (file_changes.rehearse_undo)."""
     if file_changes.writes_files(library, change_id):
-        return file_changes.rehearse_undo(library, change_id, exiftool_path, why_not)
+        return file_changes.rehearse_undo(library, change_id, fields, why_not)
     result = Result(details={"dry_run": True, "change": change_id})
     why = _why_not(library, change_id)
     if why:
@@ -369,7 +369,7 @@ def rehearse(library, change_id, exiftool_path=None):
     return result
 
 
-def undo(library, change_id, apply=False, exiftool_path=None):
+def undo(library, change_id, apply=False, fields=None):
     """Undo change `change_id`: a rehearsal unless `apply`. Applied, a Result whose
     `changed` is the rows the undo wrote back; refused, naming the rows, the newer change
     or the schema in the way, with nothing written -- and when the rehearsal, which runs
@@ -377,7 +377,7 @@ def undo(library, change_id, apply=False, exiftool_path=None):
     files puts back every file still holding what it left, `changed` counting them, and
     names the rest in its errors (file_changes.undo)."""
     if file_changes.writes_files(library, change_id):
-        result = file_changes.undo(library, change_id, exiftool_path, why_not, apply=apply)
+        result = file_changes.undo(library, change_id, fields, why_not, apply=apply)
         if apply and not result.refused and result.changed:
             _unname_what_was_taken_off(library, change_id, result)
         return result

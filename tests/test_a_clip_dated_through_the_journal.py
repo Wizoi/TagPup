@@ -185,7 +185,7 @@ class AClipDatedThroughTheJournal(tagged.ALibraryHoldingAClip):
         return change
 
     def undo(self, change):
-        undone = journal.undo(self.vl.library, change, apply=True, exiftool_path=EXIFTOOL)
+        undone = journal.undo(self.vl.library, change, apply=True, fields=field_values.opened(EXIFTOOL))
         self.assertEqual((1, []), (undone.changed, undone.errors), undone.message())
         return undone
 
@@ -341,7 +341,7 @@ class AClipDatedThroughTheJournal(tagged.ALibraryHoldingAClip):
 
         def save(date):
             start.wait(10)
-            results[date] = tagging.save_photo(self.vl.library, path, "", [], date, EXIFTOOL, "", base=base)
+            results[date] = tagging.save_photo(self.vl.library, path, "", [], date, field_values.opened(EXIFTOOL), "", base=base)
         saves = [threading.Thread(target=save, args=(date,)) for date in (SAVED, other)]
         for one in saves:
             one.start()
@@ -448,7 +448,7 @@ class AClipDatedThroughTheJournal(tagged.ALibraryHoldingAClip):
         clip, = self.index(held)
         lagging = {"raw_metadata": {"QuickTime:CreateDate": "2020:07:04 18:30:00"}, "tags": []}
 
-        result = tagging.save_photo(self.vl.library, held, "", [], SAVED_AS_THE_PAGE_SENDS, EXIFTOOL, "",
+        result = tagging.save_photo(self.vl.library, held, "", [], SAVED_AS_THE_PAGE_SENDS, field_values.opened(EXIFTOOL), "",
                                     base=page_writes.base(self.vl.library, held))
         self.assertTrue(result.ok, result.message())
         self.assertEqual(SAVED, result.details["taken"])
@@ -528,7 +528,7 @@ class AClipDatedThroughTheJournal(tagged.ALibraryHoldingAClip):
         self.index(self.clip_path)
         before = self.read_bytes(self.clip_path)
         with open(self.clip_path, "rb"):
-            held = convert.convert_clip(self.vl.library, EXIFTOOL, TOOLS, self.clip_path, reason=convert.SMALLER)
+            held = convert.convert_clip(self.vl.library, field_values.opened(EXIFTOOL), TOOLS, self.clip_path, reason=convert.SMALLER)
         self.assertEqual(0, held.changed)
         self.assertTrue(held.refused.startswith(convert.HELD_OPEN), held.refused)
         self.assertRegex(held.refused, r"\(this TagPup process, pid \d+\)\.")
@@ -544,7 +544,7 @@ class AClipDatedThroughTheJournal(tagged.ALibraryHoldingAClip):
                     raise OSError(None, said, path, winerror)
                 return opened(path, sharing, write)
             with self.subTest(winerror=winerror), mock.patch.object(lock_owners, "opened", side_effect=failing):
-                result = convert.convert_clip(self.vl.library, EXIFTOOL, TOOLS, self.clip_path, reason=convert.SMALLER)
+                result = convert.convert_clip(self.vl.library, field_values.opened(EXIFTOOL), TOOLS, self.clip_path, reason=convert.SMALLER)
                 self.assertEqual(0, result.changed)
                 self.assertNotIn("open in another program", result.refused)
                 self.assertEqual(convert.UNREADABLE % said, result.refused)
@@ -555,7 +555,7 @@ class AClipDatedThroughTheJournal(tagged.ALibraryHoldingAClip):
         base = page_writes.base(self.vl.library, self.clip_path)
         with cutting:
             with self.assertRaises(Crash):
-                tagging.save_photo(self.vl.library, self.clip_path, "", [], SAVED, EXIFTOOL, "", base=base)
+                tagging.save_photo(self.vl.library, self.clip_path, "", [], SAVED, field_values.opened(EXIFTOOL), "", base=base)
         self.assertEqual(["writing"], self.change_states(self.clip))
         with mock.patch.object(file_changes, "_settled", set()):
             self.assertEqual(1, file_changes.settle_once(self.vl.library, EXIFTOOL))

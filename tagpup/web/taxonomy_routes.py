@@ -91,8 +91,10 @@ def taxonomy_delete_confirm():
     tag_id, action = body.get("tag_id"), body.get("action")
     if tag_id is None or not action:
         return responses.error(400, "Missing parameters")
-    result, failed = _tree_edit(lambda library: tags_service.delete(
-        library, tag_id, action, body.get("target_tag"), state.exiftool(library), force=bool(body.get("force"))))
+    def delete(library):
+        with state.fields(library) as fields:
+            return tags_service.delete(library, tag_id, action, body.get("target_tag"), fields, force=bool(body.get("force")))
+    result, failed = _tree_edit(delete)
     if failed:
         return failed
     reply = {"success": result.ok, "photos_affected": result.details["photos_affected"],
@@ -111,8 +113,10 @@ def taxonomy_rename():
     tag_id, new_name = body.get("tag_id"), str(body.get("new_name") or "").strip()
     if tag_id is None or not new_name:
         return responses.error(400, "Missing parameters")
-    result, failed = _tree_edit(lambda library: tags_service.rename(
-        library, tag_id, new_name, state.exiftool(library)))
+    def rename(library):
+        with state.fields(library) as fields:
+            return tags_service.rename(library, tag_id, new_name, fields)
+    result, failed = _tree_edit(rename)
     if failed:
         return failed
     # The tree has the new name once every photo is rewritten; one that could not be keeps the old, and so does the tree.

@@ -19,6 +19,7 @@ import test_a_clip_tagged_through_the_journal as tagged  # noqa: E402
 
 from tagpup.services import tags  # noqa: E402
 from tagpup.store import taxonomy  # noqa: E402
+from tagpup.files import field_values  # noqa: E402
 
 EXIFTOOL = tagged.EXIFTOOL
 
@@ -52,7 +53,7 @@ class ATagTreeEditOfATagAClipHolds(tagged.ALibraryHoldingAClip):
 
     def test_a_merge_into_another_tag_rewrites_the_clip(self):
         clip, = self.tagged(self.clip_path)
-        result = tags.merge(self.vl.library, "Trips/Coast", "Trips/Harbour", EXIFTOOL, apply=True)
+        result = tags.merge(self.vl.library, "Trips/Coast", "Trips/Harbour", field_values.opened(EXIFTOOL), apply=True)
         self.assertEqual((True, []), (result.details["applied"], result.errors), result.message())
         self.assert_holds(["Trips/Harbour"], clip, self.clip_path)
         self.assertIsNone(self.node("Trips/Coast"))
@@ -60,7 +61,7 @@ class ATagTreeEditOfATagAClipHolds(tagged.ALibraryHoldingAClip):
     def test_a_retire_takes_the_tag_off_the_clip(self):
         clip, = self.tagged(self.clip_path)
         self.tagged(self.clip_path, tag="Trips/Pier")
-        result = tags.merge(self.vl.library, "Trips/Coast", "", EXIFTOOL, retire=True, apply=True)
+        result = tags.merge(self.vl.library, "Trips/Coast", "", field_values.opened(EXIFTOOL), retire=True, apply=True)
         self.assertEqual((True, []), (result.details["applied"], result.errors), result.message())
         self.assert_holds(["Trips/Pier"], clip, self.clip_path)
         self.assertIsNone(self.node("Trips/Coast"))

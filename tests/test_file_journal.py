@@ -172,13 +172,13 @@ class FilesCase(unittest.TestCase):
         return self.rows("SELECT MAX(id) FROM changes")[0][0]
 
     def add(self, photo_paths, tags=("Harbour",)):
-        return tagging.change_tags(self.library, photo_paths, list(tags), [], EXIFTOOL)
+        return tagging.change_tags(self.library, photo_paths, list(tags), [], field_values.opened(EXIFTOOL))
 
     def undo(self, change_id, apply=True):
-        return journal_service.undo(self.library, change_id, apply=apply, exiftool_path=EXIFTOOL)
+        return journal_service.undo(self.library, change_id, apply=apply, fields=field_values.opened(EXIFTOOL))
 
     def settle(self):
-        return file_changes.settle(self.library, EXIFTOOL)
+        return file_changes.settle(self.library, field_values.opened(EXIFTOOL))
 
 
 class Forward(FilesCase):
@@ -213,7 +213,7 @@ class Forward(FilesCase):
 
     def test_a_person_renamed_through_the_tree_is_one_change_of_files(self):
         a = self.make("a.jpg", ["People/Rowan Thackeray", "Beach"])
-        result = tagging.replace_tag(self.library, [a], "People/Rowan Thackeray", "People/Rowan Vale", EXIFTOOL)
+        result = tagging.replace_tag(self.library, [a], "People/Rowan Thackeray", "People/Rowan Vale", field_values.opened(EXIFTOOL))
         self.assertEqual(result.changed, 1)
         self.assertEqual(keywords_of(a), ["Beach", "People/Rowan Vale"])
         self.assertEqual(self.status(result.details["change"]), "applied")
@@ -410,7 +410,7 @@ class Renames(FilesCase):
 
     def rename(self):
         return photo_actions.smart_rename(self.library, [self.a, self.b], "Regatta",
-                                          "{grouping} - {index} - {caption}", EXIFTOOL)
+                                          "{grouping} - {index} - {caption}", field_values.opened(EXIFTOOL))
 
     def names(self):
         return sorted(os.listdir(self.folder))
@@ -471,7 +471,7 @@ class APatchInPlace(FilesCase):
     carried by the fields, as any undo is."""
 
     def replace(self, photo_paths):
-        return tagging.replace_tag(self.library, photo_paths, "Beach", "Shore", EXIFTOOL)
+        return tagging.replace_tag(self.library, photo_paths, "Beach", "Shore", field_values.opened(EXIFTOOL))
 
     def recorded(self):
         return [i for (i,) in self.rows("SELECT id FROM change_files WHERE patch IS NOT NULL OR patch_before IS NOT NULL")]
@@ -564,7 +564,7 @@ class AShareThatStopsAnsweringInAPatch(FilesCase):
 
     def rename(self, photo_paths):
         """Beach renamed Shore: the same length, so each photo's fields fit its segments and are patched in place."""
-        return tagging.replace_tag(self.library, photo_paths, "Beach", "Shore", EXIFTOOL)
+        return tagging.replace_tag(self.library, photo_paths, "Beach", "Shore", field_values.opened(EXIFTOOL))
 
     def test_a_share_gone_half_way_through_the_first_patch_stops_the_write_there(self):
         a, b, c = self.make("a.jpg"), self.make("b.jpg"), self.make("c.jpg")
@@ -622,7 +622,7 @@ class TimeShift(FilesCase):
     def test_a_time_shift_is_undone(self):
         a = self.make("a.jpg", taken=TAKEN)
         self.execute("UPDATE photos SET taken = NULL")
-        result = photo_actions.shift_date_taken(self.library, [a], 30, EXIFTOOL)
+        result = photo_actions.shift_date_taken(self.library, [a], 30, field_values.opened(EXIFTOOL))
         self.assertEqual(result.changed, 1)
         self.assertEqual(field_of(a, "EXIF:DateTimeOriginal"), SHIFTED)
         shifted = self.rows("SELECT taken FROM photos WHERE path = ?", (a,))[0][0]

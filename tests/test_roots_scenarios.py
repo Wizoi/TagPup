@@ -143,7 +143,7 @@ class TheOwnersFlows(Twins):
     def test_a_tag_save_with_its_rename(self):
         def flow(side):
             result = tagging.save_photo(side.library, side.real[0], "Start line", ["Activity/Sailing", "Harbour"],
-                                        None, EXIFTOOL, FORMAT, base=page_writes.base(side.library, side.real[0]))
+                                        None, field_values.opened(EXIFTOOL), FORMAT, base=page_writes.base(side.library, side.real[0]))
             return [result.attempted, result.changed, result.errors, result.refused, result.details.get("new_path"),
                     result.details.get("renamed"), self.seen(side)]
         found = self.both(flow)
@@ -152,9 +152,9 @@ class TheOwnersFlows(Twins):
 
     def test_bulk_tags_and_their_undo(self):
         def flow(side):
-            result = tagging.change_tags(side.library, side.real, ["Bulk"], ["Activity/Sailing"], EXIFTOOL)
+            result = tagging.change_tags(side.library, side.real, ["Bulk"], ["Activity/Sailing"], field_values.opened(EXIFTOOL))
             changed = [result.attempted, result.changed, result.errors, result.refused, self.seen(side)]
-            undone = journal_service.undo(side.library, result.details["change"], apply=True, exiftool_path=EXIFTOOL)
+            undone = journal_service.undo(side.library, result.details["change"], apply=True, fields=field_values.opened(EXIFTOOL))
             return [changed, undone.changed, undone.errors, undone.refused, self.seen(side)]
         found = self.both(flow)
         self.assertEqual(6, found[0][1])
@@ -170,7 +170,7 @@ class TheOwnersFlows(Twins):
         def flow(side):
             change = before[side.label][0]["id"]
             refusals = journal_service.refusals(side.library, [{"id": change, "operation": before[side.label][0]["operation"]}])
-            undone = journal_service.undo(side.library, change, apply=True, exiftool_path=EXIFTOOL)
+            undone = journal_service.undo(side.library, change, apply=True, fields=field_values.opened(EXIFTOOL))
             return [refusals, undone.changed, undone.errors, undone.refused, self.seen(side)]
         found = self.both(flow)
         self.assertEqual(2, found[1])
@@ -180,11 +180,11 @@ class TheOwnersFlows(Twins):
     def test_smart_rename_and_its_undo(self):
         def flow(side):
             with mock.patch("tagpup.services.photos.preserve_names", return_value=Result()):
-                renamed = photo_actions.smart_rename(side.library, side.real[:4], "Regatta", FORMAT, EXIFTOOL)
+                renamed = photo_actions.smart_rename(side.library, side.real[:4], "Regatta", FORMAT, field_values.opened(EXIFTOOL))
             names = [renamed.attempted, renamed.changed, renamed.errors, renamed.refused,
                      sorted(renamed.details.get("renamed", {}).items()), renamed.details.get("index_rows_moved"),
                      self.seen(side)]
-            undone = journal_service.undo(side.library, renamed.details["change"], apply=True, exiftool_path=EXIFTOOL)
+            undone = journal_service.undo(side.library, renamed.details["change"], apply=True, fields=field_values.opened(EXIFTOOL))
             return [names, undone.changed, undone.errors, undone.refused, self.seen(side)]
         found = self.both(flow)
         self.assertEqual(4, found[0][1])
@@ -196,7 +196,7 @@ class TheOwnersFlows(Twins):
                 os.remove(path)
                 return True
             with mock.patch("tagpup.files.recycle_bin.send_to_recycle_bin", side_effect=recycle):
-                result = photo_actions.delete(side.library, side.real[0], None)
+                result = photo_actions.delete(side.library, side.real[0], field_values.opened(None))
             return [result.attempted, result.changed, result.errors, result.details.get("removed"), self.seen(side)]
         found = self.both(flow)
         self.assertEqual({"faces": 1, "photos": 1}, found[3])
@@ -405,7 +405,7 @@ class WhenTheMachineMovesTheRoot(Twins):
     def test_the_flows_work_against_the_new_place(self):
         self.move_the_root()
         target = os.path.join(self.moved, "2024 Regatta", "IMG_1001.jpg")
-        result = tagging.change_tags(self.rooted.library, [target], ["At the share"], [], EXIFTOOL)
+        result = tagging.change_tags(self.rooted.library, [target], ["At the share"], [], field_values.opened(EXIFTOOL))
         self.assertEqual((1, []), (result.changed, result.errors))
         conn = db.connect(db.readonly_uri(self.rooted.db_path), uri=True)
         try:
@@ -417,7 +417,7 @@ class WhenTheMachineMovesTheRoot(Twins):
         self.assertEqual(1, len([p for p in self.rooted.raw_paths() if p.endswith("IMG_1001.jpg")]))
         # The file at the old place is another copy: written to, it is written under the same row
         # (the two places are one root's, and the page says which one writes go to).
-        undone = journal_service.undo(self.rooted.library, result.details["change"], apply=True, exiftool_path=EXIFTOOL)
+        undone = journal_service.undo(self.rooted.library, result.details["change"], apply=True, fields=field_values.opened(EXIFTOOL))
         self.assertEqual(1, undone.changed, undone.errors)
 
     @requires_exiftool

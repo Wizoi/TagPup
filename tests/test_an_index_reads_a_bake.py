@@ -208,7 +208,7 @@ class AnIndexReadsABake(unittest.TestCase):
         planned = {paths.key(path): self.plan(path) for path in photo_paths}
         for path in photo_paths:
             self.assertIsInstance(planned[paths.key(path)], baking.ToBake, path)
-        written = file_changes.write_fields(Library(self.db_path), "bake", EXIFTOOL, photo_paths, list(bake.WRITTEN.values()),
+        written = file_changes.write_fields(Library(self.db_path), "bake", field_values.opened(EXIFTOOL), photo_paths, list(bake.WRITTEN.values()),
                                             lambda path, _held: file_changes.Plan(after=planned[paths.key(path)].values))
         self.assertEqual((len(photo_paths), []), (written.changed, written.errors))
 
@@ -435,7 +435,7 @@ class AnIndexReadsABake(unittest.TestCase):
 
         # The owner tags both in the app: the write restamps each photo's vector over its own change, the bake stays.
         for path in (kept, edited):
-            saved = tagging.save_photo(Library(self.db_path), path, "", ["Places/Harbour"], None, EXIFTOOL, "",
+            saved = tagging.save_photo(Library(self.db_path), path, "", ["Places/Harbour"], None, field_values.opened(EXIFTOOL), "",
                                        base=page_writes.base(self.db_path, path))
             self.assertEqual(1, saved.changed, saved.errors)
             self.assertIsInstance(self.plan(path), baking.Current, path)
@@ -911,7 +911,7 @@ class AnIndexReadsABake(unittest.TestCase):
         # The owner tags the photo elsewhere: its file changes, its picture does not; the index reads it again.
         flat, hierarchical = fields.expand_tag_fields(["Places/Harbour"])
         after = dict(fields.keyword_fields(flat, hierarchical))
-        file_only.write_fields(EXIFTOOL, [path], list(after), lambda _path, _held: file_changes.Plan(after=after))
+        file_only.write_fields(field_values.opened(EXIFTOOL), [path], list(after), lambda _path, _held: file_changes.Plan(after=after))
         self.refused = self.detector.refused = True
         self.index(folder)
         self.assertEqual([(box_of(baked_files.area(0), *SIZE), "Rowan Thackeray", 0),
@@ -965,7 +965,7 @@ class AnIndexReadsABake(unittest.TestCase):
         after.update(fields.caption_fields("Boats at the harbour wall"))
         after.update({"XMP:Title": "Harbour wall", "XMP:Rating": 4, "EXIF:GPSLatitude": 51.5, "EXIF:GPSLatitudeRef": "N",
                       "EXIF:GPSLongitude": 1.25, "EXIF:GPSLongitudeRef": "W"})
-        written = file_only.write_fields(EXIFTOOL, [path], list(after), lambda _path, _held: file_changes.Plan(after=after))
+        written = file_only.write_fields(field_values.opened(EXIFTOOL), [path], list(after), lambda _path, _held: file_changes.Plan(after=after))
         self.assertEqual(1, written.changed, written.errors)
         with field_values.opened(EXIFTOOL) as reader:
             (plain,), (struct,) = reader.whole([path]), reader.whole([path], bakes=True)

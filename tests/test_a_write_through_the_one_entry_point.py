@@ -151,7 +151,7 @@ class AWriteThroughTheOneEntryPoint(unittest.TestCase):
         # The page read p0 at its old name; a Smart Rename in another tab renamed it since (a change of its own).
         old, photo_id = self.photos[0], self.ids[0]
         new = os.path.join(self.held, "p0 Quay at dusk.jpg")
-        file_changes.rename(self.lib.library, "smart rename", {old: new}, {}, EXIFTOOL)
+        file_changes.rename(self.lib.library, "smart rename", {old: new}, {}, field_values.opened(EXIFTOOL))
         before = len(self.changes())
         chunk = lambda named: self.tags_op({named: (photo_id, ["Places/Quay"]),   # noqa: E731
                                             self.photos[1]: (self.ids[1], ["Places/Quay"])}, group="tap-1")
@@ -182,7 +182,7 @@ class AWriteThroughTheOneEntryPoint(unittest.TestCase):
         # #3295: the save of the record a page read before a rename answers as a chunk's does (409, read again), not 400.
         old, photo_id = self.photos[0], self.ids[0]
         new = os.path.join(self.held, "p0 Quay at dusk.jpg")
-        file_changes.rename(self.lib.library, "smart rename", {old: new}, {}, EXIFTOOL)
+        file_changes.rename(self.lib.library, "smart rename", {old: new}, {}, field_values.opened(EXIFTOOL))
         before = len(self.changes())
 
         def save(path, named_id):
@@ -205,7 +205,7 @@ class AWriteThroughTheOneEntryPoint(unittest.TestCase):
             raise AssertionError("photo_writes.write took the lock of changes of photo files itself")
         with mock.patch.object(file_changes, "exclusively", no_lock):
             result = photo_writes.write(self.lib.library, photo_writes.TAGS,
-                                        {self.photos[1]: (self.ids[0], {"add": ["Places/Quay"]})}, EXIFTOOL, None)
+                                        {self.photos[1]: (self.ids[0], {"add": ["Places/Quay"]})}, field_values.opened(EXIFTOOL), None)
         self.assertTrue(result.refused)
         self.assertEqual(0, result.changed)
         self.assertNotIn("Places/Quay", tags_in(self.photos[1]))
@@ -516,7 +516,7 @@ class AWriteThroughTheOneEntryPoint(unittest.TestCase):
         self.assertEqual((200, ["PHOTO_0", "PHOTO_1"]), (status, sorted(self.as_the_page_test_reads(reply, sent)["written"])))
         found["written"] = {"status": status, "reply": self.as_the_page_test_reads(reply, sent)}
         old, new = self.photos[0], os.path.join(self.held, "p0 Quay at dusk.jpg")
-        file_changes.rename(self.lib.library, "smart rename", {old: new}, {}, EXIFTOOL)
+        file_changes.rename(self.lib.library, "smart rename", {old: new}, {}, field_values.opened(EXIFTOOL))
         status, reply = self.lib.post(ROUTE, self.tags_op({old: (self.ids[0], ["Places/Boats"]),
                                                           self.photos[1]: (self.ids[1], ["Places/Boats"])}))
         self.assertEqual((409, True, {}), (status, reply["changed_on_disk"], reply["written"]))

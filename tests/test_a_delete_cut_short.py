@@ -38,6 +38,7 @@ from tagpup.services import batches, bulk_edit, file_changes  # noqa: E402
 from tagpup.services import journal as journal_service  # noqa: E402
 from tagpup.services import photos as photo_actions  # noqa: E402
 from tagpup.store import db, file_journal, journal  # noqa: E402
+from tagpup.files import field_values  # noqa: E402
 
 #: A process that has gone: no process has this id.
 GONE = "%s:%d:1" % (socket.gethostname(), 0x7FFFFFF0)
@@ -110,10 +111,10 @@ class ADeleteCutShort(unittest.TestCase):
         self.vl.conn.commit()
 
     def settle(self):
-        return file_changes.settle(self.library, None)
+        return file_changes.settle(self.library, field_values.opened(None))
 
     def delete(self, path):
-        return photo_actions.delete(self.library, path, None)
+        return photo_actions.delete(self.library, path, field_values.opened(None))
 
     # ---- the scenarios ----------------------------------------------------------------------
 
@@ -158,7 +159,7 @@ class ADeleteCutShort(unittest.TestCase):
             with self.assertRaises(Crash):
                 self.delete(self.local)
         self.died()
-        out = bulk_edit.run(self.library, bulk_edit.Edit(bulk_edit.DELETE), [self.local_id], None)
+        out = bulk_edit.run(self.library, bulk_edit.Edit(bulk_edit.DELETE), [self.local_id], field_values.opened(None))
         self.assertEqual(1, out.skipped_missing, "the settle sent it: the bulk Delete finds it gone")
         self.assertEqual([self.local], self.binned, "sent once, by the settle")
         self.assertEqual(([], []), (self.changes(), self.files()), "the dead change is finished, not left beside a new one")

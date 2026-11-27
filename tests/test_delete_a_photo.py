@@ -45,6 +45,7 @@ from tagpup.core import paths, processes  # noqa: E402
 from tagpup.files import recycle_bin  # noqa: E402
 from tagpup.services import libraries as library_actions  # noqa: E402
 from tagpup.services import photos as photo_actions  # noqa: E402
+from tagpup.files import field_values  # noqa: E402
 
 #: The real send to the Recycle Bin, before any test stands in for it; asked only with SHFileOperationW stood in for too.
 REAL_SEND = recycle_bin.send_to_recycle_bin
@@ -429,7 +430,7 @@ class DeletingAPhoto(unittest.TestCase):
                 raise moved
             return moved
         with mock.patch("tagpup.files.recycle_bin.send_to_recycle_bin", side_effect=recycle):
-            return photo_actions.delete(self.lib.library, self.photo, None)
+            return photo_actions.delete(self.lib.library, self.photo, field_values.opened(None))
 
     def counts(self, path):
         # Faces by their photo's path, and the faces that point at no photo row at all: a face whose photo row went while

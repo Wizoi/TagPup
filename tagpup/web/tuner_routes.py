@@ -212,10 +212,9 @@ def tags_merge():
     before they reached photos."""
     library = state.require()
     body = request.get_json(silent=True) or {}
-    result = tags_service.merge(
-        library, body.get("from"), body.get("into") or body.get("to"),
-        state.exiftool(library), retire=bool(body.get("retire")),
-        apply=bool(body.get("apply")))
+    with state.fields(library) as fields:
+        result = tags_service.merge(library, body.get("from"), body.get("into") or body.get("to"), fields,
+                                    retire=bool(body.get("retire")), apply=bool(body.get("apply")))
     if result.refused:
         return responses.refused(result)
     reply = dict(result.details)
@@ -241,8 +240,9 @@ def person_rename():
     library = state.require()
     body = request.get_json(silent=True) or {}
     try:
-        result = tags_service.rename_person(library, face_routes.person_arg(body.get("person_id"), body.get("old_name")),
-                                            body.get("new_name"), state.exiftool(library))
+        with state.fields(library) as fields:
+            result = tags_service.rename_person(library, face_routes.person_arg(body.get("person_id"), body.get("old_name")),
+                                                body.get("new_name"), fields)
     except responses.ANSWERED as why:
         return responses.of(why)
     except Exception as e:

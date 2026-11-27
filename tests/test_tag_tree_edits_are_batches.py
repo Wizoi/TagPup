@@ -19,6 +19,7 @@ from tagpup.services import batches, tags  # noqa: E402
 from tagpup.store import taxonomy  # noqa: E402
 from tagpup.web import lifecycle, tuner_routes  # noqa: E402
 from tagpup.runtime import Runtime  # noqa: E402
+from tagpup.files import field_values  # noqa: E402
 
 OLD, NEW = "Trips/Coast", "Trips/Shore"
 
@@ -87,7 +88,7 @@ class Rename(T.Bulk):
     def test_a_move_with_no_photo_left_still_moves_the_branch(self):
         self.vl.tree("Old/Stuff/Deep")
         node = self.vl.rows("SELECT id FROM tag_taxonomy WHERE tag = 'Old/Stuff'")[0][0]     # setUp took it off every photo
-        done = tags.delete(self.library, node, "move", OLD, "exiftool")
+        done = tags.delete(self.library, node, "move", OLD, field_values.opened("exiftool"))
         self.assertTrue(done.ok, done.message())
         self.assertEqual((None, True), (taxonomy.find(self.library.path, "Old/Stuff"),
                                         bool(taxonomy.find(self.library.path, OLD + "/Deep"))), "the branch went on under the target")
@@ -173,7 +174,7 @@ class PersonRename(T.Bulk):
     def test_a_photo_that_cannot_be_written_means_not_renamed_for_a_person_too(self):
         stuck = self.path(self.ids[3])
         self.files.fails.add(paths.key(stuck))
-        result = tags.rename_person(self.library, self.NAME, self.NEW, "exiftool")
+        result = tags.rename_person(self.library, self.NAME, self.NEW, field_values.opened("exiftool"))
         self.assertEqual((False, 0), (result.ok, result.changed))
         self.assertEqual([stuck], [each["path"] for each in result.details["failed_photos"]])
         self.assertTrue(taxonomy.find(self.library.path, "People/" + self.NAME))
@@ -184,14 +185,14 @@ class PersonRename(T.Bulk):
     def test_stopped_after_the_first_chunk_the_person_keeps_their_node_until_it_is_made_again(self):
         first_write = self.files.writes
         self.files.on_write = lambda path, n: batches.stop_all() if n == first_write + 10 else None
-        result = tags.rename_person(self.library, self.NAME, self.NEW, "exiftool")
+        result = tags.rename_person(self.library, self.NAME, self.NEW, field_values.opened("exiftool"))
         self.assertIn("Stopped as asked after 25 of 60 photos", result.refused)
         self.assertTrue(taxonomy.find(self.library.path, "People/" + self.NAME), "the node is where it was")
         self.assertIsNone(taxonomy.find(self.library.path, "People/" + self.NEW))
         self.assertEqual(25, self.holding("People/" + self.NEW))
         batches.reopen()
         self.files.on_write = None
-        done = tags.rename_person(self.library, self.NAME, self.NEW, "exiftool")
+        done = tags.rename_person(self.library, self.NAME, self.NEW, field_values.opened("exiftool"))
         self.assertIsNone(done.refused)
         self.assertTrue(taxonomy.find(self.library.path, "People/" + self.NEW))
         self.assertIsNone(taxonomy.find(self.library.path, "People/" + self.NAME))

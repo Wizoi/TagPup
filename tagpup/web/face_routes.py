@@ -161,8 +161,8 @@ def assigned(library, plan):
     library does not hold), 409 when too many batches wait ahead; nothing was written then. The cached grids lose the faces the write
     took out of identity work."""
     try:
-        outcome = face_assignment.run(library, plan, state.exiftool(library),
-                                      told=lambda done: tagpup_routes.records_written(library, done))
+        with state.fields(library) as fields:
+            outcome = face_assignment.run(library, plan, fields, told=lambda done: tagpup_routes.records_written(library, done))
     except responses.ANSWERED as why:
         responses.abort_with(why)
     for face_ids, before, after in outcome.unpooled.runs():

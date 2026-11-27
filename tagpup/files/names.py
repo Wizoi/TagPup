@@ -4,14 +4,14 @@ import logging
 import os
 import time
 
-from tagpup.core import fields, paths
-from tagpup.files import field_values, lock_owners
+from tagpup.core import fields as core_fields, paths
+from tagpup.files import lock_owners
 
 logger = logging.getLogger(__name__)
 
 #: What Smart Rename reads from each photo: the name it had before it was first renamed,
 #: and every field its title is read from (fields.CAPTION_FIELDS: the title, else the description).
-RENAME_FIELDS = [fields.PRESERVED_NAME, "XMP:PreservedFileName", *fields.CAPTION_FIELDS]
+RENAME_FIELDS = [core_fields.PRESERVED_NAME, "XMP:PreservedFileName", *core_fields.CAPTION_FIELDS]
 
 
 def _field(meta, *names):
@@ -36,19 +36,18 @@ def preserved_name(meta):
 def caption_for_name(meta):
     """The text a photo's new name carries: its title as the page shows it (fields.title_of: XMP's Title, else a
     clip's QuickTime Title, else IPTC's ObjectName, else the description); "" for none."""
-    return fields.title_of(meta)
+    return core_fields.title_of(meta)
 
 
-def read_for_renaming(exiftool_path, photo_paths):
-    """{path: caption} for each photo, in one ExifTool session (field_values.opened; a start that fails is raised).
+def read_for_renaming(fields, photo_paths):
+    """{path: caption} for each photo, read through the operation's `fields` (field_values.opened; a start that fails is raised).
     Reads only: the name a
     photo had before its first rename is written into fields.PRESERVED_NAME by the caller, as
     a change of photo files (tagpup.services.photos.preserve_names); it was written here,
     and recorded nowhere (docs/findings.md, #266)."""
     photo_paths = list(photo_paths)
     records = {}
-    with field_values.opened(exiftool_path) as reader:
-        held = reader.read(photo_paths, [], also=RENAME_FIELDS, records=records)
+    held = fields.read(photo_paths, [], also=RENAME_FIELDS, records=records)
     captions = {}
     for path in photo_paths:
         answer = held.get(paths.key(path))

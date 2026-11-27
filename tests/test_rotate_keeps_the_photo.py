@@ -24,6 +24,7 @@ from tagpup.files.exiftool_session import ExifToolSession
 from tagpup.services import file_only, rotation
 from tagpup.services import photos as photo_actions
 from tagpup.store import db
+from tagpup.files import field_values
 from tests import photo_rows
 from tests.face_rows import add_face
 
@@ -79,7 +80,7 @@ def read_fields(path):
 def turn(path, direction, exiftool):
     """A quarter turn of a photo of a folder no library holds (Just look): file_only.write_fields with the turn's plan
     (services.photos.rotate_plan), the one writer of a turn. Returns the Orientation the photo now has."""
-    done = file_only.write_fields(exiftool, [path], [rotation.FIELD], photo_actions.rotate_plan(direction))
+    done = file_only.write_fields(field_values.opened(exiftool), [path], [rotation.FIELD], photo_actions.rotate_plan(direction))
     if not done.ok:
         raise AssertionError(done.message())
     return next(iter(done.details["written"].values()))["orientation"]

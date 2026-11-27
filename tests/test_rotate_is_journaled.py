@@ -113,10 +113,10 @@ class RotationCase(unittest.TestCase):
         return [json.loads(box) for (box,) in self.rows("SELECT box FROM faces ORDER BY id")]
 
     def rotate(self, path, direction="left"):
-        return photo_actions.rotate(self.library, path, direction, EXIFTOOL)
+        return photo_actions.rotate(self.library, path, direction, field_values.opened(EXIFTOOL))
 
     def settle(self):
-        return file_changes.settle(self.library, EXIFTOOL)
+        return file_changes.settle(self.library, field_values.opened(EXIFTOOL))
 
     def last_change(self):
         return self.rows("SELECT MAX(id) FROM changes")[0][0]
@@ -128,7 +128,7 @@ class RotationCase(unittest.TestCase):
         return self.rows("SELECT status FROM changes WHERE id = ?", (change_id,))[0][0]
 
     def undo(self, change_id):
-        return journal_service.undo(self.library, change_id, apply=True, exiftool_path=EXIFTOOL)
+        return journal_service.undo(self.library, change_id, apply=True, fields=field_values.opened(EXIFTOOL))
 
     def crash(self, step, path, direction="left"):
         with mock.patch.object(file_changes, "_reached", side_effect=crash_at(step)):
@@ -248,7 +248,7 @@ class TheFacesOfATurnedPhoto(RotationCase):
         faces = self.faces()
         self.assertEqual(self.counts(), (1, 2))
 
-        change = photo_actions.rotate_photos(self.library, [with_face, faceless], "left", EXIFTOOL).details["change"]
+        change = photo_actions.rotate_photos(self.library, [with_face, faceless], "left", field_values.opened(EXIFTOOL)).details["change"]
         self.assertEqual((self.faces(), self.counts()), (faces, (0, 0)))
         self.assertEqual(self.crop_size(face), (8, 10))   # cut again, upright for the new Orientation
 
@@ -288,9 +288,9 @@ class TheFacesOfATurnedPhoto(RotationCase):
                 path = self.make("pass%d.jpg" % n)
                 passed = self.a_pass(path, shape)
                 self.assertEqual(self.rows("SELECT COUNT(*) FROM face_crops")[0][0], 1)
-                photo_actions.rotate_photos(self.library, [path], "left", EXIFTOOL)
+                photo_actions.rotate_photos(self.library, [path], "left", field_values.opened(EXIFTOOL))
                 self.assertEqual(self.rows("SELECT COUNT(*) FROM face_crops")[0][0], 0)
-                rehearsed = journal_service.undo(self.library, passed, apply=False, exiftool_path=EXIFTOOL)
+                rehearsed = journal_service.undo(self.library, passed, apply=False, fields=field_values.opened(EXIFTOOL))
                 self.assertIsNone(rehearsed.refused)
                 self.assertUndone(passed)
                 self.assertEqual(self.rows("SELECT (SELECT COUNT(*) FROM faces), (SELECT COUNT(*) FROM face_crops),"
@@ -300,7 +300,7 @@ class TheFacesOfATurnedPhoto(RotationCase):
         for n, shape in enumerate(self.SHAPES):
             with self.subTest(shape):
                 path = self.make("turned%d.jpg" % n)
-                turned = photo_actions.rotate_photos(self.library, [path], "left", EXIFTOOL).details["change"]
+                turned = photo_actions.rotate_photos(self.library, [path], "left", field_values.opened(EXIFTOOL)).details["change"]
                 passed = self.a_pass(path, shape)
                 self.assertUndone(turned)   # takes the pass's crop: it was cut from the turned picture
                 self.assertEqual((self.orientation(path), self.rows("SELECT COUNT(*) FROM face_crops")[0][0]), (None, 0))
@@ -314,7 +314,7 @@ class WhereTheLibraryDoesNotHoldTheFolder(RotationCase):
         os.makedirs(loose_folder)
         loose = self.make("x.jpg", row=False, folder=loose_folder)
         held = self.make("h.jpg")
-        result = photo_actions.rotate_photos(self.library, [held, loose], "right", EXIFTOOL)
+        result = photo_actions.rotate_photos(self.library, [held, loose], "right", field_values.opened(EXIFTOOL))
         self.assertEqual((result.ok, result.changed, result.details["file_only"], result.details["with_rows"]), (True, 2, 1, 1))
         self.assertEqual(self.orientations([loose, held]), [6, 6])
         self.assertEqual(self.rows("SELECT COUNT(*) FROM photos"), [(1,)])

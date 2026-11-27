@@ -25,6 +25,7 @@ from tagpup.services import journal as journal_service  # noqa: E402
 from tagpup.store import db, people, taxonomy  # noqa: E402
 from tagpup.store import faces as store_faces  # noqa: E402
 from tagpup.web import face_routes  # noqa: E402
+from tagpup.files import field_values  # noqa: E402
 
 ASSIGN = "assign faces to a person"
 IGNORE = "ignore faces"
@@ -358,13 +359,13 @@ class InterruptedAndAtOnce(Bulk):
         return self.tuner_post("faces/match-bulk", {"face_ids": [face for _p, face in made], "person_name": WREN})
 
     def settle(self):
-        return file_changes.settle(self.library, "exiftool")
+        return file_changes.settle(self.library, field_values.opened("exiftool"))
 
     def test_a_crash_between_the_file_and_its_faces_is_finished_by_the_settle_with_both(self):
         made = self.many(3)
         with mock.patch.object(file_changes, "_reached", side_effect=crash_at("file written", nth=2)):
             with self.assertRaises(Crash):
-                face_assignment.run(self.library, face_assignment.plan_name(self.library, [f for _p, f in made], WREN), "exiftool")
+                face_assignment.run(self.library, face_assignment.plan_name(self.library, [f for _p, f in made], WREN), field_values.opened("exiftool"))
         self.assertEqual([[PEOPLE + WREN], [PEOPLE + WREN], []], [self.tags(p) for p, _f in made][:2] + [self.tags(made[2][0])])
         self.assertEqual([WREN, None, None], [self.row(f)[0] for _p, f in made], "the second file was written, not recorded")
         self.assertEqual(1, self.settle())
@@ -378,7 +379,7 @@ class InterruptedAndAtOnce(Bulk):
         made = self.many(3)
         with mock.patch.object(file_changes, "_reached", side_effect=crash_at("file recorded", nth=1)):
             with self.assertRaises(Crash):
-                face_assignment.run(self.library, face_assignment.plan_name(self.library, [f for _p, f in made], WREN), "exiftool")
+                face_assignment.run(self.library, face_assignment.plan_name(self.library, [f for _p, f in made], WREN), field_values.opened("exiftool"))
         self.assertEqual([WREN, None, None], [self.row(f)[0] for _p, f in made])
         self.assertEqual([[PEOPLE + WREN], [], []], [self.tags(p) for p, _f in made])
         self.settle()
@@ -391,7 +392,7 @@ class InterruptedAndAtOnce(Bulk):
         made = self.many(3)
         with mock.patch.object(file_changes, "_reached", side_effect=crash_at("file recorded", nth=1)):
             with self.assertRaises(Crash):
-                face_assignment.run(self.library, face_assignment.plan_name(self.library, [f for _p, f in made], WREN), "exiftool")
+                face_assignment.run(self.library, face_assignment.plan_name(self.library, [f for _p, f in made], WREN), field_values.opened("exiftool"))
         self.files.keep_tags(made[2][0], [PEOPLE + WREN])
         self.assertEqual(1, self.settle())
         self.assertEqual([WREN] * 3, [self.row(f)[0] for _p, f in made])
@@ -447,7 +448,7 @@ class InterruptedAndAtOnce(Bulk):
         plan = face_assignment.plan_name(self.library, [f for _p, f in made], WREN)
         self.merge_away()
         with self.assertRaises(Conflict) as why:
-            face_assignment.run(self.library, plan, "exiftool")
+            face_assignment.run(self.library, plan, field_values.opened("exiftool"))
         self.assertIn("Nothing was changed", str(why.exception))
         self.assertEqual((0, [None, None], []), (self.files.writes, [self.row(f)[0] for _p, f in made], self.operations(ASSIGN)))
 
@@ -469,7 +470,7 @@ class InterruptedAndAtOnce(Bulk):
         made = self.many(2)
         plan = face_assignment.plan_name(self.library, [f for _p, f in made], WREN)
         self.files.on_write = lambda path, n: self.merge_away() if n == 1 else None
-        outcome = face_assignment.run(self.library, plan, "exiftool")
+        outcome = face_assignment.run(self.library, plan, field_values.opened("exiftool"))
         self.assertEqual(([], 2, 2), (outcome.applied, len(outcome.left), outcome.files), "the tags are written all the same")
         self.assertEqual([None, None], [self.row(f)[0] for _p, f in made])
 
@@ -514,7 +515,7 @@ class InterruptedAndAtOnce(Bulk):
         change = self.assign(made).get_json()["change"]
         with mock.patch.object(file_changes, "_reached", side_effect=crash_at("file recorded", nth=1)):
             with self.assertRaises(Crash):
-                journal_service.undo(self.library, change, apply=True, exiftool_path="exiftool")
+                journal_service.undo(self.library, change, apply=True, fields=field_values.opened("exiftool"))
         self.settle()
         self.assertEqual(([None] * 3, 3), ([self.row(f)[0] for _p, f in made], self.faces_recorded(change)),
                          "settling the undo took away what History shows of the change")

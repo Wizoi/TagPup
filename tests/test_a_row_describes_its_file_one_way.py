@@ -115,7 +115,7 @@ class AFileChangedWhileItIsRead(ReadFilesCase):
             touched_by_another_program(row.path)
             return real(fields, row, read)
         with mock.patch.object(file_changes, "_read_whole", read_whole):
-            saved = tagging.save_photo(self.library, a, "Quay at dusk", ["Beach"], None, EXIFTOOL, "", base=base)
+            saved = tagging.save_photo(self.library, a, "Quay at dusk", ["Beach"], None, field_values.opened(EXIFTOOL), "", base=base)
         self.assertTrue(saved.ok, saved.message())
         stamp = self.rows("SELECT mtime, size FROM photos WHERE path = ?", (a,))[0]
         self.assertFalse(describes_its_file(stamp, a), "a change made during the read back was stamped as read")

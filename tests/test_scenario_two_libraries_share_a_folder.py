@@ -45,6 +45,7 @@ from tagpup.services import bake_after_index, baking, photos, sync, tagging  # n
 from tagpup.services import faces as face_service  # noqa: E402
 from tagpup.services import libraries as library_actions  # noqa: E402
 from tagpup.store import db  # noqa: E402
+from tagpup.files import field_values  # noqa: E402
 
 EXIFTOOL = own_home.installed_exiftool()
 
@@ -170,7 +171,7 @@ class SharedFolderTwoLibraries(unittest.TestCase):
         files = {meet_photo: []}
         session, _et = exiftool(files)
         with mock.patch("tagpup.files.exiftool_session.ExifToolSession", session):
-            result = tagging.change_tags(self.alpha, [meet_photo], ["Trips/Meet"], [], "exiftool")
+            result = tagging.change_tags(self.alpha, [meet_photo], ["Trips/Meet"], [], field_values.opened("exiftool"))
         self.assertEqual((1, 1), (result.attempted, result.changed))
 
         self.assertEqual(["Trips/Meet"], self.tags_of(self.alpha_path, meet_photo))
@@ -190,7 +191,7 @@ class SharedFolderTwoLibraries(unittest.TestCase):
         files = {meet_photo: []}
         session, _et = exiftool(files)
         with mock.patch("tagpup.files.exiftool_session.ExifToolSession", session):
-            tagging.change_tags(self.alpha, [meet_photo], ["Trips/Meet"], [], "exiftool")
+            tagging.change_tags(self.alpha, [meet_photo], ["Trips/Meet"], [], field_values.opened("exiftool"))
         later = os.stat(meet_photo).st_mtime + 10
         os.utime(meet_photo, (later, later))
         self.truth["meet_01.jpg"] = {"XMP:Subject": ["Trips/Meet"]}
@@ -304,7 +305,7 @@ class TwoLibrariesAdoptEachOthersBake(unittest.TestCase):
         for name in ("alpha", "beta"):
             self.assertIsInstance(self.current_in(name, a), baking.Current, name)
 
-        turned = photos.rotate(Library(self.libraries["alpha"]), a, "right", EXIFTOOL)
+        turned = photos.rotate(Library(self.libraries["alpha"]), a, "right", field_values.opened(EXIFTOOL))
         self.assertTrue(turned.changed, turned.refused or turned.errors)
         self.index("alpha")   # alpha bakes the turned picture
         held = baked_files.held(a)

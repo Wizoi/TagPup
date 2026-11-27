@@ -27,6 +27,7 @@ from tagpup.files.exiftool_session import ExifToolSession  # noqa: E402
 from tagpup.services import journal as journal_service  # noqa: E402
 from tagpup.services import tagging  # noqa: E402
 from tagpup.store import db, file_journal, journal  # noqa: E402
+from tagpup.files import field_values  # noqa: E402
 
 EXIFTOOL = own_home.installed_exiftool()
 BEACH = {"XMP:Subject": ["Beach"], "IPTC:Keywords": ["Beach"]}
@@ -98,7 +99,7 @@ class AChunkedTagWrite(unittest.TestCase):
         coast = self.chunk(self.photos[0:2], "Trips/Coast", "drain-1")
         pier = self.chunk(self.photos[2:3], "Trips/Pier", "drain-2")
         # A change with no token, as every change made before this cut: its own line, as it was.
-        plain = tagging.change_tags(self.library, self.photos[3:4], ["Trips/Coast"], [], EXIFTOOL).details["change"]
+        plain = tagging.change_tags(self.library, self.photos[3:4], ["Trips/Coast"], [], field_values.opened(EXIFTOOL)).details["change"]
         coast_again = self.chunk(self.photos[4:5], "Trips/Coast", "drain-1")
         alone = self.chunk(self.photos[0:1], "Trips/Pier", "drain-3")
         pier_again = self.chunk(self.photos[1:2], "Trips/Pier", "drain-2")

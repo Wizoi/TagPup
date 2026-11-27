@@ -120,7 +120,8 @@ class AnOldClipInTheLibrary(ALibraryHoldingAClip):
         return path, self.index(path)[0]
 
     def convert(self, path, **kwargs):
-        return convert.convert_clip(self.vl.library, EXIFTOOL, TOOLS, path, **kwargs)
+        with field_values.opened(EXIFTOOL) as fields:
+            return convert.convert_clip(self.vl.library, fields, TOOLS, path, **kwargs)
 
     def held(self, path, *wanted):
         with field_values.opened(EXIFTOOL) as et:
@@ -175,7 +176,7 @@ class AnOldClipInTheLibrary(ALibraryHoldingAClip):
         minutes by then (SCRATCH_STALE, 0 here: a temp's own modified time set back would make it older than its
         original, which the rule reads as the original changed since)."""
         with mock.patch.object(file_changes, "SCRATCH_STALE", 0):
-            file_changes.settle(self.vl.library, EXIFTOOL)
+            file_changes.settle(self.vl.library, field_values.opened(EXIFTOOL))
         self.assertEqual([], [row for row in self.changes() if row[2] == "planned"], "every change finished: %s" % (
             self.vl.rows("SELECT change_id, state, note FROM change_files"),))
 
@@ -214,7 +215,7 @@ class TheConversion(AnOldClipInTheLibrary):
 
     def test_an_mp4_of_mpeg4_part_2_is_converted_under_its_own_name_its_tags_carried(self):
         source, photo_id = self.clip("dock.mp4")
-        saved = file_changes.write_fields(self.vl.library, "save", EXIFTOOL, [source], list(tagging.KEYWORD_READ),
+        saved = file_changes.write_fields(self.vl.library, "save", field_values.opened(EXIFTOOL), [source], list(tagging.KEYWORD_READ),
                                           tagging.keywords_planner(self.vl.library, lambda _p, _h: (["Trips/Coast"], ())))
         self.assertEqual(1, saved.changed, saved.message())
         result = self.convert(source)
@@ -410,7 +411,7 @@ class CutShort(AnOldClipInTheLibrary):
         self.assertEqual(self.before, self.read_bytes(self.source), "the original kept")
         self.assertEqual(["writing"], self.converted_states(self.photo_id), "left for the next settle")
         self.assertEqual([kept], self.convert_notes(self.photo_id), "the original kept, noted")
-        file_changes.settle(self.vl.library, EXIFTOOL)
+        file_changes.settle(self.vl.library, field_values.opened(EXIFTOOL))
         self.assertEqual(["done"], self.converted_states(self.photo_id))
         self.assert_converted(self.source, self.photo_id, TITLE)
 
@@ -426,10 +427,10 @@ class CutShort(AnOldClipInTheLibrary):
             self.assertEqual((1, kept, kept), (result.changed, result.details.get("original_kept"), result.message()))
             self.assertEqual([kept], self.convert_notes(self.photo_id), "the original kept, noted")
             down.set()
-            file_changes.settle(self.vl.library, EXIFTOOL)
+            file_changes.settle(self.vl.library, field_values.opened(EXIFTOOL))
             self.assertEqual(["writing"], self.converted_states(self.photo_id), "a settle while it is down waits")
         self.assertEqual(self.before, self.read_bytes(self.source), "the original kept")
-        file_changes.settle(self.vl.library, EXIFTOOL)
+        file_changes.settle(self.vl.library, field_values.opened(EXIFTOOL))
         self.assertEqual(["done"], self.converted_states(self.photo_id))
         self.assert_converted(self.source, self.photo_id, TITLE)
 
@@ -454,10 +455,10 @@ class CutShort(AnOldClipInTheLibrary):
             result = self.convert(self.source)
             self.assertEqual(1, result.changed, result.message())
             self.assertEqual(["writing"], self.converted_states(self.photo_id), "left for the next settle")
-            file_changes.settle(self.vl.library, EXIFTOOL)
+            file_changes.settle(self.vl.library, field_values.opened(EXIFTOOL))
             self.assertEqual(["writing"], self.converted_states(self.photo_id), "a settle while it is down waits")
             down.clear()
-        file_changes.settle(self.vl.library, EXIFTOOL)
+        file_changes.settle(self.vl.library, field_values.opened(EXIFTOOL))
         self.assertEqual(["done"], self.converted_states(self.photo_id))
         self.assert_converted(self.source, self.photo_id, TITLE)
 
@@ -539,7 +540,7 @@ class Refused(AnOldClipInTheLibrary):
                          "the verified copy kept")
         self.assertEqual(["writing"], self.converted_states(self.photo_id))
         held.pop().close()
-        file_changes.settle(self.vl.library, EXIFTOOL)
+        file_changes.settle(self.vl.library, field_values.opened(EXIFTOOL))
         self.assertFalse(os.path.exists(self.source), "the next settle deleted it")
         self.assert_converted(self.source, self.photo_id, TITLE)
 
@@ -661,7 +662,7 @@ class TwoLibrariesHoldingTheFolder(AnOldClipInTheLibrary):
 
         def meanwhile(*args, **kwargs):
             size = os.path.getsize(temp)
-            seconds.append(convert.convert_clip(self.other.library, EXIFTOOL, TOOLS, source))
+            seconds.append(convert.convert_clip(self.other.library, field_values.opened(EXIFTOOL), TOOLS, source))
             self.assertEqual(size, os.path.getsize(temp), "the first's temp as it was")
             return real(*args, **kwargs)
         with mock.patch.object(clip_convert, moment, side_effect=meanwhile):
@@ -721,7 +722,7 @@ class AClipHoldingWindowsTags(AnOldClipInTheLibrary):
         path = make_mov(path, 0) if name.endswith(".mov") else make_clip(path, TITLE)
         patched.with_windows_tags(path, texts)
         photo_id = self.index(path)[0]
-        saved = file_changes.write_fields(self.vl.library, "save", EXIFTOOL, [path], list(tagging.KEYWORD_READ),
+        saved = file_changes.write_fields(self.vl.library, "save", field_values.opened(EXIFTOOL), [path], list(tagging.KEYWORD_READ),
                                           tagging.keywords_planner(self.vl.library, lambda _p, _h: (["Trips/Harbour"], ())))
         self.assertEqual(1, saved.changed, saved.message())
         self.assertEqual((["Trips/Harbour"], list(texts) or None), patched.windows_tags_read(path))
@@ -780,7 +781,7 @@ class AClipHoldingWindowsTags(AnOldClipInTheLibrary):
                     with self.assertRaises(Crash):
                         self.convert(source, reason=reason)
                 with mock.patch.object(file_changes, "SCRATCH_STALE", 0):
-                    file_changes.settle(self.vl.library, EXIFTOOL)
+                    file_changes.settle(self.vl.library, field_values.opened(EXIFTOOL))
                 self.assert_carried(source, photo_id, title)
 
     def test_a_renamed_copy_that_does_not_read_back_holding_its_carry_keeps_the_original_for_the_next_settle(self):
@@ -795,7 +796,7 @@ class AClipHoldingWindowsTags(AnOldClipInTheLibrary):
         self.assertIn("its tags, title or kept name could not be written into its converted copy", result.message())
         self.assertEqual(before, self.read_bytes(source), "the original kept")
         self.assertEqual(["writing"], self.converted_states(photo_id))
-        file_changes.settle(self.vl.library, EXIFTOOL)
+        file_changes.settle(self.vl.library, field_values.opened(EXIFTOOL))
         self.assert_carried(source, photo_id, "")
 
 
@@ -954,7 +955,7 @@ class ThePanelButtons(AnOldClipInTheLibrary):
     def test_an_mp4_dated_in_its_xmp_made_smaller_keeps_that_date_and_its_headers_take_it(self):
         # Its packet, carried whole, holds the date while ffmpeg left every header zero: the carry writes them.
         source, photo_id = self.mov("dock.mp4", 0)
-        dated = file_changes.write_fields(self.vl.library, "save", EXIFTOOL, [source], ["XMP:DateTimeOriginal"],
+        dated = file_changes.write_fields(self.vl.library, "save", field_values.opened(EXIFTOOL), [source], ["XMP:DateTimeOriginal"],
                                           lambda _path, _held: file_changes.Plan(after={"XMP:DateTimeOriginal": XMP_TAKEN}))
         self.assertEqual(1, dated.changed, dated.message())
         self.assertEqual(XMP_TAKEN, self.taken(photo_id), "dated by its XMP, read before its QuickTime date")

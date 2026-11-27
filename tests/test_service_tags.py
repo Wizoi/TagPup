@@ -22,6 +22,7 @@ from tagpup.core import vocabulary  # noqa: E402
 from tagpup.core.result import NotFound, Refused, Result  # noqa: E402
 from tagpup.services import tags  # noqa: E402
 from tagpup.store import db, derived, faces as store_faces, people as store_people, taxonomy  # noqa: E402
+from tagpup.files import field_values  # noqa: E402
 
 
 class TreeCase(unittest.TestCase):
@@ -149,7 +150,7 @@ class Deleting(TreeCase):
         self.assertEqual(sorted(usage["affected_photos"]), sorted([self.on_it, self.under_it]))
 
     def test_removed_from_its_photos_and_from_the_tree(self):
-        result = tags.delete(self.lib.library, self.rowing, "remove", None, "exiftool")
+        result = tags.delete(self.lib.library, self.rowing, "remove", None, field_values.opened("exiftool"))
         self.assertTrue(result.ok, result.message())
         self.assertEqual(self.rewrites, [(sorted([self.on_it, self.under_it]), "Activity/Rowing", None)])
         self.assertEqual(sorted(self.tree()), ["Activity"])
@@ -157,22 +158,22 @@ class Deleting(TreeCase):
     def test_moved_to_a_tag_under_which_its_branch_goes_on(self):
         """The photos carrying Activity/Rowing/Juniors now carry Sport/Rowing/Juniors, and
         so does the tree (docs/findings.md, #38)."""
-        tags.delete(self.lib.library, self.rowing, "move", " Sport / Rowing ", "exiftool")
+        tags.delete(self.lib.library, self.rowing, "move", " Sport / Rowing ", field_values.opened("exiftool"))
         self.assertEqual(self.rewrites[0][1:], ("Activity/Rowing", "Sport/Rowing"))
         self.assertEqual(sorted(self.tree()), ["Activity", "Sport", "Sport/Rowing", "Sport/Rowing/Juniors"])
 
     def test_it_cannot_be_moved_under_itself(self):
-        result = tags.delete(self.lib.library, self.rowing, "move", "Activity/Rowing/Masters", "exiftool")
+        result = tags.delete(self.lib.library, self.rowing, "move", "Activity/Rowing/Masters", field_values.opened("exiftool"))
         self.assertTrue(result.refused)
         self.assertEqual(self.rewrites, [])
 
     def test_moving_needs_somewhere_to_move_to(self):
-        self.assertTrue(tags.delete(self.lib.library, self.rowing, "move", "", "exiftool").refused)
+        self.assertTrue(tags.delete(self.lib.library, self.rowing, "move", "", field_values.opened("exiftool")).refused)
         self.assertIn("Activity/Rowing", self.tree())
 
     def test_a_tag_a_photo_still_carries_stays(self):
         self.unwritable.add(self.under_it)
-        result = tags.delete(self.lib.library, self.rowing, "remove", None, "exiftool")
+        result = tags.delete(self.lib.library, self.rowing, "remove", None, field_values.opened("exiftool"))
         self.assertFalse(result.ok)
         self.assertEqual((result.details["photos_affected"], result.details["photos_rewritten"]), (2, 1))
         self.assertIn("Activity/Rowing/Juniors", self.tree())
@@ -186,7 +187,7 @@ class Renaming(TreeCase):
         photo = self.photo("a.jpg", ["People/Rowan Thackeray"], people=["Ada Pembrook"])
         self.face(photo, [0, 0, 10, 10], name="Rowan Thackeray")
         self.assertEqual(self.people(photo), ["Rowan Thackeray", "Ada Pembrook"])
-        result = tags.rename(self.lib.library, person, "Rowan Thackeray-Vale", "exiftool")
+        result = tags.rename(self.lib.library, person, "Rowan Thackeray-Vale", field_values.opened("exiftool"))
         self.assertEqual(result.details["faces_renamed"], 1)
         self.assertEqual(self.lib.rows("SELECT name FROM faces"), [("Rowan Thackeray-Vale",)])
         self.assertEqual(self.people(photo), ["Rowan Thackeray-Vale", "Ada Pembrook"])
@@ -194,17 +195,17 @@ class Renaming(TreeCase):
     def test_onto_a_node_that_is_there_is_refused(self):
         crew = self.node("Crew/Divers")
         self.node("Crew/Swimmers")
-        self.assertTrue(tags.rename(self.lib.library, crew, "Swimmers", "exiftool").refused)
+        self.assertTrue(tags.rename(self.lib.library, crew, "Swimmers", field_values.opened("exiftool")).refused)
         self.assertEqual(self.rewrites, [])
 
     def test_to_the_name_it_has_changes_nothing(self):
         crew = self.node("Crew")
-        result = tags.rename(self.lib.library, crew, "Crew", "exiftool")
+        result = tags.rename(self.lib.library, crew, "Crew", field_values.opened("exiftool"))
         self.assertEqual((result.ok, result.changed, self.rewrites), (True, 0, []))
 
     def test_a_name_holding_a_separator_is_refused(self):
         crew = self.node("Crew")
-        self.assertTrue(tags.rename(self.lib.library, crew, "Crew/Divers", "exiftool").refused)
+        self.assertTrue(tags.rename(self.lib.library, crew, "Crew/Divers", field_values.opened("exiftool")).refused)
 
 
 class Merging(TreeCase):
@@ -217,7 +218,7 @@ class Merging(TreeCase):
         self.jane = self.id_of("Crew/Divers/Jane Olsen")
 
     def merge(self, source, target, **options):
-        return tags.merge(self.lib.library, source, target, "exiftool", **options)
+        return tags.merge(self.lib.library, source, target, field_values.opened("exiftool"), **options)
 
     def test_the_plan_counts_the_photos_carrying_a_tag_under_it_and_writes_nothing(self):
         on_it = self.photo("a.jpg", ["Crew/Divers"])
@@ -273,7 +274,7 @@ class RenamingAPerson(TreeCase):
         self.family_rowan = self.node("Family/Rowan Thackeray", has_face=1)
 
     def rename(self, who, new):
-        return tags.rename_person(self.lib.library, who, new, "exiftool")
+        return tags.rename_person(self.lib.library, who, new, field_values.opened("exiftool"))
 
     def name(self, face_id, who):
         db.write_with_connection(self.lib.library.path, lambda conn: store_faces.name(conn, [face_id], who))
@@ -387,18 +388,18 @@ class AnIndexBehindItsFiles(unittest.TestCase):
         self.addCleanup(patcher.stop)
 
     def test_a_delete_takes_the_tag_out_of_the_tree(self):
-        result = tags.delete(self.lib.library, self.node, "remove", None, "exiftool")
+        result = tags.delete(self.lib.library, self.node, "remove", None, field_values.opened("exiftool"))
         self.assertTrue(result.ok, result.message())
         self.assertIsNone(taxonomy.find(self.lib.library.path, "Activity/Rowing"))
         self.assertEqual(self.lib.rows("SELECT tags FROM photos WHERE path = ?", (self.stale,)), [("[]",)])
 
     def test_a_merge_is_applied(self):
-        result = tags.merge(self.lib.library, "Activity/Rowing", "Activity/Sculling", "exiftool", apply=True)
+        result = tags.merge(self.lib.library, "Activity/Rowing", "Activity/Sculling", field_values.opened("exiftool"), apply=True)
         self.assertTrue(result.details["applied"], result.message())
         self.assertNotIn("error", result.details)
 
     def test_a_rename_warns_of_nothing(self):
-        result = tags.rename(self.lib.library, self.node, "Sculling", "exiftool")
+        result = tags.rename(self.lib.library, self.node, "Sculling", field_values.opened("exiftool"))
         self.assertTrue(result.ok, result.message())
 
 

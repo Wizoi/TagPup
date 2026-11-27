@@ -38,7 +38,7 @@ OPERATIONS = {TAGS: "bulk tags", SET: "save photo", SHIFT: "time shift"}
 MOVED_SENTENCE = "%s is not the photo this page read (renamed, moved or deleted since): reload it first."
 
 
-def write(library, op, changes, exiftool_path, rename_format, group=None, params=None, operation=tagging.ADD_TO_ALL,
+def write(library, op, changes, fields, rename_format, group=None, params=None, operation=tagging.ADD_TO_ALL,
           persons=None):
     """Write `changes` ({path: (id or None, fields)}) by `op`, in `library`, under the caller's hold of the lock of
     changes of photo files when it names an id (the module's docstring): a Result as the operation's service gives it. `tags`' fields are {"add": [tag], "remove": [tag]}, `group` the token
@@ -55,12 +55,12 @@ def write(library, op, changes, exiftool_path, rename_format, group=None, params
     if op == TAGS:
         return tagging.change_tags_of(
             library, {path: (own.get("add", []), own.get("remove", [])) for path, (_id, own) in changes.items()},
-            exiftool_path, operation=operation, stop_at_first_error=False,
+            fields, operation=operation, stop_at_first_error=False,
             persons=persons, group=group)
     if op == SHIFT:
-        return photo_actions.shift_date_taken(library, list(changes), params["minutes"], exiftool_path, group=group)
+        return photo_actions.shift_date_taken(library, list(changes), params["minutes"], fields, group=group)
     ((path, (_id, own)),) = changes.items()
-    return tagging.save_photo(library, path, own["title"], own["tags"], own["date_taken"], exiftool_path,
+    return tagging.save_photo(library, path, own["title"], own["tags"], own["date_taken"], fields,
                               rename_format, own["stamp"], base=own["base"])
 
 

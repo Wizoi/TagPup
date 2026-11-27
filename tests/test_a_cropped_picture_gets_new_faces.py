@@ -55,6 +55,7 @@ from tagpup.services import faces as face_service  # noqa: E402
 from tagpup.services import libraries as library_actions  # noqa: E402
 from tagpup.services import people as people_service  # noqa: E402
 from tagpup.store import db  # noqa: E402
+from tagpup.files import field_values  # noqa: E402
 
 EXIFTOOL = own_home.installed_exiftool()
 SIZE = (640, 480)
@@ -137,7 +138,7 @@ class ACroppedPictureGetsNewFaces(unittest.TestCase):
         library = Library(db_path)
         person = face_people.made(library, PERSON)
         tag = people_service.resolve(library, person).tag
-        saved = tagging.save_photo(library, self.photo, "", [tag], None, EXIFTOOL, "",
+        saved = tagging.save_photo(library, self.photo, "", [tag], None, field_values.opened(EXIFTOOL), "",
                                    base=page_writes.base(library, self.photo))
         self.assertEqual(1, saved.changed, saved.errors)
         (_, left, *_), (_, right, *_) = self.faces(db_path)

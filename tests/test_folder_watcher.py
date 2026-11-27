@@ -35,6 +35,7 @@ from tagpup.services import sync as sync_service  # noqa: E402
 from tagpup.store import db, job_runs, schema  # noqa: E402
 from tagpup.web import app as web  # noqa: E402
 from tagpup.web.lifecycle import Lifecycle  # noqa: E402
+from tagpup.files import field_values  # noqa: E402
 from watchdog.events import FileMovedEvent  # noqa: E402
 
 EXIFTOOL = own_home.installed_exiftool()
@@ -699,7 +700,7 @@ class TagPupsOwnWrites(Base):
         wait_until(lambda: not watcher.busy(), 60)
 
     def write(self, photos, library=None):
-        written = tagging.change_tags(library or self.harbour, photos, ["Harbour"], [], EXIFTOOL)
+        written = tagging.change_tags(library or self.harbour, photos, ["Harbour"], [], field_values.opened(EXIFTOOL))
         self.assertEqual(len(photos), written.changed, written.refused)
 
     def folder_records(self, library):

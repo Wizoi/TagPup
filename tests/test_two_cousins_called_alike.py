@@ -48,6 +48,7 @@ from tagpup.services.suggester import TagSuggester  # noqa: E402
 from tagpup.core.vocabulary import Ref  # noqa: E402
 from tagpup.store import db, faces, people, person_ids, removals, schema, taxonomy  # noqa: E402
 from tagpup.store.taxonomy import TagTaxonomy  # noqa: E402
+from tagpup.files import field_values  # noqa: E402
 
 
 class TwoSamsOnAPhoto(InStep):
@@ -241,7 +242,7 @@ class ABareKeywordNamesNobody(InStep):
         """A bare keyword beside the person of that name: the writer rewrote it into their path, and a photo the owner had
         tagged by hand gained the person (and a people row) with no click."""
         photo = self.held("quay_20.jpg", [WREN])
-        done = tagging.change_tags(self.library, [photo], ["Regatta"], [], "exiftool")
+        done = tagging.change_tags(self.library, [photo], ["Regatta"], [], field_values.opened("exiftool"))
         self.assertEqual(1, done.changed, done.errors)
         self.assertEqual({WREN, "Regatta"}, set(self.tags(photo)), "no person's path was added")
         self.assertEqual([], self.indexed_people(), "and no people row")

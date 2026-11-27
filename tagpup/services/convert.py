@@ -1,7 +1,7 @@
 """A clip converted to H.264 and AAC in an MP4, as one change of the library's journal (DECISIONS 2026-11-09, 'A CLIP IS
 CONVERTED ONLY WHEN THE OWNER CLICKS CONVERT'; tagpup.files.clip_convert runs ffmpeg).
 
-    result = convert.convert_clip(library, exiftool_path, tools, source, reason="old format")
+    result = convert.convert_clip(library, fields, tools, source, reason="old format")
 
 One function for every caller (the one-time convert of the old formats, a clip's own button, a playable MOV made smaller):
 `reason` alone tells them apart, in the change's summary.
@@ -171,7 +171,7 @@ class _Ready:
         self.before, self.packet = before, packet
 
 
-def convert_clip(library, exiftool_path, tools, source, reason=OLD_FORMAT, stop=None):
+def convert_clip(library, fields, tools, source, reason=OLD_FORMAT, stop=None):
     """Convert the clip at `source` of `library` (see the module), `tools` being config.locate_ffmpeg()'s, its original
     deleted for good once its copy is verified and in place.
     `stop`, an Event: Cancel. A Result: `changed` 1 once the copy is in place, its row moved and what it carries written;
@@ -184,8 +184,8 @@ def convert_clip(library, exiftool_path, tools, source, reason=OLD_FORMAT, stop=
     result = Result(attempted=1)
     result.details.update(change=None, reason=reason, photo=None)
     source = paths.stored(source)
-    file_changes.settle(library, exiftool_path)
-    ready = _ready(library, exiftool_path, tools, source, reason)
+    file_changes.settle(library, fields)
+    ready = _ready(library, fields, tools, source, reason)
     if isinstance(ready, str):
         result.refuse(ready)
         return result
@@ -234,7 +234,7 @@ def convert_clip(library, exiftool_path, tools, source, reason=OLD_FORMAT, stop=
             db.write_with_connection(library.path, lambda conn: file_journal.set_after(conn, row.id, row.after),
                                      label="change %d: its copy made" % change_id)
         with file_changes.exclusively():
-            if _onward(library, exiftool_path, row, True, result, problem):
+            if _onward(library, fields, row, True, result, problem):
                 file_changes.finish_forward(library, change_id, result)
             else:
                 file_journal.release(library.path, change_id)
@@ -285,8 +285,9 @@ def start(library, exiftool_path, find_ffmpeg, photo_id, mode, stamp, done=None)
 
     def work():
         try:
-            with batches.claim(library, OPERATION, 1, on_line=in_line) as batch:
-                how = convert_clip(library, exiftool_path, tools, source, reason=MODES[mode], stop=batch.stop)
+            # Its Fields opened here, on the thread that uses it: the request has returned already.
+            with batches.claim(library, OPERATION, 1, on_line=in_line) as batch, field_values.opened(exiftool_path) as fields:
+                how = convert_clip(library, fields, tools, source, reason=MODES[mode], stop=batch.stop)
         except Exception as e:   # told to the panel through `done`, the request answered already; or before it was
             if not lined.is_set():
                 said["raised"] = e
@@ -321,7 +322,7 @@ def outcome(library, ticket, wait=None):
     return held[1]
 
 
-def _ready(library, exiftool_path, tools, source, reason):
+def _ready(library, fields, tools, source, reason):
     """_Ready, or why the clip at `source` is not converted (a sentence), looked at before anything is planned."""
     if not images.is_clip(source):
         return NOT_A_CLIP
@@ -340,14 +341,13 @@ def _ready(library, exiftool_path, tools, source, reason):
         conn.close()
     if found is None:
         return NO_ROW
-    with field_values.opened(exiftool_path) as fields:
-        # Whole, in the indexer's shape: its Date Taken is the row's (dates.date_taken of what the indexer records), but
-        # for a date in its name, which is not carried: the copy has the clip's name and is dated by it again.
-        try:
-            held, whole = fields.read_one(source, list(READ) + [core_fields.CLIP_CATEGORY], whole=True)
-        except field_values.Unreadable as e:
-            logger.warning("A clip to convert could not be read whole: %s", e)
-            return UNREADABLE % "ExifTool could not read it"
+    # Whole, in the indexer's shape: its Date Taken is the row's (dates.date_taken of what the indexer records), but
+    # for a date in its name, which is not carried: the copy has the clip's name and is dated by it again.
+    try:
+        held, whole = fields.read_one(source, list(READ) + [core_fields.CLIP_CATEGORY], whole=True)
+    except field_values.Unreadable as e:
+        logger.warning("A clip to convert could not be read whole: %s", e)
+        return UNREADABLE % "ExifTool could not read it"
     windows = [str(text) for text in dict.fromkeys(core_fields.field_values(held.get(core_fields.CLIP_CATEGORY)))]
     carryable = _carryable(library) if windows else frozenset()
     cannot = [text for text in windows if text not in carryable]
@@ -444,7 +444,7 @@ def _taken(library, source, target):
     return None
 
 
-def settle_change(library, change, exiftool_path):
+def settle_change(library, change, fields):
     """Settle a conversion `change` a crash or an error left (file_changes._finish routes it here): a file `planned` was
     never begun and is taken out; one `writing` is carried onward (_onward). True when it is finished; False, released by
     the caller, when a file is left `writing` (a share away, a temp written in the last minutes, a carry that failed, an
@@ -459,13 +459,13 @@ def settle_change(library, change, exiftool_path):
                    for path in (row.path, row.new_path or row.path)):
                 settled = False
                 continue
-            settled = _onward(library, exiftool_path, row, False, Result()) and settled
+            settled = _onward(library, fields, row, False, Result()) and settled
     if settled:
         file_journal.finish(library.path, change.id)
     return settled
 
 
-def _onward(library, exiftool_path, row, forward, result, problem=None):
+def _onward(library, fields, row, forward, result, problem=None):
     """Carry the conversion `row` onward from where its copy is (the module, step 4), under the lock of changes of photo
     files: `forward`, the run that made it (`problem`, why ffmpeg or the verification failed); else a settle. True when the
     file is settled (done, taken out, or a conflict); False when it stays `writing` for the next settle. `result` is told
@@ -511,14 +511,14 @@ def _onward(library, exiftool_path, row, forward, result, problem=None):
             result.refuse(NOT_IN_PLACE % why)
             return False
     _reached("renamed")
-    if not _followed(library, exiftool_path, row, target):
+    if not _followed(library, fields, row, target):
         file_journal.mark(library.path, [row.id], "conflict", ROW_THERE)
         result.refuse(ROW_THERE)
         return True
     _reached("rows followed")
-    carried = file_changes.write_fields(library, CARRIED, exiftool_path, [target], list(CARRY_READ), _carrier(library, row.after),
+    carried = file_changes.write_fields(library, CARRIED, fields, [target], list(CARRY_READ), _carrier(library, row.after),
                                         summary={"photos": 1, "change": row.change_id})
-    short = carried.message() if not carried.ok else _short_of(library, exiftool_path, target, row.after)
+    short = carried.message() if not carried.ok else _short_of(library, fields, target, row.after)
     if short:
         _note(library, row, NOT_CARRIED % short)
         result.refuse(NOT_CARRIED % short)
@@ -551,13 +551,12 @@ def _size_recorded(library, target):
         conn.close()
 
 
-def _short_of(library, exiftool_path, target, after):
+def _short_of(library, fields, target, after):
     """None when the copy at `target` reads back holding all the conversion carries (`after`'s carry: _carrier finds
     nothing to write) and no Windows Tags (ffmpeg carries no Xtra); else what it lacks, a phrase naming fields, never
     tags. Read after the carry and before the original, the one other holder of what it carries, is deleted for good."""
     try:
-        with field_values.opened(exiftool_path) as fields:
-            held = fields.read_back(target, list(CARRY_READ) + [core_fields.CLIP_CATEGORY])
+        held = fields.read_back(target, list(CARRY_READ) + [core_fields.CLIP_CATEGORY])
     except (OSError, field_values.Unreadable) as e:
         return "it could not be read back: %s" % e
     if core_fields.field_values(held.get(core_fields.CLIP_CATEGORY)):
@@ -652,16 +651,15 @@ def _removed_for_good(source):
     return lock_owners.explain(error, source, getattr(error, "strerror", None) or str(error))
 
 
-def _followed(library, exiftool_path, row, target):
+def _followed(library, fields, row, target):
     """The photo's row moved to `target` (a new name) and made to say what the copy holds, read whole, in one transaction;
     its stamp the copy's, so its vectors and frames are computed again. False when another row is at `target`."""
     stat = os.stat(target)   # unbounded: the conversion's own copy, just put in place under the lock
-    with field_values.opened(exiftool_path) as fields:
-        try:
-            _held, whole = fields.read_back(target, [], whole=True)
-        except field_values.Unreadable as e:
-            logger.warning("%s: could not read it back whole: %s", row.named(), e)
-            whole = None
+    try:
+        _held, whole = fields.read_back(target, [], whole=True)
+    except field_values.Unreadable as e:
+        logger.warning("%s: could not read it back whole: %s", row.named(), e)
+        whole = None
 
     def work(conn):
         if row.new_path is not None:

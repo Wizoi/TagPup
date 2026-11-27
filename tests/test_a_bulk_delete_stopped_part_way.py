@@ -37,6 +37,7 @@ from tagpup.files import shares  # noqa: E402
 from tagpup.services import batches, bulk_edit, file_changes  # noqa: E402
 from tagpup.services import photos as photo_actions  # noqa: E402
 from tagpup.store import file_journal  # noqa: E402
+from tagpup.files import field_values  # noqa: E402
 
 #: A process that has gone: no process has this id.
 GONE = "%s:%d:1" % (socket.gethostname(), 0x7FFFFFF0)
@@ -64,7 +65,7 @@ class ABulkDeleteStoppedPartWay(Delete):
         return self.vl.rows("SELECT path FROM change_files WHERE state = 'planned'")
 
     def settle(self):
-        return file_changes.settle(self.library, None)
+        return file_changes.settle(self.library, field_values.opened(None))
 
     def cancel(self):
         [running] = batches.listing(self.library)
@@ -222,7 +223,7 @@ class ABulkDeleteStoppedPartWay(Delete):
         with mock.patch.object(photo_actions, "_reached", side_effect=reached), \
                 mock.patch.object(photo_actions, "end_deletes"):
             with self.assertRaises(Crash):
-                bulk_edit.run(self.library, bulk_edit.Edit(bulk_edit.DELETE, token="asked"), self.coast, None)
+                bulk_edit.run(self.library, bulk_edit.Edit(bulk_edit.DELETE, token="asked"), self.coast, field_values.opened(None))
         self.vl.conn.execute("UPDATE changes SET owner = ?", (GONE,))
         self.vl.conn.commit()
         self.assertEqual(3, len(self.sent))

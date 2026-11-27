@@ -37,6 +37,7 @@ from tagpup.services import roots as roots_service  # noqa: E402
 from tagpup.store import checks, db, file_journal  # noqa: E402
 from tagpup.web import app as web  # noqa: E402
 from tagpup.web import roots_gate, roots_ingress, tagpup_routes  # noqa: E402
+from tagpup.files import field_values  # noqa: E402
 
 WINDOWS = os.name == "nt"
 LIBRARY = "photo_index"
@@ -346,7 +347,7 @@ class AnUndoOfAnEarlierChange(unittest.TestCase):
                         "an undo would write the old copy: " + files[0].path)
         moved = first + side.real[0][len(side.pictures):]
         self.assertIn("Harbour", keywords(moved))
-        undone = journal_service.undo(side.library, change, apply=True, exiftool_path=rl.EXIFTOOL)
+        undone = journal_service.undo(side.library, change, apply=True, fields=field_values.opened(rl.EXIFTOOL))
         self.assertEqual((True, 2), (undone.ok, undone.changed), undone.message())
         self.assertNotIn("Harbour", keywords(moved))
         self.assertIn("Harbour", keywords(side.real[0]), "the old copy was written")
@@ -452,7 +453,7 @@ class AWriteStoppedByARootChange(unittest.TestCase):
 
     def test_the_change_is_finished_at_once_so_what_was_written_can_be_undone(self):               # #486
         result = self.stopped(lambda: tagging.change_tags(self.library, self.side.real[:3], ["Harbour"], [],
-                                                          rl.EXIFTOOL))
+                                                          field_values.opened(rl.EXIFTOOL)))
         change = result.details["change"]
         self.assertEqual("applied", file_journal.change(self.side.db_path, change).status)
         states = [row.state for row in file_journal.files_of(self.side.db_path, change)]

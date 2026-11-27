@@ -188,7 +188,7 @@ class TheIndexWritesTheBake(unittest.TestCase):
         a = self.picture("a.jpg", (200, 40, 40))
         with mock.patch.object(bake_after_index, "bake_folders"):
             self.index()   # indexed, not baked yet
-        saved = tagging.save_photo(self.library, a, "Ferry at the quay", ["Harbour/Ferry"], None, EXIFTOOL, "",
+        saved = tagging.save_photo(self.library, a, "Ferry at the quay", ["Harbour/Ferry"], None, field_values.opened(EXIFTOOL), "",
                                    base=page_writes.base(self.library, a))
         self.assertTrue(saved.changed, saved.refused)
         self.picture("b.jpg", (40, 200, 40))
@@ -196,7 +196,7 @@ class TheIndexWritesTheBake(unittest.TestCase):
         self.assertBaked(a, 1)
         self.assertNoBakeListed()
         self.assertIsNone(journal_service.history(self.library, change_id=saved.details["change"])["changes"][0]["why_not"])
-        undone = journal_service.undo(self.library, saved.details["change"], apply=True, exiftool_path=EXIFTOOL)
+        undone = journal_service.undo(self.library, saved.details["change"], apply=True, fields=field_values.opened(EXIFTOOL))
         self.assertFalse(undone.refused, undone.refused)
         self.assertBaked(a, 1)
 
@@ -214,9 +214,9 @@ class TheIndexWritesTheBake(unittest.TestCase):
                 # the new file beside the photo that a crash at "scratch written" left: a restart within
                 # SCRATCH_STALE of it is told to try again later; the settle here is the one after that
                 with mock.patch.object(file_changes, "SCRATCH_STALE", 0):
-                    file_changes.settle(self.library, EXIFTOOL)
+                    file_changes.settle(self.library, field_values.opened(EXIFTOOL))
                 self.assertNoBakeListed()
-                bake_after_index.bake_folders(self.library, EXIFTOOL, DETECTOR, [self.folder], {})
+                bake_after_index.bake_folders(self.library, field_values.opened(EXIFTOOL), DETECTOR, [self.folder], {})
                 self.assertBaked(path, 0)
                 self.assertNoBakeListed()
 
@@ -285,7 +285,7 @@ class TheIndexWritesTheBake(unittest.TestCase):
         def turn_first(library, operation, *args, **kwargs):
             if operation == baking.INDEX_OPERATION:
                 # The owner clicks Rotate in the app while the bake has planned the folder: the turn's own write first.
-                turn = photo_service.rotate(library, a, "left", EXIFTOOL)
+                turn = photo_service.rotate(library, a, "left", field_values.opened(EXIFTOOL))
                 self.assertEqual((None, []), (turn.refused, turn.errors))
             return real(library, operation, *args, **kwargs)
         with mock.patch.object(file_changes, "write_fields", side_effect=turn_first):
@@ -325,7 +325,7 @@ class TheIndexWritesTheBake(unittest.TestCase):
 
         said = []
         with mock.patch.object(batches, "MAX_BATCH", 1):
-            baked = bake_after_index.bake_folders(self.library, EXIFTOOL, DETECTOR, [self.folder, quay], {})
+            baked = bake_after_index.bake_folders(self.library, field_values.opened(EXIFTOOL), DETECTOR, [self.folder, quay], {})
         said.append(baked.said())
         self.assertEqual((0, {"Select up to 1 photos at a time (2 were named)": 2}),
                          (baked.written, {why.rstrip("."): n for why, n in baked.refused.items()}))
@@ -339,7 +339,7 @@ class TheIndexWritesTheBake(unittest.TestCase):
             return real_planned(library, fields, detector, folder, *args)
         with mock.patch.object(file_changes.roots_service, "pinned", side_effect=roots_service.RootsChanged("moved")), \
                 mock.patch.object(bake_after_index, "_planned", side_effect=planning):
-            baked = bake_after_index.bake_folders(self.library, EXIFTOOL, DETECTOR, [self.folder, quay], {})
+            baked = bake_after_index.bake_folders(self.library, field_values.opened(EXIFTOOL), DETECTOR, [self.folder, quay], {})
         said.append(baked.said())
         self.assertEqual([self.folder], planned, "the run went on after the roots changed")
         self.assertTrue(baked.roots_changed)
@@ -355,7 +355,7 @@ class TheIndexWritesTheBake(unittest.TestCase):
                 raise field_values.NotAnswered("ExifTool did not answer in 300 s")
             return real(et, path, *args, **kwargs)
         with mock.patch.object(file_changes.field_values, "_read_one", side_effect=read_one):
-            result = file_changes.write_fields(self.library, baking.INDEX_OPERATION, EXIFTOOL, photos, [found],
+            result = file_changes.write_fields(self.library, baking.INDEX_OPERATION, field_values.opened(EXIFTOOL), photos, [found],
                                                lambda _path, _held: file_changes.Plan(after={found: ["0"]}))
         said = " ".join(result.refused.split())
         self.assertIn("ExifTool stopped answering after 1 of 3 photos: 1 file(s) were written; the rest", said)
@@ -377,7 +377,7 @@ class TheIndexWritesTheBake(unittest.TestCase):
         lines = []
         with mock.patch.object(batches, "CHUNK", 2), \
                 mock.patch.object(file_changes.field_values, "_read_one", side_effect=read_one):
-            baked = bake_after_index.bake_folders(self.library, EXIFTOOL, DETECTOR, [self.folder], {}, each=lines.append)
+            baked = bake_after_index.bake_folders(self.library, field_values.opened(EXIFTOOL), DETECTOR, [self.folder], {}, each=lines.append)
         self.assertTrue(baked.stalled)
         self.assertEqual([(None, None), (2, 5)], heard(lines), "no line after the share stopped answering")
         self.assertIn(", 2 of 5 of its files reached: ", lines[1]["sentence"])
@@ -387,7 +387,7 @@ class TheIndexWritesTheBake(unittest.TestCase):
 
         lines = []
         with mock.patch.object(batches, "CHUNK", 2):
-            baked = bake_after_index.bake_folders(self.library, EXIFTOOL, DETECTOR, [self.folder], {}, each=lines.append)
+            baked = bake_after_index.bake_folders(self.library, field_values.opened(EXIFTOOL), DETECTOR, [self.folder], {}, each=lines.append)
         self.assertEqual((2, 3), (baked.written, baked.current), baked)
         self.assertEqual([(None, None)], heard(lines), "two files to write are one chunk")
         for path in photos:
@@ -408,7 +408,7 @@ class TheIndexWritesTheBake(unittest.TestCase):
                 raise OSError("the pipe is closed")
         with mock.patch.object(batches, "CHUNK", 2), \
                 self.assertLogs(bake_after_index.logger, "WARNING") as logged:
-            baked = bake_after_index.bake_folders(self.library, EXIFTOOL, DETECTOR, [self.folder], {}, each=each)
+            baked = bake_after_index.bake_folders(self.library, field_values.opened(EXIFTOOL), DETECTOR, [self.folder], {}, each=each)
         self.assertEqual(7, baked.written, baked)
         self.assertEqual(1, len(logged.records), "the failure is logged once, not per chunk")
         self.assertEqual(3, len(lines), "a line was said after one failed")
@@ -558,7 +558,7 @@ class TheIndexWritesTheBake(unittest.TestCase):
             return real(et, photo_paths, *args, **kwargs)
         with mock.patch.object(field_values, "READ_BATCH", 1), \
                 mock.patch.object(field_values, "_read", side_effect=folder_read):
-            baked = bake_after_index.bake_folders(self.library, EXIFTOOL, DETECTOR, [self.folder], {})
+            baked = bake_after_index.bake_folders(self.library, field_values.opened(EXIFTOOL), DETECTOR, [self.folder], {})
         self.assertEqual((True, 0, 0), (baked.stalled, baked.written, baked.adopted))
         self.assertEqual([[], []], [self.fingerprint_row(path) for path in (a, b)],
                          "a photo planned to bake and never written was given a row")

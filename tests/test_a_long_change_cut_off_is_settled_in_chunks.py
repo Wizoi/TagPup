@@ -35,6 +35,7 @@ from tagpup.files import names  # noqa: E402
 from tagpup.services import batches, file_changes, tagging  # noqa: E402
 from tagpup.store import file_journal, schema  # noqa: E402
 from tagpup.web import lifecycle  # noqa: E402
+from tagpup.files import field_values  # noqa: E402
 
 GONE = "%s:4000000:1" % socket.gethostname()      # a process of this machine that has ended
 PHOTOS = 12
@@ -110,7 +111,7 @@ class ALongChangeCutOff(CutOff):
             if name == "file recorded" and "thread" not in save:
                 # The owner saves another photo while the settle is under way: it waits for the lock.
                 def saving():
-                    result = tagging.change_tags(self.library, [self.other], ["Lighthouse"], [], EXIFTOOL)
+                    result = tagging.change_tags(self.library, [self.other], ["Lighthouse"], [], field_values.opened(EXIFTOOL))
                     save["ok"] = result.ok
                 save["thread"] = threading.Thread(target=saving)
                 save["thread"].start()
@@ -154,11 +155,11 @@ class ALongChangeCutOff(CutOff):
         self.assertEqual([], batches.listing(self.library))
 
         # The next save in this process does not take the settle up again in its own request.
-        self.assertEqual(0, file_changes.settle(self.library, EXIFTOOL))
+        self.assertEqual(0, file_changes.settle(self.library, field_values.opened(EXIFTOOL)))
         self.assertEqual(["done"] * 4 + ["planned"] * 8, self.states(self.change))
 
         # Nor does a save of a photo it left planned write ahead of it: the next start writes the cut-off edit first.
-        refused = tagging.change_tags(self.library, [self.photos[11]], ["Lighthouse"], [], EXIFTOOL)
+        refused = tagging.change_tags(self.library, [self.photos[11]], ["Lighthouse"], [], field_values.opened(EXIFTOOL))
         self.assertFalse(refused.ok)
         self.assertIn("still to be written by an earlier change", str(refused.errors))
         self.assertEqual(["Beach"], keywords_of(self.photos[11]))
@@ -179,11 +180,11 @@ class ALongChangeCutOff(CutOff):
             if name == "file recorded" and "thread" not in tried:
                 # The owner saves, then renames, a photo of the cut-off change in its last chunk, before the settle is there.
                 def saving():
-                    result = tagging.change_tags(self.library, [last], ["Lighthouse"], [], EXIFTOOL)
+                    result = tagging.change_tags(self.library, [last], ["Lighthouse"], [], field_values.opened(EXIFTOOL))
                     tried["saved"], tried["save said"] = result.ok, str(result.errors)
                     try:
                         file_changes.rename(self.library, "smart rename",
-                                            {next_to_last: os.path.join(self.folder, "renamed.jpg")}, {}, EXIFTOOL)
+                                            {next_to_last: os.path.join(self.folder, "renamed.jpg")}, {}, field_values.opened(EXIFTOOL))
                     except names.RenameFailed as refused:
                         tried["rename said"] = str(refused)
                 tried["thread"] = threading.Thread(target=saving)
@@ -202,7 +203,7 @@ class ALongChangeCutOff(CutOff):
         self.assertEqual({}, file_changes._unsettled)
 
         # Saved again once it is finished, the photo holds both edits.
-        self.assertTrue(tagging.change_tags(self.library, [last], ["Lighthouse"], [], EXIFTOOL).ok)
+        self.assertTrue(tagging.change_tags(self.library, [last], ["Lighthouse"], [], field_values.opened(EXIFTOOL)).ok)
         self.assertEqual(["Beach", "Harbour", "Lighthouse"], keywords_of(last))
 
     def test_a_settle_that_cannot_take_its_turn_is_left_whole_for_the_next(self):
@@ -247,7 +248,7 @@ class ALongChangeCutOff(CutOff):
             if name == "file recorded" and not listed:
                 listed.extend(batches.listing(self.library))
         with mock.patch.object(file_changes, "_reached", side_effect=step):
-            self.assertTrue(tagging.change_tags(self.library, others, ["Lighthouse"], [], EXIFTOOL).ok)
+            self.assertTrue(tagging.change_tags(self.library, others, ["Lighthouse"], [], field_values.opened(EXIFTOOL)).ok)
         # One row, the write's own batch, cancellable here: not a batch of another process that cannot be.
         self.assertEqual([(self.change, True)], [(each["id"], each["here"]) for each in listed])
         self.assert_settled()
@@ -318,7 +319,7 @@ class OnAThreadInTheServer(CutOff):
         self.execute("UPDATE changes SET owner = ? WHERE id = ?", (GONE, self.change))
 
     def save(self, path):
-        return tagging.change_tags(self.library, [path], ["Lighthouse"], [], EXIFTOOL)
+        return tagging.change_tags(self.library, [path], ["Lighthouse"], [], field_values.opened(EXIFTOOL))
 
     def test_the_open_returns_at_once_its_photos_are_refused_until_the_settle_reaches_them_then_saved(self):
         go = self.bulk_ahead()
@@ -389,7 +390,7 @@ class OnAThreadInTheServer(CutOff):
         self.assertEqual(["done"] * 2 + ["writing"] + ["planned"] * 9, self.states(self.change))
         self.assertFalse(self.save(self.photos[11]).ok)
         # The next save's settle does not take it up in this process either.
-        self.assertEqual(0, file_changes.settle(self.library, EXIFTOOL))
+        self.assertEqual(0, file_changes.settle(self.library, field_values.opened(EXIFTOOL)))
 
         self.next_start()
         self.open_in_the_server()
@@ -443,7 +444,7 @@ class OnAThreadInTheServer(CutOff):
         self.assertFalse(refused.ok)
         self.assertIn(file_changes.UNSETTLED, str(refused.errors))
         self.assertEqual(["Beach"], keywords_of(self.photos[11]))
-        self.assertEqual(0, file_changes.settle(self.library, EXIFTOOL))
+        self.assertEqual(0, file_changes.settle(self.library, field_values.opened(EXIFTOOL)))
         # The next start finishes it.
         self.stamps.update({path: os.stat(path).st_mtime_ns for path, state in zip(self.photos, states) if state == "done"})
         self.next_start()

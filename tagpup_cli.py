@@ -521,7 +521,7 @@ def index(ctx, directories, force_reembed: bool, reset: bool, skip_faces: bool, 
                 console.print(f"  • {root}: {count} path(s)")
         photo_index.close()
         if bake_only and not skip_faces:
-            _bake_after_index(Library(db_path), exiftool_path, face_records.detector_named(settings.faces),
+            _bake_after_index(Library(db_path), settings, face_records.detector_named(settings.faces),
                               list(bake_only.values()), {}, os.environ.get(indexing_service.STOP_FILE))
         return
 
@@ -592,7 +592,7 @@ def index(ctx, directories, force_reembed: bool, reset: bool, skip_faces: bool, 
             console.print("[yellow]No photos found to index.[/yellow]")
         photo_index.close()
         if bake_only and not skip_faces:
-            _bake_after_index(Library(db_path), exiftool_path, face_records.detector_named(settings.faces),
+            _bake_after_index(Library(db_path), settings, face_records.detector_named(settings.faces),
                               list(bake_only.values()), {}, os.environ.get(indexing_service.STOP_FILE))
         return
 
@@ -1026,7 +1026,7 @@ def index(ctx, directories, force_reembed: bool, reset: bool, skip_faces: bool, 
     # The files of the folders it recorded are written from the library (docs/PLAN_KEEP_IN_STEP.md, cut 2), the card let
     # go above: every way of indexing does it, and the owner runs no bake. Not with --skip-faces: no face was looked for.
     if touched and not skip_faces:
-        _bake_after_index(Library(db_path), exiftool_path, face_records.detector_named(settings.faces),
+        _bake_after_index(Library(db_path), settings, face_records.detector_named(settings.faces),
                           list(touched.values()), handed, stop_file)
 
 
@@ -1209,13 +1209,14 @@ def _say(fact, person=None):
         _stop_saying(error)
 
 
-def _bake_after_index(library, exiftool_path, detector, folders, handed, stop_file):
+def _bake_after_index(library, settings, detector, folders, handed, stop_file):
     """The bake after an index (tagpup.services.bake_after_index), its line said in counts. One that fails is logged
     and said, and the index stands: the next index of the folder bakes it. A Ctrl+C keeps what was written. Each
     folder's line is a fact for the server; by hand the log alone shows it."""
     try:
-        baked = bake_after_index.bake_folders(library, exiftool_path, detector, folders, handed,
-                                              stop=lambda: bool(stop_file) and os.path.exists(stop_file), each=_say)
+        with runtimes.fields(library, settings) as fields:
+            baked = bake_after_index.bake_folders(library, fields, detector, folders, handed,
+                                                  stop=lambda: bool(stop_file) and os.path.exists(stop_file), each=_say)
     except Exception as error:
         logger.exception("The bake after the index stopped")
         line = (bake_after_index.SAID + "stopped (%s); the photos are indexed, and the next index of their folders "
@@ -1405,8 +1406,8 @@ def undo(ctx, change_id, apply_):
     every row is still what the change left, and no newer change touched the same rows.
     A rehearsal unless --apply."""
     library = _existing_library(ctx)
-    result = library_journal.undo(library, change_id, apply=apply_,
-                                  exiftool_path=get_exiftool_path(library.path, read_only=True))
+    with runtimes.fields(library, runtimes.peek_settings(library)) as fields:
+        result = library_journal.undo(library, change_id, apply=apply_, fields=fields)
     _say_rehearsal(result)
     if result.refused:
         raise SystemExit(1)

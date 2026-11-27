@@ -197,7 +197,7 @@ def _write_plain(library, plan, outcome):
         outcome.plain_ids.extend(chunk)
 
 
-def run(library, plan, exiftool_path, told=None):
+def run(library, plan, fields, told=None):
     """Carry out `plan` and wait for the end: the Outcome. The photos are one batch of `file_changes.write_fields` (claimed, queued,
     capped, stopped by Cancel or a hand-over, listed in the strip); `told(result)` is heard with what it wrote, for the pages' records.
     Refused (the cap), or Conflict (the queue is full, or the write was refused and its change is gone: planned and
@@ -213,7 +213,7 @@ def run(library, plan, exiftool_path, told=None):
         change = None
         try:
             result = file_changes.write_fields(
-                library, DESCRIPTIONS[plan.op], exiftool_path, photos, tagging.KEYWORD_READ,
+                library, DESCRIPTIONS[plan.op], fields, photos, tagging.KEYWORD_READ,
                 tagging.keywords_planner(library, _editor(work, known)),
                 summary={"photos": len(photos), "faces": len(work.face_ids())}, stop_at_first_error=False, alongside=work,
                 unpooled=outcome.unpooled if plan.op in (NAME, EXCLUDE) else None)

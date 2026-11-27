@@ -15,6 +15,7 @@ from service_fixture import TempLibrary  # noqa: E402
 
 from tagpup.core.result import Result  # noqa: E402
 from tagpup.services import photos  # noqa: E402
+from tagpup.files import field_values  # noqa: E402
 
 FORMAT = "{grouping} - {index} - {caption}"
 
@@ -27,7 +28,7 @@ class SmartRenaming(unittest.TestCase):
         with mock.patch("tagpup.files.names.read_for_renaming",
                         side_effect=lambda exiftool, present: {p: captions.get(p, "") for p in present}), \
                 mock.patch.object(photos, "preserve_names", return_value=Result()):
-            return photos.smart_rename(self.lib.library, paths, grouping, FORMAT, "exiftool")
+            return photos.smart_rename(self.lib.library, paths, grouping, FORMAT, field_values.opened("exiftool"))
 
     def names(self):
         return sorted(os.listdir(self.lib.photos))

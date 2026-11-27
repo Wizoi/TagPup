@@ -21,6 +21,7 @@ import web_client  # noqa: E402
 from tagpup.core import fields, vocabulary  # noqa: E402
 from tagpup.core.result import Result  # noqa: E402
 from tagpup.services import indexing, libraries, photos, tagging, tags  # noqa: E402
+from tagpup.files import field_values  # noqa: E402
 
 PIPE = 'A tag cannot contain "|": other programs read it as a break between levels. Use "/" instead.'
 EMPTY_LEVEL = 'A tag cannot have an empty level, as in "A//B" or "A/".'
@@ -79,7 +80,7 @@ class PhotoCase(unittest.TestCase):
 class Tagging(PhotoCase):
     def test_tags_added_to_many_photos(self):
         session, et = self.exiftool()
-        result = tagging.change_tags(self.lib.library, [self.photo], ["Places//Dunes"], [], "exiftool")
+        result = tagging.change_tags(self.lib.library, [self.photo], ["Places//Dunes"], [], field_values.opened("exiftool"))
         self.assertEqual(result.refused, EMPTY_LEVEL)
         self.assertEqual((result.changed, result.details["written"]), (0, {}))
         session.assert_not_called()
@@ -87,25 +88,25 @@ class Tagging(PhotoCase):
     def test_tags_added_many_photos_are_spelled_once(self):
         # The route spelled them before; the service does now, for every caller.
         _session, et = self.exiftool()
-        result = tagging.change_tags(self.lib.library, [self.photo], [" Places / Dunes "], [], "exiftool")
+        result = tagging.change_tags(self.lib.library, [self.photo], [" Places / Dunes "], [], field_values.opened("exiftool"))
         self.assertTrue(result.ok, result.message())
         self.assertIn("Places/Dunes", result.details["written"][self.photo][0])
 
     def test_taking_a_bad_tag_off_is_still_allowed(self):
         self.exiftool({"XMP:Subject": ["Legacy|Keyword"]})
-        result = tagging.change_tags(self.lib.library, [self.photo], [], ["Legacy|Keyword"], "exiftool")
+        result = tagging.change_tags(self.lib.library, [self.photo], [], ["Legacy|Keyword"], field_values.opened("exiftool"))
         self.assertIsNone(result.refused)
 
     def test_apply_all(self):
         session, _et = self.exiftool()
-        result = tagging.add_tags(self.lib.library, {self.photo: ["Places/Dunes", "Places|Harbour"]}, "exiftool")
+        result = tagging.add_tags(self.lib.library, {self.photo: ["Places/Dunes", "Places|Harbour"]}, field_values.opened("exiftool"))
         self.assertEqual(result.refused, PIPE)
         session.assert_not_called()
 
     def test_a_caption_being_set(self):
         _session, et = self.exiftool()
         result = tagging.save_photo(self.lib.library, self.photo, "Relays" + BELL, ["Places/Harbour"],
-                                    None, "exiftool", "{grouping} - {index} - {caption}", base=self.base)
+                                    None, field_values.opened("exiftool"), "{grouping} - {index} - {caption}", base=self.base)
         self.assertEqual(result.refused, CAPTION)
         et.set_tags.assert_not_called()
         et.execute.assert_not_called()
@@ -115,7 +116,7 @@ class Tagging(PhotoCase):
         _session, et = self.exiftool({"XMP:Subject": ["Places/Harbour"], "XMP:Description": "Relays" + BELL})
         with mock.patch("tagpup.files.metadata.title_filename", side_effect=lambda p, *rest: p):
             result = tagging.save_photo(self.lib.library, self.photo, "Relays" + BELL, ["Places/Harbour"],
-                                        None, "exiftool", "{grouping} - {index} - {caption}", base=self.base)
+                                        None, field_values.opened("exiftool"), "{grouping} - {index} - {caption}", base=self.base)
         self.assertIsNone(result.refused)
         et.set_tags.assert_called()
 
@@ -134,7 +135,7 @@ class Tagging(PhotoCase):
     def save(self, caption):
         with mock.patch("tagpup.files.metadata.title_filename", side_effect=lambda p, *rest: p):
             return tagging.save_photo(self.lib.library, self.photo, caption, ["Places/Harbour"],
-                                      None, "exiftool", "{grouping} - {index} - {caption}", base=self.base)
+                                      None, field_values.opened("exiftool"), "{grouping} - {index} - {caption}", base=self.base)
 
     def test_a_caption_held_only_in_exif_is_not_being_set(self):
         # Another program's caption, in EXIF ImageDescription alone: the save that keeps
@@ -154,7 +155,7 @@ class Tagging(PhotoCase):
 
     def test_the_bulk_tags_write(self):
         session, _et = self.exiftool()
-        result = tagging.change_tags(self.lib.library, [self.photo], ["Places|Dunes"], [], "exiftool")
+        result = tagging.change_tags(self.lib.library, [self.photo], ["Places|Dunes"], [], field_values.opened("exiftool"))
         self.assertEqual((result.refused, result.changed), (PIPE, 0))
         session.assert_not_called()
 
@@ -164,7 +165,7 @@ class Renaming(PhotoCase):
         with mock.patch("tagpup.files.names.read_for_renaming") as read, \
                 mock.patch("tagpup.files.names.rename_all") as rename:
             result = photos.smart_rename(self.lib.library, [self.photo], "2019-06 - Summer Camp",
-                                         "{grouping} - {index} - {caption}", "exiftool")
+                                         "{grouping} - {index} - {caption}", field_values.opened("exiftool"))
         self.assertIn('cannot contain " - "', result.refused or "")
         read.assert_not_called()
         rename.assert_not_called()
@@ -172,7 +173,7 @@ class Renaming(PhotoCase):
 
     def test_a_time_shift_is_whole_minutes(self):
         with mock.patch("tagpup.services.file_changes.write_fields") as shift:
-            result = photos.shift_date_taken(self.lib.library, [self.photo], "ninety", "exiftool")
+            result = photos.shift_date_taken(self.lib.library, [self.photo], "ninety", field_values.opened("exiftool"))
         self.assertEqual(result.refused, "A time shift is a whole number of minutes.")
         shift.assert_not_called()
 
@@ -193,7 +194,7 @@ class TheTree(unittest.TestCase):
 
     def test_a_deleted_tags_photos_are_not_moved_to_one_that_may_not_be_set(self):
         # It was spelled once and written: "Places|Harbour" became Places/Harbour.
-        result = tags.delete(self.lib.library, self.rowing, "move", "Places|Harbour", "exiftool")
+        result = tags.delete(self.lib.library, self.rowing, "move", "Places|Harbour", field_values.opened("exiftool"))
         self.assertEqual(result.refused, PIPE)
         self.assertEqual(self.rewrites, [])
         self.assertIn(("Activity/Rowing",), self.lib.rows("SELECT tag FROM tag_taxonomy"))
@@ -202,7 +203,7 @@ class TheTree(unittest.TestCase):
         self.assertEqual(tags.create(self.lib.library, "  ").refused, "A tag cannot be empty.")
 
     def test_a_person_renamed_to_one_of_tagtuners_lists(self):
-        result = tags.rename_person(self.lib.library, "Rowan Thackeray", "Unmatched", "exiftool")
+        result = tags.rename_person(self.lib.library, "Rowan Thackeray", "Unmatched", field_values.opened("exiftool"))
         self.assertEqual(result.refused, "'Unmatched' is the name of one of TagTuner's lists, not a person's.")
 
 

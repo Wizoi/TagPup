@@ -298,7 +298,7 @@ class AClipInTheLibrary(ALibraryHoldingAClip):
         def plan_one(path, held):
             raise AssertionError("a clip is not planned")
 
-        result = file_only.write_fields(EXIFTOOL, [self.clip_path], sorted(fields.CLIP_FIELDS), plan_one)
+        result = file_only.write_fields(field_values.opened(EXIFTOOL), [self.clip_path], sorted(fields.CLIP_FIELDS), plan_one)
         self.assertEqual([images.CLIP_NOT_EDITED], [why for _path, why in result.errors],
                          "no journal to settle a patch a crash cut short")
         self.assertEqual(before, self.read_bytes(self.clip_path))

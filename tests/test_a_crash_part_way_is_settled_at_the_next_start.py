@@ -172,12 +172,12 @@ class AnInPlacePatchCutShort(FilesCase):
     def replace(self, cutting=None, step=None):
         with cutting if cutting is not None else contextlib.nullcontext(), \
                 mock.patch.object(file_changes, "_reached", side_effect=crash_at(step) if step else None):
-            return tagging.replace_tag(self.library, [self.a], "Beach", "Shore", EXIFTOOL)
+            return tagging.replace_tag(self.library, [self.a], "Beach", "Shore", field_values.opened(EXIFTOOL))
 
     def shift(self, cutting=None, step=None):
         with cutting if cutting is not None else contextlib.nullcontext(), \
                 mock.patch.object(file_changes, "_reached", side_effect=crash_at(step) if step else None):
-            return photos.shift_date_taken(self.library, [self.a], 60, EXIFTOOL)
+            return photos.shift_date_taken(self.library, [self.a], 60, field_values.opened(EXIFTOOL))
 
     def killed(self, cutting=None, step=None, writing=None):
         with self.assertRaises(Crash):
@@ -319,7 +319,7 @@ class APictureAWriteDamagesTwice(FilesCase):
         found = bake.WRITTEN[bake.FACES_FOUND]
         with mock.patch.object(file_changes, "_reached", side_effect=crash_at("plan committed")):
             with self.assertRaises(Crash):
-                file_changes.write_fields(self.library, baking.INDEX_OPERATION, EXIFTOOL, [self.a], [found],
+                file_changes.write_fields(self.library, baking.INDEX_OPERATION, field_values.opened(EXIFTOOL), [self.a], [found],
                                           lambda _path, _held: file_changes.Plan(after={found: ["0"]}))
         change = self.last_change()
         self.execute("UPDATE changes SET owner = ? WHERE id = ?", (GONE, change))
@@ -337,7 +337,7 @@ class APictureAWriteDamagesTwice(FilesCase):
         found = bake.WRITTEN[bake.FACES_FOUND]
         with mock.patch.object(file_changes, "_reached", side_effect=crash_at("plan committed")):
             with self.assertRaises(Crash):
-                file_changes.write_fields(self.library, baking.INDEX_OPERATION, EXIFTOOL, [self.a], [found],
+                file_changes.write_fields(self.library, baking.INDEX_OPERATION, field_values.opened(EXIFTOOL), [self.a], [found],
                                           lambda _path, _held: file_changes.Plan(after={found: ["0"]}))
         change = self.last_change()
         self.execute("UPDATE changes SET owner = ? WHERE id = ?", (GONE, change))

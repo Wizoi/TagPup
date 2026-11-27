@@ -212,7 +212,7 @@ class AFaceGetsOneNearestPersonEverywhere(unittest.TestCase):
         self.assertEqual(ODA, self.boxes(face))
         minutes = int((datetime.datetime(2020, 6, 1) - datetime.datetime(1994, 6, 1)).total_seconds() // 60)
         shifted = photos_service.shift_date_taken(self.library, [os.path.join(self.folder, "school", "wren_1994.jpg")],
-                                                  minutes, "exiftool")
+                                                  minutes, field_values.opened("exiftool"))
         self.assertEqual(1, shifted.changed)
         self.assertEqual(WREN, self.boxes(face), "the named faces kept the year their photo had before Time Shift")
 

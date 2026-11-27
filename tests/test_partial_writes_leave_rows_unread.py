@@ -45,6 +45,7 @@ from tagpup.store import db, schema  # noqa: E402
 from tagpup.store import photos as store_photos  # noqa: E402
 from tagpup.store import taxonomy as store_taxonomy  # noqa: E402
 from tagpup.services.search import PhotoIndex  # noqa: E402
+from tagpup.files import field_values  # noqa: E402
 from face_rows import configured_model, people_of  # noqa: E402
 import photo_rows  # noqa: E402
 
@@ -133,21 +134,21 @@ class PartialWritesOnAnUnreadRow(Photos):
     def test_apply_all(self):
         path = make_photo(self.folder, "a.jpg")
         self.suggested(path)
-        result = tagging.add_tags(self.library, {path: ["Activity/Sailing"]}, EXIFTOOL)
+        result = tagging.add_tags(self.library, {path: ["Activity/Sailing"]}, field_values.opened(EXIFTOOL))
         self.assertEqual((result.ok, result.changed), (True, 1))
         self.assertUnread(path)
 
     def test_add_to_all_selected(self):
         path = make_photo(self.folder, "b.jpg")
         self.suggested(path)
-        result = tagging.change_tags(self.library, [path], ["Activity/Sailing"], [], EXIFTOOL)
+        result = tagging.change_tags(self.library, [path], ["Activity/Sailing"], [], field_values.opened(EXIFTOOL))
         self.assertEqual((result.ok, result.changed), (True, 1))
         self.assertUnread(path)
 
     def test_renaming_a_tag(self):
         path = make_photo(self.folder, "c.jpg", keywords=["Activity/Sailing"])
         self.suggested(path)
-        result = tagging.replace_tag(self.library, [path], "Activity/Sailing", "Activity/Rowing", EXIFTOOL)
+        result = tagging.replace_tag(self.library, [path], "Activity/Sailing", "Activity/Rowing", field_values.opened(EXIFTOOL))
         self.assertEqual((result.ok, result.changed), (True, 1))
         self.assertUnread(path)
 
@@ -155,13 +156,13 @@ class PartialWritesOnAnUnreadRow(Photos):
         """Its row is told what the file holds, and nothing was written to the file."""
         path = make_photo(self.folder, "d.jpg", keywords=["Activity/Rowing"])
         self.suggested(path)
-        tagging.replace_tag(self.library, [path], "Activity/Sailing", "Activity/Kayaking", EXIFTOOL)
+        tagging.replace_tag(self.library, [path], "Activity/Sailing", "Activity/Kayaking", field_values.opened(EXIFTOOL))
         self.assertUnread(path)
 
     def test_rotating(self):
         path = make_photo(self.folder, "g.jpg")
         self.suggested(path)
-        result = photo_actions.rotate(self.library, path, "left", EXIFTOOL)
+        result = photo_actions.rotate(self.library, path, "left", field_values.opened(EXIFTOOL))
         self.assertTrue(result.ok)
         self.assertUnread(path)
 
@@ -169,7 +170,7 @@ class PartialWritesOnAnUnreadRow(Photos):
         """The save reads the file back whole, so it may record it all."""
         path = make_photo(self.folder, "h.jpg")
         self.suggested(path)
-        result = tagging.save_photo(self.library, path, "", ["Activity/Sailing"], None, EXIFTOOL, "",
+        result = tagging.save_photo(self.library, path, "", ["Activity/Sailing"], None, field_values.opened(EXIFTOOL), "",
                                     base=page_writes.base(self.library, path))
         self.assertTrue(result.ok)
         self.assertUnreadOrWhole(path)
@@ -178,7 +179,7 @@ class PartialWritesOnAnUnreadRow(Photos):
         """The shift reads the files back whole too."""
         path = make_photo(self.folder, "i.jpg")
         self.suggested(path)
-        result = photo_actions.shift_date_taken(self.library, [path], 0, EXIFTOOL)
+        result = photo_actions.shift_date_taken(self.library, [path], 0, field_values.opened(EXIFTOOL))
         self.assertTrue(result.ok)
         self.assertUnreadOrWhole(path)
 
@@ -191,7 +192,7 @@ class PartialWritesOnARowReadFromItsFile(Photos):
     def test_apply_all_stamps_a_row_that_was_read(self):
         path = make_photo(self.folder, "j.jpg")
         self.indexed(path)
-        tagging.add_tags(self.library, {path: ["Activity/Sailing"]}, EXIFTOOL)
+        tagging.add_tags(self.library, {path: ["Activity/Sailing"]}, field_values.opened(EXIFTOOL))
         mtime, size, raw, taken = self.row(path)
         stat = os.stat(path)
         self.assertEqual((mtime, size), (stat.st_mtime, stat.st_size))
@@ -201,7 +202,7 @@ class PartialWritesOnARowReadFromItsFile(Photos):
     def test_rotating_stamps_a_row_that_was_read(self):
         path = make_photo(self.folder, "k.jpg")
         self.indexed(path)
-        self.assertTrue(photo_actions.rotate(self.library, path, "left", EXIFTOOL).ok)
+        self.assertTrue(photo_actions.rotate(self.library, path, "left", field_values.opened(EXIFTOOL)).ok)
         stat = os.stat(path)
         self.assertEqual(self.row(path)[:2], (stat.st_mtime, stat.st_size))
 
@@ -223,12 +224,12 @@ class PartialWritesOnARowTheFileHasMovedOnFrom(Photos):
 
     def test_a_partial_write_leaves_it_for_the_scan(self):
         writers = {
-            "apply all": lambda path: tagging.add_tags(self.library, {path: ["Activity/Rowing"]}, EXIFTOOL),
-            "add to selected": lambda path: tagging.change_tags(self.library, [path], ["Activity/Rowing"], [], EXIFTOOL),
+            "apply all": lambda path: tagging.add_tags(self.library, {path: ["Activity/Rowing"]}, field_values.opened(EXIFTOOL)),
+            "add to selected": lambda path: tagging.change_tags(self.library, [path], ["Activity/Rowing"], [], field_values.opened(EXIFTOOL)),
             "rename a tag": lambda path: tagging.replace_tag(
-                self.library, [path], "Activity/Sailing", "Activity/Kayaking", EXIFTOOL),
-            "rotate": lambda path: photo_actions.rotate(self.library, path, "left", EXIFTOOL),
-            "shift date": lambda path: photo_actions.shift_date_taken(self.library, [path], 60, EXIFTOOL),
+                self.library, [path], "Activity/Sailing", "Activity/Kayaking", field_values.opened(EXIFTOOL)),
+            "rotate": lambda path: photo_actions.rotate(self.library, path, "left", field_values.opened(EXIFTOOL)),
+            "shift date": lambda path: photo_actions.shift_date_taken(self.library, [path], 60, field_values.opened(EXIFTOOL)),
         }
         for label, write in writers.items():
             with self.subTest(label):
@@ -238,7 +239,7 @@ class PartialWritesOnARowTheFileHasMovedOnFrom(Photos):
 
     def test_saving_one_photo_reads_the_file_back_whole_and_records_all_of_it(self):
         path, _read_at = self.moved_on("save.jpg")
-        self.assertTrue(tagging.save_photo(self.library, path, "", ["Activity/Rowing"], None, EXIFTOOL, "",
+        self.assertTrue(tagging.save_photo(self.library, path, "", ["Activity/Rowing"], None, field_values.opened(EXIFTOOL), "",
                                            base=page_writes.base(self.library, path)).ok)
         mtime, size, raw, _taken = self.row(path)
         stat = os.stat(path)
