@@ -1,10 +1,9 @@
 // TagPup's page: suggestions -- asking for them, following their progress and an index's,
 // showing them for a photo, and applying them.
 import { api } from './common/api.js';
-import { buildElement, replaceContent } from './common/dom.js';
+import { buildElement, replaceContent, withAction } from './common/dom.js';
 import { appUrls } from './common/gear.js';
 import { attachPersonFaces } from './common/person-faces.js';
-import { offersReexamine, withReexamine } from './common/reexamine-offer.js';
 import { pressable } from './common/press.js';
 import { baseName, isUnder, pathKey, samePath } from './common/paths.js';
 import { leafOf, peopleListHas, personLabelOf, photoAlreadyHas, sortedTags } from './common/vocabulary.js';
@@ -318,7 +317,7 @@ function showIndexing(running, waiting) {
  * (upper.indexEnded), then the status line keeps their closing sentences (the bake, the new faces), not the "Ready" of
  * the scan that read it again. One cancelled wrote nothing, and is not read again. A batch's folders share one status
  * (tagpup/jobs/indexing.py: one run), named by its first folder: its sentence is said once (#3417), and its Re-examine
- * is that folder's (sayIndexesEnded).
+ * (its `reexamine`) is that folder's (sayIndexesEnded).
  */
 function indexesFinished(finished) {
     const said = [];
@@ -330,7 +329,8 @@ function indexesFinished(finished) {
         const first = !heard.has(run);
         heard.add(run);
         const named = status.folder || folder;
-        const sentence = first && status.message && status.message !== NOTHING_TO_SAY ? `${baseName(named)}: ${status.message}` : '';
+        const head = `${baseName(named)}: `;
+        const sentence = first && status.message && status.message !== NOTHING_TO_SAY ? head + status.message : '';
         if (status.status === 'cancelled') {
             if (sentence) setStatus('ready', sentence);
             continue;
@@ -338,8 +338,8 @@ function indexesFinished(finished) {
         forgetScansHolding(folder);
         wrote.push(folder);
         if (status.status === 'failed') kind = 'error';
-        if (sentence) said.push({ folder: named, text: sentence });
-        else if (first && status.status === 'failed') said.push({ folder: named, text: `${baseName(named)}: indexing failed` });
+        if (sentence) said.push({ head, text: status.message, reexamine: status.reexamine || null });
+        else if (first && status.status === 'failed') said.push({ head, text: 'indexing failed', reexamine: null });
     }
     if (!wrote.length) return;
     Promise.resolve(upper.indexEnded(wrote)).then(() => {
@@ -348,20 +348,21 @@ function indexesFinished(finished) {
 }
 
 /**
- * The status line after indexes ended: their sentences, each `{folder, text}`; in one that offers Re-examine (some of
- * its new faces have a likely name: web/common/reexamine-offer.js) the word is a link to TagTuner's Re-examine of that
- * index's folder (TagTuner's address `reexamine=`, web/tuner/reexamine.js). The link is put in once TagTuner's address is
- * known (the gear's, web/common/gear.js appUrls), and only while the line still says this: a status said meanwhile
- * keeps its own words. With no TagTuner to point at, the words stay words.
+ * The status line after indexes ended: their sentences, each `{head, text, reexamine}` (the folder's name, its words,
+ * and the folder it offers Re-examine of or null: its status's `reexamine`, some of its new faces with a likely name or
+ * their matching failed); each that offers it has a link to TagTuner's Re-examine of that folder (TagTuner's address
+ * `reexamine=`, web/tuner/reexamine.js), on the sentence's word Re-examine or after it. The link is put in once
+ * TagTuner's address is known (the gear's, web/common/gear.js appUrls), and only while the line still says this: a
+ * status said meanwhile keeps its own words. With no TagTuner to point at, the words stay words.
  */
 function sayIndexesEnded(kind, said) {
-    const line = said.map(each => each.text).join(' ');
+    const line = said.map(each => each.head + each.text).join(' ');
     setStatus(kind, line, { transient: false });
-    if (!said.some(each => offersReexamine(each.text))) return;
+    if (!said.some(each => each.reexamine)) return;
     appUrls().then(urls => {
         if (!urls.tuner || statusText.textContent !== line) return;
-        replaceContent(statusText, ...said.flatMap((each, at) => [at ? ' ' : null,
-            ...withReexamine(each.text, () => reexamineLink(urls.tuner, each.folder))]));
+        replaceContent(statusText, ...said.flatMap((each, at) => [at ? ' ' : null, each.head, ...(each.reexamine
+            ? withAction(each.text, 'Re-examine', () => reexamineLink(urls.tuner, each.reexamine)) : [each.text])]));
     });
 }
 

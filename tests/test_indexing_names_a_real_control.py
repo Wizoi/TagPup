@@ -5,10 +5,8 @@ TagTuner lost the route no page called (docs/findings.md, #8 and #22). Faces are
 the photos' tags by the button "Name faces from tags" of TagTuner's header (and its gear) and of
 TagPup's folder view (#789), or by `tagpup_cli.py faces-from-tags` and `cluster-faces`.
 
-When some of the new faces have a likely name the sentence offers Re-examine on their folder, and
-both pages make that word an action (web/common/reexamine-offer.js: TagPup's status line links to
-TagTuner's Re-examine, TagTuner's index line runs it): the pages find it by the sentence's words,
-so those words are held to the pages' here.
+The Re-examine the sentence offers is the pages' action by the index's status field, not by these words
+(test_new_faces_are_matched_after_an_index: the field is set exactly when the sentence says Re-examine).
 """
 import os
 import re
@@ -41,24 +39,6 @@ class AddingAFolderNamesARealControl(unittest.TestCase):
             self.assertIn(indexing.CLUSTERING_BUTTON, buttons, "the %s page has no such button" % page)
         for message in self.messages():
             self.assertIn(indexing.CLUSTERING_BUTTON, message)
-
-
-class TheReexamineItOffersIsThePagesAction(unittest.TestCase):
-    def offer(self):
-        with open(os.path.join(WORKSPACE_DIR, "web", "common", "reexamine-offer.js"), encoding="utf-8") as f:
-            found = re.search(r"export const REEXAMINE_OFFER = '([^']+)';", f.read())
-        self.assertIsNotNone(found, "web/common/reexamine-offer.js no longer says REEXAMINE_OFFER as this test reads it")
-        return found.group(1)
-
-    def said(self, looked, decided):
-        return indexing.new_faces_said(Result(attempted=looked, details={"faces": decided, "keyword_photos": 0}))
-
-    def test_new_faces_with_a_likely_name_offer_it_in_the_words_the_pages_link(self):
-        self.assertIn(self.offer(), self.said(5, 3))
-
-    def test_no_face_with_a_likely_name_offers_nothing_to_press(self):
-        for looked in (0, 4):
-            self.assertNotIn("Re-examine", self.said(looked, 0))
 
 
 if __name__ == "__main__":

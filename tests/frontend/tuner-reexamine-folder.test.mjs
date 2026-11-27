@@ -7,9 +7,10 @@
  * again, so when it named a different number the page says so. A second press while
  * one is under way asks nothing.
  *
- * An index whose new faces have a likely name says "open Re-examine on their folder": on
- * TagTuner's index line the word runs Re-examine on the index's folder, and TagPup's status
- * line links to TagTuner opened onto it (`?reexamine=<folder>`).
+ * An index whose status offers Re-examine (`reexamine`: some new faces have a likely name, or
+ * their matching failed) keeps its sentence on TagTuner's index line, its Re-examine a button
+ * that runs Re-examine on that folder, until the next index -- the same folder's rerun too
+ * (#3422); TagPup's status line links to TagTuner opened onto it (`?reexamine=<folder>`).
  */
 import { test, describe, afterEach } from "node:test";
 import assert from "node:assert/strict";
@@ -72,17 +73,21 @@ function buttonOf(document, folder) {
 // The index's closing sentences as tagpup/services/indexing.py says them: some new faces with a likely name, and none.
 const LIKELY = "Folder indexed. 3 of the 5 new faces have a likely name: open Re-examine on their folder to confirm them.";
 const NONE_LIKELY = "Folder indexed. None of the 4 new faces looks enough like anyone named to be proposed: they wait in Identify Faces.";
+const FAILED = "Folder indexed. The photos are indexed, but matching their faces failed: RuntimeError: out of memory. Open "
+  + "Re-examine on their folder, or run cluster-faces in the TagPup CLI.";
+const AGAIN = "Indexing again: files arrived in it while it was being indexed...";
 const photoReads = (s) => s.urls().filter((u) => u.includes("/api/photos")).length;
 
 /** A server whose index of a batch, named by its first folder MEET (#3417), is under way when the page opens on
- * FINISH's entry and has ended with `message` by the first status read. */
-function endingIndex(message) {
+ * FINISH's entry and has ended with `message` by the first status read, offering Re-examine of `reexamine` (or not). */
+function endingIndex(message, reexamine = null) {
   let asked = 0;
   return server()
     .first("/api/folder/index-active", () => (asked++ === 0
       ? { active: [{ folder: FINISH, name: "Finish", percent: 90, message: "Matching" }], queued: [], busy: true, remaining: 1 }
       : { active: [], queued: [], busy: false, remaining: 0 }))
-    .first("/api/folder/index-status", { status: "completed", percent: 100, folder: MEET, message });
+    .first("/api/folder/index-status", { status: "completed", percent: 100, folder: MEET, message,
+      ...(reexamine ? { reexamine } : {}) });
 }
 
 const settle = (window, ms) => new Promise((r) => window.setTimeout(r, ms));
@@ -91,7 +96,7 @@ describe("Re-examine from an index's closing sentence", () => {
   afterEach(() => closeAllApps());
 
   test("TagTuner's index line keeps the sentence, and its Re-examine runs on the index's folder", async (t) => {
-    const ctx = await open(t, { server: endingIndex(LIKELY) });
+    const ctx = await open(t, { server: endingIndex(LIKELY, MEET) });
     await settle(ctx.window, 700);
     const line = ctx.document.getElementById("index-progress-text");
     assert.ok(!ctx.document.getElementById("index-progress-container").classList.contains("hidden"),
@@ -126,6 +131,21 @@ describe("Re-examine from an index's closing sentence", () => {
     assert.ok(ctx.document.getElementById("index-progress-container").classList.contains("hidden"));
     assert.equal(ctx.document.querySelector(".btn-index-reexamine"), null);
     assert.equal(posts(ctx.server).length, 0);
+  });
+
+  test("the matching of the new faces failed: its Re-examine is a button too (#3420)", async (t) => {
+    const ctx = await open(t, { server: endingIndex(FAILED, MEET) });
+    await settle(ctx.window, 700);
+    const line = ctx.document.getElementById("index-progress-text");
+    assert.equal(line.textContent, FAILED);
+    assert.ok(line.querySelector(".btn-index-reexamine"), "the failure's Re-examine is not something to press");
+  });
+
+  test("the words without the status's field: nothing to press, the field is the offer (#3423)", async (t) => {
+    const ctx = await open(t, { server: endingIndex(LIKELY) });
+    await settle(ctx.window, 700);
+    assert.ok(ctx.document.getElementById("index-progress-container").classList.contains("hidden"));
+    assert.equal(ctx.document.querySelector(".btn-index-reexamine"), null);
   });
 
   function openedOnto(t, folder, answer) {

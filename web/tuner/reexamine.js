@@ -169,8 +169,8 @@ export async function reexamineFolder(folderGroup, btn = null) {
 }
 
 /**
- * Re-examine `folder`, a path rather than a group of the list: what an index's closing sentence offers (its Re-examine,
- * web/common/reexamine-offer.js), pressed on TagTuner's index line (indexing.js) or followed from TagPup's status line
+ * Re-examine `folder`, a path rather than a group of the list: what an index's closing sentence offers (its status's
+ * `reexamine`), pressed on TagTuner's index line (indexing.js) or followed from TagPup's status line
  * (reexamineFromAddress). Once it named faces the list is read again, whichever the page shows: the folder need not be
  * one of its groups (its photos may be in the folders under it), and the list may have been read before the names were.
  */

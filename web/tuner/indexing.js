@@ -2,9 +2,8 @@
 // and removed from it in Manage Folders (web/common/folder-manager.js), opened from the gear (gear.js), which calls
 // indexingQueued once folders are queued.
 import { api } from './common/api.js';
-import { buildElement, replaceContent } from './common/dom.js';
+import { buildElement, replaceContent, withAction } from './common/dom.js';
 import { samePath } from './common/paths.js';
-import { offersReexamine, withReexamine } from './common/reexamine-offer.js';
 import { state } from './state.js';
 import { refreshSidebarQuietly } from './sidebar.js';
 import { REEXAMINE_TITLE, reexamineFolderAt } from './reexamine.js';
@@ -21,21 +20,23 @@ const indexQueueSummary = document.getElementById('index-queue-summary');
 const btnCancelQueue = document.getElementById('btn-cancel-queue');
 
 /**
- * The bar's line: the server's sentence. Given the `folder` of an index that ended, a sentence that offers Re-examine (its
- * new faces, some with a likely name: web/common/reexamine-offer.js) has the word a button that runs Re-examine on that
- * folder here (reexamine.js; a batch's status is named by its first folder, #3417); while an index runs, its words are
- * words: its bake still writes the folder's files. Not drawn again while it says the same of the same folder.
+ * The bar's line: the server's sentence. Given the `folder` an index that ended offers Re-examine of (its status's
+ * `reexamine`: some of its new faces have a likely name, or their matching failed; a batch's is its first folder, #3417),
+ * its Re-examine is a button that runs Re-examine on that folder here (reexamine.js), on the sentence's word or after it;
+ * while an index runs, its words are words: its bake still writes the folder's files. Not drawn again while it says the
+ * same of the same folder.
  */
 function sayOnTheBar(message, folder = null) {
     const text = message || 'Indexing...';
     indexProgressText.title = text;
-    if (indexProgressText.textContent === text && indexProgressText.dataset.folder === (folder || '')) return;
+    if (indexProgressText.dataset.said === text && indexProgressText.dataset.folder === (folder || '')) return;
+    indexProgressText.dataset.said = text;
     indexProgressText.dataset.folder = folder || '';
     if (!folder) {
         indexProgressText.textContent = text;
         return;
     }
-    replaceContent(indexProgressText, ...withReexamine(text, () => {
+    replaceContent(indexProgressText, ...withAction(text, 'Re-examine', () => {
         const button = buildElement('button', {
             className: 'btn-index-reexamine', text: 'Re-examine', title: REEXAMINE_TITLE, attrs: { type: 'button' },
         });
@@ -143,9 +144,10 @@ function pollIndexStatus(folderPath) {
                 clearInterval(state.indexPollTimer);
                 state.indexPollTimer = null;
                 state.lastFinishedFolder = folderPath;
-                // Its closing sentence stays on the bar when it offers Re-examine: the button there is the way to it.
-                state.indexEnding = data.status === 'completed' && offersReexamine(data.message)
-                    ? { message: data.message, folder: data.folder || folderPath } : null;
+                // Its closing sentence stays on the bar when it offers Re-examine (`reexamine`, the folder it offers
+                // it of): the button there is the way to it.
+                state.indexEnding = data.status === 'completed' && data.reexamine
+                    ? { message: data.message, folder: data.reexamine } : null;
 
                 if (data.status === 'failed') {
                     // One bad folder must not stop the rest of the queue, so this

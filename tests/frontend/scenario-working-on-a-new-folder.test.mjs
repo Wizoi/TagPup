@@ -6,8 +6,9 @@
  * list it kept from before the index, and when the index ends reads again what it wrote -- the Library pane's folders, the
  * open folder, the open view -- and keeps the index's closing sentence on the status line. Around it: rapid folder
  * switches, a reply for the library left, two folders queued with the open one second, a queue that does not answer, an
- * index cancelled, and no asking once nothing is queued. When some of the new faces have a likely name, the sentence's
- * Re-examine is a link to TagTuner's Re-examine of the index's folder (cut D).
+ * index cancelled, and no asking once nothing is queued. When the index's status offers Re-examine (`reexamine`: some of
+ * the new faces have a likely name, or their matching failed), its Re-examine is a link to TagTuner's Re-examine of that
+ * folder (cut D; #3420, #3423), made from the field and never from the words.
  *
  * The queue is the server's as tagpup/jobs/indexing.py IndexQueue gives it: `active` and `queued` from active(), each
  * folder's status from status() (READY for one nobody asked about). Folder names are invented.
@@ -28,6 +29,8 @@ const CLOSING = "Folder indexed. 12 photos read, 12 new. Baked 12 photos. 3 new 
 // The index's closing sentences as tagpup/services/indexing.py says them: some new faces with a likely name, and none.
 const LIKELY = "Folder indexed. 3 of the 5 new faces have a likely name: open Re-examine on their folder to confirm them.";
 const NONE_LIKELY = "Folder indexed. None of the 4 new faces looks enough like anyone named to be proposed: they wait in Identify Faces.";
+const FAILED = "Folder indexed. The photos are indexed, but matching their faces failed: RuntimeError: out of memory. Open "
+  + "Re-examine on their folder, or run cluster-faces in the TagPup CLI.";
 const TUNER = "http://localhost:8091/photo_index/";
 const APPS = { this: "tagpup", apps: { tagpup: "http://localhost:8090/photo_index/", tuner: TUNER } };
 const reexamineOf = (folder) => `${TUNER}?mode=folder-match&reexamine=${encodeURIComponent(folder)}`;
@@ -53,8 +56,8 @@ function queueOf(held = [REGATTA, HARBOUR]) {
     Object.assign(q.running, { percent, message });
     status(q.running.folder, { status: "running", percent, message });
   };
-  q.finish = (how = "completed", message = CLOSING) => {
-    status(q.running.folder, { status: how, percent: 100, message });
+  q.finish = (how = "completed", message = CLOSING, reexamine = null) => {
+    status(q.running.folder, { status: how, percent: 100, message, ...(reexamine ? { reexamine } : {}) });
     q.running = null;
     const next = q.waiting.shift();
     if (next) {
@@ -458,11 +461,44 @@ describe("V32: the index's new faces offer Re-examine, a link to TagTuner's", ()
     const q = queueOf();
     const ctx = await page(t, q);
     await addFromOrganize(ctx, HEAT_1);
-    q.finish("completed", LIKELY);
+    q.finish("completed", LIKELY, HEAT_1);
     await ctx.tick();
     await ctx.tick(200);
     assert.equal(ctx.status(), `Heat 1: ${LIKELY}`, "the link changed the sentence's words");
     assert.deepEqual(ctx.links(), [{ text: "Re-examine", href: reexamineOf(HEAT_1), target: "_blank" }]);
+  });
+
+  test("the matching of the new faces failed: its Re-examine is a link too (#3420)", async (t) => {
+    const q = queueOf();
+    const ctx = await page(t, q);
+    await addFromOrganize(ctx, HEAT_1);
+    q.finish("completed", FAILED, HEAT_1);
+    await ctx.tick();
+    await ctx.tick(200);
+    assert.equal(ctx.status(), `Heat 1: ${FAILED}`);
+    assert.deepEqual(ctx.links(), [{ text: "Re-examine", href: reexamineOf(HEAT_1), target: "_blank" }]);
+  });
+
+  test("a sentence offering Re-examine without the word: the link follows it", async (t) => {
+    const q = queueOf();
+    const ctx = await page(t, q);
+    await addFromOrganize(ctx, HEAT_1);
+    q.finish("completed", "Folder indexed. 3 new faces wait.", HEAT_1);
+    await ctx.tick();
+    await ctx.tick(200);
+    assert.equal(ctx.status(), "Heat 1: Folder indexed. 3 new faces wait. Re-examine");
+    assert.deepEqual(ctx.links().map((link) => link.href), [reexamineOf(HEAT_1)]);
+  });
+
+  test("the words without the status's field link nothing: the field is the offer (#3423)", async (t) => {
+    const q = queueOf();
+    const ctx = await page(t, q);
+    await addFromOrganize(ctx, HEAT_1);
+    q.finish("completed", LIKELY);
+    await ctx.tick();
+    await ctx.tick(200);
+    assert.equal(ctx.status(), `Heat 1: ${LIKELY}`);
+    assert.deepEqual(ctx.links(), []);
   });
 
   test("no new face with a likely name: the sentence says so and links nothing", async (t) => {
@@ -488,7 +524,7 @@ describe("V32: the index's new faces offer Re-examine, a link to TagTuner's", ()
     await openFolder(ctx, ROOT);
     await ctx.tick(200);
     batch = [];
-    const ended = { status: "completed", percent: 100, folder: HEAT_1, message: LIKELY };
+    const ended = { status: "completed", percent: 100, folder: HEAT_1, message: LIKELY, reexamine: HEAT_1 };
     for (const folder of [HEAT_1, HEAT_2]) q.statuses[folder] = { ...ended };
     await ctx.tick();
     await ctx.tick(200);
@@ -500,7 +536,7 @@ describe("V32: the index's new faces offer Re-examine, a link to TagTuner's", ()
     const q = queueOf();
     const ctx = await page(t, q, { apps: { this: "tagpup", apps: {} } });
     await addFromOrganize(ctx, HEAT_1);
-    q.finish("completed", LIKELY);
+    q.finish("completed", LIKELY, HEAT_1);
     await ctx.tick();
     await ctx.tick(200);
     assert.equal(ctx.status(), `Heat 1: ${LIKELY}`);
@@ -512,7 +548,7 @@ describe("V32: the index's new faces offer Re-examine, a link to TagTuner's", ()
     const q = queueOf();
     const ctx = await page(t, q, { apps: () => new Promise((resolve) => { answer = resolve; }) });
     await addFromOrganize(ctx, HEAT_1);
-    q.finish("completed", LIKELY);
+    q.finish("completed", LIKELY, HEAT_1);
     await ctx.tick();
     await ctx.tick(200);
     assert.equal(ctx.status(), `Heat 1: ${LIKELY}`);
