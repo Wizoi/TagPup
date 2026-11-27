@@ -263,8 +263,8 @@ class IndexQueue:
         (tagpup.web.folder_routes): the index would be refused at its next batch (store.photos.record_indexed raises
         NotHeld; the batch makes no rows) and stop, failed, part-way, and its bake would write the files of photos whose
         rows are gone. A folder asked for again while it is indexed waits too (`_missed`). It sees only this queue: a
-        run of another process's is its row's (tagpup.services.libraries.removal_refusal). pending() names a batch by
-        its first folder only, and active() lists folders, not who covers them, so neither answers this."""
+        run of another process's is its row's (tagpup.services.libraries.removal_refusal). active() lists
+        folders, not who covers them, so it does not answer this."""
         return self._job_of(folder, overlapping=True)
 
     def _job_of(self, folder, overlapping):
@@ -305,11 +305,6 @@ class IndexQueue:
         """Is a folder being indexed, or waiting to be?"""
         with self._lock:
             return bool(self._pending) or (self._runner is not None and self._runner.is_alive())
-
-    def pending(self):
-        """The folders waiting, in order, as {"folder"}."""
-        with self._lock:
-            return [{"folder": job["folder"]} for job in self._pending]
 
     def active(self):
         """What is being indexed now, and what waits behind it, each folder by its own path and name: a batch

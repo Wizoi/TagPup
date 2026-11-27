@@ -233,7 +233,7 @@ class TheCli(Drifted, unittest.TestCase):
         with mock.patch.object(indexing_jobs.IndexQueue, "_ensure_runner"):
             started = queue.start([self.folder, other], index, together=True)
             self.assertEqual(2, started.changed)
-            self.assertEqual(1, len(queue.pending()))
+            self.assertEqual(2, len(queue.active()["queued"]), "one batch, each folder named")
             self.assertEqual(0, queue.start([other], index, together=True).changed, "queued twice")
             queue.run_pending()
         self.assertEqual([[self.folder, other]], handed)

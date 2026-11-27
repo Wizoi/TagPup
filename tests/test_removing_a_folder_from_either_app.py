@@ -179,8 +179,8 @@ class RemovingAFolder:
         self.assertEqual((200, 2), (status, body["photos_removed"]), body)
 
     def test_is_refused_while_a_folder_below_it_waits_alone_or_in_a_batch(self):
-        """A batch (sync's new files, IndexQueue.start `together`) is named by its first folder only in the queue's
-        pending() and active(): the second is below the folder removed too."""
+        """A batch (sync's new files, IndexQueue.start `together`) is named by its first folder only in the queue's job list;
+        active() names each, so the second is below the folder removed too."""
         self.queue_held_back([self.meet2])
         status, body = self.remove(self.season)
         self.assertEqual((409, False), (status, body["success"]), body)

@@ -132,7 +132,7 @@ class EveryEntryPointOfTheServer(unittest.TestCase):
         answer = self.apps[kind].post(route, json=body)
         self.assertEqual(200, answer.status_code, answer.get_json())
         queue = self.runtime.index_queues.of(self.library)
-        self.assertTrue(queue.pending(), "nothing was queued")
+        self.assertTrue(queue.active()["queued"], "nothing was queued")
         queue.run_pending()
         return queue.status(self.folder)
 

@@ -177,7 +177,7 @@ class TestWorkerThreadDatabaseBinding(unittest.TestCase):
             mock_popen.return_value = mock_indexer()
             with patch.object(indexing_jobs.IndexQueue, "_ensure_runner"):
                 self.post(f"/{self.OTHER_URL_NAME}/api/folder/index-start", {"folder_path": self.tmpdir})
-            self.assertEqual([job["folder"] for job in queue.pending()], [paths.stored(self.tmpdir)])
+            self.assertEqual([each["folder"] for each in queue.active()["queued"]], [paths.stored(self.tmpdir)])
             queue._statuses.clear()
             queue.run_pending()
         self.assertEqual(queue.status(self.tmpdir).get("status"), "completed")

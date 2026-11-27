@@ -309,7 +309,7 @@ class AFolderToAdd(AfterAMove):
         with mock.patch.object(type(queue), "_ensure_runner"):
             reply = self.post("/api/folder/index-start", {"folder_path": both})
         self.assertEqual(200, reply.status_code, reply.get_data(as_text=True))
-        self.assertEqual([os.path.join(self.first, "Both")], [job["folder"] for job in queue.pending()])
+        self.assertEqual([os.path.join(self.first, "Both")], [each["folder"] for each in queue.active()["queued"]])
 
 
 class TheTunerToo(AfterAMove):

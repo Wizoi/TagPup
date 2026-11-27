@@ -765,7 +765,7 @@ class TestFolderQueue(TunerAPITestBase):
         return folders
 
     def queue_state(self):
-        return self.index_queue().pending()
+        return self.index_queue().active()["queued"]
 
     def post_start(self, folders, block_runner=True):
         """Queue folders, with the worker held back so the queue stays observable."""

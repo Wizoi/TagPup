@@ -146,7 +146,7 @@ class WhatIsQueued(QueueTest):
         folders = self.folders(2)
         result = self.start([f.replace(os.sep, "/") for f in folders])
         self.assertEqual(result.details["queued"], [paths.stored(f) for f in folders])
-        self.assertEqual([job["folder"] for job in self.queue.pending()], folders)
+        self.assertEqual([each["folder"] for each in self.queue.active()["queued"]], folders)
         self.assertEqual(self.statuses(folders), ["queued", "queued"])
 
     def test_a_folder_asked_for_twice_or_already_waiting_is_queued_once(self):
@@ -154,14 +154,14 @@ class WhatIsQueued(QueueTest):
         self.start([folder, folder])
         result = self.start([folder])
         self.assertEqual((result.details["queued"], result.details["already_queued"]), ([], [folder]))
-        self.assertEqual(len(self.queue.pending()), 1)
+        self.assertEqual(len(self.queue.active()["queued"]), 1)
 
     def test_a_folder_being_indexed_is_not_queued_behind_itself(self):
         folder = self.folders(1)[0]
         self.queue._statuses[paths.key(folder)] = {"status": "running", "folder": folder}
         result = self.start([folder])
         self.assertEqual(result.details["already_queued"], [folder])
-        self.assertEqual(self.queue.pending(), [])
+        self.assertEqual(self.queue.active()["queued"], [])
 
     def test_what_is_not_a_folder_is_reported_and_none_at_all_is_refused(self):
         folder = self.folders(1)[0]
@@ -172,7 +172,7 @@ class WhatIsQueued(QueueTest):
 
         refused = self.start([missing])
         self.assertEqual(refused.refused, "No valid folder path: %s" % missing)
-        self.assertEqual(len(self.queue.pending()), 1)
+        self.assertEqual(len(self.queue.active()["queued"]), 1)
 
     def test_cancelling_drops_what_waits_and_says_so(self):
         folders = self.folders(3)
@@ -182,7 +182,7 @@ class WhatIsQueued(QueueTest):
         self.assertEqual(self.statuses(folders), ["queued", "cancelled", "queued"], "a cancelled folder is not 'completed'")
         self.assertEqual(self.queue.cancel(everything=True).details["cancelled"],
                          [folders[0], folders[2]])
-        self.assertEqual(self.queue.pending(), [])
+        self.assertEqual(self.queue.active()["queued"], [])
 
     def test_cancelling_leaves_the_folder_being_indexed_alone(self):
         running, waiting = self.folders(2)
@@ -417,15 +417,16 @@ class TheQueueIsChangedAndReadUnderOneLock(QueueTest):
                                                                   "message": "Starting indexing...", "folder": job["folder"]}
                 self.queue._current_folders = [job["folder"]]
             took.set()
-        folders_of = indexing._folders_of
 
-        def folders_after_the_worker(job):
-            # active() reads the running folders, then the waiting ones: the worker tries to take the job in between.
-            threading.Thread(target=worker_takes_the_job, daemon=True).start()
-            took.wait(1.0)
-            return folders_of(job)
-        with mock.patch.object(indexing, "_folders_of", side_effect=folders_after_the_worker):
-            found = self.queue.active()
+        class PendingTakenAsItIsRead(list):
+            def __iter__(self):
+                # active() has read the running folders and now reads the waiting ones: the worker tries to take the job
+                # at the start of that pass; the lock holds it back (1 s), or the job is gone before the pass sees it.
+                threading.Thread(target=worker_takes_the_job, daemon=True).start()
+                took.wait(1.0)
+                return super().__iter__()
+        self.queue._pending = PendingTakenAsItIsRead(self.queue._pending)
+        found = self.queue.active()
         self.assertTrue(took.wait(5))
         self.assertEqual((True, 1), (found["busy"], found["remaining"]), found)
 
