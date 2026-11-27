@@ -99,13 +99,13 @@ class APhotoWhoseXmpExifToolObjectsTo(unittest.TestCase):
         photo = photo_holding(self, TWO_ABOUTS)
         plan = a_bake()
         plan.update({identity.DOCUMENT_ID_FIELD: "xmp.did:harbour-new", "IPTC:Keywords": ["Places/Harbour", "Quay"]})
-        with ExifToolSession(executable=EXIFTOOL, config_file=bake.config_path()) as et:
-            with mock.patch.object(et, "execute", wraps=et.execute) as execute:
-                field_values.write(et, photo, plan)
+        with field_values.opened(EXIFTOOL) as et:
+            with mock.patch.object(ExifToolSession, "execute", autospec=True, side_effect=ExifToolSession.execute) as execute:
+                et.write(photo, plan)
             self.assertEqual(1, len(writes(execute)), "a write was %d commands" % len(writes(execute)))
-            held = field_values.read_one(et, photo, list(plan))
-            kept = field_values.read_one(et, photo, ["XMP:Subject", "XMP:HierarchicalSubject"])
-            maker_note = et.execute("-b", "-XMP-GCamera:HDRPMakerNote", photo)
+            held = et.read_one(photo, list(plan))
+            kept = et.read_one(photo, ["XMP:Subject", "XMP:HierarchicalSubject"])
+            maker_note = execute.call_args.args[0].execute("-b", "-XMP-GCamera:HDRPMakerNote", photo)
         self.assertTrue(fields.same_fields(held, plan), held)
         self.assertEqual((["Places/Harbour"], ["Places/Harbour"]), (kept["XMP:Subject"], kept["XMP:HierarchicalSubject"]))
         self.assertEqual("QUJD", maker_note, "the phone's description lost its field")
@@ -115,7 +115,7 @@ class APhotoWhoseXmpExifToolObjectsTo(unittest.TestCase):
         with ExifToolSession(executable=EXIFTOOL) as et:
             with mock.patch.object(et, "execute", wraps=et.execute) as execute:
                 minted = field_values.ensure_document_id(et, photo, {})
-            held = field_values.read_one(et, photo, [identity.DOCUMENT_ID_FIELD, "XMP:Subject"])
+            held = field_values._read_one(et, photo, [identity.DOCUMENT_ID_FIELD, "XMP:Subject"])
         self.assertTrue(minted and minted.startswith("xmp.did:"), minted)
         self.assertEqual(1, len(writes(execute)), "a mint was %s" % writes(execute))
         self.assertEqual(([minted], ["Places/Harbour"]), (held[identity.DOCUMENT_ID_FIELD], held["XMP:Subject"]))
@@ -124,9 +124,9 @@ class APhotoWhoseXmpExifToolObjectsTo(unittest.TestCase):
         photo = photo_holding(self, WRONG_URI)
         plan = {"XMP:Subject": ["Places/Harbour", "Quay"]}
         with ExifToolSession(executable=EXIFTOOL) as et:
-            field_values.write(et, photo, plan)
+            field_values._write(et, photo, plan)
             self.assertEqual(0, et.last_status)
-            held = field_values.read_one(et, photo, list(plan))
+            held = field_values._read_one(et, photo, list(plan))
         self.assertTrue(fields.same_fields(held, plan), held)
 
     def test_a_packet_with_no_closing_tag_is_refused_and_the_file_left_as_it_was(self):
@@ -178,9 +178,9 @@ class AKeywordWrite(unittest.TestCase):
         values["XMP:Description"] = "Regatta"
         with ExifToolSession(executable=EXIFTOOL) as et:
             with mock.patch.object(et, "execute", wraps=et.execute) as execute:
-                field_values.write(et, self.photo, values)
+                field_values._write(et, self.photo, values)
             self.assertEqual(1, execute.call_count, "a write was %d ExifTool commands" % execute.call_count)
-            held = field_values.read_one(et, self.photo, list(values))
+            held = field_values._read_one(et, self.photo, list(values))
         self.assertTrue(fields.same_fields(held, values), held)
         self.assertEqual([], held["XMP:HierarchicalSubject"])
         self.assertEqual(["Regatta"], held["XMP:Description"])
@@ -189,10 +189,10 @@ class AKeywordWrite(unittest.TestCase):
         values = {"XMP:HierarchicalSubject": [], "EXIF:XPKeywords": ""}
         with ExifToolSession(executable=EXIFTOOL) as et:
             with mock.patch.object(et, "execute", wraps=et.execute) as execute:
-                field_values.write(et, self.photo, values)
+                field_values._write(et, self.photo, values)
             self.assertEqual(1, execute.call_count)
             self.assertIn("-m", execute.call_args.args, "a clear alone is written as every write is")
-            held = field_values.read_one(et, self.photo, ["XMP:HierarchicalSubject", "EXIF:XPKeywords", "XMP:Subject"])
+            held = field_values._read_one(et, self.photo, ["XMP:HierarchicalSubject", "EXIF:XPKeywords", "XMP:Subject"])
         self.assertEqual(([], [], ["Places/Harbour"]),
                          (held["XMP:HierarchicalSubject"], held["EXIF:XPKeywords"], held["XMP:Subject"]))
 
@@ -201,19 +201,19 @@ class AKeywordWrite(unittest.TestCase):
                   "XMP:HierarchicalSubject": []}
         with ExifToolSession(executable=EXIFTOOL) as et:
             with mock.patch.object(et, "execute", wraps=et.execute) as execute:
-                field_values.write(et, self.photo, values)
+                field_values._write(et, self.photo, values)
             self.assertEqual(1, execute.call_count, "a write was %d ExifTool commands" % execute.call_count)
-            held = field_values.read_one(et, self.photo, list(values))
+            held = field_values._read_one(et, self.photo, list(values))
         self.assertTrue(fields.same_fields(held, values), held)
 
     def test_an_identity_taken_away_goes_in_the_same_command(self):
         with ExifToolSession(executable=EXIFTOOL) as et:
-            field_values.write(et, self.photo, {identity.DOCUMENT_ID_FIELD: "xmp.did:harbour-0002"})
+            field_values._write(et, self.photo, {identity.DOCUMENT_ID_FIELD: "xmp.did:harbour-0002"})
             values = {identity.DOCUMENT_ID_FIELD: "", "XMP:Subject": ["Places/Quay"]}
             with mock.patch.object(et, "execute", wraps=et.execute) as execute:
-                field_values.write(et, self.photo, values)
+                field_values._write(et, self.photo, values)
             self.assertEqual(1, execute.call_count)
-            held = field_values.read_one(et, self.photo, list(values))
+            held = field_values._read_one(et, self.photo, list(values))
         self.assertEqual(([], ["Places/Quay"]), (held[identity.DOCUMENT_ID_FIELD], held["XMP:Subject"]))
 
 

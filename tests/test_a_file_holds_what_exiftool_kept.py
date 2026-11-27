@@ -100,7 +100,7 @@ class KeptCase(ReadFilesCase):
 class WhatTheFileKept(KeptCase):
     def test_a_write_records_what_the_file_holds_and_an_undo_finds_it(self):
         photos = [self.make_read(name) for name in ("a.jpg", "b.jpg", "c.jpg")]
-        with rewritten(), mock.patch.object(field_values, "read", wraps=field_values.read) as read:
+        with rewritten(), mock.patch.object(field_values, "_read", wraps=field_values._read) as read:
             result = self.add(photos, [LONG])
         change = result.details["change"]
         self.assertEqual(3, result.changed)
@@ -209,13 +209,13 @@ class AWriteThatChangedNothing(KeptCase):
 
     def test_is_not_counted_changed(self):
         a, b = self.make_read("a.jpg"), self.make_read("b.jpg")
-        real = field_values.write
+        real = field_values._write
 
         def write(et, path, values, **options):
             # field_values.write's answer: the fields it left as they were, none for one that "wrote" all.
             return real(et, path, values, **options) if path != a else ()
 
-        with mock.patch.object(field_values, "write", side_effect=write):
+        with mock.patch.object(field_values, "_write", side_effect=write):
             result = self.add([a, b])
         change = result.details["change"]
         self.assertEqual(1, result.changed)
@@ -228,7 +228,7 @@ class AWriteThatChangedNothing(KeptCase):
     def test_nothing_changed_leaves_no_change(self):
         a = self.make_read("a.jpg")
         last = self.last_change()
-        with mock.patch.object(field_values, "write"):
+        with mock.patch.object(field_values, "_write"):
             result = self.add([a])
         self.assertEqual((0, 1), (result.changed, len(result.errors)))
         self.assertEqual((None, last), (result.details["change"], self.last_change()), "History lists no change that wrote nothing")
@@ -330,7 +330,7 @@ class ABakeIsWritten(BakeCase):
             self.assertEqual(orientation.area_of(box, 16, 12), face.area, "a region read back is the float written")
             self.assertGreater(float(face.vector @ baked_files.unit(bake.FACE_DIM, 10 + n)), 0.999)
 
-        with mock.patch.object(field_values, "write", wraps=field_values.write) as write:
+        with mock.patch.object(field_values, "_write", wraps=field_values._write) as write:
             undone = self.undo(change)
         self.assertEqual((1, []), (undone.changed, undone.errors))
         self.assertEqual([{field: [] for field in values}], [call.args[2] for call in write.call_args_list],
@@ -414,7 +414,7 @@ class ABakeIsWritten(BakeCase):
             self.bake([a], {fields.REGION_INFO: regions})
         with ExifToolSession(executable=EXIFTOOL) as et:
             with self.assertRaises(ValueError):
-                field_values.write(et, a, self.values(1))
+                field_values._write(et, a, self.values(1))
         self.assertEqual((None, written), (self.last_change(), os.stat(a).st_mtime_ns))
 
     def test_a_structure_reads_back_as_the_text_written(self):
@@ -500,9 +500,9 @@ class ABakeIsWritten(BakeCase):
             with ExifToolSession(executable=EXIFTOOL, config_file=bake.config_path()) as et:
                 os.remove(config)
                 et.terminate()
-                field_values.read_one(et, a, [fields.REGION_INFO])
+                field_values._read_one(et, a, [fields.REGION_INFO])
                 with self.assertRaisesRegex(RuntimeError, "is not defined"):
-                    field_values.write(et, a, self.values(1))
+                    field_values._write(et, a, self.values(1))
 
     def test_apple_photos_regions_are_replaced_by_a_bake_and_put_back_equal(self):
         a = self.make_read("a.jpg")

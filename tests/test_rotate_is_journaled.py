@@ -334,7 +334,7 @@ class WhatIsRefused(RotationCase):
         path = self.make("a.jpg", orientation=6)
         self.face(path)
         stamp = self.rows("SELECT mtime, size FROM photos")
-        with mock.patch.object(field_values, "write", side_effect=OSError("the file is locked by another program")):
+        with mock.patch.object(field_values, "_write", side_effect=OSError("the file is locked by another program")):
             result = self.rotate(path)
         self.assertFalse(result.ok)
         self.assertEqual((result.attempted, result.changed), (1, 0))

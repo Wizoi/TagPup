@@ -51,10 +51,10 @@ class APhotoIsKnownByItsPicture(unittest.TestCase):
         before = self.of(path)
         size = os.path.getsize(path)
         with ExifToolSession(executable=EXIFTOOL) as et:
-            field_values.write(et, path, {"XMP:Subject": ["Places/Harbour"], "IPTC:Keywords": ["Places/Harbour"],
+            field_values._write(et, path, {"XMP:Subject": ["Places/Harbour"], "IPTC:Keywords": ["Places/Harbour"],
                                           "XMP:Description": "A quay at dusk"})
             field_values.ensure_document_id(et, path)
-            held = field_values.read_one(et, path, ["XMP:Subject"])
+            held = field_values._read_one(et, path, ["XMP:Subject"])
         self.assertEqual(["Places/Harbour"], held["XMP:Subject"])
         self.assertNotEqual(size, os.path.getsize(path), "the file's bytes changed")
         self.assertEqual(before, self.of(path))
@@ -72,7 +72,7 @@ class APhotoIsKnownByItsPicture(unittest.TestCase):
         before = self.of(path)
         with ExifToolSession(executable=EXIFTOOL) as et:
             # What a rotation writes: the Orientation alone (tagpup.services.rotation), never the pixels.
-            field_values.write(et, path, {fields.ORIENTATION: "6"})
+            field_values._write(et, path, {fields.ORIENTATION: "6"})
         after = self.of(path)
         self.assertNotEqual(before, after)
         stored = images.opened(path, upright=False)

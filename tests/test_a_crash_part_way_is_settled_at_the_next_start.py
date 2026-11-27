@@ -290,7 +290,7 @@ class APictureAWriteDamagesTwice(FilesCase):
         raise field_values.PictureChanged("its write changed the picture's bytes; the new file was discarded")
 
     def damaging(self):
-        return mock.patch.object(field_values, "write", self.refused)
+        return mock.patch.object(field_values, "_write", self.refused)
 
     def row(self):
         return self.rows("SELECT * FROM photos WHERE path = ?", (self.a,))
@@ -344,7 +344,7 @@ class APictureAWriteDamagesTwice(FilesCase):
 
         def held(*_args, **_kwargs):
             raise PermissionError("the file is being used by another process")
-        with mock.patch.object(field_values, "write", held):
+        with mock.patch.object(field_values, "_write", held):
             start_again(self.library)
         self.assertEqual(([], [], None, 0), (self.rows("SELECT id FROM changes WHERE id = ?", (change,)),
                                               self.notes(change), field_of(self.a, found), self.counted()))

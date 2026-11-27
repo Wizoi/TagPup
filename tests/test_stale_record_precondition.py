@@ -341,8 +341,8 @@ class TheFileIsComparedWithWhatThePageRead(Fresh):
         def read_one(et, photo_path, names):
             asked.append(set(names))
             return real_read_one(et, photo_path, names)
-        real_read_one = field_values.read_one
-        with mock.patch.object(field_values, "read_one", side_effect=read_one):
+        real_read_one = field_values._read_one
+        with mock.patch.object(field_values, "_read_one", side_effect=read_one):
             self.assertSaved(self.save(record, tags=["Trips/Coast", "Activity/Sailing"], stamp=stamp_of(path)))
             self.assertSaved(self.save(self.record(photo_id), date_taken="2021-05-06T07:08:09", stamp=stamp_of(path)))
         headers = set(fields.CLIP_HEADER_DATES)

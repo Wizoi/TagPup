@@ -271,7 +271,7 @@ class AClipDatedThroughTheJournal(tagged.ALibraryHoldingAClip):
         good = self.add_clip(ZERO_HEADERS, "sound.mp4")
         bad_id, good_id = self.index(bad, good)
         with ExifToolSession(executable=EXIFTOOL) as et:
-            held = field_values.read(et, [bad, good], fields.CLIP_HEADER_DATES)
+            held = field_values._read(et, [bad, good], fields.CLIP_HEADER_DATES)
         unreadable = [one for one in held.values() if isinstance(one, field_values.Unreadable)]
         self.assertEqual(1, len(unreadable), "the garbled clip alone is unreadable")
         self.assertIn("its QuickTime headers could not be read", str(unreadable[0]))
@@ -324,11 +324,11 @@ class AClipDatedThroughTheJournal(tagged.ALibraryHoldingAClip):
         before = self.read_bytes(path)
         headers = {field: [SAVED] for field in fields.CLIP_HEADER_DATES}
         with self.assertRaises(Refused) as refused:
-            field_values.write(None, path, headers, saving=lambda record, before: None)
+            field_values._write(None, path, headers, saving=lambda record, before: None)
         self.assertEqual(images.CLIP_NOT_EDITED, str(refused.exception))
         self.assertEqual(before, self.read_bytes(path), "nothing was written")
 
-        field_values.write(None, path, {"XMP:DateTimeOriginal": [SAVED], **headers}, saving=lambda record, before: None)
+        field_values._write(None, path, {"XMP:DateTimeOriginal": [SAVED], **headers}, saving=lambda record, before: None)
         after = self.read_bytes(path)
         self.assertEqual(saved_times(after), creation_times(after), "beside its XMP date, the header is written")
 
@@ -374,7 +374,7 @@ class AClipDatedThroughTheJournal(tagged.ALibraryHoldingAClip):
                              "nothing written, nothing journaled")
             held.reset_mock()
             with ExifToolSession(executable=EXIFTOOL) as et:
-                found = field_values.read(et, [path, second], fields.CLIP_HEADER_DATES)
+                found = field_values._read(et, [path, second], fields.CLIP_HEADER_DATES)
         self.assertEqual(1, held.call_count, "one read waits one deadline: the clips after it are not read")
         self.assertTrue(all(isinstance(one, field_values.NotAnswered) for one in found.values()), found)
 

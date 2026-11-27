@@ -167,7 +167,7 @@ def _held(row, wanted):
     return {field: _value(row, field) for field in wanted}
 
 
-def read(et, photo_paths, wanted, also=(), records=None, stop=None, params=()):
+def _read(et, photo_paths, wanted, also=(), records=None, stop=None, params=()):
     """{paths.key(path): {field: its values}} of each photo in `photo_paths`, for the
     fields in `wanted`; an Unreadable in place of the fields of a photo that could not be
     read (NotAnswered, of a photo ExifTool did not answer for). Read in batches; a batch ExifTool refuses is read again a
@@ -330,9 +330,9 @@ class Fields:
         read whole beside them, Unreadable too when ExifTool reported an error reading it (metadata.READ_ERROR_KEYS)."""
         et = self._session()
         if not whole:
-            return read_one(et, photo_path, wanted)
+            return _read_one(et, photo_path, wanted)
         records = {}
-        held = read(et, [photo_path], wanted, fields.METADATA_FIELDS, records).get(paths.key(photo_path))
+        held = _read(et, [photo_path], wanted, fields.METADATA_FIELDS, records).get(paths.key(photo_path))
         record = records.get(paths.key(photo_path))
         if isinstance(held, Exception):
             raise held
@@ -358,8 +358,8 @@ class Fields:
         options = {name: value for name, value in (("saving", saving), ("scratch_written", scratch_written))
                    if value is not None}
         if again is None:
-            return write(self._session(), photo_path, values, **options)
-        return written_once_more(self._session(), photo_path, values, again, **options)
+            return _write(self._session(), photo_path, values, **options)
+        return _written_once_more(self._session(), photo_path, values, again, **options)
 
     def left_as_they_were(self, values, photo_path):
         """The fields of `values` a journaled write of `photo_path` leaves holding what they held (left_as_they_were)."""
@@ -379,7 +379,7 @@ class Fields:
         photo_paths = list(photo_paths)
         if not photo_paths:
             return {}
-        return read(self._session(), photo_paths, wanted, also or (), records, stop=stop)
+        return _read(self._session(), photo_paths, wanted, also or (), records, stop=stop)
 
     def whole(self, photo_paths, *, people=None, bakes=False):
         """A record of each of `photo_paths`, in order, as the index records it (tagpup.files.metadata.structure), read
@@ -410,7 +410,7 @@ class Fields:
             why = str(e) or type(e).__name__
             return [dict(metadata.empty(path, why, (None, None)), unread=metadata.NOT_STARTED) for path in photo_paths]
         records = {}
-        found = read(et, photo_paths, [], list(fields.METADATA_FIELDS) + list(BAKE_FIELDS if bakes else ()), records,
+        found = _read(et, photo_paths, [], list(fields.METADATA_FIELDS) + list(BAKE_FIELDS if bakes else ()), records,
                      params=BAKE_PARAMS if bakes else ())
         results = []
         for path, stamp in zip(photo_paths, stamps):
@@ -542,15 +542,15 @@ def _read_headers(found, photo_paths, wanted):
     return found
 
 
-def read_one(et, photo_path, wanted):
+def _read_one(et, photo_path, wanted):
     """The fields of one photo, as read() gives them; raises Unreadable."""
-    held = read(et, [photo_path], wanted).get(paths.key(photo_path))
+    held = _read(et, [photo_path], wanted).get(paths.key(photo_path))
     if isinstance(held, Exception) or held is None:
         raise held or Unreadable("ExifTool answered nothing for it")
     return held
 
 
-def write(et, photo_path, values, saving=None, scratch_written=None):
+def _write(et, photo_path, values, saving=None, scratch_written=None):
     """Write `values` ({field: value}) into a photo, in one ExifTool command, clearing a
     field whose value is empty, telling ExifTool an objection it calls minor does not stop it (WRITE_OPTIONS: a photo
     with two rdf:about attributes in its XMP takes a write; DECISIONS 2026-10-27). Raises
@@ -755,7 +755,7 @@ def packet_given(scratch, packet):
         raise Refused(images.CLIP_NOT_PATCHED)
 
 
-def written_once_more(et, photo_path, values, again, **options):
+def _written_once_more(et, photo_path, values, again, **options):
     """write(et, photo_path, values, **options), made once more when its new file's picture differed (PictureChanged:
     discarded, the photo as it was), for a held photo's write (tagpup.services.file_changes._carry) and a Just-look
     photo's (tagpup.services.file_only) alike (DECISIONS 2026-11-05, #2476). `again()`, the caller's, is called before
@@ -764,11 +764,11 @@ def written_once_more(et, photo_path, values, again, **options):
     Returns what write returns. The photo is not looked at between the two: the picture check compares the second new
     file with the photo as it is then."""
     try:
-        return write(et, photo_path, values, **options)
+        return _write(et, photo_path, values, **options)
     except PictureChanged:
         again()
     try:
-        return write(et, photo_path, values, **options)
+        return _write(et, photo_path, values, **options)
     except PictureChanged:
         raise PictureChanged(CHANGED_TWICE) from None
 
@@ -897,7 +897,7 @@ def ensure_document_id(et, path, metadata=None):
         return existing
     minted = identity.mint_document_id()
     try:
-        written_once_more(et, path, {identity.DOCUMENT_ID_FIELD: minted}, again=lambda: logger.warning(
+        _written_once_more(et, path, {identity.DOCUMENT_ID_FIELD: minted}, again=lambda: logger.warning(
             "%s: the write of its identity changed the picture's bytes; the new file was discarded, and it is written "
             "once more", path))
     except Exception as e:

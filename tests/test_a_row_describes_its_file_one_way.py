@@ -125,13 +125,13 @@ class AFileChangedWhileItIsRead(ReadFilesCase):
         with mock.patch.object(file_changes, "_reached", side_effect=crash_at("file written")):
             with self.assertRaises(Crash):
                 self.add([a])
-        real = field_values.read_one
+        real = field_values._read_one
 
         def read_one(et, path, wanted):
             held = real(et, path, wanted)
             touched_by_another_program(path)
             return held
-        with mock.patch.object(field_values, "read_one", read_one):
+        with mock.patch.object(field_values, "_read_one", read_one):
             self.assertEqual(1, self.settle())
         stamp = self.rows("SELECT mtime, size FROM photos WHERE path = ?", (a,))[0]
         self.assertFalse(describes_its_file(stamp, a), "a change made during the settle's read was stamped as read")

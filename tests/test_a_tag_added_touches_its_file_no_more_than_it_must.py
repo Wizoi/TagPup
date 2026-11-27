@@ -163,7 +163,7 @@ class ATagAdded(Fresh):
     def test_fields_that_do_not_read_back_as_written_put_the_file_back(self):
         path, photo_id, record = self.held("b.jpg", 52)
         original, tags_before = bytes_of(path), self.row_tags(photo_id)
-        real_read = field_values.read
+        real_read = field_values._read
 
         def read(et, photo_paths, wanted, *args, **kwargs):
             found = real_read(et, photo_paths, wanted, *args, **kwargs)
@@ -173,7 +173,7 @@ class ATagAdded(Fresh):
                 held["XMP:Subject"] = list(TWO)                 # what it held before: the patch did not take
             return found
 
-        with mock.patch.object(field_values, "read", read):
+        with mock.patch.object(field_values, "_read", read):
             reply = self.save(record, tags=["Trips/Coast"])
         body = reply.get_json()
         self.assertEqual((200, False), (reply.status_code, body["success"]), reply.data)

@@ -222,7 +222,7 @@ class TheIndexWritesTheBake(unittest.TestCase):
 
     def test_a_write_that_changed_the_picture_is_made_again_and_the_line_says_so(self):
         path = self.picture("a.jpg", (200, 40, 40))
-        write, calls = field_values.write, []
+        write, calls = field_values._write, []
 
         def damaged_once(*args, **kwargs):
             # The journal's writes (file_changes._written: the bake's), not the identity mint's before them.
@@ -231,7 +231,7 @@ class TheIndexWritesTheBake(unittest.TestCase):
                 if len(calls) == 1:
                     raise field_values.PictureChanged("its write changed the picture's bytes; the new file was discarded")
             return write(*args, **kwargs)
-        with mock.patch.object(field_values, "write", damaged_once):
+        with mock.patch.object(field_values, "_write", damaged_once):
             said = " ".join(self.index().output.split())
         self.assertEqual([path, path], calls)
         self.assertIn("Bake: 1 file(s) written", said)
@@ -348,13 +348,13 @@ class TheIndexWritesTheBake(unittest.TestCase):
     def test_a_share_that_stops_answering_in_the_bake_names_no_change_to_undo(self):
         photos = [self.picture(name, colour) for name, colour in (("a.jpg", (200, 40, 40)), ("b.jpg", (40, 200, 40)),
                                                                   ("c.jpg", (40, 40, 200)))]
-        found, real = bake.WRITTEN[bake.FACES_FOUND], field_values.read_one
+        found, real = bake.WRITTEN[bake.FACES_FOUND], field_values._read_one
 
         def read_one(et, path, *args, **kwargs):
             if paths.key(path) == paths.key(photos[1]):
                 raise field_values.NotAnswered("ExifTool did not answer in 300 s")
             return real(et, path, *args, **kwargs)
-        with mock.patch.object(file_changes.field_values, "read_one", side_effect=read_one):
+        with mock.patch.object(file_changes.field_values, "_read_one", side_effect=read_one):
             result = file_changes.write_fields(self.library, baking.INDEX_OPERATION, EXIFTOOL, photos, [found],
                                                lambda _path, _held: file_changes.Plan(after={found: ["0"]}))
         said = " ".join(result.refused.split())
@@ -368,7 +368,7 @@ class TheIndexWritesTheBake(unittest.TestCase):
         with mock.patch.object(bake_after_index, "bake_folders"):
             self.index()
         heard = lambda facts: [(found.get("files_done"), found.get("files")) for found in facts]
-        real = field_values.read_one
+        real = field_values._read_one
 
         def read_one(et, path, *args, **kwargs):
             if paths.key(path) == paths.key(photos[3]):
@@ -376,7 +376,7 @@ class TheIndexWritesTheBake(unittest.TestCase):
             return real(et, path, *args, **kwargs)
         lines = []
         with mock.patch.object(batches, "CHUNK", 2), \
-                mock.patch.object(file_changes.field_values, "read_one", side_effect=read_one):
+                mock.patch.object(file_changes.field_values, "_read_one", side_effect=read_one):
             baked = bake_after_index.bake_folders(self.library, EXIFTOOL, DETECTOR, [self.folder], {}, each=lines.append)
         self.assertTrue(baked.stalled)
         self.assertEqual([(None, None), (2, 5)], heard(lines), "no line after the share stopped answering")
@@ -522,13 +522,13 @@ class TheIndexWritesTheBake(unittest.TestCase):
             self.index(self.folder, quay)
         self.suggest_keeps_a_vector(*made[self.folder], *made[quay])
         self.assertEqual((4, 2, False), self.looked())
-        real = field_values.read_one
+        real = field_values._read_one
 
         def read_one(et, path, *args, **kwargs):
             if paths.key(os.path.dirname(path)) == paths.key(quay):
                 raise field_values.NotAnswered("ExifTool did not answer in 300 s")
             return real(et, path, *args, **kwargs)
-        with mock.patch.object(file_changes.field_values, "read_one", side_effect=read_one):
+        with mock.patch.object(file_changes.field_values, "_read_one", side_effect=read_one):
             said = self.index_with_no_model(self.folder, quay)
         self.assertIn("Bake: 2 file(s) written", said)
         for path in made[self.folder]:
@@ -547,7 +547,7 @@ class TheIndexWritesTheBake(unittest.TestCase):
 
     def test_a_share_that_stops_answering_while_its_folder_is_read_leaves_every_photo_not_written_owed(self):
         a, b = self.never_baked("a.jpg", "b.jpg")
-        real = field_values.read
+        real = field_values._read
 
         def folder_read(et, photo_paths, *args, **kwargs):
             # The folder's one read (baking.FolderRead), in batches of one: the share goes away after the first.
@@ -555,7 +555,7 @@ class TheIndexWritesTheBake(unittest.TestCase):
                 return real(_StallsAfter(et, 1), photo_paths, *args, **kwargs)
             return real(et, photo_paths, *args, **kwargs)
         with mock.patch.object(field_values, "READ_BATCH", 1), \
-                mock.patch.object(field_values, "read", side_effect=folder_read):
+                mock.patch.object(field_values, "_read", side_effect=folder_read):
             baked = bake_after_index.bake_folders(self.library, EXIFTOOL, DETECTOR, [self.folder], {})
         self.assertEqual((True, 0, 0), (baked.stalled, baked.written, baked.adopted))
         self.assertEqual([[], []], [self.fingerprint_row(path) for path in (a, b)],
@@ -641,7 +641,7 @@ class TheIndexWritesTheBake(unittest.TestCase):
 
     def test_a_new_folders_share_that_stops_answering_while_the_bake_reads_it_leaves_its_photos_owed(self):
         a, b = self.picture("a.jpg", (200, 40, 40)), self.picture("b.jpg", (40, 200, 40))
-        real_read, real_bake = field_values.read, bake_after_index.bake_folders
+        real_read, real_bake = field_values._read, bake_after_index.bake_folders
 
         def folder_read(et, photo_paths, *args, **kwargs):
             # The bake's one read of the folder (baking.FolderRead), in batches of one: the share goes away after the first.
@@ -651,7 +651,7 @@ class TheIndexWritesTheBake(unittest.TestCase):
 
         def bake(*args, **kwargs):
             with mock.patch.object(field_values, "READ_BATCH", 1), \
-                    mock.patch.object(field_values, "read", side_effect=folder_read):
+                    mock.patch.object(field_values, "_read", side_effect=folder_read):
                 return real_bake(*args, **kwargs)
         with mock.patch.object(bake_after_index, "bake_folders", side_effect=bake):
             said = " ".join(self.index().output.split())
