@@ -1,4 +1,6 @@
 # Working on a new folder: a folder added to a library (or a new library) can be worked on at once, and every page says what is still under way
+Status: BUILT 2026-11-26. Cuts A-G merged, pushed and installed at 88d39929 (full suite green on 801d7c4a); their findings
+fixed or decided (#3407-#3443, none open).
 Live count (2026-11-26, read-only): rows of a folder gone with its root, kept "missing": photo_index 1, kr-track 0, mu_dance 0,
 renton_parkrun 0. Everything else is a user action, through the real writers: create a library and add folders (mu_dance,
 5 folders, 2026-11-21 to 26), add a folder from Organize, open Library while it indexes, save while the index bakes.
