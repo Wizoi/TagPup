@@ -1,7 +1,9 @@
 """A photo, a clip or a library a test asks for is made once by the real writer and copied for each test
 (tests/corpus.py): the copies are private, the item is never written, and the run's eight processes, a run killed
 part-way and a corpus folder deleted mid-run each still give every test a whole copy. What ExifTool and ffmpeg make is
-kept across runs, made again when either is upgraded, and the least recently used deleted past the cap.
+kept across runs, made again when either is upgraded, and the least recently used deleted past the cap. Every item of
+the conformance corpus (corpus.ITEMS), made twice into two empty corpus folders, holds the same bytes, and no two hold
+the same: a recipe is its bytes, and each makes the layout it names.
 
 Each test names corpus folders of its own (corpus.ENV and corpus.CACHE_ENV, in a home of its own), never the run's or
 the machine's: it kills makers, deletes folders and fakes installed writers. The photo is ExifTool's, as FilesCase.make's is; the race and the kill are timed by a maker of the
@@ -21,11 +23,13 @@ import corpus  # noqa: E402
 import own_home  # noqa: E402
 from waiting import wait_until  # noqa: E402
 
+from tagpup import config  # noqa: E402
 from tagpup.core import processes  # noqa: E402
 from tagpup.files.exiftool_session import ExifToolSession  # noqa: E402
 from tagpup.store import db, schema  # noqa: E402
 
 EXIFTOOL = own_home.installed_exiftool()
+TOOLS = config.locate_ffmpeg()
 BEACH = {"XMP:Subject": ["Beach"], "IPTC:Keywords": ["Beach"]}
 WHOLE = b"made " * 2000
 
@@ -251,6 +255,25 @@ class TheRunsOfMonthsShareOneCorpus(ACorpusOfItsOwn):
         self.assertEqual(WHOLE, bytes_of(corpus.made(os.path.join(self.folder, "back.bin"), ["jetty"], making(made),
                                                      keep=True)))
         self.assertEqual(5, len(made), "asked for again, made again")
+
+
+@unittest.skipIf(EXIFTOOL is None or TOOLS.problem, "ExifTool or ffmpeg not installed")
+class EveryRecipeIsItsBytes(unittest.TestCase):
+
+    def test_every_recipe_made_twice_into_two_empty_corpus_folders_holds_the_same_bytes(self):
+        home = own_home.for_test(self, prefix="corpus_twice_")
+        made = []
+        for n in range(2):
+            where = os.path.join(home.root, str(n))
+            run, kept = os.path.join(where, "run"), os.path.join(where, "kept")
+            with mock.patch.dict(os.environ, {corpus.ENV: run, corpus.CACHE_ENV: kept}):
+                made.append({name: bytes_of(corpus.of(name, os.path.join(where, "copies"), EXIFTOOL, TOOLS.ffmpeg))
+                             for name in corpus.ITEMS})
+            for folder in (run, kept):
+                self.assertTrue(corpus.remove(folder))
+        self.assertEqual([], [name for name in corpus.ITEMS if made[0][name] != made[1][name]],
+                         "a recipe made twice made two files")
+        self.assertEqual(len(corpus.ITEMS), len(set(made[0].values())), "two recipes made one file")
 
 
 class ALibraryCopiedForEachTest(ACorpusOfItsOwn):
