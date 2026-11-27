@@ -75,7 +75,7 @@ def library_settings(library):
     files need ExifTool, which only the library's settings say where to find. In the web server, on a thread of its
     own (settle_on_a_thread), so the request that first opens the library returns at once."""
     settings = library_settings_service.of(library)
-    file_changes.settle_once(library, tagpup_config.exiftool_path(settings.exiftool), on_a_thread=_settle_on_a_thread)
+    file_changes.settle_once(library, exiftool(library, settings), on_a_thread=_settle_on_a_thread)
     return settings
 
 
