@@ -753,7 +753,7 @@ class TheIndexWritesTheBake(unittest.TestCase):
         self.assertIsNone(field_of(a, identity.DOCUMENT_ID_FIELD))
         bake_before, known = self.bake_fields(a), os.stat(a).st_ino
         result = self.index()
-        self.assertIn("Bake: 1 file(s) written, 0 already held it.", " ".join(result.output.split()))
+        self.assertIn("Bake: 0 file(s) written, 1 already held it; 1 given only an identity.", " ".join(result.output.split()))
         held, row, raw = self.identity_of(a)
         self.assertTrue(str(held).startswith("xmp.did:"), "no identity minted")
         self.assertEqual((held, held), (row, raw))

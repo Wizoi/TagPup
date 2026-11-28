@@ -106,6 +106,7 @@ _SAID_COUNTS = "%d file(s) written, %d already held it"
 _SAID_CONFLICTS = "%d conflict(s), left as they are"
 _SAID_REFUSED = "%d write(s) discarded for changing the picture and made again"
 _SAID_INCOMPLETE = "%d photo(s) that may be incomplete copies left as they are"
+_SAID_ALONE = "%d given only an identity"
 
 
 #: A folder whose write the library's roots, changed by another process, stopped (the run ends there).
@@ -125,8 +126,9 @@ class Baked:
     (counts only: too many photos, a batch ahead, the roots changed); `stalled`, a share stopped answering and ended the
     run; `roots_changed`, the library's roots were changed by another process and ended it; `pictures_refused`, the writes
     discarded because they changed the picture's bytes and made again (file_changes, the result's `pictures_refused`);
-    `minted`, the photos whose write gave them an identity (counted from the write's report, logged, not said);
-    `incomplete`, the photos written nothing for their file may be an incomplete copy (_incomplete)."""
+    `minted`, the photos whose write gave them an identity (counted from the write's report, logged, not said); `alone`,
+    those of them whose file held its bake and was written its identity alone (said, and counted among the files that
+    held it already, not among those written: no bake was); `incomplete`, the photos written nothing for their file may be an incomplete copy (_incomplete)."""
     planned: int = 0
     written: int = 0
     current: int = 0
@@ -140,12 +142,14 @@ class Baked:
     roots_changed: bool = False
     pictures_refused: int = 0
     minted: int = 0
+    alone: int = 0
     incomplete: int = 0
 
     def said(self):
         """The run in one line, counts only (the paths name people)."""
         line = SAID + _SAID_COUNTS % (self.written, self.current)
-        more = [("%d fingerprint(s) recorded with no write" % self.adopted) if self.adopted else "",
+        more = [(_SAID_ALONE % self.alone) if self.alone else "",
+                ("%d fingerprint(s) recorded with no write" % self.adopted) if self.adopted else "",
                 (_SAID_CONFLICTS % self.conflicts) if self.conflicts else "",
                 ("%d failed" % self.failed) if self.failed else "",
                 ("%d not answered (a share away)" % self.not_answered) if self.not_answered else "",
@@ -211,7 +215,7 @@ def bake_folders(library, fields, detector, folders, handed, stop=None, each=Non
             if to_bake and not baked.stalled:
                 if not snapshot:
                     snapshot.append(snapshot_service.before_a_long_write(library))
-                written = _write(library, fields, stored, to_bake, baked, say_chunk)
+                written = _write(library, fields, stored, to_bake, baked, say_chunk, id_alone)
             _adopt(library, _given_after(unfingerprinted, id_alone, written), handed, baked)
             if baked.stalled or fields.dead:
                 baked.stalled = True
@@ -386,10 +390,11 @@ def _adopt(library, given, handed, baked):
     baked.adopted += db.write_with_connection(library.path, adopt, label="the fingerprints of the photos whose files hold their bake")
 
 
-def _write(library, fields, stored, to_bake, baked, on_chunk):
+def _write(library, fields, stored, to_bake, baked, on_chunk, id_alone=frozenset()):
     """Write the photos of one folder to bake as one internal change, each file read again before its write, and count
-    in `baked` what the write reported (its Result: the change is erased once it finishes, its conflicts of NOTES kept); `on_chunk(done, of)` as each
-    chunk of its files ends (write_fields)."""
+    in `baked` what the write reported (its Result: the change is erased once it finishes, its conflicts of NOTES kept),
+    a photo of `id_alone` (holding its bake, planned with its identity alone) given it counted `alone`, not `written`;
+    `on_chunk(done, of)` as each chunk of its files ends (write_fields)."""
     kept = set()   # the photos that came to hold an identity since their folder was read (_mint_kept)
 
     def plan(path, held):
@@ -404,18 +409,20 @@ def _write(library, fields, stored, to_bake, baked, on_chunk):
         summary={"folder": stored}, on_chunk=on_chunk)
     unanswered = {paths.key(path) for path in result.details.get("not_answered", [])}
     conflicts = len(result.details.get("conflicts", []))
+    # Minted: written, its id with it (in the stamps of the files written, not taken out by the read back).
+    written = {paths.key(path) for path in result.details.get("written", {})} & set(result.details.get("stamps", {}))
+    minted = {key for key, (_path, values) in to_bake.items() if DOCUMENT_ID in values and key not in kept and key in written}
+    alone = len(minted & set(id_alone))
     baked.planned += len(to_bake)
-    baked.written += result.changed
-    baked.current += len(result.details.get("written", {})) - result.changed
+    baked.written += result.changed - alone
+    baked.current += len(result.details.get("written", {})) - result.changed + alone
+    baked.alone += alone
     baked.conflicts += conflicts
     baked.not_answered += len(unanswered)
     baked.pictures_refused += result.details.get("pictures_refused", 0)
-    # Minted: written, its id with it (in the stamps of the files written, not taken out by the read back).
-    written = {paths.key(path) for path in result.details.get("written", {})} & set(result.details.get("stamps", {}))
-    minted = sum(1 for key, (_path, values) in to_bake.items() if DOCUMENT_ID in values and key not in kept and key in written)
     if minted:
-        logger.info("%d photo(s) of %s given an identity", minted, stored)
-    baked.minted += minted
+        logger.info("%d photo(s) of %s given an identity", len(minted), stored)
+    baked.minted += len(minted)
     baked.failed += max(0, len({paths.key(path) for path, _why in result.errors} - unanswered) - conflicts)
     if (result.details.get("stopped") or {}).get("share"):
         baked.stalled = True
