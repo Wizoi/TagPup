@@ -66,7 +66,7 @@ from tagpup.core import progress_line
 from tagpup.files import bake, identity, images, shares
 from tagpup.services import baking, file_changes, settings
 from tagpup.services import snapshots as snapshot_service
-from tagpup.store import db, inspection, photo_fingerprints
+from tagpup.store import db, derived, inspection, photo_fingerprints
 from tagpup.store import photos as store_photos
 from tagpup.store import roots as store_roots
 
@@ -128,7 +128,9 @@ class Baked:
     run; `roots_changed`, the library's roots were changed by another process and ended it; `pictures_refused`, the writes
     discarded because they changed the picture's bytes and made again (file_changes, the result's `pictures_refused`);
     `minted`, the photos whose write gave them an identity (counted from the write's report, logged, not said);
-    `to_mint`, the photos planned one (a run that writes nothing counts these alone); `alone`,
+    `to_mint`, the photos planned one, `to_mint_alone` those of them holding their bake (counted only by a run that
+    writes nothing); `to_record`, the photos holding their bake and an identity their row does not record (planned under
+    `mint_current`), `recorded`, those whose row was given it (counted from the rows changed); `alone`,
     those of them whose file held its bake and was written its identity alone (said, and counted among the files that
     held it already, not among those written: no bake was); `incomplete`, the photos written nothing for their file may be an incomplete copy (_incomplete)."""
     planned: int = 0
@@ -145,6 +147,9 @@ class Baked:
     pictures_refused: int = 0
     minted: int = 0
     to_mint: int = 0
+    to_mint_alone: int = 0
+    to_record: int = 0
+    recorded: int = 0
     alone: int = 0
     incomplete: int = 0
 
@@ -184,9 +189,10 @@ def bake_folders(library, fields, detector, folders, handed, stop=None, each=Non
     the run's log holds too: nothing between two is said, so a share that stops answering mid-chunk stops the lines.
     A handed photo keeps its row only when its file is written, holds the current bake or is read-only (owe_first).
     `mint_current`: a photo holding its bake and no DocumentID is planned its identity alone though the index did not
-    record it this run (the one-off's, scripts/mint_identities.py; never an index's, D1), decoded here to be. Not `write`:
-    each folder is planned and counted (`planned`, `to_mint`, `incomplete`, `cannot`), and nothing is written, a file or
-    a row."""
+    record it this run (the one-off's, scripts/mint_identities.py; never an index's, D1), decoded here to be; and one
+    holding its bake and a DocumentID its row does not record has its row given it (_record_held), its file written
+    nothing. Not `write`: each folder is planned and counted (`planned`, `to_mint`, `to_mint_alone`, `to_record`,
+    `current`, `incomplete`, `not_answered`, `cannot`), and nothing is written, a file or a row."""
     baked, snapshot, walk, chunk_lines = Baked(), [], baking.walk(stop), [True]
     if write:
         owe_first(library, folders, handed)
@@ -215,10 +221,11 @@ def bake_folders(library, fields, detector, folders, handed, stop=None, each=Non
                 except Exception as error:
                     chunk_lines.clear()
                     logger.warning("The bake's progress lines stop here, its writes go on: %s: %s", type(error).__name__, error)
-            to_bake, stored, unfingerprinted, id_alone = _planned(library, fields, detector, folder, handed, baked, walk,
-                                                                  mint_current)
+            to_bake, stored, unfingerprinted, id_alone, to_record = _planned(library, fields, detector, folder, handed,
+                                                                             baked, walk, mint_current)
             if not write:
                 baked.planned += len(to_bake)
+                baked.to_mint_alone += len(id_alone)
                 baked.stalled = baked.stalled or fields.dead
                 if baked.stalled:
                     break
@@ -232,6 +239,10 @@ def bake_folders(library, fields, detector, folders, handed, stop=None, each=Non
                     snapshot.append(snapshot_service.before_a_long_write(library))
                 written = _write(library, fields, stored, to_bake, baked, say_chunk, id_alone)
             _adopt(library, _given_after(unfingerprinted, id_alone, written), handed, baked)
+            if to_record and not baked.stalled:
+                if not snapshot:
+                    snapshot.append(snapshot_service.before_a_long_write(library))
+                baked.recorded += _record_held(library, to_record)
             if baked.stalled or fields.dead:
                 baked.stalled = True
                 break
@@ -241,9 +252,11 @@ def bake_folders(library, fields, detector, folders, handed, stop=None, each=Non
 
 
 def folders_owed_an_identity(library):
-    """[(folder, how many)]: each folder (native) directly holding a photo of a baked kind whose row records no
-    identity, with how many, in path order: the folders the one-off plans (scripts/mint_identities.py). Rows only: the
-    file's own read decides each photo (_minted), and a rerun finds the photos minted since recorded (follow_fields)."""
+    """[(folder, photos, with no identity)]: each folder (native) directly holding a photo of a baked kind whose row
+    records no identity, with how many photos of a baked kind it holds directly and how many of them record none, in
+    path order: the folders the one-off plans (scripts/mint_identities.py), the photos its line accounts for. Rows only:
+    the file's own read decides each photo (_minted, _record_held), and a rerun finds the photos given one since recorded
+    (follow_fields)."""
     conn = db.connect(db.readonly_uri(library.path), uri=True)
     try:
         held = {paths.key(path) for path in store_photos.identities(conn)}
@@ -252,10 +265,11 @@ def folders_owed_an_identity(library):
         conn.close()
     folders = {}
     for _id, path, _mtime, _size, kind in rows:
-        if kind in store_photos.BAKED_KINDS and paths.key(path) not in held:
-            spelled, count = folders.get(paths.key(os.path.dirname(path)), (os.path.dirname(path), 0))
-            folders[paths.key(spelled)] = (spelled, count + 1)
-    return [folders[key] for key in sorted(folders)]
+        if kind in store_photos.BAKED_KINDS:
+            key = paths.key(os.path.dirname(path))
+            spelled, photos, no_id = folders.get(key, (os.path.dirname(path), 0, 0))
+            folders[key] = (spelled, photos + 1, no_id + (paths.key(path) not in held))
+    return [folders[key] for key in sorted(folders) if folders[key][2]]
 
 
 def owe_first(library, folders, handed):
@@ -280,9 +294,11 @@ def owe_first(library, folders, handed):
 def _planned(library, fields, detector, folder, handed, baked, walk, mint_current=False):
     """({paths.key(path): (path, values)} of the photos of `folder` to write -- to bake, or holding their bake and to be
     given their identity alone --, the folder as the library stores it, {paths.key(path): (photo id, _Decode)} of those
-    planned that have no fingerprint row, current or to bake, and the keys of those to be given their identity alone),
-    counting into `baked` the photos current, not answered and that cannot be planned. A photo's identity is minted
-    here (_minted), once, after its second plan; with `mint_current`, one holding its bake and no id is decoded for it."""
+    planned that have no fingerprint row, current or to bake, the keys of those to be given their identity alone, and
+    {paths.key(path): (path, the DocumentID its file holds)} of those holding their bake and an identity their row does
+    not record, under `mint_current` only: their row to be given it), counting into `baked` the photos current, to
+    record, not answered and that cannot be planned. A photo's identity is minted here (_minted), once, after its second
+    plan; with `mint_current`, one holding its bake and no id is decoded for it."""
     conn = db.connect(db.readonly_uri(library.path), uri=True)
     try:
         keys = baking.keys(conn, detector)
@@ -292,12 +308,13 @@ def _planned(library, fields, detector, folder, handed, baked, walk, mint_curren
                  if paths.key(os.path.dirname(path)) == paths.key(folder)]
         fingerprinted = photo_fingerprints.fingerprinted(conn, [photo_id for photo_id, _path in group])
         read = baking.FolderRead(fields, [path for _id, path in group], also=(DOCUMENT_ID,))
-        to_bake, unfingerprinted, id_alone = {}, {}, set()
+        rows = store_photos.rows_of(conn, [path for _id, path in group]) if mint_current else {}
+        to_bake, unfingerprinted, id_alone, to_record = {}, {}, set(), {}
         for photo_id, path in group:
             photo, decode = baking.PhotoAt(path, read, walk), _Decode(path, handed)
             plan = photo.plan(conn, keys)
             if isinstance(plan, baking.ToBake) or (isinstance(plan, baking.Current) and (
-                    photo_id not in fingerprinted or (mint_current and _holds_no_id(read, path)))):
+                    photo_id not in fingerprinted or (mint_current and _held_id(read, path) == ""))):
                 plan = photo.plan(conn, keys, decode)
             if photo_id not in fingerprinted and decode.digest is not None and isinstance(
                     plan, (baking.ToBake, baking.Current)):
@@ -313,6 +330,10 @@ def _planned(library, fields, detector, folder, handed, baked, walk, mint_curren
                     id_alone.add(paths.key(path))
             elif isinstance(plan, baking.ToBake):
                 to_bake[paths.key(path)] = (path, plan.values)
+            elif mint_current and isinstance(plan, baking.Current) and paths.key(path) in rows and not rows[
+                    paths.key(path)][2] and _held_id(read, path):
+                to_record[paths.key(path)] = (path, _held_id(read, path))
+                baked.to_record += 1
             elif isinstance(plan, baking.Current):
                 baked.current += 1
             elif photo.not_answered:
@@ -322,7 +343,7 @@ def _planned(library, fields, detector, folder, handed, baked, walk, mint_curren
     finally:
         conn.close()
     baked.stalled = baked.stalled or read.stalled
-    return to_bake, stored, unfingerprinted, id_alone
+    return to_bake, stored, unfingerprinted, id_alone, to_record
 
 
 def _minted(path, read, handed, decode, plan, mint_current=False):
@@ -339,15 +360,41 @@ def _minted(path, read, handed, decode, plan, mint_current=False):
             return None
     elif not isinstance(plan, baking.ToBake):
         return None
-    if decode.digest is None or not _holds_no_id(read, path):
+    if decode.digest is None or _held_id(read, path) != "":
         return None
     return identity.mint_document_id()
 
 
-def _holds_no_id(read, path):
-    """Did the folder's `read` find the file at `path` holding no DocumentID (a file it could not read: no answer)?"""
+def _held_id(read, path):
+    """The DocumentID the folder's `read` found the file at `path` holding: its text, "" for none, None for a file it
+    could not read (no answer)."""
     held = read.of(path)
-    return not isinstance(held, Exception) and not core_fields.read_document_id(held)
+    return None if isinstance(held, Exception) else (core_fields.read_document_id(held) or "")
+
+
+def _record_held(library, to_record):
+    """Give each photo's row of `to_record` ({paths.key(path): (path, the DocumentID its file holds)}: holding its bake,
+    planned Current) the identity its file holds, as a read of the file records it (store.photos.follow_fields with no
+    stat: raw_metadata's XMP:DocumentID and document_id, the stamp kept, the derived rows rebuilt), in one transaction;
+    how many rows went from recording no identity to the file's. A row that came to record one since its folder was
+    planned (an index of it meanwhile) is left as it is, and a row gone is not counted: counted from the rows read
+    again after, not from what was asked."""
+    photo_paths = [path for path, _held in to_record.values()]
+
+    def record(conn):
+        before = store_photos.rows_of(conn, photo_paths)
+        owed = [key for key in to_record if key in before and not before[key][2]]
+        batch = derived.Batch(conn)   # the tag tree read once for the folder, in this transaction
+        for key in owed:
+            path, held = to_record[key]
+            store_photos.follow_fields(conn, path, {DOCUMENT_ID: [held]}, batch=batch)
+        after = store_photos.rows_of(conn, photo_paths)
+        return sum(1 for key in owed if key in after and after[key][2] == to_record[key][1])
+    recorded = db.write_with_connection(library.path, record,
+                                        label="the identities %d photo(s) hold in their files" % len(to_record))
+    if recorded:
+        logger.info("%d photo(s) given in their row the identity their file holds", recorded)
+    return recorded
 
 
 def _incomplete(path, decode, baked):

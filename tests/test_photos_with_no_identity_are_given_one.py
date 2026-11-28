@@ -4,13 +4,19 @@ the bake minted one (56,272 such in photo_index, 2026-11-27): each holds its bak
 
 What the owner lives through:
 - a dry run counts per folder the photos it would mint, one that does not decode and one that may be an incomplete copy
-  (#407), and writes nothing, a file or a row;
+  (#407), and writes nothing, a file or a row; its parts account for every photo of the folder;
 - --apply mints each photo once, through the index's bake (its id alone: the bake is not rewritten), its row holding
   what its file holds; the one that does not decode and the incomplete copy are counted and their bytes untouched;
 - a second run mints nothing and writes no file;
 - a Ctrl+C after the first of two folders stops before the second; the run after mints only the second;
-- --apply is refused while TagPup runs, and while another run holds the library, writing nothing.
+- --apply is refused while TagPup runs, and while another run holds the library, writing nothing; a run leaves no
+  lock file behind;
+- a photo whose file holds an identity its row never recorded (another program's, about a quarter of photo_index's
+  photos with none recorded) is counted by the dry run, and --apply records it in the row, its file written nothing;
+  the run after finds none left;
+- a Ctrl+C in a dry run says nothing was written.
 """
+import json
 import os
 import sys
 import unittest
@@ -38,6 +44,7 @@ from tagpup.services import bake_after_index, baking  # noqa: E402
 from tagpup.services import faces as face_service  # noqa: E402
 from tagpup.services import libraries as library_actions  # noqa: E402
 from tagpup.store import db  # noqa: E402
+from tagpup.store import roots as store_roots  # noqa: E402
 
 EXIFTOOL = own_home.installed_exiftool()
 SIZE = (640, 480)
@@ -65,21 +72,65 @@ class PhotosWithNoIdentityAreGivenOne(unittest.TestCase):
             patcher.start()
             self.addCleanup(patcher.stop)
 
-    def baked_before_the_mint(self, folder, *names):
+    def baked_before_the_mint(self, folder, *names, held=None):
         """`names` in `folder`, indexed and baked as the bake before stage M left them: no identity, in the file or the
-        row."""
+        row; but for those of `held` ({name: DocumentID}), whose file another program gave one before the index read it,
+        and whose row, as an index that did not ask for it left it, records none."""
         folder = paths.stored(os.path.join(self.home.root, folder))
         os.makedirs(folder, exist_ok=True)
-        made = [corpus.jpeg(os.path.join(folder, name), {"XMP-dc:Title": "Pier at noon"}, EXIFTOOL, size=SIZE,
-                            colour=(40 + 30 * n, 160, 200 - 30 * n)) for n, name in enumerate(names)]
+        held = held or {}
+        made = [corpus.jpeg(os.path.join(folder, name), {"XMP-dc:Title": "Pier at noon",
+                                                         **({identity.DOCUMENT_ID_FIELD: held[name]} if name in held else {})},
+                            EXIFTOOL, size=SIZE, colour=(40 + 30 * n, 160, 200 - 30 * n)) for n, name in enumerate(names)]
         with mock.patch.object(bake_after_index, "_minted", return_value=None):
             result = CliRunner().invoke(tagpup_cli.cli, ["--db", self.db_path, "index", folder])
         self.assertEqual(0, result.exit_code, result.output)
         for path in made:
-            self.assertIsNone(field_of(path, identity.DOCUMENT_ID_FIELD))
+            self.assertEqual(held.get(os.path.basename(path)), field_of(path, identity.DOCUMENT_ID_FIELD))
+            if os.path.basename(path) in held:
+                self.unlearned(path)
             self.assertIsInstance(baked_files.plan(self.db_path, path, face_service.detector_of(self.detector)),
                                   baking.Current, "not baked")
         return made
+
+    def unlearned(self, path):
+        """The row of `path` as an index that never asked for its DocumentID left it (raw_metadata holding no
+        DocumentID key, document_id NULL; 56,272 such rows in photo_index), at the stamp its file is at."""
+        def forget(conn):
+            where, params = store_roots.sql_equals(conn, "path", path)
+            (raw,) = conn.execute("SELECT raw_metadata FROM photos WHERE " + where, params).fetchone()
+            raw = {key: value for key, value in json.loads(raw).items() if "DocumentID" not in key}
+            conn.execute("UPDATE photos SET document_id = NULL, raw_metadata = ? WHERE " + where,
+                         [json.dumps(raw)] + list(params))
+        db.write_with_connection(self.db_path, forget, label="a row that never learned its identity")
+
+    def stamp_of_row(self, path):
+        conn = db.connect(db.readonly_uri(self.db_path), uri=True)
+        try:
+            where, params = store_roots.sql_equals(conn, "path", path)
+            return conn.execute("SELECT mtime, size FROM photos WHERE " + where, params).fetchone()
+        finally:
+            conn.close()
+
+    def accounted(self):
+        """A dry run, each folder's counts asserted to account for every photo of the folder (its header count): the
+        run's (code, what it said)."""
+        owed = {paths.key(folder): photos for folder, photos, _no_id in bake_after_index.folders_owed_an_identity(
+            mint_identities.Library(self.db_path))}
+        real, seen = bake_after_index.bake_folders, []
+
+        def counted(library, fields, detector, folders, *args, **kwargs):
+            baked = real(library, fields, detector, folders, *args, **kwargs)
+            parts = (baked.to_mint + (baked.planned - baked.to_mint) + baked.to_record + baked.current
+                     + baked.incomplete + baked.not_answered + sum(baked.cannot.values()))
+            seen.append((owed[paths.key(folders[0])], parts))
+            return baked
+        with mock.patch.object(bake_after_index, "bake_folders", side_effect=counted):
+            said = self.run_script(apply=False)
+        self.assertTrue(seen)
+        self.assertEqual([photos for photos, _parts in seen], [parts for _photos, parts in seen],
+                         "a dry run's line does not account for every photo of its folder")
+        return said
 
     def identities(self, *made):
         """{path: (the DocumentID its file holds, the one its row holds)}."""
@@ -119,10 +170,11 @@ class PhotosWithNoIdentityAreGivenOne(unittest.TestCase):
             handle.write(bytes(images.ZERO_TAIL))
         before = self.bytes_of(a, b, broken, cut)
 
-        code, said = self.run_script(apply=False)
+        code, said = self.accounted()
         self.assertEqual(0, code, said)
         self.assertIn("4 photo(s) in 1 folder(s) whose row records no identity", said)
-        self.assertIn("all: 2 to mint, 2 file(s) to write; left as they are: 1 possibly incomplete copies, 1 %s."
+        self.assertIn("all: 2 to mint (2 alone, 0 with their bake), 0 owed their bake alone, 0 already hold one in the "
+                      "file, their row to be recorded, 0 current; left as they are: 1 possibly incomplete copies, 1 %s."
                       % baking.UNREADABLE, said)
         self.assertEqual(before, self.bytes_of(a, b, broken, cut), "a dry run wrote a file")
         self.assertEqual({path: (None, None) for path in (a, b)}, self.identities(a, b), "a dry run wrote a row")
@@ -130,7 +182,7 @@ class PhotosWithNoIdentityAreGivenOne(unittest.TestCase):
         bake_before = {path: self.bake_fields(path) for path in (a, b)}
         code, said = self.run_script(apply=True)
         self.assertEqual(0, code, said)
-        self.assertIn("all: wrote 2 identit(ies).", said)
+        self.assertIn("all: wrote 2 identit(ies), recorded 0 from their files.", said)
         self.assertIn(bake_after_index._SAID_ALONE % 2, said)
         given = self.identities(a, b)
         for path, (held, row) in given.items():
@@ -145,13 +197,17 @@ class PhotosWithNoIdentityAreGivenOne(unittest.TestCase):
         code, said = self.run_script(apply=True)
         self.assertEqual(0, code, said)
         self.assertIn("2 photo(s) in 1 folder(s) whose row records no identity", said)
-        self.assertIn("all: wrote 0 identit(ies).", said)
+        self.assertIn("all: wrote 0 identit(ies), recorded 0 from their files.", said)
         self.assertEqual(written, self.bytes_of(a, b), "a second run wrote a photo again")
         self.assertEqual(given, self.identities(a, b))
 
     def test_a_ctrl_c_stops_after_the_folder_under_way_and_the_next_run_mints_only_the_rest(self):
         (a,) = self.baked_before_the_mint("Harbour", "a.jpg")
         (q,) = self.baked_before_the_mint("Quay", "q.jpg")
+        with mock.patch.object(bake_after_index, "bake_folders", side_effect=KeyboardInterrupt):
+            code, said = self.run_script(apply=False)
+        self.assertEqual(130, code, said)
+        self.assertTrue(said.endswith("Stopped: a dry run, nothing was written."), said)
         real = bake_after_index.bake_folders
 
         def pressed_during(*args, **kwargs):
@@ -162,7 +218,7 @@ class PhotosWithNoIdentityAreGivenOne(unittest.TestCase):
             code, said = self.run_script(apply=True)
         self.assertEqual(0, code, said)
         self.assertIn("Stopped before folder 2 of 2", said)
-        self.assertIn("all: wrote 1 identit(ies).", said)
+        self.assertIn("all: wrote 1 identit(ies), recorded 0 from their files.", said)
         ((held, row),) = self.identities(a).values()
         self.assertEqual(held, row)
         self.assertIsNotNone(held)
@@ -172,7 +228,7 @@ class PhotosWithNoIdentityAreGivenOne(unittest.TestCase):
         code, said = self.run_script(apply=True)
         self.assertEqual(0, code, said)
         self.assertIn("1 photo(s) in 1 folder(s) whose row records no identity", said)
-        self.assertIn("all: wrote 1 identit(ies).", said)
+        self.assertIn("all: wrote 1 identit(ies), recorded 0 from their files.", said)
         self.assertEqual(stamp, os.stat(a).st_mtime_ns, "the first folder was written again")
         ((held, row),) = self.identities(q).values()
         self.assertTrue(str(held).startswith("xmp.did:"))
@@ -193,6 +249,39 @@ class PhotosWithNoIdentityAreGivenOne(unittest.TestCase):
         self.assertEqual((1, mint_identities.TWO_AT_ONCE), (code, said))
         self.assertEqual(before, self.bytes_of(a))
         self.assertEqual({a: (None, None)}, self.identities(a))
+        os.remove(self.db_path + mint_identities.LOCK)
+        code, said = self.run_script(apply=True)
+        self.assertEqual(0, code, said)
+        self.assertFalse(os.path.exists(self.db_path + mint_identities.LOCK), "a run left its lock file behind")
+
+    def test_a_photo_whose_file_holds_an_identity_its_row_never_recorded_has_its_row_given_it_and_its_file_left(self):
+        given = "xmp.did:3f1c9a52-7d40-4e88-9b1e-5c2a7e6d0f13"
+        a, b = self.baked_before_the_mint("Harbour", "a.jpg", "b.jpg", held={"b.jpg": given})
+        self.assertEqual({b: (given, None)}, self.identities(b))
+        before, stamp = self.bytes_of(a, b), self.stamp_of_row(b)
+
+        code, said = self.accounted()
+        self.assertEqual(0, code, said)
+        self.assertIn("2 photo(s) in 1 folder(s) whose row records no identity", said)
+        self.assertIn("all: 1 to mint (1 alone, 0 with their bake), 0 owed their bake alone, 1 already hold one in the "
+                      "file, their row to be recorded, 0 current.", said)
+        self.assertEqual(before, self.bytes_of(a, b), "a dry run wrote a file")
+        self.assertEqual({b: (given, None)}, self.identities(b), "a dry run wrote a row")
+
+        code, said = self.run_script(apply=True)
+        self.assertEqual(0, code, said)
+        self.assertIn("all: wrote 1 identit(ies), recorded 1 from their files.", said)
+        self.assertEqual({b: (given, given)}, self.identities(b), "the row does not record the identity its file holds")
+        self.assertEqual(before[b], self.bytes_of(b)[b], "a file holding its identity was written")
+        self.assertEqual(stamp, self.stamp_of_row(b), "the row's stamp moved, though its file was not written")
+        ((held, row),) = self.identities(a).values()
+        self.assertEqual(held, row)
+        self.assertTrue(str(held).startswith("xmp.did:"))
+
+        code, said = self.run_script(apply=False)
+        self.assertEqual(0, code, said)
+        self.assertIn("0 photo(s) in 0 folder(s) whose row records no identity", said)
+        self.assertIn("all: 0 to mint (0 alone, 0 with their bake), 0 owed their bake alone, 0 already hold one", said)
 
 
 if __name__ == "__main__":
