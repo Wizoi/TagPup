@@ -28,6 +28,7 @@ the photo files put back as the earlier change left them. Fictional names; a hom
 indexer and the pass store them.
 """
 import contextlib
+import json
 import os
 import re
 import shutil
@@ -194,7 +195,8 @@ def a_bake(case, library):
     """A folder's bake as the deleted `bake-photos --apply` recorded it, a kind the live journals hold
     (tagpup.services.journal.RETIRED): each photo is given its photo vector first, stamped as its file is now, as the
     indexer stores it (the library as built holds none); the photos of the first photo's folder the bake plans to bake
-    (baking.plan_photo) are written as one change under baking.OPERATION by the writer it used, file_changes.write_fields."""
+    (baking.plan_photo) are written as one change under baking.OPERATION by the writer it used, file_changes.write_fields.
+    It journals no identity: the one mint is the index's bake, internal and never undone (bake_after_index)."""
     conn = db.connect(library.path)
     try:
         key = library_settings.photo_key_on(conn)
@@ -221,7 +223,17 @@ def a_bake(case, library):
     written = file_changes.write_fields(
         library, baking.OPERATION, case.fields, [path for path, _values in planned.values()], list(bake.WRITTEN.values()),
         lambda path, _held: file_changes.Plan(after=planned[paths.key(path)][1]), summary={"folder": stored})
-    return written.details.get("change")
+    change = written.details.get("change")
+    conn = db.connect(db.readonly_uri(library.path), uri=True)
+    try:
+        journaled = [json.loads(text) for row in conn.execute(
+            "SELECT fields_before, fields_after FROM change_files WHERE change_id = ?", (change,)) for text in row if text]
+    finally:
+        conn.close()
+    case.assertTrue(journaled, "the bake journaled no file")
+    case.assertEqual([], [each for each in journaled if isinstance(each, dict) and any(
+        field.endswith("DocumentID") for field in each)], "a bake journaled an identity")
+    return change
 
 
 #: The kinds made by a writer here, earlier or later: name -> make.

@@ -103,8 +103,7 @@ def structure(path, meta, people, stamp):
 
 
 def empty(path, error, stamp):
-    """The record of a file ExifTool could not read: nothing read, and `read_error`, why -- so nothing is written into it
-    (tagpup.files.field_values.IdentityWriter). `stamp` is the file's from before the read, or (None, None) for one left
+    """The record of a file ExifTool could not read: nothing read, and `read_error`, why. `stamp` is the file's from before the read, or (None, None) for one left
     unread."""
     mtime, size = stamp
     return {

@@ -9,7 +9,8 @@ including every name assigned by hand.
 already carry one -- 1,075 of 1,129 sampled from this library, all distinct. So the
 rule is read it, and mint one only where it is missing: nothing already answered gets
 rewritten, and what is written uses Adobe's own `xmp.did:` form so other tools
-recognise it.
+recognise it. The one mint is a field of the index's bake (tagpup.services.bake_after_index;
+its scenarios: tests/test_the_index_writes_the_bake.py).
 """
 import os
 import sys
@@ -20,26 +21,8 @@ sys.path.insert(0, WORKSPACE_DIR)
 sys.path.insert(0, os.path.join(WORKSPACE_DIR, "scripts"))
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-import fake_exiftool  # noqa: E402
-from tagpup.core.fields import read_document_id
-from tagpup.files.field_values import ensure_document_id
-from tagpup.files.identity import (
-    DOCUMENT_ID_FIELD,
-    mint_document_id,
-)
-
-
-class FakeExifTool:
-    """Records what would be written, and can be told to fail."""
-
-    def __init__(self, fail=False):
-        self.writes = []
-        self.fail = fail
-
-    def set_tags(self, paths, tags=None, params=None):
-        if self.fail:
-            raise RuntimeError("exiftool said no")
-        self.writes.append((list(paths), dict(tags or {})))
+from tagpup.core.fields import read_document_id  # noqa: E402
+from tagpup.files.identity import mint_document_id  # noqa: E402
 
 
 class TestReadingAnIdentity(unittest.TestCase):
@@ -72,38 +55,6 @@ class TestMinting(unittest.TestCase):
         self.assertEqual(len(minted), 200)
 
 
-class TestEnsuring(unittest.TestCase):
-    def setUp(self):
-        fake_exiftool.writes_no_file(self)
-
-    def test_a_photo_that_has_one_is_not_written_to(self):
-        # The common case by a wide margin, and the reason this is cheap: 1,075 of
-        # 1,129 photos in this library already have an identity.
-        et = FakeExifTool()
-        found = ensure_document_id(et, "D:/a.jpg", {"XMP:DocumentID": "xmp.did:already"})
-        self.assertEqual(found, "xmp.did:already")
-        self.assertEqual(et.writes, [], "a photo that already had an identity was rewritten")
-
-    def test_a_photo_without_one_is_given_one(self):
-        et = FakeExifTool()
-        minted = ensure_document_id(et, "D:/a.jpg", {"XMP:Subject": ["Cross Country"]})
-        self.assertTrue(minted.startswith("xmp.did:"))
-        self.assertEqual(len(et.writes), 1)
-        paths, tags = et.writes[0]
-        self.assertEqual(paths, ["D:/a.jpg"])
-        self.assertEqual(tags[DOCUMENT_ID_FIELD], minted)
-
-    def test_a_write_that_fails_does_not_stop_the_index(self):
-        # An identity is an improvement on knowing the path. A photo that cannot take
-        # one -- read-only, an odd format, a locked file -- still indexes perfectly.
-        et = FakeExifTool(fail=True)
-        self.assertIsNone(ensure_document_id(et, "D:/a.jpg", {}))
-
-    def test_no_metadata_at_all_still_mints(self):
-        et = FakeExifTool()
-        self.assertTrue(ensure_document_id(et, "D:/a.jpg", None).startswith("xmp.did:"))
-
-
 class TestTheExtractorCarriesIt(unittest.TestCase):
     def test_a_structured_record_reports_the_identity(self):
         from tagpup.files import metadata
@@ -112,51 +63,25 @@ class TestTheExtractorCarriesIt(unittest.TestCase):
             "D:/a.jpg", {"XMP:DocumentID": "xmp.did:abc", "XMP:Subject": ["Beach"]}, None, (1.0, 1))
         self.assertEqual(record["document_id"], "xmp.did:abc")
 
-    def test_the_indexer_mints_and_nothing_else_does(self):
-        """Indexing records what it read, so it may write an identity; a scan may not.
-
-        Reading a folder to show it used to write an identity into every photo that had
-        none, and nothing told the index -- whose rows then looked out of date. Without
-        minting at index time renames still strand rows, so the indexer makes the one
-        writer, IdentityWriter (Fields.whole only reads). Every other reader -- the
-        folder scans, suggest, inspect -- must not.
-        """
+    def test_the_index_s_bake_mints_and_nothing_else_does(self):
+        """Indexing records what it read, so its bake may write an identity, in the transaction that records it in
+        the photo's row; a scan may not. Reading a folder to show it once wrote an identity into every photo that had
+        none, and nothing told the index -- whose rows then looked out of date. The one mint is the index's bake
+        (bake_after_index, DECISIONS 2026-11-26): no other module, program or script calls mint_document_id."""
         import ast
 
-        def minting_calls(path):
+        def mints(path):
             with open(os.path.join(WORKSPACE_DIR, path), encoding="utf-8") as handle:
                 tree = ast.parse(handle.read())
-            found = []
-            for func in (n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef)):
-                for call in (n for n in ast.walk(func) if isinstance(n, ast.Call)):
-                    name = getattr(call.func, "id", getattr(call.func, "attr", None))
-                    if name == "IdentityWriter":
-                        found.append(func.name)
-            return found
+            return any(getattr(call.func, "id", getattr(call.func, "attr", None)) == "mint_document_id"
+                       for call in ast.walk(tree) if isinstance(call, ast.Call))
 
-        self.assertEqual(["index"], minting_calls("tagpup_cli.py"))
-        # The web layer and everything it calls: the routes, the services, the jobs.
-        readers = []
-        for folder in ("web", "services", "jobs"):
-            readers += ["tagpup/%s/%s" % (folder, name)
-                        for name in sorted(os.listdir(os.path.join(WORKSPACE_DIR, "tagpup", folder)))
-                        if name.endswith(".py")]
-        for reader in readers:
-            self.assertEqual([], minting_calls(reader), reader)
-
-    def test_a_photo_that_already_has_one_is_left_alone(self):
-        from tagpup.files.field_values import IdentityWriter
-
-        et = FakeExifTool()
-        records = [
-            {"path": "D:/a.jpg", "document_id": "xmp.did:already", "raw_metadata": {}},
-            {"path": "D:/b.jpg", "document_id": None, "raw_metadata": {}},
-        ]
-        writer = IdentityWriter("exiftool")
-        writer._session = lambda: et
-        for record in records:
-            writer.give(record, decoded=True)
-        self.assertEqual([p for p, _ in et.writes], [["D:/b.jpg"]])
+        sources = ["tagpup_cli.py"]
+        for folder in ("tagpup", "scripts"):
+            for top, _dirs, names in os.walk(os.path.join(WORKSPACE_DIR, folder)):
+                sources += [os.path.relpath(os.path.join(top, name), WORKSPACE_DIR).replace(os.sep, "/")
+                            for name in sorted(names) if name.endswith(".py")]
+        self.assertEqual(["tagpup/services/bake_after_index.py"], [path for path in sources if mints(path)])
 
 
 if __name__ == "__main__":

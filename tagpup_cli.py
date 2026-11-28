@@ -63,7 +63,6 @@ warnings.filterwarnings("ignore", category=UserWarning, module="huggingface_hub"
 os.environ["HF_HUB_DISABLE_SYMLINKS_WARNING"] = "1"
 
 # Load components
-from tagpup.files.field_values import IdentityWriter
 from tagpup.store.taxonomy import TagTaxonomy
 from tagpup.core import gpu_turns
 from tagpup.core import paths
@@ -95,7 +94,6 @@ from tagpup.services import roots as library_roots
 from tagpup.core.result import SHARE_AWAY, NotFound, NotHeld, Refused
 from tagpup.services import maintenance
 from tagpup.services import metadata_check, segment_census
-from tagpup.services import refresh_rows
 from tagpup.services import file_changes
 from tagpup.services import search as search_service
 from tagpup.services.search import PhotoEmbeddings, PhotoIndex
@@ -436,7 +434,6 @@ def index(ctx, directories, force_reembed: bool, reset: bool, skip_faces: bool, 
             library_settings.stamp(Library(db_path), kept_settings, operation=library_settings.FROM_REPLACED)
 
     settings = runtime.settings(Library(db_path))
-    exiftool_path = runtimes.exiftool(Library(db_path), settings)
 
     # Setup / Load components
     # Connected, its vectors not read: the index needs their stamps alone.
@@ -531,8 +528,8 @@ def index(ctx, directories, force_reembed: bool, reset: bool, skip_faces: bool, 
 
     # Extract metadata in batches of 500
     console.print(f"[bold cyan]Reading metadata in batches for {len(images_to_process)} image(s)...[/bold cyan]")
-    # Read only: a photo is given its identity below, once its picture has decoded. One ExifTool for every batch
-    # (runtime.fields): a batch a share stopped answering in leaves the rest of that batch unread, and the next batch
+    # Read only: a photo is given its identity by the bake after the index (bake_after_index), once its picture has
+    # decoded. One ExifTool for every batch (runtime.fields): a batch a share stopped answering in leaves the rest of that batch unread, and the next batch
     # answers again.
     batch_size = 500
     all_metadata = []
@@ -615,10 +612,6 @@ def index(ctx, directories, force_reembed: bool, reset: bool, skip_faces: bool, 
     # Per-photo write locks, shared with every other indexer of the libraries in this
     # folder, wherever each was started from.
     locker = PathLocker(lock_dir=Library(db_path).locks)
-    # The indexer records what it reads, so it may give a photo its identity -- after the
-    # photo's picture has decoded in full, never before (IdentityWriter); a rename that knows the file is told what the
-    # write left (file_changes.OutsideWrites, #1957).
-    identity_writer = IdentityWriter(exiftool_path, around=file_changes.OutsideWrites(Library(db_path)).around)
     unreadable, incomplete = [], []
 
     # The index queue's Cancel, while this waits for the graphics card (tagpup.jobs.indexing).
@@ -663,7 +656,6 @@ def index(ctx, directories, force_reembed: bool, reset: bool, skip_faces: bool, 
         batch_embeddings = []
         batch_metas = []
         batch_faces = {}  # Map path -> faces list
-        given = set()  # The paths of the photos given their identity, read again before their batch is recorded
         total_new_indexed = 0
         locked_out = []
         failed_photos = []
@@ -759,8 +751,8 @@ def index(ctx, directories, force_reembed: bool, reset: bool, skip_faces: bool, 
             return prepared, zeros, picture, {"stamp": stamp, "upright": upright, "fingerprint": fingerprint,
                                               "took": took, "same": False, "picture_size": (width, height)}
 
-        # The photos are read ahead and handed back in their order; the graphics card, the identity written into a
-        # file and every write of the library stay on this thread, one photo after the other, as before.
+        # The photos are read ahead and handed back in their order; the graphics card and every write of the library
+        # stay on this thread, one photo after the other, as before.
         photos = read_ahead.ReadAhead(to_index_meta, begin, read, threads=READ_THREADS, ahead=READ_AHEAD,
                                       budget=READ_AHEAD_BYTES)
         # The bar is moved by hand: tqdm iterating `photos` kept the last photo it handed on, and its pictures, while
@@ -835,19 +827,13 @@ def index(ctx, directories, force_reembed: bool, reset: bool, skip_faces: bool, 
                     meta["fingerprint"] = (image_files.FINGERPRINT_KEY, decoded["fingerprint"])
                 else:
                     # Not decoded: its vector was kept by its stamp, and is recorded again with the fingerprint row it
-                    # has (store.embeddings.put records or forgets one with every vector) -- stamped again, as its row
-                    # is, after an identity written into the file.
+                    # has (store.embeddings.put records or forgets one with every vector).
                     meta["fingerprint"] = embeddings.fingerprint_of(path)
                 if zeros >= image_files.ZERO_TAIL:
                     # It decodes, perhaps grey below a line: indexed, and left as it is.
                     incomplete.append((path, zeros))
                     logger.info(f"Possibly an incomplete copy, indexed and not written to: {path} ends in "
                                 f"{zeros} zero bytes")
-                else:
-                    # Decoded: only now may the photo be written to. Its record keeps the stamp from before its
-                    # read, and the batch reads it again before it is recorded (_read_again).
-                    if identity_writer.give(meta, decoded=True):
-                        given.add(path)
 
                 # Extract and save face embeddings in the same pass (cached in memory until parent photo is saved): of a
                 # photo whose vector was worked out, or one never examined; a kept vector's photo keeps its faces.
@@ -878,7 +864,6 @@ def index(ctx, directories, force_reembed: bool, reset: bool, skip_faces: bool, 
 
                 # Save progress incrementally in batches of PHOTO_CHUNK
                 if len(batch_embeddings) >= PHOTO_CHUNK:
-                    _read_again(photo_index.conn, batch_metas, given, Library(db_path), settings)
                     photo_index.build_or_update(batch_embeddings, batch_metas, dim=len(batch_embeddings[0]))
                     _recorded(batch_metas, touched, handed)
 
@@ -916,7 +901,6 @@ def index(ctx, directories, force_reembed: bool, reset: bool, skip_faces: bool, 
         # Rebuild or update the FAISS index for the final batch
         if batch_embeddings:
             # Not reloaded: nothing below searches this index, and a reload reads every vector again.
-            _read_again(photo_index.conn, batch_metas, given, Library(db_path), settings)
             photo_index.build_or_update(batch_embeddings, batch_metas, dim=len(batch_embeddings[0]))
             _recorded(batch_metas, touched, handed)
 
@@ -999,7 +983,6 @@ def index(ctx, directories, force_reembed: bool, reset: bool, skip_faces: bool, 
             photos.close()
         if turn is not None:
             turn.release()
-        identity_writer.close()
         locker.release_all()
         photo_index.close()
 
@@ -1132,16 +1115,19 @@ BAKE_ONLY_LINE = ("%d photo(s) in %d folder(s) hold a current vector whose pictu
 
 
 def _recorded(metas, touched, handed):
-    """A batch of `metas` was recorded: its folders join `touched` ({paths.key: native folder}), and the fingerprint of
-    each photo's picture the index holds joins `handed` ({paths.key(path): ((mtime, size), digest)}), with the stamp its
-    row was recorded under: its decode's, or the row a vector kept by its stamp was recorded again with (the picture its
-    stamp still describes). Another key's row is not. The bake uses a digest only while the file is at that stamp."""
+    """A batch of `metas` was recorded: its folders join `touched` ({paths.key: native folder}), and each photo joins
+    `handed` ({paths.key(path): ((mtime, size), digest or None)}) with the stamp its row was recorded under and the
+    fingerprint of its picture the index holds: its decode's, or the row a vector kept by its stamp was recorded again with
+    (the picture its stamp still describes); None for one it holds none of under images.FINGERPRINT_KEY (another key's,
+    or a vector kept by its stamp with no row: an index stopped after the vector was kept and before its batch was
+    recorded), which the bake decodes. Every photo recorded is handed: the bake mints the identity of those alone
+    (bake_after_index._minted). The bake uses a digest only while the file is at that stamp."""
     for meta in metas:
         folder = os.path.dirname(meta["path"])
         touched.setdefault(paths.key(folder), folder)
         found = meta.get("fingerprint")
-        if found is not None and found[0] == image_files.FINGERPRINT_KEY:
-            handed[paths.key(meta["path"])] = ((meta["mtime"], meta["size"]), found[1])
+        digest = found[1] if found is not None and found[0] == image_files.FINGERPRINT_KEY else None
+        handed[paths.key(meta["path"])] = ((meta["mtime"], meta["size"]), digest)
 
 
 def _owe_the_recorded(db_path, touched, handed):
@@ -1224,24 +1210,6 @@ def _bake_after_index(library, settings, detector, folders, handed, stop_file):
         _say(progress_line.fact("baked", sentence=line), line)
         return
     _say(baked.fact(), baked.said())
-
-
-def _read_again(conn, metas, given, library, settings):
-    """The fields of each photo of `metas` that was `given` its identity, read from the file again (refresh_rows.
-    read_files, stamped before its own read), so its row is recorded as the file is after the write: the next index
-    finds it current and reads nothing, and its vector and faces are kept. The batch read was up to 500 photos
-    earlier, and a keyword saved into the file since then is read here (docs/findings.md, #1599). A photo left unread
-    now (no stamp: a share gone away mid-run, tests/test_a_share_asleep.py) keeps the record of the batch read, stamped
-    before that read: the next index reads it once more. One ExifTool refuses is recorded as Fields.whole records it."""
-    again = [meta["path"] for meta in metas if meta["path"] in given]
-    if not again:
-        return
-    with runtimes.fields(library, settings) as fields:
-        records = refresh_rows.read_files(conn, again, fields)
-    for meta in metas:
-        record = records.get(meta["path"])
-        if record is not None and record["mtime"] is not None:
-            meta.update(record)
 
 
 def _match_new_faces(db_path, after, upto):

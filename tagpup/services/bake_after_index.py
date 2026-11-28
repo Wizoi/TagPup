@@ -160,7 +160,7 @@ class Baked:
 def bake_folders(library, fields, detector, folders, handed, stop=None, each=None):
     """Bake the photos of each of `folders` (native folder paths, the photos directly in each) that plan ToBake, a
     folder at a time: Baked. `detector`, the name the library's face detector records its looks under
-    (tagpup.services.faces.detector_named); `handed`, {paths.key(path): ((mtime, size), digest of the upright decode)}
+    (tagpup.services.faces.detector_named); `handed`, {paths.key(path): ((mtime, size), digest of the upright decode, or None: decoded here)}
     the index took of the photos it recorded, with the stamp it recorded each under; `stop()`, asked before each folder;
     `each(fact)`, the fact of each folder as it begins and as each chunk of its write ends (folder_told), whose sentence
     the run's log holds too: nothing between two is said, so a share that stops answering mid-chunk stops the lines.
@@ -332,8 +332,8 @@ def _adopt(library, unfingerprinted, handed, baked):
     index's this run among them, owe_first), the caller's choice of them: those whose file holds the library's current
     bake -- planned Current, before the write of an identity alone -- and, after the write, those whose write failed on
     a file marked read-only (file_changes' `read_only`). Nothing else: a written file's row followed its write, and a
-    photo not written for any other reason stays owed. Counted in `baked.adopted`, but for `handed`'s: the index
-    recorded theirs this run, and given back it is nothing new to say."""
+    photo not written for any other reason stays owed. Counted in `baked.adopted`, but for those whose fingerprint
+    `handed` holds: the index recorded theirs this run, and given back it is nothing new to say."""
     # A file whose look did not answer when it was decoded has no stamp to hold the vector's against: no row.
     unfingerprinted = {key: found for key, found in unfingerprinted.items() if isinstance(found[1].stamp, tuple)}
     if not unfingerprinted:
@@ -342,7 +342,8 @@ def _adopt(library, unfingerprinted, handed, baked):
     def adopt(conn):
         photo_key = settings.photo_key_on(conn)
         return sum(photo_fingerprints.adopt(conn, photo_id, photo_key, decode.stamp,
-                                            (images.FINGERPRINT_KEY, decode.digest)) and key not in handed
+                                            (images.FINGERPRINT_KEY, decode.digest))
+                   and handed.get(key, (None, None))[1] is None
                    for key, (photo_id, decode) in unfingerprinted.items())
     baked.adopted += db.write_with_connection(library.path, adopt, label="the fingerprints of the photos whose files hold their bake")
 

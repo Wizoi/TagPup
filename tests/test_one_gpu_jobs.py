@@ -372,17 +372,16 @@ class TheIndexerWaitsBeforeItsFirstPhoto(_Library):
         extractor = mock.Mock()
         extractor.side_effect = lambda batch, people=None, bakes=False: [
             {"path": path, "mtime": 1.0, "size": 1, "tags": [], "people": [], "captions": []} for path in batch]
-        writer = mock.Mock()
         with mock.patch.object(tagpup_cli, "get_runtime", return_value=runtime), \
                 mock.patch("tagpup.files.field_values.Fields.whole", extractor), \
-                mock.patch.object(tagpup_cli, "IdentityWriter", writer), \
+                mock.patch.object(bake_after_index, "bake_folders") as bake_folders, \
                 mock.patch.dict(os.environ, {indexing_service.STOP_FILE: stop}):
             result = CliRunner().invoke(tagpup_cli.cli, ["--db", self.db_path, "index", self.folder])
         self.assertEqual(indexing_service.EXIT_CANCELLED, result.exit_code, result.output)
         self.assertEqual(["indexing Regatta (harbour)"], waited)
         self.assertIn("Waiting for the graphics card (in use by: Suggest Regatta (harbour)", result.output)
         self.assertIn(indexing_service.CANCELLED_WAITING, result.output)
-        writer.return_value.give.assert_not_called()
+        bake_folders.assert_not_called()   # no file written: no bake, no identity
         runtime.embeddings.return_value.of.assert_not_called()
 
 

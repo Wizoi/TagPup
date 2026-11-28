@@ -43,7 +43,7 @@ OWNERS = {
     os.path.join("tagpup", "web", "libraries.py"): "the data folder's libraries",
     # The owners of a file operation: the look is part of the operation, which itself holds the thread on a share that
     # drops; the batch's first look is bounded (file_changes.states, shares.stamp_of).
-    os.path.join("tagpup", "services", "file_changes.py"): "the journaled write and the identity mint's carry (OutsideWrites): the file's fingerprint around its write",
+    os.path.join("tagpup", "services", "file_changes.py"): "the journaled write: the file's fingerprint around its write",
     os.path.join("tagpup", "files", "metadata.py"): "the reader's stamp before ExifTool reads, and Smart Rename's free name",
     os.path.join("tagpup", "files", "names.py"): "a rename's free name, before the journaled rename",
     os.path.join("tagpup", "files", "recycle_bin.py"): "a delete: the copy to the bin and its check",

@@ -34,7 +34,7 @@ XMP segments writes only those bytes (tagpup.files.in_place.patch_jpeg, PATCH_IN
 own writer's (tagpup.files.segment_edits.new_header), given the journal's values by field, which writes a keyword or
 caption save into the XMP copy alone and answers the copies it left (fields.XMP_ONLY). What does not fit, or what the
 own writer refuses (a field it does not write, an XMP packet in IFD0, a segment an editor cannot read: segment_edits),
-is ExifTool's rewrite as above; so is every write given no `saving` (the identity the indexer mints, a just-look
+is ExifTool's rewrite as above; so is every write given no `saving` (a just-look
 photo's, the shadow comparison's ExifTool side). The picture is never read or written by a patch; the journal checks
 the bytes it changed, and the fields read back, before the file is done (tagpup.services.file_changes._verified), and
 reads no other byte of the file.
@@ -57,7 +57,7 @@ from exiftool.exceptions import ExifToolNotRunning
 
 from tagpup.core import dates, fields, paths
 from tagpup.core.result import Refused
-from tagpup.files import (bake, clip_patch, containers, exiftool_session, identity, images, in_place, lock_owners,
+from tagpup.files import (bake, clip_patch, containers, exiftool_session, images, in_place, lock_owners,
                           metadata, segment_edits, shares)
 
 logger = logging.getLogger(__name__)
@@ -880,111 +880,3 @@ def _landed(photo_path, scratch):
                            "left: %s", left)
         # A refused rename on Windows always carries its winerror (5, access denied; 32, a sharing violation).
         raise OSError(e.errno, NOT_MOVED % e.strerror, None, e.winerror) from None
-
-
-def ensure_document_id(et, path, metadata=None):
-    """Return this photo's identity, writing one into the file if it has none (tagpup.files.identity).
-
-    `metadata` is the dict already read for the photo, so the common case -- a photo
-    that has an identity -- costs nothing beyond a dictionary lookup. Only a photo
-    without one is written to, through write(): the one writer of a photo's fields, made once more when its new file's
-    picture changed (written_once_more, as a save's is; #2476).
-
-    The write is one command, as every write is (write: an objection ExifTool calls minor does not stop it); a lock
-    or a timeout leaves the photo as it was.
-    A failure to write is logged and swallowed: an identity is an improvement on
-    knowing the path, and a photo that cannot take one is still perfectly indexable.
-    Returns None in that case, which every caller must treat as "no identity", not as
-    an error.
-    """
-    existing = fields.read_document_id(metadata)
-    if existing:
-        return existing
-    minted = identity.mint_document_id()
-    try:
-        _written_once_more(et, path, {identity.DOCUMENT_ID_FIELD: minted}, again=lambda: logger.warning(
-            "%s: the write of its identity changed the picture's bytes; the new file was discarded, and it is written "
-            "once more", path))
-    except Exception as e:
-        logger.warning("Could not give %s an identity: %s", path, e)
-        return None
-    logger.debug("Minted %s for %s", minted, path)
-    return minted
-
-
-class IdentityWriter:
-    """Gives photos that have none an identity (tagpup.files.identity), one at a time, as
-    the indexer reads them -- the one writer of a minted identity at index time.
-
-    A path is a bad name for a photo: rename it and the index describes something that
-    no longer exists, while the photo looks unindexed. DocumentID is the XMP standard's
-    per-document identifier and most photos already carry one, so this writes to few
-    files. Only the indexer mints, because it records the identity in the index; opening a
-    folder once wrote into its photos and the rows then looked out of date.
-
-    Never into a photo whose picture did not decode in full (`decoded`: the caller's to
-    say, and false for a file that may be an incomplete copy, tagpup.files.images.
-    ZERO_TAIL), nor one ExifTool reported an error reading (`read_error`): a truncated file
-    took an identity, which changed its modified time, which the folder watcher saw,
-    which queued the indexer for it again (docs/findings.md, #407). Minting used to
-    happen as the batch was read, before any picture was decoded.
-
-    Failures are per-file and logged, never raised: an identity is an improvement on
-    knowing only the path, and a photo that cannot take one indexes without it. The
-    ExifTool session is started for the first photo that needs one; close() ends it.
-
-    `around(path, write)` makes each write, `write()`, and returns what it returned: the indexer's carries the fingerprint
-    of a file a rename gave its name over the write (tagpup.services.file_changes.OutsideWrites, #1957); by default the
-    write alone.
-    """
-
-    def __init__(self, exiftool_path=None, around=None):
-        self.around = around or (lambda _path, write: write())
-        executable = exiftool_path
-        if executable and not os.path.isabs(executable):
-            executable = os.path.abspath(executable)
-        self.executable = executable
-        self._et = None
-        self._failed = False
-        #: Photos given an identity.
-        self.minted = 0
-
-    def give(self, record, decoded):
-        """Write an identity into the photo of `record` (Fields.whole's) if it has
-        none, it `decoded`, and ExifTool read it without an error, and put it in the record.
-        The record keeps the stamp from before its read: stamped after the write, the row
-        claimed a keyword saved into the file since its batch was read (contract 5), and the
-        next index skipped the file as unchanged. The indexer reads a photo given its identity
-        again before recording it (tagpup_cli._read_again). The identity minted, or None."""
-        if record.get("document_id") or not decoded or record.get("read_error"):
-            return None
-        et = self._session()
-        if et is None:
-            return None
-        minted = self.around(record["path"],
-                             lambda: ensure_document_id(et, record["path"], record.get("raw_metadata")))
-        if not minted:
-            return None
-        self.minted += 1
-        record["document_id"] = minted
-        record.setdefault("raw_metadata", {})["XMP:DocumentID"] = minted
-        return minted
-
-    def _session(self):
-        if self._et is None and not self._failed:
-            try:
-                et = exiftool_session.ExifToolSession(executable=self.executable)
-                et.run()
-                self._et = et
-            except Exception as e:
-                self._failed = True
-                logger.error(f"Could not start ExifTool to give photos an identity: {e}")
-        return self._et
-
-    def close(self):
-        et, self._et = self._et, None
-        if et is not None:
-            try:
-                et.terminate()
-            except Exception:
-                pass

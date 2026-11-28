@@ -116,8 +116,7 @@ class TheIndexWritesTheBake(unittest.TestCase):
                         mock.patch.object(clip.ClipModel, "embed_input", return_value=vector),
                         mock.patch.object(Runtime, "gpu_turn", lambda runtime, what, *args, **kwargs: Hold()),
                         mock.patch.object(runtimes, "on_the_card", return_value=True),
-                        mock.patch.object(Runtime, "faces", lambda runtime, library, settings=None: self.detector),
-                        mock.patch.object(tagpup_cli.IdentityWriter, "give", return_value=None)):
+                        mock.patch.object(Runtime, "faces", lambda runtime, library, settings=None: self.detector)):
             patcher.start()
             self.addCleanup(patcher.stop)
 
@@ -232,7 +231,7 @@ class TheIndexWritesTheBake(unittest.TestCase):
         write, calls = field_values._write, []
 
         def damaged_once(*args, **kwargs):
-            # The journal's writes (file_changes._written: the bake's), not the identity mint's before them.
+            # The journal's writes (file_changes._written: the bake's, its mint with it).
             if "scratch_written" in kwargs:
                 calls.append(args[1])
                 if len(calls) == 1:

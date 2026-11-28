@@ -47,7 +47,7 @@ import corpus  # noqa: E402
 import photo_rows  # noqa: E402
 import page_writes  # noqa: E402
 from tagpup.core import fields, orientation  # noqa: E402
-from tagpup.files import bake, containers, exiftool_session, field_values, lock_owners  # noqa: E402
+from tagpup.files import bake, containers, exiftool_session, field_values, identity, lock_owners  # noqa: E402
 from tagpup.files.exiftool_session import ExifToolSession  # noqa: E402
 from tagpup.services import file_changes, tagging  # noqa: E402
 from tagpup.store import db, file_journal  # noqa: E402
@@ -609,10 +609,10 @@ class APhotoIsWrittenBesideItselfAndMovedOverIt(KeptCase):
         self.assertEqual([], self.states(result.details["change"]))
 
     def test_an_identity_minted_into_a_new_file_whose_picture_changed_is_minted_once_more(self):
-        """The indexer's mint of a photo's identity (field_values.ensure_document_id) is a write like a save's: a new file
-        whose picture changed is removed and the mint made once more (#2476's decision), not swallowed with the photo
-        indexed without one this time."""
-        real, made = field_values._command, []
+        """The mint of a photo's identity (the index's bake, bake_after_index) is a write like a save's, through the
+        journal's Fields.write: a new file whose picture changed is removed and the write made once more (#2476's
+        decision), not swallowed with the photo left without one this time."""
+        real, made, again = field_values._command, [], []
 
         def command(et, source, target, params, clear):
             real(et, source, target, params, clear)
@@ -620,14 +620,11 @@ class APhotoIsWrittenBesideItselfAndMovedOverIt(KeptCase):
             if len(made) == 1:
                 flip_a_picture_byte(target)
 
-        with ExifToolSession(executable=EXIFTOOL) as et, \
-                mock.patch.object(field_values, "_command", side_effect=command), \
-                self.assertLogs(field_values.logger, "WARNING") as logged:
-            minted = field_values.ensure_document_id(et, self.a)
-            held = fields.read_document_id(et.get_metadata([self.a])[0])
-        self.assertIsNotNone(minted)
-        self.assertEqual((2, minted), (len(made), held))
-        self.assertTrue(any("picture's bytes" in line for line in logged.output), logged.output)
+        minted, written = identity.mint_document_id(), exiftool_fields.opened(self, EXIFTOOL)
+        with mock.patch.object(field_values, "_command", side_effect=command):
+            written.write(self.a, {identity.DOCUMENT_ID_FIELD: minted}, again=lambda: again.append(self.a))
+        held = fields.read_document_id(written.read_one(self.a, [identity.DOCUMENT_ID_FIELD], whole=False))
+        self.assertEqual((2, [self.a], minted), (len(made), again, held))
         self.assertEqual(picture_of(self.before), picture_of(bytes_of(self.a)))
         self.assertFalse(os.path.exists(self.scratch))
 

@@ -113,10 +113,10 @@ class APhotoWhoseXmpExifToolObjectsTo(unittest.TestCase):
     def test_a_new_photo_with_two_abouts_is_given_an_identity_in_one_command(self):
         photo = photo_holding(self, TWO_ABOUTS)
         with ExifToolSession(executable=EXIFTOOL) as et:
+            minted = identity.mint_document_id()
             with mock.patch.object(et, "execute", wraps=et.execute) as execute:
-                minted = field_values.ensure_document_id(et, photo, {})
+                field_values._write(et, photo, {identity.DOCUMENT_ID_FIELD: minted})
             held = field_values._read_one(et, photo, [identity.DOCUMENT_ID_FIELD, "XMP:Subject"])
-        self.assertTrue(minted and minted.startswith("xmp.did:"), minted)
         self.assertEqual(1, len(writes(execute)), "a mint was %s" % writes(execute))
         self.assertEqual(([minted], ["Places/Harbour"]), (held[identity.DOCUMENT_ID_FIELD], held["XMP:Subject"]))
 
@@ -141,7 +141,7 @@ class APhotoWhoseXmpExifToolObjectsTo(unittest.TestCase):
 
 @unittest.skipIf(EXIFTOOL is None, "ExifTool not installed")
 class AMintThatFails(unittest.TestCase):
-    """The indexer reads a photo with no identity, and the write fails: a lock, a timeout."""
+    """The index's bake writes the identity of a photo with none, and the write fails: a lock, a timeout."""
 
     def test_is_not_made_again_and_leaves_the_photo(self):
         photo = photo_holding(self, TWO_ABOUTS)
@@ -150,9 +150,9 @@ class AMintThatFails(unittest.TestCase):
             with self.subTest(error=type(error).__name__), ExifToolSession(executable=EXIFTOOL) as et:
                 before = digest(photo)
                 with mock.patch.object(et, "set_tags", side_effect=error) as set_tags, \
-                        mock.patch.object(et, "execute", wraps=et.execute) as execute:
-                    minted = field_values.ensure_document_id(et, photo, {})
-            self.assertIsNone(minted, "a photo that took no identity reported one")
+                        mock.patch.object(et, "execute", wraps=et.execute) as execute, \
+                        self.assertRaises(type(error)):
+                    field_values._write(et, photo, {identity.DOCUMENT_ID_FIELD: identity.mint_document_id()})
             self.assertEqual(1, set_tags.call_count, "a mint that failed was made again")
             self.assertEqual([], writes(execute), "a second command wrote the file")
             self.assertEqual(before, digest(photo))
