@@ -33,7 +33,8 @@ What the owner lives through, each with the CLI's index over a real ExifTool and
   57 minutes with no line). The lines change nothing written: the files not reached are owed as before;
 - a photo's identity (DocumentID) is a field of its folder's bake (DECISIONS 2026-11-26, decision 1): a new photo is
   given one in the bake's write, its row holds it, and the next index gives none again; a photo whose file holds its bake
-  already is given its id alone, patched, its bake not rewritten; a file that came to hold an id since its folder was
+  already is given its id alone, patched, its bake not rewritten, and a crash at any step of that write leaves it
+  right, the next index reading it again at worst; a file that came to hold an id since its folder was
   read (another library's bake of a folder both hold) keeps its own; a photo changed between the index and its bake is
   given none; a photo ending in zeros (an interrupted copy, #407) is written nothing, its bake nor its identity, the
   line says so, and the next index writes it nothing again, and an index with --skip-faces gives none.
@@ -751,6 +752,35 @@ class TheIndexWritesTheBake(unittest.TestCase):
         self.assertEqual(known, os.stat(a).st_ino, "the identity alone was not patched into the file's XMP")
         self.assertBaked(a, 1)
         self.assertNoBakeListed()
+
+    def test_a_crash_in_the_write_of_an_identity_alone_leaves_the_photo_right_and_the_next_index_ends_it(self):
+        """A photo holding its bake is given its fingerprint row at its decode's stamp before its id alone is written
+        (_adopt), and the write's record restamps the row and its vector. Killed at each step of that write, before the
+        record: a settle takes the file forward or back, and the next index reads the photo again at worst -- it ends
+        holding one identity, in its file and in its row, its bake as it was, and the index after writes it nothing."""
+        for n, step in enumerate((file_changes.STEPS[1], file_changes.PATCH_SAVED, file_changes.STEPS[4])):
+            with self.subTest(step=step):
+                path = self.picture("crash %d.jpg" % n, (20 * n, 90, 160))
+                self.index()
+                write_outside(path, {identity.DOCUMENT_ID_FIELD: ""})   # another program takes its identity off
+                bake_before = self.bake_fields(path)
+                with mock.patch.object(file_changes, "_reached", side_effect=crash_at(step)):
+                    with self.assertRaises(Crash):
+                        self.index()
+                self.assertTrue(self.fingerprint_row(path), "the photo holding its bake has no row")
+                with mock.patch.object(file_changes, "SCRATCH_STALE", 0):
+                    file_changes.settle(self.library, exiftool_fields.opened(self, EXIFTOOL))
+                self.index()
+                held, row, raw = self.identity_of(path)
+                self.assertTrue(str(held).startswith("xmp.did:"), "no identity minted")
+                self.assertEqual((held, held), (row, raw), "the row does not hold the identity its file holds")
+                self.assertEqual(bake_before, self.bake_fields(path), "a current bake was rewritten")
+                self.assertBaked(path, 0)
+                self.assertNoBakeListed()
+                stamp = os.stat(path).st_mtime_ns
+                self.index()
+                self.assertEqual((stamp, held), (os.stat(path).st_mtime_ns, self.identity_of(path)[0]),
+                                 "the index after wrote it again")
 
     def test_a_file_given_an_identity_since_its_folder_was_read_keeps_it(self):
         # Two libraries over one folder, their bakes at once: the other one's id reached the file first.
