@@ -1,0 +1,10 @@
+# Findings of a branch
+
+Provisional numbers `B-n`: `tools/add_findings.py --take` gives each row its number in
+docs/findings.md when the main session merges the branch, and removes this file.
+
+| # | Found | Finding | Status |
+|---|---|---|---|
+| B-1 | 2026-11-27 | wrong: the index tells the owner a possibly incomplete copy (a file ending in images.ZERO_TAIL zero bytes, #407) is "indexed, and nothing was written to them" (tagpup_cli.py's incomplete lines), but an index with faces then ran the bake, which planned and wrote that photo's bake (bake_after_index._planned asked the tail only of a photo it would mint). Reproduced at 694af9dd (before M) with tests/test_no_writes_to_damaged_photos.py run with faces stood in; fixed in own-metadata-m2 82e3cdd2: the tail check moved from _minted to _incomplete, asked of every photo the bake would write; both new tests fail on the code before it | fixed |
+| B-2 | 2026-11-27 | wrong: with the CLI's mint deleted, a photo the index recorded with no fingerprint of its picture (a vector kept by its stamp with no fingerprint row: an index stopped after PhotoEmbeddings.keep and before its batch was recorded) was not in `handed`, so its bake wrote it and never minted it, and no later index would (its row then current). Found by re-pointing tests/test_an_index_reads_the_next_photos_ahead.py's stopped-half-way test, which failed on it; fixed in own-metadata-m2 195a0fcf: tagpup_cli._recorded hands every recorded photo, its digest None when it holds none, and the bake decodes it | fixed |
+| B-3 | 2026-11-27 | low: a photo whose file changes (a keyword saved by another program or a page) between its decode and its batch's record is shown to CLIP and the face model again by the next index: owe_first takes its fingerprint row, the bake cannot plan it (its vector's stamp is the decode's: NO_VECTOR), so no row is put back and the next index cannot tell the picture is the same. Pre-dates M (the CLI's _read_again hid it in the read-ahead test). user action: a save during an index. One extra model pass per photo, nothing lost | open |
