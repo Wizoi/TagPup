@@ -33,7 +33,8 @@ puts a row only from a Fingerprint written); a write that failed or never ran le
 change: in no History, never undone, recorded in the photo's row (store.photos.follow_fields: DocumentID ->
 document_id), and a done rename is carried over it (file_changes._follow_rename). A file that came to hold an id since
 it was read (another library's bake of a folder both hold) keeps its own (_mint_kept). Not minted here: a Current photo
-that holds no id and was not recorded this run (a write for the id alone: the one-off's, D1), one the bake cannot plan
+that holds no id and was not recorded this run (a write for the id alone: the one-off's, scripts/mint_identities.py,
+which asks it of bake_folders by `mint_current`; never an index's, D1), one the bake cannot plan
 (minted when it can be), a clip (never baked), and nothing under --skip-faces, which bakes nothing. A read or a write ExifTool does not answer in its deadline (a share gone away) ends the run at that
 folder; the folders after it are baked by the next index. One snapshot of the library is taken before the first write
 (snapshots.before_a_long_write: none when today's stands); if it fails nothing is written.
@@ -126,7 +127,8 @@ class Baked:
     (counts only: too many photos, a batch ahead, the roots changed); `stalled`, a share stopped answering and ended the
     run; `roots_changed`, the library's roots were changed by another process and ended it; `pictures_refused`, the writes
     discarded because they changed the picture's bytes and made again (file_changes, the result's `pictures_refused`);
-    `minted`, the photos whose write gave them an identity (counted from the write's report, logged, not said); `alone`,
+    `minted`, the photos whose write gave them an identity (counted from the write's report, logged, not said);
+    `to_mint`, the photos planned one (a run that writes nothing counts these alone); `alone`,
     those of them whose file held its bake and was written its identity alone (said, and counted among the files that
     held it already, not among those written: no bake was); `incomplete`, the photos written nothing for their file may be an incomplete copy (_incomplete)."""
     planned: int = 0
@@ -142,6 +144,7 @@ class Baked:
     roots_changed: bool = False
     pictures_refused: int = 0
     minted: int = 0
+    to_mint: int = 0
     alone: int = 0
     incomplete: int = 0
 
@@ -171,7 +174,7 @@ class Baked:
                                   conflicts=self.conflicts)
 
 
-def bake_folders(library, fields, detector, folders, handed, stop=None, each=None):
+def bake_folders(library, fields, detector, folders, handed, stop=None, each=None, mint_current=False, write=True):
     """Bake the photos of each of `folders` (native folder paths, the photos directly in each) that plan ToBake, a
     folder at a time: Baked. `detector`, the name the library's face detector records its looks under
     (tagpup.services.faces.detector_named); `handed`, {paths.key(path): ((mtime, size), digest of the upright decode, or
@@ -179,12 +182,16 @@ def bake_folders(library, fields, detector, folders, handed, stop=None, each=Non
     recorded each under; `stop()`, asked before each folder;
     `each(fact)`, the fact of each folder as it begins and as each chunk of its write ends (folder_told), whose sentence
     the run's log holds too: nothing between two is said, so a share that stops answering mid-chunk stops the lines.
-    A handed photo keeps its row only when its file is written, holds the current bake or is read-only (owe_first)."""
+    A handed photo keeps its row only when its file is written, holds the current bake or is read-only (owe_first).
+    `mint_current`: a photo holding its bake and no DocumentID is planned its identity alone though the index did not
+    record it this run (the one-off's, scripts/mint_identities.py; never an index's, D1), decoded here to be. Not `write`:
+    each folder is planned and counted (`planned`, `to_mint`, `incomplete`, `cannot`), and nothing is written, a file or
+    a row."""
     baked, snapshot, walk, chunk_lines = Baked(), [], baking.walk(stop), [True]
     owe_first(library, folders, handed)
     # One deadline for the run (Fields.together): a share away ends it at that folder, the rest baked by the next index.
     with fields.together():
-        if folders:
+        if folders and write:
             fields.ready_to_write()   # an ExifTool that will not start fails the run once, not as an unreadable line per photo
         for number, folder in enumerate(folders, 1):
             if stop is not None and stop():
@@ -207,7 +214,14 @@ def bake_folders(library, fields, detector, folders, handed, stop=None, each=Non
                 except Exception as error:
                     chunk_lines.clear()
                     logger.warning("The bake's progress lines stop here, its writes go on: %s: %s", type(error).__name__, error)
-            to_bake, stored, unfingerprinted, id_alone = _planned(library, fields, detector, folder, handed, baked, walk)
+            to_bake, stored, unfingerprinted, id_alone = _planned(library, fields, detector, folder, handed, baked, walk,
+                                                                  mint_current)
+            if not write:
+                baked.planned += len(to_bake)
+                baked.stalled = baked.stalled or fields.dead
+                if baked.stalled:
+                    break
+                continue
             # A photo holding its bake already, and written nothing, has its row now: its file holds the bake.
             _adopt(library, {key: (photo_id, decode, decode.stamp) for key, (photo_id, decode) in unfingerprinted.items()
                              if key not in to_bake}, handed, baked)
@@ -223,6 +237,24 @@ def bake_folders(library, fields, detector, folders, handed, stop=None, each=Non
             if baked.roots_changed:
                 break
     return baked
+
+
+def folders_owed_an_identity(library):
+    """[(folder, how many)]: each folder (native) directly holding a photo of a baked kind whose row records no
+    identity, with how many, in path order: the folders the one-off plans (scripts/mint_identities.py). Rows only: the
+    file's own read decides each photo (_minted), and a rerun finds the photos minted since recorded (follow_fields)."""
+    conn = db.connect(db.readonly_uri(library.path), uri=True)
+    try:
+        held = {paths.key(path) for path in store_photos.identities(conn)}
+        rows = store_photos.stamps(conn, with_kind=True)
+    finally:
+        conn.close()
+    folders = {}
+    for _id, path, _mtime, _size, kind in rows:
+        if kind in store_photos.BAKED_KINDS and paths.key(path) not in held:
+            spelled, count = folders.get(paths.key(os.path.dirname(path)), (os.path.dirname(path), 0))
+            folders[paths.key(spelled)] = (spelled, count + 1)
+    return [folders[key] for key in sorted(folders)]
 
 
 def owe_first(library, folders, handed):
@@ -244,12 +276,12 @@ def owe_first(library, folders, handed):
                                  label="the fingerprints the index recorded of the photos its bake is to write")
 
 
-def _planned(library, fields, detector, folder, handed, baked, walk):
+def _planned(library, fields, detector, folder, handed, baked, walk, mint_current=False):
     """({paths.key(path): (path, values)} of the photos of `folder` to write -- to bake, or holding their bake and to be
     given their identity alone --, the folder as the library stores it, {paths.key(path): (photo id, _Decode)} of those
     planned that have no fingerprint row, current or to bake, and the keys of those to be given their identity alone),
     counting into `baked` the photos current, not answered and that cannot be planned. A photo's identity is minted
-    here (_minted), once, after its second plan."""
+    here (_minted), once, after its second plan; with `mint_current`, one holding its bake and no id is decoded for it."""
     conn = db.connect(db.readonly_uri(library.path), uri=True)
     try:
         keys = baking.keys(conn, detector)
@@ -263,15 +295,17 @@ def _planned(library, fields, detector, folder, handed, baked, walk):
         for photo_id, path in group:
             photo, decode = baking.PhotoAt(path, read, walk), _Decode(path, handed)
             plan = photo.plan(conn, keys)
-            if isinstance(plan, baking.ToBake) or (isinstance(plan, baking.Current) and photo_id not in fingerprinted):
+            if isinstance(plan, baking.ToBake) or (isinstance(plan, baking.Current) and (
+                    photo_id not in fingerprinted or (mint_current and _holds_no_id(read, path)))):
                 plan = photo.plan(conn, keys, decode)
             if photo_id not in fingerprinted and decode.digest is not None and isinstance(
                     plan, (baking.ToBake, baking.Current)):
                 unfingerprinted[paths.key(path)] = (photo_id, decode)
-            minted = _minted(path, read, handed, decode, plan)
+            minted = _minted(path, read, handed, decode, plan, mint_current)
             if (minted is not None or isinstance(plan, baking.ToBake)) and _incomplete(path, decode, baked):
                 continue
             if minted is not None:
+                baked.to_mint += 1
                 to_bake[paths.key(path)] = (path, {**(plan.values if isinstance(plan, baking.ToBake) else {}),
                                                    DOCUMENT_ID: [minted]})
                 if isinstance(plan, baking.Current):
@@ -290,25 +324,29 @@ def _planned(library, fields, detector, folder, handed, baked, walk):
     return to_bake, stored, unfingerprinted, id_alone
 
 
-def _minted(path, read, handed, decode, plan):
+def _minted(path, read, handed, decode, plan, mint_current=False):
     """A new identity for the photo at `path` (identity.mint_document_id), or None: for one whose picture decoded in full
     (`decode`: the index's, handed over, or the bake's own) and whose file holds no DocumentID (the folder's `read`),
     planned to bake (`plan` ToBake: written anyway, the index's this run or not), or holding its bake (Current: a write
-    for the id alone) when the index recorded it this run (`handed`) at the stamp its file is at still. A file that may
+    for the id alone) when the index recorded it this run (`handed`) at the stamp its file is at still, or, with
+    `mint_current`, whether it did or not (the one-off's: bake_folders). A file that may
     be an incomplete copy is written nothing, its identity with the rest (_incomplete); one changed between the plan and
     the write is a conflict (write_fields' read just before it)."""
     if isinstance(plan, baking.Current):
         recorded = handed.get(paths.key(path))
-        if recorded is None or not _still_at(recorded[0], decode.stamp):
+        if not mint_current and (recorded is None or not _still_at(recorded[0], decode.stamp)):
             return None
     elif not isinstance(plan, baking.ToBake):
         return None
-    if decode.digest is None:
-        return None
-    held = read.of(path)
-    if isinstance(held, Exception) or core_fields.read_document_id(held):
+    if decode.digest is None or not _holds_no_id(read, path):
         return None
     return identity.mint_document_id()
+
+
+def _holds_no_id(read, path):
+    """Did the folder's `read` find the file at `path` holding no DocumentID (a file it could not read: no answer)?"""
+    held = read.of(path)
+    return not isinstance(held, Exception) and not core_fields.read_document_id(held)
 
 
 def _incomplete(path, decode, baked):
