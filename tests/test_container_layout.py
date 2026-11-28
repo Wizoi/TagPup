@@ -64,10 +64,9 @@ class AClip(Reading):
     def test_a_64_bit_box_size_and_a_last_box_of_size_0(self):
         data = FTYP + large_box(b"mdat", bytes(40)) + MOOV + struct.pack(">I", 0) + b"mdat" + bytes(30)
         layout = self.read(data)
-        mdat = layout.first_mdat
+        mdat, last = layout.of_type("mdat")
         self.assertEqual((16, 56), (mdat.header, mdat.size))
         self.assertEqual("moov", layout.boxes[2].type)
-        last = layout.last_mdat
         self.assertTrue(last.to_end)
         self.assertEqual(len(data), last.end)
         self.assertIsNone(layout.tail)
@@ -135,8 +134,7 @@ class AClipThatStopsBeingOne(Reading):
         layout = self.read(data)
         self.assertEqual(["ftyp", "moov"], [b.type for b in layout.boxes])
         self.assertEqual(containers.Tail(len(FTYP + MOOV), "truncated", 10_000, "mdat"), layout.tail)
-        self.assertIsNone(layout.first_mdat)
-        self.assertIsNone(layout.moov_first)
+        self.assertEqual((), layout.of_type("mdat"))
 
     def test_a_file_cut_inside_a_box_header(self):
         layout = self.read(FTYP + MOOV + MDAT + b"\0\0\x01")

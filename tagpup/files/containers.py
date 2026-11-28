@@ -190,23 +190,6 @@ class Video:
         return found[0] if found else None
 
     @property
-    def first_mdat(self):
-        found = self.of_type("mdat")
-        return found[0] if found else None
-
-    @property
-    def last_mdat(self):
-        found = self.of_type("mdat")
-        return found[-1] if found else None
-
-    @property
-    def moov_first(self):
-        """True when moov comes before the first mdat, False after; None when either is missing."""
-        if self.moov is None or self.first_mdat is None:
-            return None
-        return self.moov.offset < self.first_mdat.offset
-
-    @property
     def fragmented(self):
         return bool(self.of_type("moof"))
 
