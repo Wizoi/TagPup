@@ -329,9 +329,11 @@ index recorded it this run (DECISIONS 2026-11-27: no write and no decode more; a
 left was baked by the next index, which handed it nothing, and never minted). A photo whose bake is `Current` and holds
 no id, not recorded this run (`handed`, decoded by the index), is NOT minted: a write for the id alone is B1's. A photo
 recorded this run whose bake is `Current` is planned with the id alone (a current bake is
-never rewritten: DECISIONS 2026-10-27) and written with the bake's follower (`baking.follower`) in the transaction that
-marks it done, so its fingerprint row is put as a baked photo's is (`_adopt` leaves a photo in `to_bake` to the
-follower). The write is the folder's internal change under `baking.INDEX_OPERATION` alone (`file_journal.INTERNAL`: one
+never rewritten: DECISIONS 2026-10-27). The bake's follower (`baking.follower`) cannot give it its fingerprint row (it
+puts one only from a Fingerprint written), so the row comes after the write, from the write's report (done or held
+already, at the stamp it recorded; or failed on a read-only file), by `_adopt`; a write that failed or never ran (a
+share stalled, a kill before its plan) leaves it owed. As first built the row came before the write, and such a stop
+left the photo with a row, no id and nothing owed. The write is the folder's internal change under `baking.INDEX_OPERATION` alone (`file_journal.INTERNAL`: one
 change a folder, in no History, never undone), recorded by `follow_fields` (`DOCUMENT_ID_KEYS` -> `document_id`),
 carried over a done rename by `_follow_rename`; no other operation journals an identity (the undo matrix's `a_bake`,
 which journals a bake under the retired `baking.OPERATION`, writes none). The mint's rules move with it: never into a

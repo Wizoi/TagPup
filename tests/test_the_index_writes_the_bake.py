@@ -762,10 +762,10 @@ class TheIndexWritesTheBake(unittest.TestCase):
         self.assertNoBakeListed()
 
     def test_a_crash_in_the_write_of_an_identity_alone_leaves_the_photo_right_and_the_next_index_ends_it(self):
-        """A photo holding its bake is given its fingerprint row at its decode's stamp before its id alone is written
-        (_adopt), and the write's record restamps the row and its vector. Killed at each step of that write, before the
-        record: a settle takes the file forward or back, and the next index reads the photo again at worst -- it ends
-        holding one identity, in its file and in its row, its bake as it was, and the index after writes it nothing."""
+        """A photo holding its bake is given its fingerprint row only once its id alone is written, at the stamp the
+        write recorded (_adopt). Killed at each step of that write, before the record: it has no row (owed), a settle
+        takes the file forward or back, and the next index reads the photo again at worst -- it ends holding one
+        identity, in its file and in its row, its bake as it was, and the index after writes it nothing."""
         for n, step in enumerate((file_changes.STEPS[1], file_changes.PATCH_SAVED, file_changes.STEPS[4])):
             with self.subTest(step=step):
                 path = self.picture("crash %d.jpg" % n, (20 * n, 90, 160))
@@ -775,7 +775,7 @@ class TheIndexWritesTheBake(unittest.TestCase):
                 with mock.patch.object(file_changes, "_reached", side_effect=crash_at(step)):
                     with self.assertRaises(Crash):
                         self.index()
-                self.assertTrue(self.fingerprint_row(path), "the photo holding its bake has no row")
+                self.assertEqual([], self.fingerprint_row(path), "given its row before its write was done")
                 with mock.patch.object(file_changes, "SCRATCH_STALE", 0):
                     file_changes.settle(self.library, exiftool_fields.opened(self, EXIFTOOL))
                 self.index()
@@ -789,6 +789,49 @@ class TheIndexWritesTheBake(unittest.TestCase):
                 self.index()
                 self.assertEqual((stamp, held), (os.stat(path).st_mtime_ns, self.identity_of(path)[0]),
                                  "the index after wrote it again")
+
+    def identity_taken_off(self):
+        """a.jpg and b.jpg indexed and baked; then another program takes a.jpg's identity off: the next index records
+        it again, its bake current, and plans its identity alone."""
+        a, b = self.picture("a.jpg", (200, 40, 40)), self.picture("b.jpg", (40, 200, 40))
+        self.index()
+        write_outside(a, {identity.DOCUMENT_ID_FIELD: ""})
+        return a, b
+
+    def assertOwedWithNoIdentity(self, path):
+        self.assertEqual([], self.fingerprint_row(path), "given its row with its identity alone never written: never owed again")
+        self.assertIsNone(field_of(path, identity.DOCUMENT_ID_FIELD))
+        self.assertEqual((1, 1, False), self.looked())
+
+    def test_an_identity_alone_a_share_kept_from_its_write_leaves_the_photo_owed(self):
+        """The share stops answering while the bake reads the folder (a.jpg read, b.jpg not): the folder is written
+        nothing, and a.jpg, planned with its identity alone, has no fingerprint row: its row comes after its write."""
+        a, _b = self.identity_taken_off()
+        real_read, real_bake = field_values._read, bake_after_index.bake_folders
+
+        def folder_read(et, photo_paths, *args, **kwargs):
+            if len(photo_paths) > 1:
+                return real_read(_StallsAfter(et, 1), photo_paths, *args, **kwargs)
+            return real_read(et, photo_paths, *args, **kwargs)
+
+        def bake(*args, **kwargs):
+            with mock.patch.object(field_values, "READ_BATCH", 1), \
+                    mock.patch.object(field_values, "_read", side_effect=folder_read):
+                return real_bake(*args, **kwargs)
+        with mock.patch.object(bake_after_index, "bake_folders", side_effect=bake):
+            said = " ".join(self.index().output.split())
+        self.assertIn("ended at a folder whose share stopped answering", said)
+        self.assertOwedWithNoIdentity(a)
+
+    def test_an_identity_alone_killed_before_its_write_is_planned_leaves_the_photo_owed(self):
+        """Killed after the folder is planned and before the write's plan is committed (here as the snapshot before
+        the first write is taken): a.jpg has no fingerprint row."""
+        a, _b = self.identity_taken_off()
+        with mock.patch.object(bake_after_index.snapshot_service, "before_a_long_write", side_effect=Crash):
+            with self.assertRaises(Crash):
+                self.index()
+        self.assertEqual([], file_journal.unfinished(self.db_path))
+        self.assertOwedWithNoIdentity(a)
 
     def test_a_file_given_an_identity_since_its_folder_was_read_keeps_it(self):
         # Two libraries over one folder, their bakes at once: the other one's id reached the file first.
