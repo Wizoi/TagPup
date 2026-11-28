@@ -343,8 +343,9 @@ looks unindexed. `tagpup/files/identity.py` reads `XMP-xmpMM:DocumentID`, which 
 already carry (1,075 of 1,129 sampled here), and mints `xmp.did:<uuid>` into the few
 that do not. That means a normal index pass *writes* to some files: only the index's
 bake does (`tagpup/services/bake_after_index.py`), once the folder's batches are recorded,
-the identity a field of its journaled internal change, and only into a photo the index
-recorded this run whose picture decoded in full and whose file does not end in zeros --
+the identity a field of its journaled internal change, and only into a photo whose
+picture decoded in full and whose file does not end in zeros (written alone, its bake
+current, only into one the index recorded this run: DECISIONS 2026-11-27) --
 a truncated file took an identity, which changed its modified time, which queued it for
 indexing again (#407). `Fields.whole` only reads. The row follows the write in the
 transaction that marks it done (`store.photos.follow_fields`), so the next pass finds it
