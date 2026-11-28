@@ -188,7 +188,8 @@ def bake_folders(library, fields, detector, folders, handed, stop=None, each=Non
     each folder is planned and counted (`planned`, `to_mint`, `incomplete`, `cannot`), and nothing is written, a file or
     a row."""
     baked, snapshot, walk, chunk_lines = Baked(), [], baking.walk(stop), [True]
-    owe_first(library, folders, handed)
+    if write:
+        owe_first(library, folders, handed)
     # One deadline for the run (Fields.together): a share away ends it at that folder, the rest baked by the next index.
     with fields.together():
         if folders and write:
