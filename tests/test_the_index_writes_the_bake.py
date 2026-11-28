@@ -689,6 +689,9 @@ class TheIndexWritesTheBake(unittest.TestCase):
         self.assertEqual((0, 0, True), self.looked())
 
     def test_a_ctrl_c_part_way_through_a_folders_write_keeps_the_rows_of_the_files_written(self):
+        """The photo the Ctrl+C kept from its write is baked by the next index from the library (its folder owed,
+        nothing handed: bake_only), and given its identity in that write: a photo the bake writes anyway is minted
+        whether or not the index recorded it this run (DECISIONS 2026-11-27). The index after says it is up to date."""
         a, b = self.picture("a.jpg", (200, 40, 40)), self.picture("b.jpg", (40, 200, 40))
         stops_at_the_second = crash_at("file writing", nth=2)
 
@@ -706,6 +709,11 @@ class TheIndexWritesTheBake(unittest.TestCase):
         self.assertIn("Bake: 1 file(s) written, 1 already held it", self.index_with_no_model())
         self.assertBaked(b, 0)
         self.assertEqual((0, 0, True), self.looked())
+        held, row, raw = self.identity_of(b)
+        self.assertTrue(str(held).startswith("xmp.did:"), "baked by the next index and never given its identity")
+        self.assertEqual((held, held), (row, raw), "the row does not hold the identity its file holds")
+        self.assertIn("All images are up to date", self.index().output)
+        self.assertEqual((held, held, held), self.identity_of(b))
 
     def bake_fields(self, path):
         with field_values.opened(EXIFTOOL) as et:

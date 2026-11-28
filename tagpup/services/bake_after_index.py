@@ -20,16 +20,18 @@ interrupted copy leaves one) is written nothing, neither its bake nor its identi
 index tells the owner it was left as it is, and so it is.
 
 **A photo's identity** (its XMP-xmpMM:DocumentID, tagpup.files.identity) is a field of the bake (owner, DECISIONS
-2026-11-26, decision 1): minted once, after a photo's second plan, for a photo the index recorded this run (`handed`)
-that decoded in full (its decode's digest, of the file at the stamp the index recorded it under: one changed since is
-read again by the next index, and minted then), and holds no DocumentID. A photo to bake gets it beside the bake's fields; one whose
-file holds its bake already (Current) is planned with the id alone, its bake never rewritten (DECISIONS 2026-10-27),
-and is given its fingerprint row before the write, as a Current photo is (_adopt). It is the folder's one internal
+2026-11-26, decision 1): minted once, after a photo's second plan, for a photo whose picture decoded in full and whose
+file holds no DocumentID. A photo the bake writes anyway (planned ToBake) gets it beside the bake's fields, whether or
+not the index recorded it this run (DECISIONS 2026-11-27: no write and no decode more; a photo a stopped bake left is
+minted by the next index's bake of it). One whose file holds its bake already (Current) is planned with the id alone,
+its bake never rewritten (DECISIONS 2026-10-27), only when the index recorded it this run (`handed`) and its file is at
+the stamp the index recorded it under (one changed since is read again by the next index, and minted then), and is
+given its fingerprint row before the write, as a Current photo is (_adopt). It is the folder's one internal
 change: in no History, never undone, recorded in the photo's row (store.photos.follow_fields: DocumentID ->
 document_id), and a done rename is carried over it (file_changes._follow_rename). A file that came to hold an id since
-it was read (another library's bake of a folder both hold) keeps its own (_mint_kept). Not minted here: a photo not
-recorded this run (the one-off's), one the bake cannot plan (minted when it can be), a clip (never baked), and nothing
-under --skip-faces, which bakes nothing. A read or a write ExifTool does not answer in its deadline (a share gone away) ends the run at that
+it was read (another library's bake of a folder both hold) keeps its own (_mint_kept). Not minted here: a Current photo
+that holds no id and was not recorded this run (a write for the id alone: the one-off's, D1), one the bake cannot plan
+(minted when it can be), a clip (never baked), and nothing under --skip-faces, which bakes nothing. A read or a write ExifTool does not answer in its deadline (a share gone away) ends the run at that
 folder; the folders after it are baked by the next index. One snapshot of the library is taken before the first write
 (snapshots.before_a_long_write: none when today's stands); if it fails nothing is written.
 
@@ -284,14 +286,19 @@ def _planned(library, fields, detector, folder, handed, baked, walk):
 
 
 def _minted(path, read, handed, decode, plan):
-    """A new identity for the photo at `path` (identity.mint_document_id), or None: only for one the index recorded
-    this run (`handed`), planned to bake or holding its bake (`plan`), whose picture decoded in full of the file at the
-    stamp the index recorded it under (`decode`), and whose file holds no DocumentID (the folder's `read`). A file that
-    may be an incomplete copy is written nothing, its identity with the rest (_incomplete)."""
-    recorded = handed.get(paths.key(path))
-    if recorded is None or not isinstance(plan, (baking.ToBake, baking.Current)):
+    """A new identity for the photo at `path` (identity.mint_document_id), or None: for one whose picture decoded in full
+    (`decode`: the index's, handed over, or the bake's own) and whose file holds no DocumentID (the folder's `read`),
+    planned to bake (`plan` ToBake: written anyway, the index's this run or not), or holding its bake (Current: a write
+    for the id alone) when the index recorded it this run (`handed`) at the stamp its file is at still. A file that may
+    be an incomplete copy is written nothing, its identity with the rest (_incomplete); one changed between the plan and
+    the write is a conflict (write_fields' read just before it)."""
+    if isinstance(plan, baking.Current):
+        recorded = handed.get(paths.key(path))
+        if recorded is None or decode.stamp != recorded[0]:
+            return None
+    elif not isinstance(plan, baking.ToBake):
         return None
-    if decode.digest is None or decode.stamp != recorded[0]:
+    if decode.digest is None:
         return None
     held = read.of(path)
     if isinstance(held, Exception) or core_fields.read_document_id(held):
