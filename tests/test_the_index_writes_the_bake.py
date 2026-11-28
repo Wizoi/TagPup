@@ -30,7 +30,12 @@ What the owner lives through, each with the CLI's index over a real ExifTool and
   the files written keep their rows and the rest are owed;
 - a folder of many photos says how far its write has got as each chunk of its files ends, and a share that stops
   answering mid-chunk stops the lines: the page can say it has not moved (photo_index, 2026-10-28: 759 files baked over
-  57 minutes with no line). The lines change nothing written: the files not reached are owed as before.
+  57 minutes with no line). The lines change nothing written: the files not reached are owed as before;
+- a photo's identity (DocumentID) is a field of its folder's bake (DECISIONS 2026-11-26, decision 1): a new photo is
+  given one in the bake's write, its row holds it, and the next index gives none again; a photo whose file holds its bake
+  already is given its id alone, patched, its bake not rewritten; a file that came to hold an id since its folder was
+  read (another library's bake of a folder both hold) keeps its own; a photo ending in zeros (an interrupted copy, #407)
+  and a photo changed between the index and its bake are given none, and an index with --skip-faces gives none.
 
 Lifted: the deleted `bake-photos` command's tests of a PNG and of a turn between the plan and the write
 (test_a_bake_is_written_folder_by_folder), now of the index's bake.
@@ -51,13 +56,13 @@ import baked_files  # noqa: E402
 import page_writes  # noqa: E402
 import own_home  # noqa: E402
 from stand_in_models import Hold, NewFaces, RefusableFaces  # noqa: E402
-from test_file_journal import Crash, crash_at  # noqa: E402
+from test_file_journal import Crash, crash_at, field_of, write_outside  # noqa: E402
 
 import tagpup_cli  # noqa: E402
 from tagpup import runtime as runtimes  # noqa: E402
 from tagpup.core import paths, processes  # noqa: E402
 from tagpup.core.library import Library  # noqa: E402
-from tagpup.files import bake, exiftool_session, field_values, images  # noqa: E402
+from tagpup.files import bake, exiftool_session, field_values, identity, images  # noqa: E402
 from tagpup.ml import clip  # noqa: E402
 from tagpup.runtime import Runtime  # noqa: E402
 from tagpup.services import bake_after_index, baking, batches, file_changes, tagging  # noqa: E402
@@ -111,7 +116,8 @@ class TheIndexWritesTheBake(unittest.TestCase):
                         mock.patch.object(clip.ClipModel, "embed_input", return_value=vector),
                         mock.patch.object(Runtime, "gpu_turn", lambda runtime, what, *args, **kwargs: Hold()),
                         mock.patch.object(runtimes, "on_the_card", return_value=True),
-                        mock.patch.object(Runtime, "faces", lambda runtime, library, settings=None: self.detector)):
+                        mock.patch.object(Runtime, "faces", lambda runtime, library, settings=None: self.detector),
+                        mock.patch.object(tagpup_cli.IdentityWriter, "give", return_value=None)):
             patcher.start()
             self.addCleanup(patcher.stop)
 
@@ -313,6 +319,7 @@ class TheIndexWritesTheBake(unittest.TestCase):
         self.assertEqual(0, baked.written)
         self.assertEqual({baking.NO_VECTOR: 1}, dict(baked.cannot))
         self.assertIsNone(getattr(baked_files.held(a), "fingerprint", None), "the old picture's bake was written into the new one")
+        self.assertIsNone(field_of(a, identity.DOCUMENT_ID_FIELD), "a file changed since the index was given an identity")
 
     def test_a_refused_folder_is_said_and_roots_changed_ends_the_run(self):
         quay = paths.stored(os.path.join(self.home.root, "Quay"))
@@ -698,6 +705,78 @@ class TheIndexWritesTheBake(unittest.TestCase):
         self.assertIn("Bake: 1 file(s) written, 1 already held it", self.index_with_no_model())
         self.assertBaked(b, 0)
         self.assertEqual((0, 0, True), self.looked())
+
+    def bake_fields(self, path):
+        with field_values.opened(EXIFTOOL) as et:
+            return et.read([path], list(bake.WRITTEN.values()))[paths.key(path)]
+
+    def identity_of(self, path):
+        """(the DocumentID the file holds, the one its row holds, the one its row's raw_metadata holds)."""
+        ((document_id, raw),) = [(document_id, raw) for path_of, document_id, raw in self.query(
+            "SELECT path, document_id, raw_metadata FROM photos") if paths.key(path_of) == paths.key(path)]
+        return field_of(path, identity.DOCUMENT_ID_FIELD), document_id, json.loads(raw).get("XMP:DocumentID")
+
+    def test_a_new_photo_is_given_its_identity_by_its_folders_bake_once_and_its_row_holds_it(self):
+        a, b = self.picture("a.jpg", (200, 40, 40)), self.picture("b.jpg", (40, 200, 40))
+        self.assertIn("Bake: 2 file(s) written, 0 already held it.", " ".join(self.index().output.split()))
+        given = {}
+        for path, faces in ((a, 1), (b, 0)):
+            held, row, raw = self.identity_of(path)
+            self.assertTrue(str(held).startswith("xmp.did:"), "no identity minted")
+            self.assertEqual((held, held), (row, raw), "the row does not hold the identity its file holds")
+            self.assertBaked(path, faces)
+            given[path] = held
+        self.assertNotEqual(given[a], given[b])
+        self.assertNoBakeListed()
+        stamps = {path: os.stat(path).st_mtime_ns for path in (a, b)}
+        self.picture("c.jpg", (40, 40, 200))
+        self.index()
+        self.assertEqual(stamps, {path: os.stat(path).st_mtime_ns for path in (a, b)}, "a photo was given a second identity")
+        self.assertEqual(given, {path: self.identity_of(path)[0] for path in (a, b)})
+
+    def test_a_photo_holding_its_bake_is_given_its_identity_alone_and_its_bake_is_not_rewritten(self):
+        a = self.picture("a.jpg", (200, 40, 40))
+        self.index()
+        self.assertBaked(a, 1)
+        # Another program takes its identity off (and so changes the file): the next index records it, its bake current.
+        write_outside(a, {identity.DOCUMENT_ID_FIELD: ""})
+        self.assertIsNone(field_of(a, identity.DOCUMENT_ID_FIELD))
+        bake_before, known = self.bake_fields(a), os.stat(a).st_ino
+        result = self.index()
+        self.assertIn("Bake: 1 file(s) written, 0 already held it.", " ".join(result.output.split()))
+        held, row, raw = self.identity_of(a)
+        self.assertTrue(str(held).startswith("xmp.did:"), "no identity minted")
+        self.assertEqual((held, held), (row, raw))
+        self.assertEqual(bake_before, self.bake_fields(a), "a current bake was rewritten")
+        self.assertEqual(known, os.stat(a).st_ino, "the identity alone was not patched into the file's XMP")
+        self.assertBaked(a, 1)
+        self.assertNoBakeListed()
+
+    def test_a_file_given_an_identity_since_its_folder_was_read_keeps_it(self):
+        # Two libraries over one folder, their bakes at once: the other one's id reached the file first.
+        a = self.picture("a.jpg", (200, 40, 40))
+        real = bake_after_index._write
+
+        def another_library_first(library, fields, stored, to_bake, *args):
+            write_outside(a, {identity.DOCUMENT_ID_FIELD: "xmp.did:the-other-library"})
+            return real(library, fields, stored, to_bake, *args)
+        with mock.patch.object(bake_after_index, "_write", side_effect=another_library_first):
+            self.index()
+        self.assertEqual(("xmp.did:the-other-library",) * 3, self.identity_of(a))
+        self.assertBaked(a, 1)
+
+    def test_a_photo_ending_in_zeros_is_given_no_identity(self):
+        a = self.picture("a.jpg", (200, 40, 40))
+        with open(a, "ab") as handle:   # an interrupted copy into a file already given its size (#407)
+            handle.write(bytes(images.ZERO_TAIL))
+        self.index()
+        self.assertIsNone(field_of(a, identity.DOCUMENT_ID_FIELD))
+
+    def test_an_index_with_skip_faces_gives_no_identity(self):
+        a = self.picture("a.jpg", (200, 40, 40))
+        result = CliRunner().invoke(tagpup_cli.cli, ["--db", self.db_path, "index", self.folder, "--skip-faces"])
+        self.assertEqual(0, result.exit_code, result.output)
+        self.assertEqual((None, None, None), self.identity_of(a))
 
 
 if __name__ == "__main__":

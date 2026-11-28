@@ -188,18 +188,18 @@ class TheMapCoversEveryWriter(unittest.TestCase):
     def test_every_field_a_writer_names_has_its_place_and_the_rest_go_to_the_rewrite(self):
         written = (list(keyword_fields_of()) + list(caption("x")) + list(title("x"))
                    + list(fields.date_taken_fields("2019-06-15T10:30:00"))
-                   + list(dates.SHIFTED_FIELDS) + [fields.ORIENTATION, fields.PRESERVED_NAME])
+                   + list(dates.SHIFTED_FIELDS) + [fields.ORIENTATION, fields.PRESERVED_NAME, identity.DOCUMENT_ID_FIELD])
         self.assertEqual([], [field for field in written if field not in fields.EDITED_AS])
         owned = {"xmp": xmp_packet.PROPERTIES, "exif": exif_block.FIELDS, "iptc": iptc_block.DATASETS}
         for field, targets in fields.EDITED_AS.items():
             for kind, name in targets:
                 self.assertIn(name, owned[kind], field)
-        for field in (identity.DOCUMENT_ID_FIELD, fields.REGION_INFO, "EXIF:SubSecTimeOriginal"):
+        for field in (fields.REGION_INFO, "EXIF:SubSecTimeOriginal"):
             self.assertNotIn(field, fields.EDITED_AS)
 
     def test_a_write_naming_a_field_not_mapped_is_no_patch(self):
         layout, data = header()
-        for field in ("XMP-tagpup:FaceVectors", fields.REGION_INFO, "XMP:Rating", identity.DOCUMENT_ID_FIELD):
+        for field in ("XMP-tagpup:FaceVectors", fields.REGION_INFO, "XMP:Rating"):
             with self.subTest(field), self.assertLogs("tagpup.files.segment_edits", "INFO") as said:
                 self.assertIsNone(segment_edits.new_header(layout, data, {**keywords([PERSON]), field: ["x"]}))
             self.assertIn("not a field the own writer writes", said.output[0])
