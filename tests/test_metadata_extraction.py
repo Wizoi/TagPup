@@ -406,13 +406,12 @@ class TestDeriveCaptionFromTags(unittest.TestCase):
 
 
 class TestBatchReadSurvivesOneBadFile(unittest.TestCase):
-    """One unreadable file must not cost its batch-mates their metadata.
+    """A batch read that cannot read a file at all leaves it unread and says why.
 
-    ExifTool exits non-zero if any file in the batch is unreadable, and pyexiftool
-    raises on that status. The handler used to hand every file in the batch an empty
-    skeleton, so a single corrupt file blanked the tags, people and captions of up to
-    499 good ones -- and indexed them as untagged. It also dropped their mtime and
-    size, so change detection saw them as new on every later run.
+    That one unreadable file costs its batch-mates nothing -- the good ones keep their fields, the bad one alone is
+    blanked, every one keeps its mtime and size, a clean batch is one ExifTool call -- is F12's, on real files
+    (tests/test_a_photos_fields_read_and_written.py, "S3.3 one bad file in a batch"). Here: ExifTool not starting at
+    all, and a file whose stat fails, against an ExifTool stand-in that refuses any call holding `self.bad`.
     """
 
     def setUp(self):
@@ -457,55 +456,6 @@ class TestBatchReadSurvivesOneBadFile(unittest.TestCase):
                 return [outer._tags_for(f) for f in files]
 
         return FakeHelper
-
-    def test_the_good_files_keep_their_metadata(self):
-        with mock.patch("tagpup.files.exiftool_session.ExifToolSession", self._fake_helper()):
-            results = photo_rows.read_whole(None, self.paths)
-
-        self.assertEqual([r["path"] for r in results], self.paths)
-        by_path = {r["path"]: r for r in results}
-        for good in (self.paths[0], self.paths[2]):
-            self.assertEqual(
-                by_path[good]["tags"], ["Beach", "Sunset"],
-                f"{os.path.basename(good)} lost its tags to a different file's failure",
-            )
-
-    def test_the_bad_file_is_the_only_one_blanked(self):
-        with mock.patch("tagpup.files.exiftool_session.ExifToolSession", self._fake_helper()):
-            results = photo_rows.read_whole(None, self.paths)
-
-        bad = next(r for r in results if r["path"] == self.bad)
-        self.assertEqual(bad["tags"], [])
-        self.assertEqual(bad["people"], [])
-        self.assertEqual(bad["captions"], [])
-
-    def test_every_file_keeps_its_stats_so_it_is_not_re_indexed_forever(self):
-        with mock.patch("tagpup.files.exiftool_session.ExifToolSession", self._fake_helper()):
-            results = photo_rows.read_whole(None, self.paths)
-
-        for r in results:
-            stat = os.stat(r["path"])
-            self.assertEqual(r["mtime"], stat.st_mtime, r["path"])
-            self.assertEqual(r["size"], stat.st_size, r["path"])
-
-    def test_a_clean_batch_still_reads_in_one_call(self):
-        """The retry is the exception; a healthy batch must not pay for it."""
-
-        calls = []
-        fake = self._fake_helper()
-        original = fake.get_tags
-
-        def counting(self_, files, tags=None):
-            calls.append(list(files))
-            return original(self_, files, tags=tags)
-
-        fake.get_tags = counting
-        good_only = [self.paths[0], self.paths[2]]
-        with mock.patch("tagpup.files.exiftool_session.ExifToolSession", fake):
-            results = photo_rows.read_whole(None, good_only)
-
-        self.assertEqual(len(calls), 1, f"took {len(calls)} ExifTool calls for a clean batch")
-        self.assertEqual([r["tags"] for r in results], [["Beach", "Sunset"]] * 2)
 
     def test_exiftool_failing_to_start_at_all_still_returns_a_row_per_file(self):
         class DeadHelper:

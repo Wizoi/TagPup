@@ -57,44 +57,6 @@ class Reading(unittest.TestCase):
 
 
 class AClip(Reading):
-    def test_an_mp4_tagged_by_exiftool_has_its_xmp_box_after_moov_with_the_free_box_beside_it(self):
-        data = FTYP + MOOV + box(b"free") + XMP + MDAT
-        layout = self.read(data)
-        self.assertEqual(["ftyp", "moov", "free", "uuid", "mdat"], [b.type for b in layout.boxes])
-        self.assertIs(True, layout.moov_first)
-        self.assertFalse(layout.fragmented)
-        [(where, xmp)] = layout.xmp
-        self.assertEqual(("uuid",), where)
-        self.assertEqual(len(FTYP + MOOV) + 8, xmp.offset)
-        self.assertEqual(xmp.offset + 24, xmp.payload)
-        self.assertEqual(data[xmp.payload:xmp.end], b"<x:xmpmeta/>" + b" " * 200)
-        before, after = layout.slack_beside(xmp)
-        self.assertEqual(["free"], [b.type for b in before])
-        self.assertEqual((), after)
-        self.assertEqual(["free"], [b.type for b in layout.slack_beside(layout.moov)[1]])
-        self.assertIsNone(layout.tail)
-
-    def test_an_xmp_box_appended_after_mdat_or_after_a_last_moov_is_found(self):
-        moov_first = self.read(FTYP + MOOV + MDAT + XMP)
-        self.assertIs(True, moov_first.moov_first)
-        self.assertGreater(moov_first.xmp[0][1].offset, moov_first.last_mdat.offset)
-        moov_last = self.read(FTYP + box(b"wide") + MDAT + MDAT + MOOV + XMP)
-        self.assertIs(False, moov_last.moov_first)
-        self.assertEqual(len(FTYP) + 8, moov_last.first_mdat.offset)
-        self.assertEqual(len(FTYP) + 8 + len(MDAT), moov_last.last_mdat.offset)
-        self.assertEqual(moov_last.file_size, moov_last.xmp[0][1].end)
-        self.assertEqual((), moov_last.slack_beside(moov_last.moov)[0], "wide sits before mdat, not before moov")
-
-    def test_a_mov_tagged_by_exiftool_has_its_xmp_inside_moov(self):
-        udta = box(b"udta", box(b"\xa9swr", b"Lavf") + box(b"free", bytes(8)) + box(b"XMP_", b"<x:xmpmeta/>") + bytes(4))
-        layout = self.read(FTYP + box(b"moov", box(b"mvhd", bytes(100)) + udta) + MDAT, "clip.mov")
-        [(where, xmp)] = layout.xmp
-        self.assertEqual(("moov", "udta", "XMP_"), where)
-        self.assertEqual(8, xmp.header)
-        self.assertEqual((["free"], []), tuple([b.type for b in side] for side in layout.slack_beside(xmp)))
-        self.assertFalse(layout.moov.broken, "the four zero bytes ending a udta are its end, not a broken box")
-        self.assertFalse(layout.moov.children[1].broken)
-
     def test_a_mov_that_starts_with_a_skip_box(self):
         layout = self.read(box(b"skip", bytes(272)) + FTYP + box(b"wide") + MDAT + MOOV, "clip.mov")
         self.assertEqual(["skip", "ftyp", "wide", "mdat", "moov"], [b.type for b in layout.boxes])
@@ -102,10 +64,9 @@ class AClip(Reading):
     def test_a_64_bit_box_size_and_a_last_box_of_size_0(self):
         data = FTYP + large_box(b"mdat", bytes(40)) + MOOV + struct.pack(">I", 0) + b"mdat" + bytes(30)
         layout = self.read(data)
-        mdat = layout.first_mdat
+        mdat, last = layout.of_type("mdat")
         self.assertEqual((16, 56), (mdat.header, mdat.size))
         self.assertEqual("moov", layout.boxes[2].type)
-        last = layout.last_mdat
         self.assertTrue(last.to_end)
         self.assertEqual(len(data), last.end)
         self.assertIsNone(layout.tail)
@@ -173,8 +134,7 @@ class AClipThatStopsBeingOne(Reading):
         layout = self.read(data)
         self.assertEqual(["ftyp", "moov"], [b.type for b in layout.boxes])
         self.assertEqual(containers.Tail(len(FTYP + MOOV), "truncated", 10_000, "mdat"), layout.tail)
-        self.assertIsNone(layout.first_mdat)
-        self.assertIsNone(layout.moov_first)
+        self.assertEqual((), layout.of_type("mdat"))
 
     def test_a_file_cut_inside_a_box_header(self):
         layout = self.read(FTYP + MOOV + MDAT + b"\0\0\x01")
@@ -217,27 +177,10 @@ class AClipThatStopsBeingOne(Reading):
 
 
 class AJpeg(Reading):
-    def test_a_jpeg_with_no_xmp(self):
-        data = b"\xff\xd8" + JFIF + exif_segment(0) + iptc_segment(resource(0x0404, b"\x1c\x02\x19\x00\x05Alpha")) + SOS
-        layout = self.read(data, "photo.jpg")
-        self.assertEqual(["other", "exif", "iptc", "sos"], [s.kind for s in layout.segments])
-        self.assertIsNone(layout.xmp)
-        self.assertEqual(data.index(b"\xff\xda"), layout.image_offset)
-        self.assertEqual(0x0404, layout.iptc.resources[0].id)
-        self.assertEqual(data.index(b"8BIM"), layout.iptc.resources[0].offset)
-        self.assertEqual((0, 0), (layout.iptc.slack, layout.iptc.stray))
-        self.assertIsNone(layout.tail)
-
     def test_two_xmp_segments_name_no_one_xmp(self):
         layout = self.read(b"\xff\xd8" + xmp_segment() + xmp_segment() + SOS, "photo.jpg")
         self.assertEqual(2, len(layout.of_kind("xmp")))
         self.assertIsNone(layout.xmp, "which of two a reader takes is not the layout's to guess")
-
-    def test_extended_xmp_is_its_own_kind(self):
-        layout = self.read(b"\xff\xd8" + xmp_segment() + segment(0xE1, b"http://ns.adobe.com/xmp/extension/\0" + bytes(60))
-                           + SOS, "photo.jpg")
-        self.assertEqual(["xmp", "xmp-extension", "sos"], [s.kind for s in layout.segments])
-        self.assertIsNotNone(layout.xmp)
 
     def test_the_slack_of_each_segment(self):
         data = (b"\xff\xd8" + exif_segment(24) + xmp_segment(b"\n" + b" " * 300)
@@ -257,14 +200,6 @@ class AJpeg(Reading):
     def test_exif_whose_structure_cannot_be_followed_has_no_slack(self):
         bad = segment(0xE1, b"Exif\0\0" + b"II*\0" + struct.pack("<I", 4000) + bytes(40))
         self.assertEqual(0, self.read(b"\xff\xd8" + bad + SOS, "photo.jpg").exif.slack)
-
-    def test_a_jpeg_cut_before_its_picture(self):
-        data = b"\xff\xd8" + JFIF + xmp_segment()
-        layout = self.read(data[:-20], "photo.jpg")
-        self.assertIsNone(layout.image_offset)
-        self.assertEqual("truncated", layout.tail.reason)
-        self.assertEqual(len(b"\xff\xd8" + JFIF), layout.tail.offset)
-        self.assertEqual(["other"], [s.kind for s in layout.segments])
 
     def test_garbage_where_a_marker_should_be(self):
         layout = self.read(b"\xff\xd8" + JFIF + b"\x00\x11garbage" + SOS, "photo.jpg")

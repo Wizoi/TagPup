@@ -11,6 +11,12 @@ A clip's save (M7, AClipsSave): `segment_edits.new_packet` makes the clip's new 
 -- Adobe's wrapped packet edited where it stands, the bare one grown, the blank one for a clip with none -- every copy
 outside XMP left stale, also when the XMP value is cleared; the last keyword taken off a clip whose keywords are in
 QuickTime's Subject is refused with a sentence (owner, 2026-11-05: 14 live clips).
+
+Which copies a save, a date set or a turn writes and reports stale, that only the bodies change, and that a save made
+twice changes no byte the second time, are F12's (tests/test_a_photos_fields_read_and_written.py, on every corpus item:
+the photos through new_header, the clips through new_packet); this file keeps the map of every writer's fields, the
+no-patch refusals, and the decisions S2 cannot see: the bare packet grown, a clip with no packet, a cleared clip value,
+an XMP date's zone.
 """
 import hashlib
 import io
@@ -25,12 +31,10 @@ sys.path.insert(0, os.path.dirname(WORKSPACE_DIR))
 sys.path.insert(0, WORKSPACE_DIR)
 
 import test_xmp_packet_edits_what_it_owns as shapes  # noqa: E402
-import corpus  # noqa: E402
 from tagpup.core import dates, fields  # noqa: E402
-from tagpup.files import (containers, exif_block, identity, in_place, iptc_block, segment_edits, xmp_packet)
+from tagpup.files import (containers, exif_block, identity, iptc_block, segment_edits, xmp_packet)
 
 PERSON = "People/Ida Corwell"
-KEYWORD_FIELDS = ("XMP:Subject", "IPTC:Keywords", "EXIF:XPKeywords", "XMP:HierarchicalSubject")
 
 
 # --- a header as a camera's file after an ExifTool write ------------------------------------------------------------
@@ -207,39 +211,6 @@ def keyword_fields_of():
 
 class AKeywordOrCaptionSave(unittest.TestCase):
 
-    def test_a_keyword_added_is_written_to_xmp_alone_and_the_other_copies_reported_stale(self):
-        layout, data = header()
-        new, stale = segment_edits.new_header(layout, data, keywords([PERSON, "Beach", "Shore"]))
-        self.assertEqual(("IPTC:Keywords", "EXIF:XPKeywords"), stale)
-        after, segments = bodies(new)
-        before, segments_before = bodies(data)
-        self.assertEqual(segments_before, segments)
-        self.assertEqual([PERSON, "Beach", "Shore"], after["xmp"]["dc:subject"])
-        self.assertEqual([PERSON], after["xmp"]["lr:hierarchicalSubject"])
-        self.assertEqual(before["raw"]["exif"], after["raw"]["exif"])
-        self.assertEqual(before["raw"]["iptc"], after["raw"]["iptc"])
-
-    def test_a_photo_whose_keywords_were_in_iptc_alone_is_given_the_whole_set_in_xmp(self):
-        layout, data = header(xmp=packet(keywords=(), caption=None), exif=exif_body(keywords=None))
-        self.assertNotIn("dc:subject", bodies(data)[0]["xmp"])
-        values = keywords([PERSON, "Beach", "Shore"])  # the planner's set: IPTC's two and the one added
-        new, stale = segment_edits.new_header(layout, data, values)
-        after = bodies(new)[0]
-        self.assertEqual([PERSON, "Beach", "Shore"], after["xmp"]["dc:subject"])
-        self.assertEqual(bodies(data)[0]["raw"]["iptc"], after["raw"]["iptc"])
-        self.assertEqual(("IPTC:Keywords", "EXIF:XPKeywords"), stale)
-
-    def test_the_last_keyword_taken_off_is_taken_off_every_copy(self):
-        layout, data = header()
-        new, stale = segment_edits.new_header(layout, data, keywords([]))
-        self.assertEqual((), stale)
-        after = bodies(new)[0]
-        self.assertNotIn("dc:subject", after["xmp"])
-        self.assertNotIn("lr:hierarchicalSubject", after["xmp"])
-        self.assertNotIn("IPTC:Keywords", after["iptc"])
-        self.assertNotIn("XPKeywords", after["exif"])
-        self.assertEqual("A day at the lake", after["iptc"]["IPTC:Caption-Abstract"])
-
     def test_the_last_keyword_taken_off_a_copy_that_cannot_take_it_is_no_patch(self):
         # An IPTC block whose data does not start with a dataset (6 of photo_index's 1,467 read) is refused: with the
         # keyword group not XMP-only, the whole write goes to the rewrite; XMP-only, the block is not touched.
@@ -256,52 +227,9 @@ class AKeywordOrCaptionSave(unittest.TestCase):
         self.assertTrue(iptc_block.edit(data[layout.iptc.offset + 4:layout.iptc.end], {"IPTC:Keywords": []}).length_changed)
         self.assertIsNone(segment_edits.new_header(layout, data, keywords([])))
 
-    def test_a_caption_is_written_to_xmp_alone_and_a_cleared_one_to_every_copy(self):
-        layout, data = header()
-        new, stale = segment_edits.new_header(layout, data, caption("Kites over the dunes"))
-        self.assertEqual(("IPTC:Caption-Abstract", "EXIF:ImageDescription", "EXIF:XPComment"), stale)
-        after = bodies(new)[0]
-        self.assertEqual("Kites over the dunes", after["xmp"]["dc:description"])
-        self.assertEqual("A day at the lake", after["iptc"]["IPTC:Caption-Abstract"])
-        self.assertEqual("A day at the lake", after["exif"]["ImageDescription"])
-        new, stale = segment_edits.new_header(layout, data, caption(""))
-        after = bodies(new)[0]
-        self.assertEqual((), stale)
-        self.assertNotIn("dc:description", after["xmp"])
-        self.assertNotIn("IPTC:Caption-Abstract", after["iptc"])
-        self.assertNotIn("ImageDescription", after["exif"])
-        self.assertNotIn("XPComment", after["exif"])
-
-    def test_a_photo_with_no_xmp_segment_or_a_packet_refused_is_no_patch(self):
-        layout, data = header(xmp=False)
-        self.assertIsNone(segment_edits.new_header(layout, data, keywords([PERSON, "Shore"])))
-        layout, data = header(xmp=packet(extra=b"<!-- a note -->\n"))
-        self.assertIsInstance(xmp_packet.read(data[layout.xmp.offset + 4 + len(containers.XMP_HEAD):layout.xmp.end]),
-                              containers.Refusal)
-        self.assertIsNone(segment_edits.new_header(layout, data, keywords([PERSON, "Shore"])))
-
-    def test_a_photo_holding_a_kind_twice_is_no_patch_before_segment_edits_is_asked(self):
-        # Two APP13 segments (kr-track 2, renton_parkrun 3 in the census) or two EXIF (photo_index 4): which one a
-        # reader takes is not the own writer's to say. in_place._header_of, which every patch reads its header
-        # through, answers None for the photo whatever the write, so new_header never sees one.
-        layout, data = header()
-        self.assertIsNotNone(in_place._header_of(io.BytesIO(data)))
-        for kind, extra in (("iptc", _segment(0xED, iptc_body())), ("exif", _segment(0xE1, exif_body()))):
-            at = getattr(layout, kind).end
-            twice = data[:at] + extra + data[at:]
-            self.assertEqual(2, len(containers.read(io.BytesIO(twice)).of_kind(kind)), kind)
-            self.assertIsNone(in_place._header_of(io.BytesIO(twice)), kind)
-
     def test_a_text_field_given_two_values_is_no_patch(self):
         layout, data = header()
         self.assertIsNone(segment_edits.new_header(layout, data, {**caption("One"), "XMP:Description": ["One", "Two"]}))
-
-    def test_a_save_made_twice_changes_no_byte_the_second_time(self):
-        for values in (keywords([PERSON, "Shore"]), keywords([]), caption("Kites"), caption("")):
-            layout, data = header()
-            once = segment_edits.new_header(layout, data, values)[0]
-            twice = segment_edits.new_header(containers.read(io.BytesIO(once)), once, values)[0]
-            self.assertEqual(once, twice)
 
     def test_an_edit_that_changes_the_header_length_is_caught(self):
         layout, data = header()
@@ -325,16 +253,6 @@ class AClipsSave(unittest.TestCase):
         self.assertEqual(([PERSON, "Pier"], [PERSON], "2017-08-19T09:41:27+01:00"),
                          (held["dc:subject"], held["lr:hierarchicalSubject"], held["exif:DateTimeOriginal"]))
         self.assertEqual(("IPTC:Keywords", "EXIF:XPKeywords"), stale)
-
-    def test_adobes_wrapped_packet_is_edited_where_it_stands(self):
-        new, stale = self.made(corpus.PREMIERE, {**keywords(["Pier"]), **title("The pier at noon")})
-        self.assertEqual(len(corpus.PREMIERE), len(new))
-        held = xmp_packet.read(new)
-        self.assertEqual((["Pier"], "The pier at noon", "xmp.did:7c2d0e4a"),
-                         (held["dc:subject"], held["dc:title"], held["xmpMM:DocumentID"]))
-        self.assertEqual({"IPTC:Keywords", "EXIF:XPKeywords", "IPTC:ObjectName"}, set(stale))
-        self.assertEqual((new, stale), self.made(new, {**keywords(["Pier"]), **title("The pier at noon")}),
-                         "a save made twice leaves the packet as it is")
 
     def test_a_clip_with_no_packet_is_given_the_blank_one_and_none_when_the_save_says_nothing(self):
         new, _ = self.made(None, keywords(["Pier"]))
@@ -365,20 +283,6 @@ class AClipsSave(unittest.TestCase):
 
 class ADateOrARotation(unittest.TestCase):
 
-    def test_a_date_set_patches_every_copy_it_names(self):
-        layout, data = header()
-        values = {field: [value] for field, value in fields.date_taken_fields("2021-03-02T08:05:09").items()}
-        values.update({"XMP:CreateDate": ["2021:03:02 08:05:09"]})
-        new, stale = segment_edits.new_header(layout, data, values)
-        self.assertEqual((), stale)
-        after = bodies(new)[0]
-        for name in ("DateTimeOriginal", "CreateDate"):
-            self.assertEqual("2021:03:02 08:05:09", after["exif"][name])
-        self.assertEqual("2021-03-02T08:05:09", after["xmp"]["exif:DateTimeOriginal"])
-        self.assertEqual("2021-03-02T08:05:09", after["xmp"]["xmp:CreateDate"])
-        self.assertEqual(bodies(data)[0]["raw"]["iptc"], after["raw"]["iptc"])
-        self.assertEqual(new, segment_edits.new_header(containers.read(io.BytesIO(new)), new, values)[0])
-
     def test_an_xmp_date_keeps_its_own_zone_and_fraction_and_is_given_none(self):
         layout, data = header()
         for value, spelt in (("2021:03:02 08:05:09+02:00", "2021-03-02T08:05:09+02:00"),
@@ -393,18 +297,6 @@ class ADateOrARotation(unittest.TestCase):
         layout, data = header()
         self.assertIsNone(segment_edits.new_header(layout, data, {"EXIF:DateTimeOriginal": ["2021:03:02 08:05:09+02:00"]}))
 
-    def test_a_rotation_writes_exif_and_the_xmp_orientation_only_where_the_packet_holds_one(self):
-        layout, data = header(xmp=packet(orientation=1))
-        new, _stale = segment_edits.new_header(layout, data, {fields.ORIENTATION: ["6"]})
-        after = bodies(new)[0]
-        self.assertEqual(6, after["exif"]["Orientation"])
-        self.assertEqual("6", after["xmp"]["tiff:Orientation"])
-        layout, data = header()
-        new, _stale = segment_edits.new_header(layout, data, {fields.ORIENTATION: ["8"]})
-        after, before = bodies(new)[0], bodies(data)[0]
-        self.assertEqual(8, after["exif"]["Orientation"])
-        self.assertEqual(before["raw"]["xmp"], after["raw"]["xmp"])
-
     def test_a_rotation_beside_a_packet_it_cannot_read_is_no_patch(self):
         # Whether the packet holds a tiff:Orientation to follow the EXIF one cannot be told: the rewrite, not an
         # EXIF patch that might leave XMP saying the old turn.
@@ -414,20 +306,6 @@ class ADateOrARotation(unittest.TestCase):
     def test_a_rotation_of_a_photo_with_no_orientation_tag_is_no_patch(self):
         layout, data = header(exif=exif_body(orientation=None))
         self.assertIsNone(segment_edits.new_header(layout, data, {fields.ORIENTATION: ["6"]}))
-
-
-class TheEditedHeader(unittest.TestCase):
-
-    def test_only_the_bodies_change_and_every_marker_and_length_is_the_headers(self):
-        layout, data = header()
-        values = {**keywords([]), **caption(""), fields.ORIENTATION: ["3"]}
-        new = segment_edits.new_header(layout, data, values)[0]
-        self.assertEqual(len(data), len(new))
-        changed = [i for i, (a, b) in enumerate(zip(data, new)) if a != b]
-        inside = [(s.offset + 4, s.end) for s in layout.segments if s.kind in ("exif", "xmp", "iptc")]
-        self.assertTrue(changed)
-        self.assertEqual([], [i for i in changed if not any(start <= i < end for start, end in inside)])
-        self.assertEqual(bodies(data)[1], bodies(new)[1])
 
 
 if __name__ == "__main__":

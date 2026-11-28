@@ -9,14 +9,13 @@ one, and one this process is patching is not opened by another; a share that sto
 photo as it was and its record, and the next start writes it; a packet the XMP editor refuses (dc:subject written as an
 attribute) and a photo holding two APP13 segments are ExifTool's rewrite; a person added to a photo whose keywords are in
 IPTC alone gets every keyword in XMP; the last keyword taken off writes every copy (#2433); an undo puts back the bytes
-the photo held; a rotation of a photo whose packet holds tiff:Orientation and whose EXIF holds an IFD1 Orientation reads
-as ExifTool's write of the same reads (hazard c); a save repeated, or a tag the photo holds added again, is holding it
-already as the patch leaves it (fields.as_patched of field_values.left_as_they_were): nothing written, nothing journaled,
-`changed` 0, and the first save's undo puts back the bytes; the writer itself, given it, writes no byte and answers the
-copies it left (hazard a). A photo holding a second XMP packet inside its EXIF (IFD0 tag 0x02BC, as Windows Live Photo Gallery wrote it;
-tests/fixtures/xmp_in_ifd0.json, captured; corpus.photo_with_xmp_in_ifd0) has a tag added, its Date Taken moved, a turn and every keyword taken off, each
-ExifTool's rewrite, which writes both packets, and read back as asked (#3108); the same photo with that entry under
-another tag is patched in place.
+the photo held; a save repeated, or a tag the photo holds added again, is holding it already as the patch leaves it
+(fields.as_patched of field_values.left_as_they_were): nothing written, nothing journaled, `changed` 0, and the first
+save's undo puts back the bytes; the writer itself, given it, writes no byte and answers the copies it left (hazard a).
+A turn of a photo whose packet holds tiff:Orientation and whose thumbnail an Orientation of its own (hazard c), and a
+photo holding a second XMP packet inside its EXIF (IFD0 tag 0x02BC: ExifTool's rewrite, read back as asked; the same
+entry under another tag patched in place), are F12's: tests/test_a_photos_fields_read_and_written.py on the corpus's
+`thumb_turn` and `ifd0_xmp` (#3108 is cited by the item).
 
 Real JPEGs written by the real ExifTool in a home of the test's own (test_file_journal.FilesCase); nothing of the
 owner's. Breaks that fail these, each tried on a copy of the code: segment_edits.stale_of answering () fails
@@ -28,17 +27,13 @@ written as an attribute fails test_a_packet_the_editor_refuses_is_rewritten; tag
 test_a_person_added_to_a_photo_whose_keywords_are_in_iptc_alone; segment_edits.stale_of leaving a group whose XMP value
 is empty fails test_the_last_keyword_taken_off_is_taken_from_every_copy; file_changes._carry keeping the target as the
 journal's after (the read back then corrects it, warning) fails test_an_undo_puts_back_the_bytes_the_photo_held; in_place._header_of letting two APP13 segments
-through fails test_a_photo_with_two_app13_segments_is_rewritten; fields.EDITED_AS without tiff:Orientation fails
-test_a_turn_reads_as_exiftools_write_of_it_reads; file_changes._holds_already comparing against the plan's after
+through fails test_a_photo_with_two_app13_segments_is_rewritten; file_changes._holds_already comparing against the plan's after
 (the planner before the fix), or in_place.patch_jpeg answering () when no byte changes, fails
-test_a_save_repeated_or_a_tag_held_added_again_writes_and_journals_nothing;
-segment_edits.new_header patching a photo whose IFD0 holds an XMP packet (the code before #3108) fails
-test_a_photo_holding_an_xmp_packet_in_its_exif_is_rewritten_and_reads_back_as_asked.
+test_a_save_repeated_or_a_tag_held_added_again_writes_and_journals_nothing.
 """
 import io
 import json
 import os
-import shutil
 import sys
 import unittest
 from unittest import mock
@@ -53,17 +48,14 @@ from test_file_journal import (EXIFTOOL, Crash, FilesCase, crash_at, cut_patch, 
                                requires_exiftool, write_outside)
 
 import page_writes  # noqa: E402
-from tagpup.core import fields, paths  # noqa: E402
+from tagpup.core import fields  # noqa: E402
 from tagpup.files import containers, field_values, in_place, segment_edits, xmp_packet  # noqa: E402
 from tagpup.files.exiftool_session import ExifToolSession  # noqa: E402
-from tagpup.services import batches, bulk_edit, file_changes, metadata_check, photos as photo_actions, tagging  # noqa: E402
+from tagpup.services import batches, bulk_edit, file_changes, photos as photo_actions, tagging  # noqa: E402
 from tagpup.store import db  # noqa: E402
 
 #: The copies a keyword save patching the XMP alone leaves as they were, in the order segment_edits answers them.
 KEYWORD_COPIES_LEFT = ("IPTC:Keywords", "EXIF:XPKeywords")
-#: The keywords of corpus.XMP_IN_IFD0's header, in both packets and EXIF XPKeywords.
-IFD0_KEYWORDS = sorted(["People/Classmate/Robin Lark", "Holidays/Summer", "People/Classmate/Ellis Moor",
-                        "People/Wendy Harlow", "Activities/Summer Camps", "People/Classmate/Juniper Cole"])
 
 
 #: The Date Taken a camera photo of the tests holds.
@@ -356,40 +348,6 @@ class APhotoWrittenByItsOwnEditors(FilesCase):
         self.assertEqual((["Beach", "Harbour"], ["Beach", "Harbour"], ["Beach", "Harbour"]),
                          (keywords_of(a), field_of(a, "IPTC:Keywords"), self.indexed(a)))
 
-    def test_a_turn_reads_as_exiftools_write_of_it_reads(self):
-        # Hazard c: a packet holding tiff:Orientation and an EXIF whose thumbnail (IFD1) has an Orientation of its own.
-        # The own writer's turn and ExifTool's write of "Orientation" to a copy of the same photo read alike.
-        from PIL import Image
-
-        a = self.make("a.jpg", row=False)
-        thumb = os.path.join(self.home.root, "thumb.jpg")
-        Image.new("RGB", (8, 6), (20, 40, 60)).save(thumb, "JPEG")
-        with ExifToolSession(executable=EXIFTOOL) as et:
-            et.execute("-ThumbnailImage<=" + thumb, "-IFD0:Orientation#=1", "-XMP-tiff:Orientation#=1",
-                       "-overwrite_original", a)
-            et.execute("-IFD1:Orientation#=1", "-overwrite_original", a)
-        self.seed(a, {"XMP:Subject": ["Beach"], "IPTC:Keywords": ["Beach"], "EXIF:XPKeywords": "Beach"})
-        theirs = os.path.join(self.home.root, "ExifTool's", "a.jpg")
-        os.makedirs(os.path.dirname(theirs))
-        shutil.copyfile(a, theirs)
-
-        def orientations(path):
-            # By the group each copy is in (-G1: IFD0, IFD1, XMP-tiff); the session's own -G would name two EXIF.
-            with ExifToolSession(executable=EXIFTOOL, common_args=["-G1", "-n"]) as et:
-                found = json.loads(et.execute("-j", "-a", "-Orientation", path))[0]
-            return {key: value for key, value in found.items() if key != "SourceFile"}
-        before = orientations(a)
-        self.assertEqual({"IFD0:Orientation", "IFD1:Orientation", "XMP-tiff:Orientation"}, set(before))
-        with saves_counted() as saved:
-            result = photo_actions.rotate_photos(self.library, [a], "right", exiftool_fields.opened(self, EXIFTOOL))
-        self.assertEqual((1, [], 1), (result.changed, result.errors, saved.call_count), result.message())
-        turned = json.loads(self.rows("SELECT fields_after FROM change_files")[0][0])[fields.ORIENTATION]
-        with ExifToolSession(executable=EXIFTOOL) as et:
-            field_values._write(et, theirs, {fields.ORIENTATION: turned})
-        self.assertEqual(orientations(theirs), orientations(a))
-        # Both turn the picture's copies and leave the thumbnail's own (ExifTool 13.59).
-        self.assertEqual({"IFD0:Orientation": 6, "IFD1:Orientation": 1, "XMP-tiff:Orientation": 6}, orientations(a))
-
     def test_a_save_repeated_or_a_tag_held_added_again_writes_and_journals_nothing(self):
         # The photo panel's Save of the same keywords again, and Add to all selected of a tag the photo has. The file
         # holds them in XMP, IPTC the old set, as the first save's patch left it: holding it already, as a write would
@@ -421,47 +379,6 @@ class APhotoWrittenByItsOwnEditors(FilesCase):
         undone = self.undo(change)
         self.assertEqual((1, []), (undone.changed, undone.errors))
         self.assertEqual((original, ["Beach"]), (read(a), self.indexed(a)))
-
-    def written_four_times(self, tag):
-        """A photo of the captured header (its packet entry under `tag`) given a tag, its Date Taken an hour later, a turn
-        right and every keyword taken off, one write at a time, each read back through ExifTool as the planners read it:
-        (the patches each saved, the reads)."""
-        a = corpus.photo_with_xmp_in_ifd0(os.path.join(self.folder, "a.jpg"), tag)
-        with ExifToolSession(executable=EXIFTOOL) as et:
-            self.seed(a, field_values._read(et, [a], metadata_check.READ)[paths.key(a)])
-        writes = (lambda: self.add([a]),
-                  lambda: photo_actions.shift_date_taken(self.library, [a], 60, exiftool_fields.opened(self, EXIFTOOL)),
-                  lambda: photo_actions.rotate_photos(self.library, [a], "right", exiftool_fields.opened(self, EXIFTOOL)),
-                  lambda: tagging.change_tags(self.library, [a], [], IFD0_KEYWORDS + ["Harbour"], exiftool_fields.opened(self, EXIFTOOL)))
-        patches, reads = [], []
-        for write in writes:
-            with saves_counted() as saved:
-                result = write()
-            self.assertEqual((1, []), (result.changed, result.errors), result.message())
-            patches.append(saved.call_count)
-            reads.append((keywords_of(a), field_of(a, "EXIF:DateTimeOriginal"), field_of(a, "XMP:DateTimeOriginal"),
-                          field_of(a, "EXIF:Orientation"), self.indexed(a)))
-        return patches, reads
-
-    def test_a_photo_holding_an_xmp_packet_in_its_exif_is_rewritten_and_reads_back_as_asked(self):
-        # 3 of 3,000 sampled photo_index JPEGs (#3108). ExifTool's read answers the IFD0 packet's copy of a value the
-        # APP1 packet's patch changed: the date read back unshifted, the keywords taken off read back as held.
-        patches, reads = self.written_four_times(0x02BC)
-        self.assertEqual([0, 0, 0, 0], patches, "a write patched a photo whose IFD0 holds an XMP packet")
-        self.assertEqual(self.as_asked(), reads)
-
-    def test_the_same_photo_without_the_ifd0_packet_is_patched_in_place(self):
-        # The one difference, its IFD0 entry under a tag no reader takes for XMP: the own writer patches it.
-        patches, reads = self.written_four_times(0x02BD)
-        self.assertEqual([1, 1, 1, 1], patches, "a write of a photo with no XMP packet in its IFD0 was not a patch")
-        self.assertEqual(self.as_asked(), reads)
-
-    def as_asked(self):
-        added = sorted(IFD0_KEYWORDS + ["Harbour"])
-        return [(added, "2006:08:19 15:42:07", "2006:08:19 15:42:07Z", 1, added),
-                (added, "2006:08:19 16:42:07", "2006:08:19 16:42:07Z", 1, added),
-                (added, "2006:08:19 16:42:07", "2006:08:19 16:42:07Z", 6, added),
-                ([], "2006:08:19 16:42:07", "2006:08:19 16:42:07Z", 6, [])]
 
 
 if __name__ == "__main__":

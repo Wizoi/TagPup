@@ -7,6 +7,10 @@ other dataset keeps its bytes and its place, the dummy resource at the end gives
 its length when the change fits, and a block it does not wholly understand is refused, never repaired. The bodies here
 are laid out by hand from the layout (not by the code under test) in the shapes counted in the three libraries; the
 values are fictional (docs/domains/files.md, "The IPTC block editor").
+
+That a save which moves nothing changes no byte is F12's (tests/test_a_photos_fields_read_and_written.py, on the
+corpus's `iptc_alone`, `iptc_utf8`, `tagged` and `two_app13`); this file keeps the reads and the decisions inside a
+block.
 """
 import hashlib
 import os
@@ -117,18 +121,6 @@ class AnIptcBlockReadAndWritten(unittest.TestCase):
         self.assertEqual(data, back.body[:len(data)])
         self.assertEqual(resource(PAD, bytes(len(back.body) - len(data) - 12)), back.body[len(data):])
 
-    def test_writing_what_it_holds_changes_no_byte(self):
-        for data in (body(EXIFTOOL), body(WLPG), HEAD, body(EXIFTOOL, pad=40)):
-            self.assertEqual(data, self.edited(data, ib.read(data)).body)
-        # a repeat, a blank, a keyword already held, a value held cut at IPTC's 64 bytes: the same values
-        data = body(EXIFTOOL)
-        same = {KEYWORDS: ["People/Ida Corwell", "Places/Lakeside", "Places/Lakeside", " "], CAPTION: "", TITLE: None}
-        self.assertEqual(data, self.edited(data, same).body)
-        long = "Places/" + "x" * 70
-        cut = self.edited(data, {KEYWORDS: [long]}).body
-        self.assertEqual([(2, 25, long[:64].encode())], [r for r in records(cut) if r[:2] == (2, 25)])
-        self.assertEqual(cut, self.edited(cut, {KEYWORDS: [long]}).body)
-
     def test_a_change_that_fits_keeps_the_length_and_the_dummy_resource_takes_the_room(self):
         data = body(EXIFTOOL, pad=60)
         longer = self.edited(data, {CAPTION: "Kites over the dunes"})       # 25 bytes of dataset, of 60
@@ -209,6 +201,14 @@ class AnIptcBlockReadAndWritten(unittest.TestCase):
         self.assertIn("list", self.refused(HEAD, {KEYWORDS: "Kites"}))
         self.assertIn("text", self.refused(HEAD, {CAPTION: ["Kites"]}))
         self.assertIn("owns", self.refused(HEAD, {"IPTC:City": "Lakeside"}))
+        # a repeat, a blank, a keyword already held, a value held cut at IPTC's 64 bytes: the same values, no byte moved
+        data = body(EXIFTOOL)
+        same = {KEYWORDS: ["People/Ida Corwell", "Places/Lakeside", "Places/Lakeside", " "], CAPTION: "", TITLE: None}
+        self.assertEqual(data, self.edited(data, same).body)
+        long = "Places/" + "x" * 70
+        cut = self.edited(data, {KEYWORDS: [long]}).body
+        self.assertEqual([(2, 25, long[:64].encode())], [r for r in records(cut) if r[:2] == (2, 25)])
+        self.assertEqual(cut, self.edited(cut, {KEYWORDS: [long]}).body)
 
     def test_a_segment_with_no_iptc_block_is_given_one_before_the_dummy(self):
         data = HEAD + resource(0x03ED, bytes(16)) + resource(PAD, bytes(48))

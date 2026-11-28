@@ -268,8 +268,9 @@ The padding is one rule: `containers.XMP_PADDING_LEAST` (one line break) is the 
 slack (`containers._xmp_slack`) and the own writer's packet fit (`segment_edits`) leave of it, and
 `xmp_packet.padding(size)` lays the bytes (lines of 100 spaces) for the editor and the patch alike.
 All three editors answer `containers.Edited(body, length_changed)` or `containers.Refusal(reason)`, one pair.
-An edit is parsed again and read back before it is answered. Scenario test:
-`tests/test_xmp_packet_edits_what_it_owns.py` (F1).
+An edit is parsed again and read back before it is answered. Scenario tests: how a laid-out packet reads and that a
+write changes its targets only, F12 (`tests/test_a_photos_fields_read_and_written.py`, on the corpus's `tagged` and
+`premiere_mp4`); the decisions inside a packet, `tests/test_xmp_packet_edits_what_it_owns.py` (F1).
 
 Counted this session, read-only, through `scripts/census_segments.py`'s reads (seed 20261103): photo_index 1,000 of its
 59,598 JPEGs sampled, kr-track's 2,065 and renton_parkrun's 1,308 every one; 4,373 XMP packets, every one read, none
@@ -330,9 +331,14 @@ everything. Bytes no IFD points at are taken only with no MakerNote, or one whos
 note-relative, its own header, none, moved by the Canon footer's shift, moved by a shift unknown). An edit is walked
 again and read back, and every byte it changed is checked to be an owned table's, an owned value's or zero, before it
 is answered. The editor takes one segment: a file with two (photo_index 2 of the 1,500 below) is its caller's to
-refuse. Scenario test: `tests/test_exif_block_edits_what_it_owns.py` (F1), which fails on each of 11 deliberately
-broken copies of the module (a value laid over the thumbnail, a MakerNote byte moved with the checks skipped, a note
-that is no IFD taken as contained, grow ignored, old values not zeroed, among them).
+refuse. Scenario tests: how a laid-out block reads and that a write changes its targets only, F12
+(`tests/test_a_photos_fields_read_and_written.py`), which fails on a copy of the module that reads one byte order
+alone, writes a value that fits its old place into the slack, answers a save that moves nothing a byte short, or keeps
+a cleared field's entry (T1c, 2026-11-27); the decisions inside a block, `tests/test_exif_block_edits_what_it_owns.py`
+(F1), which fails on broken copies such as a value laid over the thumbnail, a MakerNote byte moved with the checks
+skipped, a note that is no IFD taken as contained, grow ignored, old values not zeroed (11 such copies counted
+2026-11-03, before T1c moved four of its tests to F12; not counted again), and a copy that takes no MakerNote as
+contained, which F12 passes.
 
 Counted this session, read-only, in memory, nothing written: a seeded sample (seed 7) of photo_index 1,500, kr-track
 400 and renton_parkrun 400 JPEGs; 2,297 with one EXIF segment, every one read, none refused, and writing back the
@@ -385,9 +391,11 @@ choose a patch or a rewrite. No 1:90 reads as cp1252, as ExifTool reads it; a bl
 cp1252, and is else given 1:90 UTF-8 and its owned values written in UTF-8. An edit is walked again and read back, its
 values, character set and every kept dataset and resource compared, before it is answered. A file with two APP13
 segments is its caller's to refuse (`containers.Jpeg.iptc` is None). Scenario test:
-`tests/test_iptc_block_edits_what_it_owns.py` (F1), which fails on each of 7 deliberately broken copies of the module
-(the read-back skipped, the `kept` check skipped, each with and without a fault of the layout behind it; no version
-dataset added; zero bytes after the last dataset kept).
+`tests/test_iptc_block_edits_what_it_owns.py` (F1), which failed on each of 7 deliberately broken copies of the module
+(2026-11-03: the read-back skipped, the `kept` check skipped, each with and without a fault of the layout behind it; no
+version dataset added; zero bytes after the last dataset kept). T1c (2026-11-27) moved only its save-that-moves-nothing
+test to F12 (`tests/test_a_photos_fields_read_and_written.py`); the tests of the editor's own checks, the version
+datasets and the zero bytes stay.
 
 Counted read-only, in memory, nothing written: single-APP13 bodies 1,467 / 2,059 / 1,302 (photo_index's seed-7 1,500,
 every kr-track and renton_parkrun JPEG); photo_index's recounted this session (1,467, 6 refused, 1,461 held values,
