@@ -33,8 +33,10 @@ What the owner lives through, each with the CLI's index over a real ExifTool and
   57 minutes with no line). The lines change nothing written: the files not reached are owed as before;
 - a photo's identity (DocumentID) is a field of its folder's bake (DECISIONS 2026-11-26, decision 1): a new photo is
   given one in the bake's write, its row holds it, and the next index gives none again; a photo whose file holds its bake
-  already is given its id alone, patched, its bake not rewritten, and a crash at any step of that write leaves it
-  right, the next index reading it again at worst; a file that came to hold an id since its folder was
+  already is given its id alone, patched, its bake not rewritten, its fingerprint row only once that write is done (a
+  share stalling the folder's read, or a kill before the write's plan, leaves it owed), and a crash at any step of that
+  write leaves it right, the next index reading it again at worst; a photo a Ctrl+C kept from its bake is given its id
+  by the next index's bake of it, which the index hands nothing (DECISIONS 2026-11-27); a file that came to hold an id since its folder was
   read (another library's bake of a folder both hold) keeps its own; a photo changed between the index and its bake is
   given none; a photo ending in zeros (an interrupted copy, #407) is written nothing, its bake nor its identity, the
   line says so, and the next index writes it nothing again, and an index with --skip-faces gives none.
