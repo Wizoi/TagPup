@@ -6,6 +6,12 @@ its thumbnail, GPS -- stays where it was, a longer value is paid for out of the 
 at, and a block it does not wholly understand is refused, never repaired. The editor is given one segment's body; a
 file with two EXIF segments (2 of 1,500 photo_index files sampled) is its caller's to refuse. The values here are
 fictional; the layouts are the ones the census counted (docs/domains/files.md, "The EXIF block editor").
+
+How a laid-out block reads in either byte order, and that a write changes its targets only, gives the bytes back when
+undone and changes nothing the second time, is F12's (tests/test_a_photos_fields_read_and_written.py, on the corpus's
+`tagged`, `tagged_ii`, `camera`, `maker_note` and `no_taken`); this file keeps the decisions inside a block: the slack
+and growth, the type-2 XP tags, where a new tag is laid, Orientation's range, the MakerNote, the refusals and the
+damage loops.
 """
 import os
 import struct
@@ -37,10 +43,6 @@ def patched(body, tag, field, value):
     return body[:at] + data + body[at + len(data):]
 
 
-FULL_VALUES = {"ImageDescription": "A day at the lake", "Orientation": 1, "XPComment": "Kites",
-               "XPKeywords": "Beach;Kites", "DateTimeOriginal": "2019:07:14 10:22:31",
-               "CreateDate": "2019:07:14 10:22:31", "SubSecTime": "42", "SubSecTimeOriginal": "042",
-               "SubSecTimeDigitized": "0420"}
 LITTLE, BIG = block("<"), block(">")
 
 
@@ -81,29 +83,6 @@ class AnExifBlockReadAndWritten(unittest.TestCase):
         changed_only_where_owned(self, body, result.body)
         return result
 
-    def test_every_owned_field_reads_in_either_byte_order(self):
-        for body in (LITTLE, BIG):
-            self.assertEqual(FULL_VALUES, eb.read(body))
-        self.assertEqual({}, eb.read(block(ifd0={}, exif={})))
-
-    def test_all_nine_set_in_place_keep_every_other_byte_and_go_back(self):
-        changes = {"ImageDescription": "A day at the loch", "Orientation": 6, "XPComment": "Kelp!",
-                   "XPKeywords": "Beach;Dunes", "DateTimeOriginal": "2019:07:15 08:00:00",
-                   "CreateDate": "2019:07:15 08:00:01", "SubSecTime": "07", "SubSecTimeOriginal": "007",
-                   "SubSecTimeDigitized": "0070"}
-        for body in (LITTLE, BIG):
-            result = self.edited(body, changes)
-            self.assertFalse(result.length_changed)
-            self.assertEqual(len(body), len(result.body))
-            self.assertEqual(changes, eb.read(result.body))
-            self.assertEqual(body, self.edited(result.body, FULL_VALUES).body)
-
-    def test_writing_what_it_holds_changes_no_byte(self):
-        for body in (LITTLE, BIG, block(ifd0={}, exif={}), block(note=note_ifd("<"))):
-            self.assertEqual(body, self.edited(body, eb.read(body)).body)
-        once = self.edited(LITTLE, {"XPComment": "Kites over the dunes"}).body
-        self.assertEqual(once, self.edited(once, {"XPComment": "Kites over the dunes"}).body)
-
     def test_a_longer_value_goes_into_the_slack_and_a_shorter_one_stays(self):
         layout = containers.exif_tiff(LITTLE[6:])
         tiff = self.edited(LITTLE, {"ImageDescription": "A day at the lake, then rain"}).body[6:]
@@ -142,17 +121,6 @@ class AnExifBlockReadAndWritten(unittest.TestCase):
         self.assertEqual(struct.pack("<HHI", 0x9C9C, 1, len(ucs2("Pier at dusk"))),
                          result[entry_at(result, 0x9C9C):entry_at(result, 0x9C9C) + 8])
 
-    def test_a_cleared_field_loses_its_entry_and_set_again_takes_back_its_place(self):
-        # A new tag fits only where its 12 bytes are free: never for the ~3,000 absent tags of the sample, whose IFD
-        # is followed by data, but after a clear has freed them (the one user action that makes the case).
-        cleared = self.edited(LITTLE, {"ImageDescription": None, "SubSecTime": ""}).body
-        self.assertEqual(len(LITTLE), len(cleared))
-        self.assertEqual({"ImageDescription", "SubSecTime"}, set(FULL_VALUES) - set(eb.read(cleared)))
-        self.assertNotIn(b"A day at the lake", cleared)
-        again = self.edited(cleared, {"ImageDescription": "A day at the lake"}).body
-        self.assertEqual("A day at the lake", eb.read(again)["ImageDescription"])
-        self.assertIsInstance(eb.edit(block(ifd0={}), {"ImageDescription": "Lake"}, grow=True), containers.Refusal)
-
     def test_a_new_tag_is_laid_over_zero_bytes_nothing_points_at_and_never_over_others(self):
         def with_gap(gap):
             return b"Exif\0\0" + layout_tiff("<", [
@@ -170,6 +138,8 @@ class AnExifBlockReadAndWritten(unittest.TestCase):
         last = b"Exif\0\0" + layout_tiff("<", [("ifd0", [(0x0112, 3, struct.pack("<H", 1))], b"\xab" * 16)], 0, b"")
         self.assertIsInstance(eb.edit(last, {"ImageDescription": "Oak"}), containers.Refusal)
         self.assertIsInstance(eb.edit(last, {"ImageDescription": "Oak"}, grow=True), containers.Refusal)
+        # an IFD whose table is followed by data (the ~3,000 absent tags of the sample) takes no new entry, grown or not
+        self.assertIsInstance(eb.edit(block(ifd0={}), {"ImageDescription": "Lake"}, grow=True), containers.Refusal)
 
     def test_orientation_takes_one_to_eight_and_an_odd_one_held_is_left_alone(self):
         self.assertEqual(8, eb.read(self.edited(BIG, {"Orientation": 8}).body)["Orientation"])
