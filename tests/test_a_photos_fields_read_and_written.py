@@ -25,7 +25,7 @@ may: Q1), and S4 takes that format's refusals as its cases.
 Deterministic under the tests' replay (tests/exiftool_replay.py): each item's bytes are its recipe's, a copy's name is
 its item's, the oracle's whole read names no folder and no file's dates (field_values.WHOLE_READ), and the mint's id is
 seeded by the item (exiftool_replay.seeded_mint). A second replayed run misses only the commands never kept: one that
-failed (a file not a photo, the file held open) and the recipes that read a file by name (made once a generation).
+failed (a file not a photo, the file held open, S3.6's commands naming X, given no time) and the recipes that read a file by name (made once a generation).
 
 How it fails: two runs at once each copy into a home of their own (FilesCase), sharing only the corpus and the kept
 answers, whose makers take turns; a file held open is let go, and one made read-only made writable again, at the
