@@ -299,7 +299,7 @@ def _minted(path, read, handed, decode, plan):
     the write is a conflict (write_fields' read just before it)."""
     if isinstance(plan, baking.Current):
         recorded = handed.get(paths.key(path))
-        if recorded is None or decode.stamp != recorded[0]:
+        if recorded is None or not _still_at(recorded[0], decode.stamp):
             return None
     elif not isinstance(plan, baking.ToBake):
         return None
@@ -335,6 +335,12 @@ def _mint_kept(path, held, values):
     return {**values, DOCUMENT_ID: [found]}
 
 
+def _still_at(recorded, now):
+    """Is the file whose look answered `now` (shares.stamp_of's) at `recorded`, the (mtime, size) the index recorded it
+    under (None: not recorded)? The project's one rule of a stamp (photo_fingerprints.same_picture, as adopt asks it)."""
+    return isinstance(now, tuple) and photo_fingerprints.same_picture(recorded, now) == photo_fingerprints.STAMPED
+
+
 class _Decode:
     """The digest of the photo's upright decode, as plan_photo asks it: the index's, handed over, while the file is at
     the stamp the index recorded it under (a file changed since holds another picture, perhaps); or decoded now. Keeps
@@ -347,7 +353,7 @@ class _Decode:
     def __call__(self):
         stamp, digest, zeros = self.handed.get(paths.key(self.path), (None, None, None))
         now = shares.stamp_of(self.path)
-        if digest is None or now != stamp:
+        if digest is None or not _still_at(stamp, now):
             picture = images.opened(self.path, upright=True)
             digest, zeros = images.fingerprint(picture), picture.info.get(images.ZERO_TAIL_INFO, 0)
         self.stamp, self.digest, self.zeros = now, digest, zeros
