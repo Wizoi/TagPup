@@ -15,9 +15,11 @@ recorded it under, so a photo it decoded is not decoded again; a file changed si
 through one patient walk (baking.walk): a share slow to wake is waited for once, and only one that stays away has its
 photos counted not answered -- nothing is called unreachable, and the next index bakes them.
 Each file is read again just before its write (write_fields with no `held`): one changed outside since is a conflict,
-never overwritten. A file that may be an incomplete copy (#407: it ends in images.ZERO_TAIL zero bytes or more, as an
-interrupted copy leaves one) is written nothing, neither its bake nor its identity, and counted (_incomplete): the
-index tells the owner it was left as it is, and so it is.
+never overwritten. A file that may be an incomplete copy (#407: images.incomplete of the zeros it ends in, as an
+interrupted copy leaves one; the decode's count, the index's handed over or the bake's own, so no tail is read again)
+is written nothing, neither its bake nor its identity, and counted (_incomplete). The index's line counts another
+thing: the photos it recorded this run that may be incomplete copies, "indexed, and nothing was written to them" (and
+so it is); the bake's counts the photos it would have written, recorded this run or not, and left as they are.
 
 **A photo's identity** (its XMP-xmpMM:DocumentID, tagpup.files.identity) is a field of the bake (owner, DECISIONS
 2026-11-26, decision 1): minted once, after a photo's second plan, for a photo whose picture decoded in full and whose
@@ -168,8 +170,9 @@ class Baked:
 def bake_folders(library, fields, detector, folders, handed, stop=None, each=None):
     """Bake the photos of each of `folders` (native folder paths, the photos directly in each) that plan ToBake, a
     folder at a time: Baked. `detector`, the name the library's face detector records its looks under
-    (tagpup.services.faces.detector_named); `handed`, {paths.key(path): ((mtime, size), digest of the upright decode, or None: decoded here)}
-    the index took of the photos it recorded, with the stamp it recorded each under; `stop()`, asked before each folder;
+    (tagpup.services.faces.detector_named); `handed`, {paths.key(path): ((mtime, size), digest of the upright decode, or
+    None: decoded here, zero bytes the file ends in)} the index took of the photos it recorded, with the stamp it
+    recorded each under; `stop()`, asked before each folder;
     `each(fact)`, the fact of each folder as it begins and as each chunk of its write ends (folder_told), whose sentence
     the run's log holds too: nothing between two is said, so a share that stops answering mid-chunk stops the lines.
     A handed photo keeps its row only when its file is written, holds the current bake or is read-only (owe_first)."""
@@ -262,7 +265,7 @@ def _planned(library, fields, detector, folder, handed, baked, walk):
                     plan, (baking.ToBake, baking.Current)):
                 unfingerprinted[paths.key(path)] = (photo_id, decode)
             minted = _minted(path, read, handed, decode, plan)
-            if (minted is not None or isinstance(plan, baking.ToBake)) and _incomplete(path, baked, unfingerprinted):
+            if (minted is not None or isinstance(plan, baking.ToBake)) and _incomplete(path, decode, baked):
                 continue
             if minted is not None:
                 to_bake[paths.key(path)] = (path, {**(plan.values if isinstance(plan, baking.ToBake) else {}),
@@ -304,22 +307,15 @@ def _minted(path, read, handed, decode, plan):
     return identity.mint_document_id()
 
 
-def _incomplete(path, baked, unfingerprinted):
-    """Is the file at `path`, planned to be written, to be written nothing: it may be an incomplete copy (#407: it ends in
-    images.ZERO_TAIL zero bytes or more, images.tail_check, its end alone read), counted in `baked.incomplete` and left in
-    `unfingerprinted` for its row (_adopt: no write would change it; a copy put back has another stamp and is read
-    again); or its end could not be read, counted as a photo the bake cannot read (baking.UNREADABLE) and owed, taken
-    out of `unfingerprinted`. Asked only of a photo the bake would write."""
-    try:
-        zeros = images.tail_check(path)
-    except OSError as error:
-        logger.info("Not written, its end could not be read: %s: %s", path, error)
-        baked.cannot[baking.UNREADABLE] += 1
-        unfingerprinted.pop(paths.key(path), None)
-        return True
-    if zeros < images.ZERO_TAIL:
+def _incomplete(path, decode, baked):
+    """Is the file at `path`, planned to be written, to be written nothing: it may be an incomplete copy (#407:
+    images.incomplete of the zeros its `decode` counted, the index's of the file at the stamp it is at, or the bake's
+    own), counted in `baked.incomplete` and left in _planned's photos with no row for theirs (_adopt: no write would change
+    it; a copy put back has another stamp and is read again). Asked only of a photo the bake would write, which its
+    second plan decoded."""
+    if not images.incomplete(decode.zeros):
         return False
-    logger.info("Possibly an incomplete copy, not written: %s ends in %d zero bytes", path, zeros)
+    logger.info("Possibly an incomplete copy, not written: %s ends in %d zero bytes", path, decode.zeros)
     baked.incomplete += 1
     return True
 
@@ -338,17 +334,19 @@ def _mint_kept(path, held, values):
 class _Decode:
     """The digest of the photo's upright decode, as plan_photo asks it: the index's, handed over, while the file is at
     the stamp the index recorded it under (a file changed since holds another picture, perhaps); or decoded now. Keeps
-    the digest and the stamp of the file it was taken of (`digest`, `stamp`; None until asked)."""
+    the digest, the zero bytes the file ends in (images.ZERO_TAIL_INFO: the decode's count, read with it) and the stamp
+    of the file it was taken of (`digest`, `zeros`, `stamp`; None until asked)."""
 
     def __init__(self, path, handed):
-        self.path, self.handed, self.digest, self.stamp = path, handed, None, None
+        self.path, self.handed, self.digest, self.zeros, self.stamp = path, handed, None, None, None
 
     def __call__(self):
-        stamp, digest = self.handed.get(paths.key(self.path), (None, None))
+        stamp, digest, zeros = self.handed.get(paths.key(self.path), (None, None, None))
         now = shares.stamp_of(self.path)
         if digest is None or now != stamp:
-            digest = images.fingerprint(images.opened(self.path, upright=True))
-        self.stamp, self.digest = now, digest
+            picture = images.opened(self.path, upright=True)
+            digest, zeros = images.fingerprint(picture), picture.info.get(images.ZERO_TAIL_INFO, 0)
+        self.stamp, self.digest, self.zeros = now, digest, zeros
         return digest
 
 

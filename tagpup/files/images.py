@@ -72,6 +72,13 @@ ZERO_TAIL = 64 * 1024
 #: What `opened` marks a picture with in its `info`: how many zero bytes its file ends in.
 ZERO_TAIL_INFO = "zero_tail"
 
+
+def incomplete(zeros):
+    """May a file ending in `zeros` zero bytes (zero_tail, zero_tail_of, an `opened` picture's ZERO_TAIL_INFO) be an
+    incomplete copy (#407: an interrupted copy into a file already given its size)? The one rule of it: the index's
+    line, its bake (which writes nothing into one), the doctor and `damage` ask it."""
+    return zeros >= ZERO_TAIL
+
 #: What `opened` marks a picture with in its `info`: the Orientation its face boxes are turned by between the picture as
 #: stored and the picture upright (orientation.boxes_turn), read from the file before it was turned.
 BOXES_TURN_INFO = "boxes_turn"
@@ -146,7 +153,7 @@ def damage(data, error):
         return Unreadable("empty", detail)
     if zeros == len(data):
         return Unreadable("all zeros", detail, zeros)
-    if zeros >= ZERO_TAIL:
+    if incomplete(zeros):
         return Unreadable("zero-filled", detail, zeros)
     if isinstance(error, Image.UnidentifiedImageError):
         return Unreadable("not an image", detail, zeros)
@@ -172,13 +179,13 @@ def is_damage(error):
 def tail_check(photo_path):
     """How many zero bytes the file at `photo_path` ends in (zero_tail_of), having read only the end of
     it: for the doctor's count of photos whose file fails to open (tagpup.services.inspect), without
-    decoding them. Raises Unreadable for an empty file, and what the system raised for one that cannot
+    decoding them (`incomplete` of what it gives). Raises Unreadable for an empty file, and what the system raised for one that cannot
     be read. A zero-filled tail is `zero_tail_of`'s rule, at ZERO_TAIL, as the indexer's (#528), and
     nothing is judged of what follows the picture -- a Samsung trailer, an MP4 appended to a motion
     photo, 0xFF or zero padding below ZERO_TAIL, bytes after a PNG's IEND all decode. It cannot see
-    damage in the middle of a picture, which the indexer's full decode (`opened`) does. The index's bake
-    asks it of each photo it would write, and writes nothing into one ending in zeros (tagpup.services.
-    bake_after_index._incomplete, #407); no other write asks it (DECISIONS 2026-10-15)."""
+    damage in the middle of a picture, which the indexer's full decode (`opened`) does. No write asks it:
+    the index's bake judges the zeros of each photo's decode this run, the index's or its own (tagpup.services.
+    bake_after_index._incomplete, #407), and no other write checks a file first (DECISIONS 2026-10-15)."""
     if os.path.getsize(photo_path) == 0:   # unbounded: the doctor bounds the whole look (inspect, shares.bounded); the bake asks after the file's decode answered
         raise Unreadable("empty", "the file is empty")
     return zero_tail_of(photo_path)

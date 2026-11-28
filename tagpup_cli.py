@@ -829,7 +829,9 @@ def index(ctx, directories, force_reembed: bool, reset: bool, skip_faces: bool, 
                     # Not decoded: its vector was kept by its stamp, and is recorded again with the fingerprint row it
                     # has (store.embeddings.put records or forgets one with every vector).
                     meta["fingerprint"] = embeddings.fingerprint_of(path)
-                if zeros >= image_files.ZERO_TAIL:
+                # Handed to the bake with its fingerprint (_recorded): the bake reads no tail of a photo the index read.
+                meta["zero_tail"] = zeros
+                if image_files.incomplete(zeros):
                     # It decodes, perhaps grey below a line: indexed, and left as it is.
                     incomplete.append((path, zeros))
                     logger.info(f"Possibly an incomplete copy, indexed and not written to: {path} ends in "
@@ -1116,8 +1118,9 @@ BAKE_ONLY_LINE = ("%d photo(s) in %d folder(s) hold a current vector whose pictu
 
 def _recorded(metas, touched, handed):
     """A batch of `metas` was recorded: its folders join `touched` ({paths.key: native folder}), and each photo joins
-    `handed` ({paths.key(path): ((mtime, size), digest or None)}) with the stamp its row was recorded under and the
-    fingerprint of its picture the index holds: its decode's, or the row a vector kept by its stamp was recorded again with
+    `handed` ({paths.key(path): ((mtime, size), digest or None, zeros)}) with the stamp its row was recorded under, the
+    zero bytes its file ends in (images.incomplete's question, asked once) and the fingerprint of its picture the index
+    holds: its decode's, or the row a vector kept by its stamp was recorded again with
     (the picture its stamp still describes); None for one it holds none of under images.FINGERPRINT_KEY (another key's,
     or a vector kept by its stamp with no row: an index stopped after the vector was kept and before its batch was
     recorded), which the bake decodes. Every photo recorded is handed: the bake mints the identity of those alone
@@ -1127,7 +1130,7 @@ def _recorded(metas, touched, handed):
         touched.setdefault(paths.key(folder), folder)
         found = meta.get("fingerprint")
         digest = found[1] if found is not None and found[0] == image_files.FINGERPRINT_KEY else None
-        handed[paths.key(meta["path"])] = ((meta["mtime"], meta["size"]), digest)
+        handed[paths.key(meta["path"])] = ((meta["mtime"], meta["size"]), digest, meta["zero_tail"])
 
 
 def _owe_the_recorded(db_path, touched, handed):

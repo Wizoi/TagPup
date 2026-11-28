@@ -252,7 +252,8 @@ class TheIndexWritesTheBake(unittest.TestCase):
         bake_folders = bake_after_index.bake_folders
 
         def without_a_decode(*args, **kwargs):
-            with mock.patch.object(images, "fingerprint", side_effect=AssertionError("decoded again")):
+            with mock.patch.object(images, "fingerprint", side_effect=AssertionError("decoded again")), \
+                    mock.patch.object(images, "zero_tail_of", side_effect=AssertionError("its tail read again")):
                 return bake_folders(*args, **kwargs)
         with mock.patch.object(bake_after_index, "bake_folders", without_a_decode):
             result = self.index()

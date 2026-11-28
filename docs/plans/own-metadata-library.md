@@ -338,8 +338,9 @@ change a folder, in no History, never undone), recorded by `follow_fields` (`DOC
 carried over a done rename by `_follow_rename`; no other operation journals an identity (the undo matrix's `a_bake`,
 which journals a bake under the retired `baking.OPERATION`, writes none). The mint's rules move with it: never into a
 photo that did not decode in full; and nothing, neither its bake nor its id, into one whose tail is zeros (#407:
-`images.tail_check`, asked of every photo the bake would write, `_incomplete`; as built, asked only of a photo to
-mint, it let that photo's bake through). M does not need the own writer's growth path: `fields.EDITED_AS` gains `XMP-xmpMM:DocumentID`, so a
+`images.incomplete`, the one rule, of the zeros the photo's decode counted -- the index's, handed beside its digest,
+or the bake's own -- asked of every photo the bake would write, `_incomplete`; as built, asked only of a photo to
+mint, it let that photo's bake through, and the tail was read again). M does not need the own writer's growth path: `fields.EDITED_AS` gains `XMP-xmpMM:DocumentID`, so a
 mint alone patches where XMP has room, else ExifTool's rewrite as today until J3a; a mint beside the bake's fields is
 part of the bake's write (ExifTool's rewrite until J3c). Deletes `IdentityWriter`, `ensure_document_id`,
 `OutsideWrites` with `file_journal.renamed_fingerprints`, `_read_again` and `given`, the index loop's `give`, INVARIANTS
