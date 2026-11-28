@@ -332,13 +332,16 @@ follower). The write is the folder's internal change under `baking.INDEX_OPERATI
 change a folder, in no History, never undone), recorded by `follow_fields` (`DOCUMENT_ID_KEYS` -> `document_id`),
 carried over a done rename by `_follow_rename`; no other operation journals an identity (the undo matrix's `a_bake`,
 which journals a bake under the retired `baking.OPERATION`, writes none). The mint's rules move with it: never into a
-photo that did not decode in full, never into one whose tail is zeros (#407: `images.tail_check`, asked only of a photo
-it would mint). M does not need the own writer's growth path: `fields.EDITED_AS` gains `XMP-xmpMM:DocumentID`, so a
+photo that did not decode in full; and nothing, neither its bake nor its id, into one whose tail is zeros (#407:
+`images.tail_check`, asked of every photo the bake would write, `_incomplete`; as built, asked only of a photo to
+mint, it let that photo's bake through). M does not need the own writer's growth path: `fields.EDITED_AS` gains `XMP-xmpMM:DocumentID`, so a
 mint alone patches where XMP has room, else ExifTool's rewrite as today until J3a; a mint beside the bake's fields is
 part of the bake's write (ExifTool's rewrite until J3c). Deletes `IdentityWriter`, `ensure_document_id`,
-`OutsideWrites`, `_read_again` and `given`, the index loop's `give`, INVARIANTS exception (1), the CLI's `field_values`
-import (PROGRAMS_TODAY 6 -> 5). Behaviour changes, named for the owner: the mint is written after the folder's batches
-are recorded; an index with `--skip-faces` mints nothing; a photo the bake cannot plan is minted when it can be. Before
+`OutsideWrites` with `file_journal.renamed_fingerprints`, `_read_again` and `given`, the index loop's `give`, INVARIANTS
+exception (1), the CLI's `field_values` and `refresh_rows` imports (PROGRAMS_TODAY 6 -> 5). Behaviour changes, named
+for the owner: the mint is written after the folder's batches are recorded, inside the bake; an index with
+`--skip-faces` mints nothing; a photo the bake cannot plan is minted when it can be; a photo ending in zeros gets
+neither its bake nor its id, and is counted on the bake's line as a possibly incomplete copy. Before
 it merges: a read-only dry count of the photos it would mint per library, told the owner (Q5's condition, a census).
 Gate: conformance step 2 for a mint; `tests/test_a_rename_stopped_part_way.py` (`AnIdentityTheIndexGivesTheRenamedPhotos`,
 faces stood in); `tests/test_no_writes_to_damaged_photos.py` re-pointed at the bake; `tests/test_photo_identity.py`

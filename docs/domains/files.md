@@ -42,13 +42,15 @@ editors) are the evidence those scenario tests cite.
    - One batch reader, `field_values.read`: an operation's reads (`Fields.read`: sync's pairing, Smart Rename's
      captions, Apply All's people, a caption's rule; `Fields.whole`: the indexer's) and the write sessions' read
      through it (#1473); ExifToolSession is constructed in field_values alone, but for the write sessions L0b moves. A timeout ends the read and leaves every photo not read unread (#1490).
-   - One writer of a photo's fields, `field_values.write`; the identity mint writes through it (`ensure_document_id`).
+   - One writer of a photo's fields, `field_values.write`; the identity the index's bake mints is written through it, by `write_fields`.
      It writes a file one of two ways: a journaled write of a JPEG whose fields fit is patched in place
      (`in_place.patch_jpeg`, called from nowhere else; `PATCH_IN_PLACE`, True), every other write is ExifTool's rewrite.
      A patch's new segments are made by `segment_edits`, the own writer (the one caller of the three block editors,
      `tests/test_the_block_editors_have_one_caller.py`; on since 4d, 2026-11-16, ExifTool's header-copy patch deleted).
-     `file_only`, `ensure_document_id` and the bake fields do not reach the own writer (no `saving`, or not in
-     `fields.EDITED_AS`, so `segment_edits` refuses): they are ExifTool's rewrite. A clip is patched by `clip_patch`
+     `file_only` and the bake fields do not reach the own writer (no `saving`, or not in
+     `fields.EDITED_AS`, so `segment_edits` refuses): they are ExifTool's rewrite, an identity minted beside
+     the bake's fields with them; one minted alone (`XMP-xmpMM:DocumentID` is in `EDITED_AS`) is patched where
+     the XMP has room. A clip is patched by `clip_patch`
      (a clip patch is outside `field_values.write`; Media's Convert reaches Files' packet only through
      `field_values.packet_held` / `packet_given`, `PACKET_UNREAD`, `NotAnswered`: contract row 77).
      It writes every photo beside itself and moves the new file over it only once its picture is the photo's
@@ -87,17 +89,14 @@ editors) are the evidence those scenario tests cite.
    #2755 (the watcher), #2756 (an unreachable arm of the bulk edit) and #2735 (this page, closed by this restatement).
    Closed: #1490 (wrong), #1491 to #1496, and the lows below, by design.
 
-## The journaled path and its two named exceptions
+## The journaled path and its one named exception
 
-A photo file is written only through `file_changes.write_fields` and `rename` (the charter's contract, point 1). The two
-exceptions, each unjournaled by decision:
+A photo file is written only through `file_changes.write_fields` and `rename` (the charter's contract, point 1). The
+one exception is unjournaled by decision; a photo's DocumentID, the second until stage M (2026-11-27), is a field of
+the index's bake (`services/bake_after_index.py`), written through `write_fields` as the folder's internal change
+under `baking.INDEX_OPERATION` (in no History, never undone), its row followed in the transaction that marks it
+done and a done rename carried over it by `_record`'s `_follow_rename`, as every journaled write is (#1957):
 
-- **The DocumentID the indexer mints**: `files/field_values.ensure_document_id`, through `field_values.write`. It is
-  one command, made with `-m` as every write is (`field_values.WRITE_OPTIONS`, #2009, DECISIONS 2026-10-27) (#1355).
-  It is never written into a photo whose picture did not decode. Its write is wrapped by `file_changes.OutsideWrites`,
-  which carries a done rename's fingerprint over it as `_record` carries the journal's own writes (one helper,
-  `_follow_rename`; #1957): the exception stays unjournaled, but no longer leaves a rename knowing a file by a
-  fingerprint the mint changed. Forward only (#1959); a renamed file minted before 2026-10-29 stays refused.
 - **Just look**: `services/file_only.py`, the files of a folder the library does not hold (#527).
 
 A photo's Delete (`services/photos.delete`) is not a write and is journaled too, as an INTERNAL change
@@ -506,14 +505,12 @@ caller rewrites the file, nothing written. It is the one caller of the three edi
   whole-library sync asks for again while it runs is run again whole, N folders scanned once more; the stamp rule
   skips the unchanged files. It is once, not a loop (a re-run repeats only when something asks during it), and
   splitting the batch would need the sync to say which folder received files, which nothing records.
-- **The index's re-read of the photos it gives an identity** (#1599's review): `tagpup_cli._read_again` starts an
-  ExifTool session for each batch of 100 and asks `face_refs` once for each such photo (`refresh_rows.read_files`). If
-  every photo without a DocumentID is indexed (58,973 of photo_index's 59,519, the Files owner's count, 2026-10-17),
-  that is about 590 session starts and about 59,000 indexed queries, against a second CLIP and face-detection pass for
-  each of those photos, which is what the next index did without the re-read.
 
 ## Known, and closed
 
+- **The index's re-read of the photos it gave an identity** (#1599's review): gone with `tagpup_cli._read_again`
+  at stage M (2026-11-27): the mint is the bake's journaled write, whose row follows it in the transaction that
+  marks the file done.
 - **#885**: obsolete. The size-change re-read that left a decided face's vector stale was deleted (a4a4a42).
 - **#360**: decided by design. A watcher sync during a slow bulk write may re-read a file whose row is not recorded yet;
   the journal's preconditions settle it, and only reads are wasted.
