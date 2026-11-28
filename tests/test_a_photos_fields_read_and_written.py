@@ -82,7 +82,7 @@ P, R = "patch", "rewrite"
 #: outside write is ExifTool's rewrite (a JPEG's, a PNG's, a TIFF's) or refused (a clip's, S2.1's one case of it).
 WRITES = {
     "camera": (PHOTO, R, dict.fromkeys(("Date Taken shifted", "turned right", "mirrored"), P)),
-    "tagged": (PHOTO, P, dict.fromkeys(BAKES + ("a mint",), R)),
+    "tagged": (PHOTO, P, dict.fromkeys(BAKES, R)),
     "tagged_ii": (("Date Taken shifted", "turned right", "keyword added"), P, {}),
     "iptc_alone": (("keyword added", "last keyword taken off", "preserved name set"), P, {}),
     "iptc_utf8": (("caption set", "caption cleared", "keyword added"), P, {}),

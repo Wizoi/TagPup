@@ -29,12 +29,16 @@ from unittest import mock
 from click.testing import CliRunner
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import baked_files  # noqa: E402
 import exiftool_fields  # noqa: E402
+from stand_in_models import Hold, RefusableFaces  # noqa: E402
 from face_rows import FACES_WITH_PATHS, VECTORS_WITH_PATHS, add_face, add_vector  # noqa: E402
 from test_file_journal import EXIFTOOL, Crash, FilesCase, crash_at, field_of, keywords_of, write_outside  # noqa: E402
 from test_a_file_holds_what_exiftool_kept import rewritten  # noqa: E402
 
 import tagpup_cli  # noqa: E402
+from tagpup import runtime as runtimes  # noqa: E402
+from tagpup.runtime import Runtime  # noqa: E402
 
 from tagpup.core import paths  # noqa: E402
 from tagpup.files import names as file_names  # noqa: E402
@@ -42,7 +46,7 @@ import page_writes  # noqa: E402
 from tagpup.services import file_changes, tagging, photos as photo_actions  # noqa: E402
 from tagpup.services import journal as journal_service  # noqa: E402
 from tagpup.services import libraries as library_actions  # noqa: E402
-from tagpup.store import db, file_journal  # noqa: E402
+from tagpup.store import db  # noqa: E402
 from tagpup.store import roots as store_roots  # noqa: E402
 
 FORMAT = "{grouping} - {index} - {caption}"
@@ -332,18 +336,25 @@ class ALaterWriteOfTheRenamedPhoto(RenameCase):
 
 class AnIdentityTheIndexGivesTheRenamedPhotos(FilesCase):
     """Smart Rename of three photos that carry no DocumentID (58,688 of photo_index's 59,523 rows have none, counted
-    2026-10-29), then an index of their folder: it decodes them and mints each its identity, one write outside the journal
-    that gives the file a new file id, size and modified time (live: photo_index change 34, three files grown 84 bytes,
-    #1954). The mint carries the rename's fingerprint over its write, as the journal's own writes do, so History offers
-    the rename's Undo and it puts every photo back under its old name (#1957). Before, the Undo was offered and its
-    rehearsal refused each photo "not found under the name the change gave it". Real ExifTool and the real index; only
-    CLIP is stood in for, after each picture has decoded."""
+    2026-10-29), then an index of their folder: it decodes them, and its bake mints each its identity, a journaled write
+    of the folder's (bake_after_index, under baking.INDEX_OPERATION) that gives the file a new file id, size and modified
+    time (live, when the mint was the index's own write: photo_index change 34, three files grown 84 bytes, #1954). The
+    journal carries the rename's fingerprint over its own writes (file_changes._follow_rename), the bake's among them, so
+    History offers the rename's Undo and it puts every photo back under its old name (#1957). Before, the Undo was
+    offered and its rehearsal refused each photo "not found under the name the change gave it". Real ExifTool and the
+    real index; CLIP and the face model are stood in for, after each picture has decoded, so the bake runs."""
 
     def setUp(self):
         super().setUp()
         library_actions.record_added(self.library, [self.folder])
         self.old = [self.make("IMG_000%d.jpg" % n, caption="Start", preserved="IMG_000%d.jpg" % n) for n in (1, 2, 3)]
         self.ids = [self.photo_id(path) for path in self.old]
+        detector = RefusableFaces({}, vector=baked_files.face_vector)
+        for patcher in (mock.patch.object(Runtime, "gpu_turn", lambda runtime, what, *args, **kwargs: Hold()),
+                        mock.patch.object(runtimes, "on_the_card", return_value=True),
+                        mock.patch.object(Runtime, "faces", lambda runtime, library, settings=None: detector)):
+            patcher.start()
+            self.addCleanup(patcher.stop)
 
     def rename(self):
         renamed = photo_actions.smart_rename(self.library, self.old, "Regatta", FORMAT, exiftool_fields.opened(self, EXIFTOOL))
@@ -353,19 +364,16 @@ class AnIdentityTheIndexGivesTheRenamedPhotos(FilesCase):
         return renamed.details["change"]
 
     def index(self):
-        """The index of the folder, as the queue runs it; the mint is its own (tagpup_cli's IdentityWriter). Returns how
-        often the run read what the renames know."""
+        """The index of the folder, as the queue runs it; the mint is its bake's (bake_after_index)."""
         known = {path: os.stat(path).st_ino for path in self.new}
         with mock.patch("tagpup.ml.clip.ClipModel._init_model"), \
                 mock.patch("tagpup.ml.clip.ClipModel.picture_input"), \
-                mock.patch("tagpup.ml.clip.ClipModel.embed_input", return_value=[0.1] * 8), \
-                mock.patch.object(file_journal, "renamed_fingerprints", wraps=file_journal.renamed_fingerprints) as read:
-            result = CliRunner().invoke(tagpup_cli.cli, ["--db", self.library.path, "index", self.folder, "--skip-faces"])
+                mock.patch("tagpup.ml.clip.ClipModel.embed_input", return_value=baked_files.unit(1152, 99).tolist()):
+            result = CliRunner().invoke(tagpup_cli.cli, ["--db", self.library.path, "index", self.folder])
         self.assertEqual(0, result.exit_code, result.output)
         for path in self.new:
             self.assertTrue(str(field_of(path, "XMP-xmpMM:DocumentID") or "").startswith("xmp.did:"), "no identity minted")
             self.assertNotEqual(known[path], os.stat(path).st_ino, "the mint did not write the file anew")
-        return read.call_count
 
     def photo_rows_at(self, photo_paths):
         conn = db.connect(db.readonly_uri(self.library.path), uri=True)
@@ -387,8 +395,7 @@ class AnIdentityTheIndexGivesTheRenamedPhotos(FilesCase):
 
     def test_minted_after_the_rename_the_rename_is_undone(self):
         rename = self.rename()
-        # What the renames know is the run's answer: read once for the three photos minted, not once a photo.
-        self.assertEqual(1, self.index(), "the renames' fingerprints are read once a run")
+        self.index()
         self.assert_undone(rename)
 
     def test_a_rename_recorded_before_the_roots_were_adopted_is_undone(self):
@@ -421,8 +428,8 @@ class AnIdentityTheIndexGivesTheRenamedPhotos(FilesCase):
         self.assert_undone(rename)
 
     def test_a_save_between_the_rename_and_the_mint_is_undone_and_then_the_rename(self):
-        # Two writers of one photo: the Save's (journaled) and then the mint's (not). Each carries the rename over its
-        # own write, the mint from what the Save left.
+        # Two writers of one photo, both journaled: the Save's and then the bake's with its mint. Each carries the rename
+        # over its own write, the bake from what the Save left.
         rename = self.rename()
         saved = tagging.save_photo(self.library, self.new[0], "Start", ["Beach", "Harbour"], None, exiftool_fields.opened(self, EXIFTOOL), FORMAT,
                                    base=page_writes.base(self.library, self.new[0]))

@@ -1352,61 +1352,11 @@ def _fingerprint_of(stat):
 def _follow_rename(conn, path, before, after):
     """The one rule of a photo file this process just wrote under the name a rename gave it: a rename done that knows it by
     its fingerprint before the write (`before`, its os.stat) knows it by the one the write left (`after`) from here on
-    (file_journal.follow_renamed). Nothing when either stat could not be taken. In the caller's transaction: for the
-    journal's own writes, the one that records the file (_record); for a write outside the journal, its own (OutsideWrites).
-    Returns the files of renames followed."""
+    (file_journal.follow_renamed). Nothing when either stat could not be taken. In the caller's transaction, the one that
+    records the file (_record). Returns the files of renames followed."""
     if before is None or after is None:
         return 0
     return file_journal.follow_renamed(conn, path, _fingerprint_of(before), _fingerprint_of(after))
-
-
-class OutsideWrites:
-    """The writes of photo files a process makes outside the journal's file-change path: the indexer's identity mint
-    (tagpup.files.field_values.IdentityWriter over field_values.ensure_document_id; the charter's named exception, #1355). Each
-    is carried over the journal's renames as the journal's own writes are (_follow_rename), so that a rename's undo still finds the
-    file it renamed (#1957). Forward only: a file minted before this was made is not looked for (no backfill), and a file
-    another program rewrites stays as it is: History reads no file. Nothing else of the journal knows of the write: it is
-    no change, and no undo takes it back.
-
-    Which fingerprints the renames know is read once, at the first write that changed a file (renamed_fingerprints), and
-    each file after asks the set, not the library: a full index mints tens of thousands of files, and the answer is the
-    run's. A rename another process (the server) finishes during the run is not in the set, so the mint leaves it knowing
-    its file as it was and its undo refuses the file, as before this carry; a rename of this run's files is rare, and
-    nothing more is built for it."""
-
-    def __init__(self, library):
-        self.library = library
-        self.known = None
-
-    def _renames_know(self, fingerprint):
-        if self.known is None:
-            self.known = file_journal.renamed_fingerprints(self.library.path)
-        return file_journal.fingerprint_key(fingerprint) in self.known
-
-    def around(self, path, write):
-        """`write()`, a write of the file at `path` that returns something true when it wrote, with the file's stat taken
-        just before and after it and the rename that knew it by the one before carried to the one after, in a transaction
-        of its own right after the write: a Save of the photo that follows (the server, another process) finds the rename
-        knowing the file as it is. A photo no rename knows (almost every one) takes a lookup and no write transaction.
-        Never raises for the carry: the file is written either way. What is left: a process killed between the write and
-        this transaction leaves the rename knowing the file as it was, and its undo refuses it, as before; a stat a share
-        does not answer is no carry. Returns what `write` returned."""
-        before = _stat(path)
-        result = write()
-        if not result or before is None:
-            return result
-        after = _stat(path)
-        if after is None or _fingerprint_of(after) == _fingerprint_of(before):
-            return result
-        try:
-            if self._renames_know(_fingerprint_of(before)):
-                followed = db.write_with_connection(self.library.path, lambda conn: _follow_rename(conn, path, before, after),
-                                                    label="a rename told of a write outside the journal")
-                logger.info("%s: %d rename(s) told of a write outside the journal", self.library.path, followed)
-        except Exception as e:
-            logger.warning("%s: a rename could not be told of a write outside the journal; its undo will refuse the file:"
-                           " %s", self.library.path, e)
-        return result
 
 
 def _holds(path, row):

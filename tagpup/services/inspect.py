@@ -341,7 +341,7 @@ def _fails_to_open(path):
     nothing decoded. Raises the OSError of a file that could not be read -- gone, locked, a share that dropped --: no
     reason to call a photo damaged."""
     try:
-        if images.tail_check(path) >= images.ZERO_TAIL:
+        if images.incomplete(images.tail_check(path)):
             return images.DAMAGE["zero-filled"]
         images.shown_shape(path)
     except images.Unreadable as damage:

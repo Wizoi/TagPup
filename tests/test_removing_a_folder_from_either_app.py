@@ -46,6 +46,7 @@ from tagpup.services.indexing import INDEXER_LOG  # noqa: E402
 from tagpup.core.library import Library  # noqa: E402
 from tagpup.core.result import NotHeld, Result  # noqa: E402
 from tagpup.services import job_runs, thumbnails  # noqa: E402
+from tagpup.services.search import PhotoIndex  # noqa: E402
 from tagpup.services import libraries as library_actions  # noqa: E402
 from tagpup.services import settings as library_settings  # noqa: E402
 from tagpup.store import added_folders, db, file_journal  # noqa: E402
@@ -429,20 +430,21 @@ class AnIndexInTheCli(unittest.TestCase):
         self.assertIsNotNone(started, "the parent process's start cannot be read")
         another = mock.patch.object(file_journal, "owner",
                                     return_value="%s:%d:%d" % (socket.gethostname(), parent, started))
-        read_again, answered = tagpup_cli._read_again, []
+        record, answered = PhotoIndex.build_or_update, []
 
-        def removed_between_batches(*args):
+        def removed_between_batches(*args, **kwargs):
+            # As a batch is about to be recorded.
             if not answered:
                 another.stop()   # the app's process asks: its own owner
                 try:
                     answered.append(self.ask_removal(self.meet))
                 finally:
                     another.start()
-            return read_again(*args)
+            return record(*args, **kwargs)
         another.start()
         try:
             with mock.patch.object(tagpup_cli, "PHOTO_CHUNK", 2), \
-                    mock.patch.object(tagpup_cli, "_read_again", removed_between_batches):
+                    mock.patch.object(PhotoIndex, "build_or_update", removed_between_batches):
                 result = self.index(self.meet)
         finally:
             another.stop()
@@ -485,16 +487,17 @@ class AnIndexInTheCli(unittest.TestCase):
         index runs all the same, and nothing says so to the app: the removal goes ahead, and the index stops at its
         next batch with NotHeld."""
         self.photos(self.meet, 5)
-        read_again, batches = tagpup_cli._read_again, []
+        record, batches = PhotoIndex.build_or_update, []
 
-        def removed_before_the_second_batch(*args):
+        def removed_before_the_second_batch(*args, **kwargs):
+            # As a batch is about to be recorded.
             batches.append(self.held(self.meet))
             if len(batches) == 2:
                 self.assertTrue(self.remove(self.meet)["success"])
-            return read_again(*args)
+            return record(*args, **kwargs)
         with mock.patch.object(job_runs, "claim", return_value=run_rows.Claim(why="busy")), \
                 mock.patch.object(tagpup_cli, "PHOTO_CHUNK", 2), \
-                mock.patch.object(tagpup_cli, "_read_again", removed_before_the_second_batch):
+                mock.patch.object(PhotoIndex, "build_or_update", removed_before_the_second_batch):
             result = self.index(self.meet)
         self.assertEqual(2, batches[1][1], "the first batch was not recorded, with its faces, before the removal")
         self.assertEqual((0, 0), self.held(self.meet), "the index brought the removed folder back")

@@ -341,14 +341,15 @@ embeddings, then the embedding cache — because each site had its own settings.
 rename it and the index row describes something that no longer exists, while the photo
 looks unindexed. `tagpup/files/identity.py` reads `XMP-xmpMM:DocumentID`, which most photos
 already carry (1,075 of 1,129 sampled here), and mints `xmp.did:<uuid>` into the few
-that do not. That means a normal index pass *writes* to some files: only the indexer
-does, through `IdentityWriter` (`tagpup/files/field_values.py`), and only into a photo whose
-picture has decoded in full and whose metadata ExifTool read without an error -- a
-truncated file took an identity, which changed its modified time, which queued it for
-indexing again (#407). `Fields.whole` only reads. A photo given an identity keeps
-the stamp from before its read, and the index reads the photo again before recording it
-(`tagpup_cli._read_again`), so its row holds the file as the write left it and the next
-pass finds it current (#1599).
+that do not. That means a normal index pass *writes* to some files: only the index's
+bake does (`tagpup/services/bake_after_index.py`), once the folder's batches are recorded,
+the identity a field of its journaled internal change, and only into a photo whose
+picture decoded in full and whose file does not end in zeros (written alone, its bake
+current, only into one the index recorded this run: DECISIONS 2026-11-27) --
+a truncated file took an identity, which changed its modified time, which queued it for
+indexing again (#407). `Fields.whole` only reads. The row follows the write in the
+transaction that marks it done (`store.photos.follow_fields`), so the next pass finds it
+current (#1599). An index with `--skip-faces` runs no bake, and mints nothing.
 
 **ExifTool treats an empty list as "no change".** Clearing a photo's last keyword has to
 be an explicit `-TAG=` deletion, which is what `write_keyword_fields()` does. Assigning

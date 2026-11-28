@@ -30,7 +30,16 @@ What the owner lives through, each with the CLI's index over a real ExifTool and
   the files written keep their rows and the rest are owed;
 - a folder of many photos says how far its write has got as each chunk of its files ends, and a share that stops
   answering mid-chunk stops the lines: the page can say it has not moved (photo_index, 2026-10-28: 759 files baked over
-  57 minutes with no line). The lines change nothing written: the files not reached are owed as before.
+  57 minutes with no line). The lines change nothing written: the files not reached are owed as before;
+- a photo's identity (DocumentID) is a field of its folder's bake (DECISIONS 2026-11-26, decision 1): a new photo is
+  given one in the bake's write, its row holds it, and the next index gives none again; a photo whose file holds its bake
+  already is given its id alone, patched, its bake not rewritten, its fingerprint row only once that write is done (a
+  share stalling the folder's read, or a kill before the write's plan, leaves it owed), and a crash at any step of that
+  write leaves it right, the next index reading it again at worst; a photo a Ctrl+C kept from its bake is given its id
+  by the next index's bake of it, which the index hands nothing (DECISIONS 2026-11-27); a file that came to hold an id since its folder was
+  read (another library's bake of a folder both hold) keeps its own; a photo changed between the index and its bake is
+  given none; a photo ending in zeros (an interrupted copy, #407) is written nothing, its bake nor its identity, the
+  line says so, and the next index writes it nothing again, and an index with --skip-faces gives none.
 
 Lifted: the deleted `bake-photos` command's tests of a PNG and of a turn between the plan and the write
 (test_a_bake_is_written_folder_by_folder), now of the index's bake.
@@ -51,13 +60,13 @@ import baked_files  # noqa: E402
 import page_writes  # noqa: E402
 import own_home  # noqa: E402
 from stand_in_models import Hold, NewFaces, RefusableFaces  # noqa: E402
-from test_file_journal import Crash, crash_at  # noqa: E402
+from test_file_journal import Crash, crash_at, field_of, write_outside  # noqa: E402
 
 import tagpup_cli  # noqa: E402
 from tagpup import runtime as runtimes  # noqa: E402
 from tagpup.core import paths, processes  # noqa: E402
 from tagpup.core.library import Library  # noqa: E402
-from tagpup.files import bake, exiftool_session, field_values, images  # noqa: E402
+from tagpup.files import bake, exiftool_session, field_values, identity, images  # noqa: E402
 from tagpup.ml import clip  # noqa: E402
 from tagpup.runtime import Runtime  # noqa: E402
 from tagpup.services import bake_after_index, baking, batches, file_changes, tagging  # noqa: E402
@@ -226,7 +235,7 @@ class TheIndexWritesTheBake(unittest.TestCase):
         write, calls = field_values._write, []
 
         def damaged_once(*args, **kwargs):
-            # The journal's writes (file_changes._written: the bake's), not the identity mint's before them.
+            # The journal's writes (file_changes._written: the bake's, its mint with it).
             if "scratch_written" in kwargs:
                 calls.append(args[1])
                 if len(calls) == 1:
@@ -245,7 +254,8 @@ class TheIndexWritesTheBake(unittest.TestCase):
         bake_folders = bake_after_index.bake_folders
 
         def without_a_decode(*args, **kwargs):
-            with mock.patch.object(images, "fingerprint", side_effect=AssertionError("decoded again")):
+            with mock.patch.object(images, "fingerprint", side_effect=AssertionError("decoded again")), \
+                    mock.patch.object(images, "zero_tail_of", side_effect=AssertionError("its tail read again")):
                 return bake_folders(*args, **kwargs)
         with mock.patch.object(bake_after_index, "bake_folders", without_a_decode):
             result = self.index()
@@ -313,6 +323,7 @@ class TheIndexWritesTheBake(unittest.TestCase):
         self.assertEqual(0, baked.written)
         self.assertEqual({baking.NO_VECTOR: 1}, dict(baked.cannot))
         self.assertIsNone(getattr(baked_files.held(a), "fingerprint", None), "the old picture's bake was written into the new one")
+        self.assertIsNone(field_of(a, identity.DOCUMENT_ID_FIELD), "a file changed since the index was given an identity")
 
     def test_a_refused_folder_is_said_and_roots_changed_ends_the_run(self):
         quay = paths.stored(os.path.join(self.home.root, "Quay"))
@@ -681,6 +692,9 @@ class TheIndexWritesTheBake(unittest.TestCase):
         self.assertEqual((0, 0, True), self.looked())
 
     def test_a_ctrl_c_part_way_through_a_folders_write_keeps_the_rows_of_the_files_written(self):
+        """The photo the Ctrl+C kept from its write is baked by the next index from the library (its folder owed,
+        nothing handed: bake_only), and given its identity in that write: a photo the bake writes anyway is minted
+        whether or not the index recorded it this run (DECISIONS 2026-11-27). The index after says it is up to date."""
         a, b = self.picture("a.jpg", (200, 40, 40)), self.picture("b.jpg", (40, 200, 40))
         stops_at_the_second = crash_at("file writing", nth=2)
 
@@ -698,6 +712,168 @@ class TheIndexWritesTheBake(unittest.TestCase):
         self.assertIn("Bake: 1 file(s) written, 1 already held it", self.index_with_no_model())
         self.assertBaked(b, 0)
         self.assertEqual((0, 0, True), self.looked())
+        held, row, raw = self.identity_of(b)
+        self.assertTrue(str(held).startswith("xmp.did:"), "baked by the next index and never given its identity")
+        self.assertEqual((held, held), (row, raw), "the row does not hold the identity its file holds")
+        self.assertIn("All images are up to date", self.index().output)
+        self.assertEqual((held, held, held), self.identity_of(b))
+
+    def bake_fields(self, path):
+        with field_values.opened(EXIFTOOL) as et:
+            return et.read([path], list(bake.WRITTEN.values()))[paths.key(path)]
+
+    def identity_of(self, path):
+        """(the DocumentID the file holds, the one its row holds, the one its row's raw_metadata holds)."""
+        ((document_id, raw),) = [(document_id, raw) for path_of, document_id, raw in self.query(
+            "SELECT path, document_id, raw_metadata FROM photos") if paths.key(path_of) == paths.key(path)]
+        return field_of(path, identity.DOCUMENT_ID_FIELD), document_id, json.loads(raw).get("XMP:DocumentID")
+
+    def test_a_new_photo_is_given_its_identity_by_its_folders_bake_once_and_its_row_holds_it(self):
+        a, b = self.picture("a.jpg", (200, 40, 40)), self.picture("b.jpg", (40, 200, 40))
+        self.assertIn("Bake: 2 file(s) written, 0 already held it.", " ".join(self.index().output.split()))
+        given = {}
+        for path, faces in ((a, 1), (b, 0)):
+            held, row, raw = self.identity_of(path)
+            self.assertTrue(str(held).startswith("xmp.did:"), "no identity minted")
+            self.assertEqual((held, held), (row, raw), "the row does not hold the identity its file holds")
+            self.assertBaked(path, faces)
+            given[path] = held
+        self.assertNotEqual(given[a], given[b])
+        self.assertNoBakeListed()
+        stamps = {path: os.stat(path).st_mtime_ns for path in (a, b)}
+        self.picture("c.jpg", (40, 40, 200))
+        self.index()
+        self.assertEqual(stamps, {path: os.stat(path).st_mtime_ns for path in (a, b)}, "a photo was given a second identity")
+        self.assertEqual(given, {path: self.identity_of(path)[0] for path in (a, b)})
+
+    def test_a_photo_holding_its_bake_is_given_its_identity_alone_and_its_bake_is_not_rewritten(self):
+        a = self.picture("a.jpg", (200, 40, 40))
+        self.index()
+        self.assertBaked(a, 1)
+        # Another program takes its identity off (and so changes the file): the next index records it, its bake current.
+        write_outside(a, {identity.DOCUMENT_ID_FIELD: ""})
+        self.assertIsNone(field_of(a, identity.DOCUMENT_ID_FIELD))
+        bake_before, known = self.bake_fields(a), os.stat(a).st_ino
+        result = self.index()
+        self.assertIn("Bake: 0 file(s) written, 1 already held it; 1 given only an identity.", " ".join(result.output.split()))
+        held, row, raw = self.identity_of(a)
+        self.assertTrue(str(held).startswith("xmp.did:"), "no identity minted")
+        self.assertEqual((held, held), (row, raw))
+        self.assertEqual(bake_before, self.bake_fields(a), "a current bake was rewritten")
+        self.assertEqual(known, os.stat(a).st_ino, "the identity alone was not patched into the file's XMP")
+        self.assertBaked(a, 1)
+        self.assertNoBakeListed()
+
+    def test_a_crash_in_the_write_of_an_identity_alone_leaves_the_photo_right_and_the_next_index_ends_it(self):
+        """A photo holding its bake is given its fingerprint row only once its id alone is written, at the stamp the
+        write recorded (_adopt). Killed at each step of that write, before the record: it has no row (owed), a settle
+        takes the file forward or back, and the next index reads the photo again at worst -- it ends holding one
+        identity, in its file and in its row, its bake as it was, and the index after writes it nothing."""
+        for n, step in enumerate((file_changes.STEPS[1], file_changes.PATCH_SAVED, file_changes.STEPS[4])):
+            with self.subTest(step=step):
+                path = self.picture("crash %d.jpg" % n, (20 * n, 90, 160))
+                self.index()
+                write_outside(path, {identity.DOCUMENT_ID_FIELD: ""})   # another program takes its identity off
+                bake_before = self.bake_fields(path)
+                with mock.patch.object(file_changes, "_reached", side_effect=crash_at(step)):
+                    with self.assertRaises(Crash):
+                        self.index()
+                self.assertEqual([], self.fingerprint_row(path), "given its row before its write was done")
+                with mock.patch.object(file_changes, "SCRATCH_STALE", 0):
+                    file_changes.settle(self.library, exiftool_fields.opened(self, EXIFTOOL))
+                self.index()
+                held, row, raw = self.identity_of(path)
+                self.assertTrue(str(held).startswith("xmp.did:"), "no identity minted")
+                self.assertEqual((held, held), (row, raw), "the row does not hold the identity its file holds")
+                self.assertEqual(bake_before, self.bake_fields(path), "a current bake was rewritten")
+                self.assertBaked(path, 0)
+                self.assertNoBakeListed()
+                stamp = os.stat(path).st_mtime_ns
+                self.index()
+                self.assertEqual((stamp, held), (os.stat(path).st_mtime_ns, self.identity_of(path)[0]),
+                                 "the index after wrote it again")
+
+    def identity_taken_off(self):
+        """a.jpg and b.jpg indexed and baked; then another program takes a.jpg's identity off: the next index records
+        it again, its bake current, and plans its identity alone."""
+        a, b = self.picture("a.jpg", (200, 40, 40)), self.picture("b.jpg", (40, 200, 40))
+        self.index()
+        write_outside(a, {identity.DOCUMENT_ID_FIELD: ""})
+        return a, b
+
+    def assertOwedWithNoIdentity(self, path):
+        self.assertEqual([], self.fingerprint_row(path), "given its row with its identity alone never written: never owed again")
+        self.assertIsNone(field_of(path, identity.DOCUMENT_ID_FIELD))
+        self.assertEqual((1, 1, False), self.looked())
+
+    def test_an_identity_alone_a_share_kept_from_its_write_leaves_the_photo_owed(self):
+        """The share stops answering while the bake reads the folder (a.jpg read, b.jpg not): the folder is written
+        nothing, and a.jpg, planned with its identity alone, has no fingerprint row: its row comes after its write."""
+        a, _b = self.identity_taken_off()
+        real_read, real_bake = field_values._read, bake_after_index.bake_folders
+
+        def folder_read(et, photo_paths, *args, **kwargs):
+            if len(photo_paths) > 1:
+                return real_read(_StallsAfter(et, 1), photo_paths, *args, **kwargs)
+            return real_read(et, photo_paths, *args, **kwargs)
+
+        def bake(*args, **kwargs):
+            with mock.patch.object(field_values, "READ_BATCH", 1), \
+                    mock.patch.object(field_values, "_read", side_effect=folder_read):
+                return real_bake(*args, **kwargs)
+        with mock.patch.object(bake_after_index, "bake_folders", side_effect=bake):
+            said = " ".join(self.index().output.split())
+        self.assertIn("ended at a folder whose share stopped answering", said)
+        self.assertOwedWithNoIdentity(a)
+
+    def test_an_identity_alone_killed_before_its_write_is_planned_leaves_the_photo_owed(self):
+        """Killed after the folder is planned and before the write's plan is committed (here as the snapshot before
+        the first write is taken): a.jpg has no fingerprint row."""
+        a, _b = self.identity_taken_off()
+        with mock.patch.object(bake_after_index.snapshot_service, "before_a_long_write", side_effect=Crash):
+            with self.assertRaises(Crash):
+                self.index()
+        self.assertEqual([], file_journal.unfinished(self.db_path))
+        self.assertOwedWithNoIdentity(a)
+
+    def test_a_file_given_an_identity_since_its_folder_was_read_keeps_it(self):
+        # Two libraries over one folder, their bakes at once: the other one's id reached the file first.
+        a = self.picture("a.jpg", (200, 40, 40))
+        real = bake_after_index._write
+
+        def another_library_first(library, fields, stored, to_bake, *args):
+            write_outside(a, {identity.DOCUMENT_ID_FIELD: "xmp.did:the-other-library"})
+            return real(library, fields, stored, to_bake, *args)
+        with mock.patch.object(bake_after_index, "_write", side_effect=another_library_first):
+            self.index()
+        self.assertEqual(("xmp.did:the-other-library",) * 3, self.identity_of(a))
+        self.assertBaked(a, 1)
+
+    def test_a_photo_ending_in_zeros_is_written_nothing_and_the_next_index_writes_it_nothing(self):
+        a, b = self.picture("a.jpg", (200, 40, 40)), self.picture("b.jpg", (40, 200, 40))
+        with open(a, "ab") as handle:   # an interrupted copy into a file already given its size (#407)
+            handle.write(bytes(images.ZERO_TAIL))
+        with open(a, "rb") as handle:
+            before = handle.read()
+        said = " ".join(self.index().output.split())
+        self.assertIn("1 photo(s) may be incomplete copies", said)
+        self.assertIn("Bake: 1 file(s) written, 0 already held it", said)
+        self.assertIn(bake_after_index._SAID_INCOMPLETE % 1, said)
+        with open(a, "rb") as handle:
+            self.assertEqual(before, handle.read(), "a possibly incomplete copy was written to")
+        self.assertIsNone(field_of(a, identity.DOCUMENT_ID_FIELD))
+        self.assertBaked(b, 0)
+        self.assertTrue(self.fingerprint_row(a), "its folder would be owed to the index again at every sync")
+        self.assertNoBakeListed()
+        self.assertIn("All images are up to date", self.index().output)
+        with open(a, "rb") as handle:
+            self.assertEqual(before, handle.read(), "the next index wrote it")
+
+    def test_an_index_with_skip_faces_gives_no_identity(self):
+        a = self.picture("a.jpg", (200, 40, 40))
+        result = CliRunner().invoke(tagpup_cli.cli, ["--db", self.db_path, "index", self.folder, "--skip-faces"])
+        self.assertEqual(0, result.exit_code, result.output)
+        self.assertEqual((None, None, None), self.identity_of(a))
 
 
 if __name__ == "__main__":

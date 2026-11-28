@@ -142,7 +142,8 @@ class AMachineWithoutACard(unittest.TestCase):
         self.assertEqual(1, len(self.embedded), "the copied photo's vector is its bake's, the other's worked out")
         self.assertEqual(["unbaked.jpg"], [os.path.basename(path) for path in self.detector.asked])
         self.assertTrue(np.allclose(baked_files.unit(bake.PHOTO_DIM, 7), self.vector(copied), atol=1e-3))
-        self.assertIn(bake_after_index.SAID + "1 file(s) written, 1 already held it.", said)
+        # The copied photo holds its bake and no identity: its bake is not rewritten, its identity written alone.
+        self.assertIn(bake_after_index.SAID + "1 file(s) written, 1 already held it; 1 given only an identity.", said)
         self.assertBaked(copied)
         self.assertBaked(unbaked)
 

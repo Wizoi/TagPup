@@ -321,24 +321,33 @@ ExifTool, replayed, real under `--real-exiftool`. Every conformance write is det
 `--real-exiftool`; a measured fast-tier time, baseline first, read from a second run. Rollback: a revert (tests only).
 
 **M. The mint as a field of the index's bake** (Files and Data; about 300 added lines, more deleted; Q5, owner's
-decision 1). The mint is planned by `bake_after_index._planned`, never by `baking.plan_photo`: for a photo the index
-recorded this run (`handed`, decoded in full) that holds no DocumentID, `XMP-xmpMM:DocumentID` is added to its final
-plan once, after its second `photo.plan` (`_planned` plans a photo twice, :223-225), so a `PhotoAt` is minted once. The
-bake's read (`FolderRead`) asks DocumentID beside `bake.WRITTEN`. A photo owed a bake with no fingerprint row but not
-recorded this run is NOT minted (B1's). A photo whose bake is `Current` is planned with the id alone (a current bake is
-never rewritten: DECISIONS 2026-10-27) and written with the bake's follower (`baking.follower`) in the transaction that
-marks it done, so its fingerprint row is put as a baked photo's is (`_adopt` leaves a photo in `to_bake` to the
-follower). The write is the folder's internal change under `baking.INDEX_OPERATION` alone (`file_journal.INTERNAL`: one
+decision 1). The mint is planned by `bake_after_index._planned`, never by `baking.plan_photo`: for a photo decoded in
+full that holds no DocumentID, `XMP-xmpMM:DocumentID` is added to its final plan once, after its second `photo.plan`
+(`_planned` plans a photo twice, :223-225), so a `PhotoAt` is minted once. The bake's read (`FolderRead`) asks
+DocumentID beside `bake.WRITTEN`. A photo the bake writes anyway (`ToBake`) gets the id in that write whether or not the
+index recorded it this run (DECISIONS 2026-11-27: no write and no decode more; as first built, a photo a stopped bake
+left was baked by the next index, which handed it nothing, and never minted). A photo whose bake is `Current` and holds
+no id, not recorded this run (`handed`, decoded by the index), is NOT minted: a write for the id alone is B1's. A photo
+recorded this run whose bake is `Current` is planned with the id alone (a current bake is
+never rewritten: DECISIONS 2026-10-27). The bake's follower (`baking.follower`) cannot give it its fingerprint row (it
+puts one only from a Fingerprint written), so the row comes after the write, from the write's report (done or held
+already, at the stamp it recorded; or failed on a read-only file), by `_adopt`; a write that failed or never ran (a
+share stalled, a kill before its plan) leaves it owed. As first built the row came before the write, and such a stop
+left the photo with a row, no id and nothing owed. The write is the folder's internal change under `baking.INDEX_OPERATION` alone (`file_journal.INTERNAL`: one
 change a folder, in no History, never undone), recorded by `follow_fields` (`DOCUMENT_ID_KEYS` -> `document_id`),
 carried over a done rename by `_follow_rename`; no other operation journals an identity (the undo matrix's `a_bake`,
 which journals a bake under the retired `baking.OPERATION`, writes none). The mint's rules move with it: never into a
-photo that did not decode in full, never into one whose tail is zeros (#407: `images.tail_check`, asked only of a photo
-it would mint). M does not need the own writer's growth path: `fields.EDITED_AS` gains `XMP-xmpMM:DocumentID`, so a
+photo that did not decode in full; and nothing, neither its bake nor its id, into one whose tail is zeros (#407:
+`images.incomplete`, the one rule, of the zeros the photo's decode counted -- the index's, handed beside its digest,
+or the bake's own -- asked of every photo the bake would write, `_incomplete`; as built, asked only of a photo to
+mint, it let that photo's bake through, and the tail was read again). M does not need the own writer's growth path: `fields.EDITED_AS` gains `XMP-xmpMM:DocumentID`, so a
 mint alone patches where XMP has room, else ExifTool's rewrite as today until J3a; a mint beside the bake's fields is
 part of the bake's write (ExifTool's rewrite until J3c). Deletes `IdentityWriter`, `ensure_document_id`,
-`OutsideWrites`, `_read_again` and `given`, the index loop's `give`, INVARIANTS exception (1), the CLI's `field_values`
-import (PROGRAMS_TODAY 6 -> 5). Behaviour changes, named for the owner: the mint is written after the folder's batches
-are recorded; an index with `--skip-faces` mints nothing; a photo the bake cannot plan is minted when it can be. Before
+`OutsideWrites` with `file_journal.renamed_fingerprints`, `_read_again` and `given`, the index loop's `give`, INVARIANTS
+exception (1), the CLI's `field_values` and `refresh_rows` imports (PROGRAMS_TODAY 6 -> 5). Behaviour changes, named
+for the owner: the mint is written after the folder's batches are recorded, inside the bake; an index with
+`--skip-faces` mints nothing; a photo the bake cannot plan is minted when it can be; a photo ending in zeros gets
+neither its bake nor its id, and is counted on the bake's line as a possibly incomplete copy. Before
 it merges: a read-only dry count of the photos it would mint per library, told the owner (Q5's condition, a census).
 Gate: conformance step 2 for a mint; `tests/test_a_rename_stopped_part_way.py` (`AnIdentityTheIndexGivesTheRenamedPhotos`,
 faces stood in); `tests/test_no_writes_to_damaged_photos.py` re-pointed at the bake; `tests/test_photo_identity.py`

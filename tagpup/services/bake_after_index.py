@@ -15,17 +15,36 @@ recorded it under, so a photo it decoded is not decoded again; a file changed si
 through one patient walk (baking.walk): a share slow to wake is waited for once, and only one that stays away has its
 photos counted not answered -- nothing is called unreachable, and the next index bakes them.
 Each file is read again just before its write (write_fields with no `held`): one changed outside since is a conflict,
-never overwritten. A read or a write ExifTool does not answer in its deadline (a share gone away) ends the run at that
+never overwritten. A file that may be an incomplete copy (#407: images.incomplete of the zeros it ends in, as an
+interrupted copy leaves one; the decode's count, the index's handed over or the bake's own, so no tail is read again)
+is written nothing, neither its bake nor its identity, and counted (_incomplete). The index's line counts another
+thing: the photos it recorded this run that may be incomplete copies, "indexed, and nothing was written to them" (and
+so it is); the bake's counts the photos it would have written, recorded this run or not, and left as they are.
+
+**A photo's identity** (its XMP-xmpMM:DocumentID, tagpup.files.identity) is a field of the bake (owner, DECISIONS
+2026-11-26, decision 1): minted once, after a photo's second plan, for a photo whose picture decoded in full and whose
+file holds no DocumentID. A photo the bake writes anyway (planned ToBake) gets it beside the bake's fields, whether or
+not the index recorded it this run (DECISIONS 2026-11-27: no write and no decode more; a photo a stopped bake left is
+minted by the next index's bake of it). One whose file holds its bake already (Current) is planned with the id alone,
+its bake never rewritten (DECISIONS 2026-10-27), only when the index recorded it this run (`handed`) and its file is at
+the stamp the index recorded it under (one changed since is read again by the next index, and minted then), and is
+given its fingerprint row only once that write is done or found held, at the stamp it recorded (_adopt: the follower
+puts a row only from a Fingerprint written); a write that failed or never ran leaves it owed. It is the folder's one internal
+change: in no History, never undone, recorded in the photo's row (store.photos.follow_fields: DocumentID ->
+document_id), and a done rename is carried over it (file_changes._follow_rename). A file that came to hold an id since
+it was read (another library's bake of a folder both hold) keeps its own (_mint_kept). Not minted here: a Current photo
+that holds no id and was not recorded this run (a write for the id alone: the one-off's, D1), one the bake cannot plan
+(minted when it can be), a clip (never baked), and nothing under --skip-faces, which bakes nothing. A read or a write ExifTool does not answer in its deadline (a share gone away) ends the run at that
 folder; the folders after it are baked by the next index. One snapshot of the library is taken before the first write
 (snapshots.before_a_long_write: none when today's stands); if it fails nothing is written.
 
 The one rule of a photo's fingerprint row here: a photo the run is handed -- one the index recorded this run (`handed`),
 or one with no row (photo_fingerprints.NO_FINGERPRINT: what sync owes the index for a current vector whose picture was
 never fingerprinted) -- holds a row after it only when its file was written (the row follows the write, in the
-transaction that marks it done: baking.follower), was planned holding the library's current bake already, or failed its
-write on a file marked read-only (file_changes' `read_only`, the one failure no retry changes); the last two are given
-the decode's (_adopt, photo_fingerprints.adopt), so sync does not queue their folder again for a write that cannot
-change. To hold it, the rows the index recorded this run are taken away before the first folder is planned (owe_first):
+transaction that marks it done: baking.follower), was planned holding the library's current bake already (and, planned
+with its identity alone, that write is done), may be an incomplete copy (_incomplete), or failed its write on a file marked read-only (file_changes' `read_only`, the one
+failure no retry changes); the last three are given the decode's (_adopt, photo_fingerprints.adopt), so sync does not
+queue their folder again for a write that cannot change. To hold it, the rows the index recorded this run are taken away before the first folder is planned (owe_first):
 a row comes back only by one of those three. Every other photo has none and the next sync owes its folder to the index
 again, however the run went: a write that failed otherwise (a file another program holds open; a packet ExifTool refuses
 even with -m, which has no live instance since DECISIONS 2026-10-27 and is retried at each sync), a conflict, a photo not
@@ -40,9 +59,10 @@ import dataclasses
 import logging
 import os
 
+from tagpup.core import fields as core_fields
 from tagpup.core import paths
 from tagpup.core import progress_line
-from tagpup.files import bake, images, shares
+from tagpup.files import bake, identity, images, shares
 from tagpup.services import baking, file_changes, settings
 from tagpup.services import snapshots as snapshot_service
 from tagpup.store import db, inspection, photo_fingerprints
@@ -85,10 +105,17 @@ def folder_told(number, of, baked, folder, files=None):
 _SAID_COUNTS = "%d file(s) written, %d already held it"
 _SAID_CONFLICTS = "%d conflict(s), left as they are"
 _SAID_REFUSED = "%d write(s) discarded for changing the picture and made again"
+_SAID_INCOMPLETE = "%d photo(s) that may be incomplete copies left as they are"
+_SAID_ALONE = "%d given only an identity"
 
 
 #: A folder whose write the library's roots, changed by another process, stopped (the run ends there).
 ROOTS_CHANGED = "the library's roots were changed by another process"
+
+#: The field a photo's identity is minted into, read beside the bake's (FolderRead) and written with them.
+DOCUMENT_ID = identity.DOCUMENT_ID_FIELD
+#: The fields a folder's write reads of each file before it (write_fields' `read`): the bake's and the identity.
+_READ = list(bake.WRITTEN.values()) + [DOCUMENT_ID]
 
 
 @dataclasses.dataclass
@@ -98,7 +125,10 @@ class Baked:
     the library cannot plan, by baking's kind of Cannot; `refused`, the folders whose write was refused, by its sentence
     (counts only: too many photos, a batch ahead, the roots changed); `stalled`, a share stopped answering and ended the
     run; `roots_changed`, the library's roots were changed by another process and ended it; `pictures_refused`, the writes
-    discarded because they changed the picture's bytes and made again (file_changes, the result's `pictures_refused`)."""
+    discarded because they changed the picture's bytes and made again (file_changes, the result's `pictures_refused`);
+    `minted`, the photos whose write gave them an identity (counted from the write's report, logged, not said); `alone`,
+    those of them whose file held its bake and was written its identity alone (said, and counted among the files that
+    held it already, not among those written: no bake was); `incomplete`, the photos written nothing for their file may be an incomplete copy (_incomplete)."""
     planned: int = 0
     written: int = 0
     current: int = 0
@@ -111,15 +141,20 @@ class Baked:
     stalled: bool = False
     roots_changed: bool = False
     pictures_refused: int = 0
+    minted: int = 0
+    alone: int = 0
+    incomplete: int = 0
 
     def said(self):
         """The run in one line, counts only (the paths name people)."""
         line = SAID + _SAID_COUNTS % (self.written, self.current)
-        more = [("%d fingerprint(s) recorded with no write" % self.adopted) if self.adopted else "",
+        more = [(_SAID_ALONE % self.alone) if self.alone else "",
+                ("%d fingerprint(s) recorded with no write" % self.adopted) if self.adopted else "",
                 (_SAID_CONFLICTS % self.conflicts) if self.conflicts else "",
                 ("%d failed" % self.failed) if self.failed else "",
                 ("%d not answered (a share away)" % self.not_answered) if self.not_answered else "",
                 (_SAID_REFUSED % self.pictures_refused) if self.pictures_refused else "",
+                (_SAID_INCOMPLETE % self.incomplete) if self.incomplete else "",
                 ", ".join("%d %s" % (n, kind) for kind, n in sorted(self.cannot.items())),
                 ", ".join("%d folder(s) refused: %s" % (n, why.rstrip(".")) for why, n in sorted(self.refused.items()))]
         line += "".join("; " + each for each in more if each)
@@ -139,8 +174,9 @@ class Baked:
 def bake_folders(library, fields, detector, folders, handed, stop=None, each=None):
     """Bake the photos of each of `folders` (native folder paths, the photos directly in each) that plan ToBake, a
     folder at a time: Baked. `detector`, the name the library's face detector records its looks under
-    (tagpup.services.faces.detector_named); `handed`, {paths.key(path): ((mtime, size), digest of the upright decode)}
-    the index took of the photos it recorded, with the stamp it recorded each under; `stop()`, asked before each folder;
+    (tagpup.services.faces.detector_named); `handed`, {paths.key(path): ((mtime, size), digest of the upright decode, or
+    None: decoded here, zero bytes the file ends in)} the index took of the photos it recorded, with the stamp it
+    recorded each under; `stop()`, asked before each folder;
     `each(fact)`, the fact of each folder as it begins and as each chunk of its write ends (folder_told), whose sentence
     the run's log holds too: nothing between two is said, so a share that stops answering mid-chunk stops the lines.
     A handed photo keeps its row only when its file is written, holds the current bake or is read-only (owe_first)."""
@@ -171,13 +207,16 @@ def bake_folders(library, fields, detector, folders, handed, stop=None, each=Non
                 except Exception as error:
                     chunk_lines.clear()
                     logger.warning("The bake's progress lines stop here, its writes go on: %s: %s", type(error).__name__, error)
-            to_bake, stored, unfingerprinted = _planned(library, fields, detector, folder, handed, baked, walk)
+            to_bake, stored, unfingerprinted, id_alone = _planned(library, fields, detector, folder, handed, baked, walk)
+            # A photo holding its bake already, and written nothing, has its row now: its file holds the bake.
+            _adopt(library, {key: (photo_id, decode, decode.stamp) for key, (photo_id, decode) in unfingerprinted.items()
+                             if key not in to_bake}, handed, baked)
             written = None
             if to_bake and not baked.stalled:
                 if not snapshot:
                     snapshot.append(snapshot_service.before_a_long_write(library))
-                written = _write(library, fields, stored, to_bake, baked, say_chunk)
-            _adopt(library, unfingerprinted, to_bake, written, handed, baked)
+                written = _write(library, fields, stored, to_bake, baked, say_chunk, id_alone)
+            _adopt(library, _given_after(unfingerprinted, id_alone, written), handed, baked)
             if baked.stalled or fields.dead:
                 baked.stalled = True
                 break
@@ -206,9 +245,11 @@ def owe_first(library, folders, handed):
 
 
 def _planned(library, fields, detector, folder, handed, baked, walk):
-    """({paths.key(path): (path, values)} of the photos of `folder` to bake, the folder as the library stores it, and
-    {paths.key(path): (photo id, _Decode)} of those planned that have no fingerprint row, current or to bake), counting
-    into `baked` the photos current, not answered and that cannot be planned."""
+    """({paths.key(path): (path, values)} of the photos of `folder` to write -- to bake, or holding their bake and to be
+    given their identity alone --, the folder as the library stores it, {paths.key(path): (photo id, _Decode)} of those
+    planned that have no fingerprint row, current or to bake, and the keys of those to be given their identity alone),
+    counting into `baked` the photos current, not answered and that cannot be planned. A photo's identity is minted
+    here (_minted), once, after its second plan."""
     conn = db.connect(db.readonly_uri(library.path), uri=True)
     try:
         keys = baking.keys(conn, detector)
@@ -217,8 +258,8 @@ def _planned(library, fields, detector, folder, handed, baked, walk):
         group = [(photo_id, path) for photo_id, path in inspection.under(conn, folder, store_photos.BAKED_KINDS)
                  if paths.key(os.path.dirname(path)) == paths.key(folder)]
         fingerprinted = photo_fingerprints.fingerprinted(conn, [photo_id for photo_id, _path in group])
-        read = baking.FolderRead(fields, [path for _id, path in group])
-        to_bake, unfingerprinted = {}, {}
+        read = baking.FolderRead(fields, [path for _id, path in group], also=(DOCUMENT_ID,))
+        to_bake, unfingerprinted, id_alone = {}, {}, set()
         for photo_id, path in group:
             photo, decode = baking.PhotoAt(path, read, walk), _Decode(path, handed)
             plan = photo.plan(conn, keys)
@@ -227,7 +268,15 @@ def _planned(library, fields, detector, folder, handed, baked, walk):
             if photo_id not in fingerprinted and decode.digest is not None and isinstance(
                     plan, (baking.ToBake, baking.Current)):
                 unfingerprinted[paths.key(path)] = (photo_id, decode)
-            if isinstance(plan, baking.ToBake):
+            minted = _minted(path, read, handed, decode, plan)
+            if (minted is not None or isinstance(plan, baking.ToBake)) and _incomplete(path, decode, baked):
+                continue
+            if minted is not None:
+                to_bake[paths.key(path)] = (path, {**(plan.values if isinstance(plan, baking.ToBake) else {}),
+                                                   DOCUMENT_ID: [minted]})
+                if isinstance(plan, baking.Current):
+                    id_alone.add(paths.key(path))
+            elif isinstance(plan, baking.ToBake):
                 to_bake[paths.key(path)] = (path, plan.values)
             elif isinstance(plan, baking.Current):
                 baked.current += 1
@@ -238,64 +287,148 @@ def _planned(library, fields, detector, folder, handed, baked, walk):
     finally:
         conn.close()
     baked.stalled = baked.stalled or read.stalled
-    return to_bake, stored, unfingerprinted
+    return to_bake, stored, unfingerprinted, id_alone
+
+
+def _minted(path, read, handed, decode, plan):
+    """A new identity for the photo at `path` (identity.mint_document_id), or None: for one whose picture decoded in full
+    (`decode`: the index's, handed over, or the bake's own) and whose file holds no DocumentID (the folder's `read`),
+    planned to bake (`plan` ToBake: written anyway, the index's this run or not), or holding its bake (Current: a write
+    for the id alone) when the index recorded it this run (`handed`) at the stamp its file is at still. A file that may
+    be an incomplete copy is written nothing, its identity with the rest (_incomplete); one changed between the plan and
+    the write is a conflict (write_fields' read just before it)."""
+    if isinstance(plan, baking.Current):
+        recorded = handed.get(paths.key(path))
+        if recorded is None or not _still_at(recorded[0], decode.stamp):
+            return None
+    elif not isinstance(plan, baking.ToBake):
+        return None
+    if decode.digest is None:
+        return None
+    held = read.of(path)
+    if isinstance(held, Exception) or core_fields.read_document_id(held):
+        return None
+    return identity.mint_document_id()
+
+
+def _incomplete(path, decode, baked):
+    """Is the file at `path`, planned to be written, to be written nothing: it may be an incomplete copy (#407:
+    images.incomplete of the zeros its `decode` counted, the index's of the file at the stamp it is at, or the bake's
+    own), counted in `baked.incomplete` and left in _planned's photos with no row for theirs (_adopt: no write would change
+    it; a copy put back has another stamp and is read again). Asked only of a photo the bake would write, which its
+    second plan decoded."""
+    if not images.incomplete(decode.zeros):
+        return False
+    logger.info("Possibly an incomplete copy, not written: %s ends in %d zero bytes", path, decode.zeros)
+    baked.incomplete += 1
+    return True
+
+
+def _mint_kept(path, held, values):
+    """`values` to write into the file at `path` holding `held` just now, but for an identity planned where the file has
+    come to hold one since its folder was read (another library's bake of a folder both hold, at once): that one is the
+    photo's, never written over, and planned as it is, so the photo's row records it with the write."""
+    found = core_fields.read_document_id(held)
+    if DOCUMENT_ID not in values or not found:
+        return values
+    logger.info("Holds an identity given since its folder was read, kept: %s", path)
+    return {**values, DOCUMENT_ID: [found]}
+
+
+def _still_at(recorded, now):
+    """Is the file whose look answered `now` (shares.stamp_of's) at `recorded`, the (mtime, size) the index recorded it
+    under (None: not recorded)? The project's one rule of a stamp (photo_fingerprints.same_picture, as adopt asks it)."""
+    return isinstance(now, tuple) and photo_fingerprints.same_picture(recorded, now) == photo_fingerprints.STAMPED
 
 
 class _Decode:
     """The digest of the photo's upright decode, as plan_photo asks it: the index's, handed over, while the file is at
     the stamp the index recorded it under (a file changed since holds another picture, perhaps); or decoded now. Keeps
-    the digest and the stamp of the file it was taken of (`digest`, `stamp`; None until asked)."""
+    the digest, the zero bytes the file ends in (images.ZERO_TAIL_INFO: the decode's count, read with it) and the stamp
+    of the file it was taken of (`digest`, `zeros`, `stamp`; None until asked)."""
 
     def __init__(self, path, handed):
-        self.path, self.handed, self.digest, self.stamp = path, handed, None, None
+        self.path, self.handed, self.digest, self.zeros, self.stamp = path, handed, None, None, None
 
     def __call__(self):
-        stamp, digest = self.handed.get(paths.key(self.path), (None, None))
+        stamp, digest, zeros = self.handed.get(paths.key(self.path), (None, None, None))
         now = shares.stamp_of(self.path)
-        if digest is None or now != stamp:
-            digest = images.fingerprint(images.opened(self.path, upright=True))
-        self.stamp, self.digest = now, digest
+        if digest is None or not _still_at(stamp, now):
+            picture = images.opened(self.path, upright=True)
+            digest, zeros = images.fingerprint(picture), picture.info.get(images.ZERO_TAIL_INFO, 0)
+        self.stamp, self.digest, self.zeros = now, digest, zeros
         return digest
 
 
-def _adopt(library, unfingerprinted, to_bake, written, handed, baked):
-    """Give its decode's fingerprint row (photo_fingerprints.adopt) to each photo of `unfingerprinted` (_planned's: the
-    index's this run among them, owe_first) whose file holds the library's current bake -- planned Current, not in
-    `to_bake` -- or whose write failed on a file marked read-only (`written`, the folder's write's Result, file_changes'
-    `read_only`; None when no write ran). Nothing else: a written file's row followed its write, and a photo not written
-    for any other reason stays owed. Counted in `baked.adopted`, but for `handed`'s: the index recorded theirs this
-    run, and given back it is nothing new to say."""
-    read_only = {paths.key(path) for path in (written.details.get("read_only", []) if written is not None else [])}
-    unfingerprinted = {key: found for key, found in unfingerprinted.items() if key not in to_bake or key in read_only}
+def _given_after(unfingerprinted, id_alone, written):
+    """The photos of `unfingerprinted` (_planned's) given their row after the folder's write (`written`, its Result; None:
+    nothing written), {key: (photo id, _Decode, stamp)}: each planned with its identity alone (`id_alone`) whose file
+    holds it now -- written, at the stamp the write recorded it under (its vector follows the write), or found holding it
+    at the write's read, at its decode's -- and each whose write failed on a file marked read-only (file_changes'
+    `read_only`: a write no retry changes). A write that failed otherwise, a conflict, a photo not answered or not
+    reached leaves the photo owed."""
+    if written is None:
+        return {}
+    done = {paths.key(path) for path in written.details.get("written", {})}
+    stamps = written.details.get("stamps", {})
+    read_only = {paths.key(path) for path in written.details.get("read_only", [])}
+    return {key: (photo_id, decode, stamps.get(key) or decode.stamp) for key, (photo_id, decode) in unfingerprinted.items()
+            if key in read_only or (key in id_alone and key in done)}
+
+
+def _adopt(library, given, handed, baked):
+    """Give its decode's fingerprint row (photo_fingerprints.adopt) to each photo of `given` ({key: (photo id, _Decode,
+    the stamp of the file it describes)}, of _planned's photos with no row: the index's this run among them, owe_first),
+    the caller's choice of them: before the write, those whose file holds the library's current bake and are written
+    nothing; after it, _given_after's. Nothing else: a written file's row followed its write, and a photo not written
+    for any other reason stays owed. Counted in `baked.adopted`, but for those whose fingerprint `handed` holds: the
+    index recorded theirs this run, and given back it is nothing new to say."""
     # A file whose look did not answer when it was decoded has no stamp to hold the vector's against: no row.
-    unfingerprinted = {key: found for key, found in unfingerprinted.items() if isinstance(found[1].stamp, tuple)}
-    if not unfingerprinted:
+    given = {key: found for key, found in given.items() if isinstance(found[2], tuple)}
+    if not given:
         return
 
     def adopt(conn):
         photo_key = settings.photo_key_on(conn)
-        return sum(photo_fingerprints.adopt(conn, photo_id, photo_key, decode.stamp,
-                                            (images.FINGERPRINT_KEY, decode.digest)) and key not in handed
-                   for key, (photo_id, decode) in unfingerprinted.items())
+        return sum(photo_fingerprints.adopt(conn, photo_id, photo_key, stamp, (images.FINGERPRINT_KEY, decode.digest))
+                   and handed.get(key, (None, None))[1] is None
+                   for key, (photo_id, decode, stamp) in given.items())
     baked.adopted += db.write_with_connection(library.path, adopt, label="the fingerprints of the photos whose files hold their bake")
 
 
-def _write(library, fields, stored, to_bake, baked, on_chunk):
+def _write(library, fields, stored, to_bake, baked, on_chunk, id_alone=frozenset()):
     """Write the photos of one folder to bake as one internal change, each file read again before its write, and count
-    in `baked` what the write reported (its Result: the change is erased once it finishes, its conflicts of NOTES kept); `on_chunk(done, of)` as each
-    chunk of its files ends (write_fields)."""
+    in `baked` what the write reported (its Result: the change is erased once it finishes, its conflicts of NOTES kept),
+    a photo of `id_alone` (holding its bake, planned with its identity alone) given it counted `alone`, not `written`;
+    `on_chunk(done, of)` as each chunk of its files ends (write_fields)."""
+    kept = set()   # the photos that came to hold an identity since their folder was read (_mint_kept)
+
+    def plan(path, held):
+        planned = to_bake[paths.key(path)][1]
+        values = _mint_kept(path, held, planned)
+        if values is not planned:
+            kept.add(paths.key(path))
+        return file_changes.Plan(after=values)
+
     result = file_changes.write_fields(
-        library, baking.INDEX_OPERATION, fields, [path for path, _values in to_bake.values()],
-        list(bake.WRITTEN.values()), lambda path, _held: file_changes.Plan(after=to_bake[paths.key(path)][1]),
+        library, baking.INDEX_OPERATION, fields, [path for path, _values in to_bake.values()], _READ, plan,
         summary={"folder": stored}, on_chunk=on_chunk)
     unanswered = {paths.key(path) for path in result.details.get("not_answered", [])}
     conflicts = len(result.details.get("conflicts", []))
+    # Minted: written, its id with it (in the stamps of the files written, not taken out by the read back).
+    written = {paths.key(path) for path in result.details.get("written", {})} & set(result.details.get("stamps", {}))
+    minted = {key for key, (_path, values) in to_bake.items() if DOCUMENT_ID in values and key not in kept and key in written}
+    alone = len(minted & set(id_alone))
     baked.planned += len(to_bake)
-    baked.written += result.changed
-    baked.current += len(result.details.get("written", {})) - result.changed
+    baked.written += result.changed - alone
+    baked.current += len(result.details.get("written", {})) - result.changed + alone
+    baked.alone += alone
     baked.conflicts += conflicts
     baked.not_answered += len(unanswered)
     baked.pictures_refused += result.details.get("pictures_refused", 0)
+    if minted:
+        logger.info("%d photo(s) of %s given an identity", len(minted), stored)
+    baked.minted += len(minted)
     baked.failed += max(0, len({paths.key(path) for path, _why in result.errors} - unanswered) - conflicts)
     if (result.details.get("stopped") or {}).get("share"):
         baked.stalled = True

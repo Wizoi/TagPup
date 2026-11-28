@@ -31,7 +31,7 @@ A field change keeps `fields_before` and `fields_after` as JSON, {field: [texts]
 the file's stamp, [mtime, size], as it is marked writing, over which settling carries its
 vectors (migration 12); a rename keeps the file's old and new path, and its size, modified time and file id, which a
 rename does not change, to know the file by wherever it is found -- carried over each later write of the journal's own
-that the file under its new name takes, and over the indexer's identity mint (follow_renamed). Reading and writing the files is
+that the file under its new name takes, the index's bake and its mint among them (follow_renamed). Reading and writing the files is
 tagpup.services.file_changes'; this is the rows.
 
 A file a patch writes in place (tagpup.files.in_place, migration 37) carries, while it is `writing`, the patch's record
@@ -370,7 +370,7 @@ def fingerprint_key(was):
 
 
 def follow_renamed(conn, path, was, now):
-    """The file under `path` was just written, by the journal or the indexer's identity mint, and was `was` (its
+    """The file under `path` was just written by the journal (the index's bake and its mint among them), and was `was` (its
     fingerprint: size, modified time, file id) before: a rename done that left it there, knowing it by `was`, knows it by
     `now`, what the write left, from here on. A field write -- ExifTool's, beside the file and renamed over it -- changes
     all three for good, and the rename's undo, after the write's own undo, did not find its file (#1952); after the mint,
@@ -388,18 +388,6 @@ def follow_renamed(conn, path, was, now):
     for file_id in followed:
         conn.execute("UPDATE change_files SET fields_before = ?, fields_after = ? WHERE id = ?", (now, now, file_id))
     return len(followed)
-
-
-def renamed_fingerprints(db_path):
-    """The fingerprints (fingerprint_key) the renames done know their files by (follow_renamed): one read of the renames'
-    files, on a read connection, for a run of writes outside the journal to ask of each file without a query (a few
-    hundred in a library; nine in photo_index)."""
-    conn = db.connect(db.readonly_uri(db_path), uri=True)
-    try:
-        return frozenset(known for (known,) in conn.execute(
-            "SELECT fields_before FROM change_files WHERE " + _RENAMED, RENAMES))
-    finally:
-        conn.close()
 
 
 def mark(db_path, file_ids, state, note=None):

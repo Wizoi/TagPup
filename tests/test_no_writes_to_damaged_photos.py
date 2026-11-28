@@ -11,8 +11,12 @@ of the damage. An interrupted copy also left files of their full size that are z
 bytes after some point; some still decode, grey below a line: those are indexed, and
 left as they are.
 
+A photo's identity is now a field of the bake the index writes once its batches are recorded
+(tagpup.services.bake_after_index, DECISIONS 2026-11-26): the index here runs with its faces, so
+the bake runs, and is held to the same rules.
+
 Real ExifTool and real Pillow, on damaged JPEGs made here (tests/damaged_photos); only
-the CLIP model is stood in for, after the picture has been decoded.
+the CLIP model and the face model are stood in for, after the picture has been decoded.
 """
 import hashlib
 import os
@@ -23,17 +27,20 @@ from unittest import mock
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
+import baked_files  # noqa: E402
 import damaged_photos  # noqa: E402
 import fake_exiftool  # noqa: E402
 import own_home  # noqa: E402
 from click.testing import CliRunner  # noqa: E402
+from stand_in_models import Hold, RefusableFaces  # noqa: E402
 
 import tagpup_cli  # noqa: E402
+from tagpup import runtime as runtimes  # noqa: E402
 from tagpup.files import field_values, images  # noqa: E402
 from tagpup.files.exiftool_session import ExifToolSession  # noqa: E402
 from tagpup.core.fields import read_document_id  # noqa: E402
 from tagpup.files import metadata  # noqa: E402
-from tagpup.files.field_values import IdentityWriter  # noqa: E402
+from tagpup.runtime import Runtime  # noqa: E402
 from tagpup.services import libraries as library_actions  # noqa: E402
 from tagpup.store import db  # noqa: E402
 
@@ -55,8 +62,8 @@ def identity_in_file(path):
 
 
 def vector():
-    """Any length: a model's vectors are kept under its own key (tagpup.store.embeddings.model_key)."""
-    return [0.1] * 8
+    """As long as the library's photo model's, so the bake can write it (baked_files.unit)."""
+    return baked_files.unit(1152, 99).tolist()
 
 
 class Decoding(unittest.TestCase):
@@ -116,28 +123,9 @@ class FakeExifTool:
         self.writes.append(list(paths))
 
 
-class TheIdentityWriter(unittest.TestCase):
+class Reading(unittest.TestCase):
     def setUp(self):
         fake_exiftool.writes_no_file(self)
-
-    def writer(self, et):
-        writer = IdentityWriter("exiftool")
-        writer._session = lambda: et
-        return writer
-
-    def test_it_writes_only_into_a_photo_that_decoded(self):
-        et = FakeExifTool()
-        record = {"path": "D:/Harbour/jetty.jpg", "raw_metadata": {}, "document_id": None}
-        self.assertIsNone(self.writer(et).give(record, decoded=False))
-        self.assertEqual([], et.writes)
-        self.assertTrue(self.writer(et).give(record, decoded=True))
-        self.assertEqual([["D:/Harbour/jetty.jpg"]], et.writes)
-
-    def test_nor_into_one_exiftool_could_not_read(self):
-        et = FakeExifTool()
-        record = metadata.empty("D:/Harbour/jetty.jpg", RuntimeError("Entire file is binary zeros"), (1.0, 1))
-        self.assertIsNone(self.writer(et).give(record, decoded=True))
-        self.assertEqual([], et.writes)
 
     def test_an_error_in_the_read_is_carried_on_the_record(self):
         record = metadata.structure("D:/Harbour/jetty.jpg",
@@ -146,8 +134,8 @@ class TheIdentityWriter(unittest.TestCase):
         self.assertEqual("File format error", record["read_error"])
 
     def test_reading_writes_nothing(self):
-        # Reading a photo never writes to it: only IdentityWriter does, and only the
-        # indexer makes one.
+        # Reading a photo never writes to it: only the index's bake writes its identity
+        # (tagpup.services.bake_after_index).
         et = FakeExifTool()
         et.get_tags = lambda batch, tags=None: [{"SourceFile": path} for path in batch]
         session = mock.MagicMock()
@@ -164,9 +152,16 @@ class TheIndexer(unittest.TestCase):
 
     A file of nothing but zeros has a folder of its own: ExifTool refuses to read it,
     which fails the whole batch's read, and the batch read again file by file was never
-    given identities -- so beside it, the damaged photos were spared by chance."""
+    given identities -- so beside it, the damaged photos were spared by chance. The face
+    model is stood in for, the card's turn given at once: the bake after the index runs."""
 
     def setUp(self):
+        self.detector = RefusableFaces({}, vector=baked_files.face_vector)
+        for patcher in (mock.patch.object(Runtime, "gpu_turn", lambda runtime, what, *args, **kwargs: Hold()),
+                        mock.patch.object(runtimes, "on_the_card", return_value=True),
+                        mock.patch.object(Runtime, "faces", lambda runtime, library, settings=None: self.detector)):
+            patcher.start()
+            self.addCleanup(patcher.stop)
         self.home = own_home.for_test(self, prefix="damaged_index_")
         self.db_path = self.home.library("harbour.db")
         library_actions.create(self.db_path)
@@ -184,8 +179,7 @@ class TheIndexer(unittest.TestCase):
         with mock.patch("tagpup.ml.clip.ClipModel._init_model"), \
                 mock.patch("tagpup.ml.clip.ClipModel.picture_input"), \
                 mock.patch("tagpup.ml.clip.ClipModel.embed_input", return_value=vector()) as embed:
-            result = CliRunner().invoke(tagpup_cli.cli, ["--db", self.db_path, "index", folder or self.folder,
-                                                         "--skip-faces"])
+            result = CliRunner().invoke(tagpup_cli.cli, ["--db", self.db_path, "index", folder or self.folder])
         self.assertEqual(0, result.exit_code, result.output)
         return result, embed
 
@@ -204,6 +198,7 @@ class TheIndexer(unittest.TestCase):
         self.assertIn("1 photo(s) could not be read", result.output)
 
     def test_a_possibly_incomplete_copy_is_indexed_and_not_written_to(self):
+        # Neither its identity nor its bake: the index's bake writes nothing into it (bake_after_index._incomplete).
         result, embed = self.index()
         self.assertEqual(self.before[self.half], fingerprint(self.half), "the incomplete copy was written to")
         self.assertIn("copy stopped.jpg", self.rows(), "a photo that decodes was not indexed")

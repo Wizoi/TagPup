@@ -159,18 +159,19 @@ class ReadStopped(Exception):
 
 
 class FolderRead:
-    """The bake fields of a folder's files (Fields.read of bake.WRITTEN's, `fields` the run's Fields), read in one read the first
-    time a photo of it asks: the one read a folder is planned from, by the index's
+    """The bake fields of a folder's files (Fields.read of bake.WRITTEN's, and `also`, `fields` the run's Fields), read in
+    one read the first time a photo of it asks: the one read a folder is planned from, by the index's
     bake (bake_after_index). `stop`, an Event the read stops at (None: the folder is read whole)."""
 
-    def __init__(self, fields, photo_paths, stop=None):
+    def __init__(self, fields, photo_paths, stop=None, also=()):
         self.fields, self.photo_paths, self.stop, self.found = fields, photo_paths, stop, None
+        self.wanted = list(bake.WRITTEN.values()) + list(also)
 
     def of(self, photo_path):
         """What field_values.read gave for `photo_path`: its fields, or the Exception its read gave (NotAnswered for a
         photo the read did not reach, ReadStopped for one a stop left unread)."""
         if self.found is None:
-            self.found = self.fields.read(self.photo_paths, list(bake.WRITTEN.values()), stop=self.stop)
+            self.found = self.fields.read(self.photo_paths, self.wanted, stop=self.stop)
         held = self.found.get(paths.key(photo_path))
         if held:
             return held

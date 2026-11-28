@@ -391,8 +391,9 @@ CLIP_FIELDS = fields_of(CLIP_WRITES)
 #: Where TagPup's own JPEG writer (tagpup.files.segment_edits) puts each field a journaled write names: (segment kind,
 #: the property or field its editor names it by), xmp_packet's, exif_block's or iptc_block's. A target after the first
 #: is written only where its segment holds it already, as ExifTool's write of "Orientation" (WRITTEN_AS) updates an XMP
-#: tiff:Orientation held and makes none. A field not here is not the own writer's: the DocumentID (minted by a
-#: rewrite), a bake's fields; a write naming one is ExifTool's.
+#: tiff:Orientation held and makes none. A field not here is not the own writer's: a bake's fields; a write naming one is
+#: ExifTool's. The DocumentID the index's bake mints (tagpup.services.bake_after_index) is: a mint alone patches where
+#: the XMP has room.
 EDITED_AS = {
     "XMP:Subject": (("xmp", "dc:subject"),),
     "XMP:HierarchicalSubject": (("xmp", "lr:hierarchicalSubject"),),
@@ -401,6 +402,7 @@ EDITED_AS = {
     "XMP:DateTimeOriginal": (("xmp", "exif:DateTimeOriginal"),),
     "XMP:CreateDate": (("xmp", "xmp:CreateDate"),),
     PRESERVED_NAME: (("xmp", "xmpMM:PreservedFileName"),),
+    "XMP-xmpMM:DocumentID": (("xmp", "xmpMM:DocumentID"),),
     "EXIF:DateTimeOriginal": (("exif", "DateTimeOriginal"),),
     "EXIF:CreateDate": (("exif", "CreateDate"),),
     "EXIF:ImageDescription": (("exif", "ImageDescription"),),

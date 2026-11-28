@@ -2,8 +2,8 @@
 tagpup.core.read_ahead, tagpup_cli.py's index).
 
 Two threads decode the photos after the one the models are on, a few ahead, within a bound on the bytes they hold;
-the models, the identity written into a file and every write of the library stay on the CLI's own thread, one photo
-after the other. What a person lives through, and what must not change:
+the models and every write of the library stay on the CLI's own thread, one photo after the other (the bake after the
+index, with each photo's identity, writes the files once the photos are recorded). What a person lives through, and what must not change:
 
 * a folder indexed reading ahead records what the same folder indexed one photo at a time records: each photo its own
   vector and its own faces, the same rows, the same files written;
@@ -51,6 +51,7 @@ from tagpup.files.exiftool_session import ExifToolSession  # noqa: E402
 from tagpup.ml import clip, scrfd_adaface  # noqa: E402
 from tagpup.runtime import Runtime  # noqa: E402
 from tagpup.services import libraries as library_actions  # noqa: E402
+from tagpup.services import search  # noqa: E402
 from tagpup.store import db  # noqa: E402
 
 ORIENTATION = 0x0112
@@ -262,24 +263,25 @@ class AnIndexReadingAhead(unittest.TestCase):
     def test_an_index_stopped_half_way_leaves_nothing_half_written_and_the_next_one_finishes(self):
         library = self.library("jetty.db")
         folder = self.folder("Jetty")
-        give, given = tagpup_cli.IdentityWriter.give, []
+        made, reached = search.PhotoEmbeddings.made, []
 
-        def give_then_stop(writer, meta, *args, **kwargs):
-            if len(given) == 3:
+        def made_then_stop(embeddings, file_path, prepared):
+            if len(reached) == 3:
                 raise KeyboardInterrupt()
-            given.append(os.path.basename(meta["path"]))
-            return give(writer, meta, *args, **kwargs)
-        with mock.patch.object(tagpup_cli.IdentityWriter, "give", give_then_stop):
+            reached.append(os.path.basename(file_path))
+            return made(embeddings, file_path, prepared)
+        with mock.patch.object(search.PhotoEmbeddings, "made", made_then_stop):
             self.index(library, folder, code=1)
         # Nothing of the batch was recorded -- it is written whole every 100 photos, or at the end --: a photo the
         # card reached keeps the vector made of it, which is a row (PhotoEmbeddings.keep), and no photo past the stop
         # has even that; no face is recorded.
-        reached = set(given) | {"p03.jpg"}
         rows = recorded(library)
-        self.assertLessEqual(set(rows), reached)
+        self.assertLessEqual(set(rows), set(reached))
         self.assertFalse(any(found for _given, _vector, found, _detected in rows.values()))
+        # The files are written by the bake after the index, with each photo's identity: a run stopped before it ends
+        # writes none.
         written = {name for name in os.listdir(folder) if self.has_identity(os.path.join(folder, name))}
-        self.assertEqual(set(given), written, "a photo past the stop was written to")
+        self.assertEqual(set(), written, "a file was written before the index ended")
         self.assertEqual([], os.listdir(Library(library).locks), "a photo's lock was left held")
         for thread in threading.enumerate():
             if thread.name.startswith("read ahead"):
@@ -293,37 +295,47 @@ class AnIndexReadingAhead(unittest.TestCase):
             self.assertTrue(given_one)
             self.assertEqual(vector[2:5], found[0][1], "%s took a neighbour's picture" % name)
 
-    def test_a_tag_saved_while_its_batch_waits_is_recorded_and_the_next_index_reads_nothing(self):
-        """Another program saves a keyword into a photo after the index read its batch and before the photo is given
-        its identity. The row once took the stamp the file had after the identity write over the keywords of the batch
-        read, so the keyword was never read and the next index skipped the photo as unchanged (contract 5). Each photo
-        given its identity is read again before it is recorded: the row holds the keyword, and the next index reads
-        nothing and shows no model any photo again."""
+    def test_a_tag_saved_while_its_batch_waits_is_read_by_the_next_index_and_the_one_after_reads_nothing(self):
+        """Another program saves a keyword into a photo after the index read its batch and before the batch is
+        recorded. Its row keeps the stamp from before its read (contract 5), so the bake after the index, whose write
+        records only the fields it wrote, does not stamp a row that no longer described the file (store.photos.
+        follow_fields), and gives no identity to a photo changed since its decode (bake_after_index._minted): the next
+        index reads the photo again, records the keyword and mints its identity, its vector and faces as they were; the
+        index after it reads nothing and shows no model any photo."""
         library = self.library("quay.db")
         folder = self.folder("Quay", count=4)
-        give, saved = tagpup_cli.IdentityWriter.give, []
+        made, saved = search.PhotoEmbeddings.made, []
 
-        def saved_meanwhile(writer, meta, *args, **kwargs):
-            if os.path.basename(meta["path"]) == "p02.jpg":
+        def saved_meanwhile(embeddings, file_path, prepared):
+            if os.path.basename(file_path) == "p02.jpg":
                 with ExifToolSession(executable=own_home.installed_exiftool()) as et:
-                    et.set_tags([meta["path"]], tags={"XMP:Subject": ["Quayside"]}, params=["-overwrite_original"])
-                saved.append(meta["path"])
-            return give(writer, meta, *args, **kwargs)
-        with mock.patch.object(tagpup_cli.IdentityWriter, "give", saved_meanwhile):
+                    et.set_tags([file_path], tags={"XMP:Subject": ["Quayside"]}, params=["-overwrite_original"])
+                saved.append(file_path)
+            return made(embeddings, file_path, prepared)
+        with mock.patch.object(search.PhotoEmbeddings, "made", saved_meanwhile):
             self.index(library, folder)
         self.assertEqual(1, len(saved))
-        self.assertIn("Quayside", tags_of(library)["p02.jpg"], "the keyword saved meanwhile was never read")
         rows = recorded(library)
         self.assertEqual(4, len(rows))
-        self.assertTrue(all(given and vector and found for given, vector, found, _detected in rows.values()))
+        self.assertTrue(all(vector and found for _given, vector, found, _detected in rows.values()))
+        self.assertEqual({"p02.jpg"}, {name for name, (given, *_rest) in rows.items() if not given},
+                         "a photo changed since its decode was given its identity")
         shown, detected = len(self.models.shown), len(self.models.detected)
         self.assertEqual((4, 4), (shown, detected))
 
+        self.assertNotIn("All images are up to date", self.index(library, folder).output)
+        self.assertIn("Quayside", tags_of(library)["p02.jpg"], "the keyword saved meanwhile was never read")
+        again = recorded(library)
+        self.assertTrue(again["p02.jpg"][0], "the photo read again was not given its identity")
+        self.assertEqual({name: row[1:] for name, row in rows.items()}, {name: row[1:] for name, row in again.items()},
+                         "a vector or a face was dropped or made again")
+
+        shown, detected = len(self.models.shown), len(self.models.detected)
         self.assertIn("All images are up to date", self.index(library, folder).output,
-                      "a photo given its identity is read again by the next index")
+                      "the photo given its identity is read again by the index after")
         self.assertEqual((shown, detected), (len(self.models.shown), len(self.models.detected)),
-                         "the next index showed a model a photo again")
-        self.assertEqual(rows, recorded(library), "a vector or a face was dropped or made again")
+                         "the index after showed a model a photo again")
+        self.assertEqual(again, recorded(library))
 
     def test_a_read_still_under_way_when_the_index_stops_loads_no_model_after_the_turn_is_given_back(self):
         """Ctrl+C at the fourth photo while the photos after it decode slowly: the index gives its turn on the card
@@ -352,15 +364,18 @@ class AnIndexReadingAhead(unittest.TestCase):
                 given_back.set()
             return mock.Mock(release=release)
 
-        def give_then_stop(writer, meta, *args, **kwargs):
+        made = search.PhotoEmbeddings.made
+
+        def made_then_stop(embeddings, file_path, prepared):
             if len(given) == 3:
                 raise KeyboardInterrupt()
-            given.append(meta["path"])
+            given.append(file_path)
+            return made(embeddings, file_path, prepared)
         with mock.patch.object(clip.ClipModel, "_init_model", load), \
                 mock.patch.object(clip.ClipModel, "picture_input", PICTURE_INPUT), \
                 mock.patch.object(images, "opened", opened_slowly), \
                 mock.patch.object(Runtime, "gpu_turn", gpu_turn), \
-                mock.patch.object(tagpup_cli.IdentityWriter, "give", give_then_stop):
+                mock.patch.object(search.PhotoEmbeddings, "made", made_then_stop):
             self.index(library, folder, code=1)
             self.assertTrue(given_back.is_set(), "the index stopped without giving its turn on the card back")
             for thread in threading.enumerate():

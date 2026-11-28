@@ -17,7 +17,7 @@ from PIL import Image
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import own_home  # noqa: E402
 from tagpup.core import fields  # noqa: E402
-from tagpup.files import field_values, images  # noqa: E402
+from tagpup.files import field_values, identity, images  # noqa: E402
 from tagpup.files.exiftool_session import ExifToolSession  # noqa: E402
 
 EXIFTOOL = own_home.installed_exiftool()
@@ -53,7 +53,7 @@ class APhotoIsKnownByItsPicture(unittest.TestCase):
         with ExifToolSession(executable=EXIFTOOL) as et:
             field_values._write(et, path, {"XMP:Subject": ["Places/Harbour"], "IPTC:Keywords": ["Places/Harbour"],
                                           "XMP:Description": "A quay at dusk"})
-            field_values.ensure_document_id(et, path)
+            field_values._write(et, path, {identity.DOCUMENT_ID_FIELD: identity.mint_document_id()})
             held = field_values._read_one(et, path, ["XMP:Subject"])
         self.assertEqual(["Places/Harbour"], held["XMP:Subject"])
         self.assertNotEqual(size, os.path.getsize(path), "the file's bytes changed")
