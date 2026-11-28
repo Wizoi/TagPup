@@ -6,6 +6,11 @@ keyword by splicing text into that packet: every byte it does not own stays the 
 the padding so the container keeps its length, and a packet it does not wholly understand is refused, never repaired.
 The values here are fictional; the layout is ExifTool's (docs/domains/files.md, "The XMP packet editor"), and the
 two shapes of the live clips' packets, their text properties written as attributes of rdf:Description (Adobe's).
+
+How a laid-out packet reads, and that a write changes its targets only, gives the bytes back when undone and changes
+nothing the second time, is F12's (tests/test_a_photos_fields_read_and_written.py, on the corpus's `tagged` and
+`premiere_mp4`); this file keeps the decisions inside a packet: its padding and reserve, the namespaces declared, the
+wrapper, escaping, the attributes' bytes and the refusals.
 """
 import os
 import re
@@ -71,12 +76,6 @@ FULL = packet(
     description("xmpMM", b"<xmpMM:DocumentID>xmp.did:0a1b2c</xmpMM:DocumentID>",
                 b"<xmpMM:PreservedFileName>IMG_0001.JPG</xmpMM:PreservedFileName>"),
 )
-FULL_VALUES = {
-    "dc:subject": ["Beach", "Kites"], "dc:description": "Picnic & kites", "dc:title": "Shore",
-    "lr:hierarchicalSubject": ["Places/Beach", "People/Ida Corwell"], "exif:DateTimeOriginal": "2019-07-14T10:22:31",
-    "xmp:CreateDate": "2019-07-14T10:22:31", "tiff:Orientation": "1", "xmpMM:DocumentID": "xmp.did:0a1b2c",
-    "xmpMM:PreservedFileName": "IMG_0001.JPG",
-}
 OWNED_ELEMENT = re.compile(rb"\s*<(%s)(?:\s[^>]*)?>.*?</\1>" % b"|".join(re.escape(n) for n in OWNED), re.S)
 PADDING = re.compile(rb"(</x:xmpmeta>)\s*(<\?xpacket end)")
 
@@ -96,33 +95,6 @@ class AnExifToolPacketReadAndWritten(unittest.TestCase):
         result = xp.edit(data, changes, **kw)
         self.assertIsInstance(result, containers.Edited, result)
         return result
-
-    def test_every_owned_property_reads_back_as_written(self):
-        self.assertEqual(FULL_VALUES, xp.read(FULL))
-        self.assertEqual(xp.RESERVE, 2425)
-        self.assertEqual({}, xp.read(packet(description("photoshop", b"<photoshop:City>Lakeside</photoshop:City>"))))
-
-    def test_all_nine_set_at_the_packets_length_and_every_other_byte_kept(self):
-        changes = {
-            "dc:subject": ["Kites", "Dunes", "Beach"], "dc:description": "Kites over the dunes",
-            "dc:title": "Dunes", "lr:hierarchicalSubject": ["Places/Dunes"],
-            "exif:DateTimeOriginal": "2019-07-15T08:00:00", "xmp:CreateDate": "2019-07-15T08:00:00",
-            "tiff:Orientation": 6, "xmpMM:DocumentID": "xmp.did:ffee", "xmpMM:PreservedFileName": "IMG_0002.JPG",
-        }
-        result = self.edited(FULL, changes)
-        self.assertFalse(result.length_changed)
-        self.assertEqual(len(FULL), len(result.body))
-        self.assertEqual({**changes, "tiff:Orientation": "6"}, xp.read(result.body))
-        self.assertEqual(unowned(FULL), unowned(result.body))
-        self.assertIn(b"<dc:creator>\n   <rdf:Seq>\n    <rdf:li>Jo Brannock</rdf:li>", result.body)
-        # and back again: the very bytes it started from
-        self.assertEqual(FULL, self.edited(result.body, FULL_VALUES).body)
-
-    def test_writing_what_it_holds_changes_no_byte(self):
-        for data in (FULL, caption_only(), caption_only(None), caption_only(wrapper=False)):
-            values = xp.read(data)
-            self.assertEqual(data, self.edited(data, values).body)
-            self.assertFalse(self.edited(data, values).length_changed)
 
     def test_a_change_is_paid_for_out_of_the_padding(self):
         data = caption_only()
@@ -200,22 +172,6 @@ class AnExifToolPacketReadAndWritten(unittest.TestCase):
         self.assertEqual({"dc:description": "Rain"}, xp.read(written))
         self.assertEqual(len(data), len(written))
 
-    def test_a_bag_keeps_the_callers_order_and_a_keyword_added_then_removed_gives_the_bytes_back(self):
-        data = packet(description("dc", bag(b"dc:subject", b"Beach", b"Kites")))
-        reordered = self.edited(data, {"dc:subject": ["Kites", "Beach", "Kites"]}).body
-        self.assertEqual({"dc:subject": ["Kites", "Beach"]}, xp.read(reordered))
-        added = self.edited(data, {"dc:subject": ["Beach", "Kites", "Dunes"]}).body
-        self.assertIn(b"    <rdf:li>Kites</rdf:li>\n    <rdf:li>Dunes</rdf:li>\n   </rdf:Bag>", added)
-        self.assertEqual(len(data), len(added))
-        self.assertEqual(data, self.edited(added, {"dc:subject": ["Beach", "Kites"]}).body)
-        emptied = self.edited(data, {"dc:subject": []}).body
-        self.assertEqual({}, xp.read(emptied))
-        self.assertEqual(unowned(data), unowned(emptied))
-        self.assertIsInstance(xp.edit(data, {"dc:subject": "Beach"}), containers.Refusal)
-        # An empty keyword is no keyword: refused, not written as <rdf:li></rdf:li> (ExifTool drops one).
-        for name in ("dc:subject", "lr:hierarchicalSubject"):
-            self.assertIsInstance(xp.edit(data, {name: ["Beach", ""]}), containers.Refusal)
-
     def test_text_is_escaped_and_what_xml_cannot_carry_is_refused(self):
         text = "Fish & chips <hot> " + CR + "\nby the pier"
         result = self.edited(caption_only(), {"dc:description": text}).body
@@ -225,6 +181,11 @@ class AnExifToolPacketReadAndWritten(unittest.TestCase):
             self.assertIsInstance(xp.edit(caption_only(), {"dc:description": "a" + bad}), containers.Refusal)
             self.assertIsInstance(xp.edit(caption_only(), {"dc:subject": ["a" + bad]}), containers.Refusal)
         self.assertIsInstance(xp.edit(caption_only(), {"xmp:Rating": "3"}), containers.Refusal)
+        # a Bag takes a list; an empty keyword is no keyword: refused, not written as <rdf:li></rdf:li> (ExifTool
+        # drops one)
+        self.assertIsInstance(xp.edit(caption_only(), {"dc:subject": "Beach"}), containers.Refusal)
+        for name in ("dc:subject", "lr:hierarchicalSubject"):
+            self.assertIsInstance(xp.edit(caption_only(), {name: ["Beach", ""]}), containers.Refusal)
 
     def test_what_it_does_not_wholly_understand_is_refused(self):
         dc = URI["dc"].encode()
@@ -280,8 +241,8 @@ BARE = b"""<x:xmpmeta xmlns:x="adobe:ns:meta/" x:xmptk="Adobe XMP Core 5.1.0-jc0
 """
 class AClipsPacketWithItsPropertiesAsAttributes(unittest.TestCase):
     """The live clips' packets (docs/domains/files.md, "The XMP packet editor"): a text property written as an
-    attribute reads as its element would, is changed where it stands, and a self-closing Description is opened to take
-    a property; nothing else moves."""
+    attribute reads as its element would, is changed where it stands (both F12's, on `premiere_mp4`), and a
+    self-closing Description is opened to take a property; nothing else moves."""
 
     def edited(self, data, changes, **kw):
         result = xp.edit(data, changes, **kw)
@@ -290,33 +251,6 @@ class AClipsPacketWithItsPropertiesAsAttributes(unittest.TestCase):
         again = xp.edit(result.body, changes, **kw)
         self.assertEqual((result.body, False), (again.body, again.length_changed), "edited twice is edited once")
         return result
-
-    def test_an_attribute_reads_as_its_element_does(self):
-        self.assertEqual({"xmp:CreateDate": "2018-06-02T14:03:11Z", "tiff:Orientation": "1",
-                          "xmpMM:DocumentID": "xmp.did:7c2d0e4a"}, xp.read(PREMIERE))
-        self.assertEqual({"exif:DateTimeOriginal": "2017-08-19T09:41:27+01:00"}, xp.read(BARE))
-        as_elements = packet(description("exif", b"<exif:DateTimeOriginal>2017-08-19T09:41:27+01:00"
-                                                 b"</exif:DateTimeOriginal>"))
-        self.assertEqual(xp.read(as_elements), xp.read(BARE))
-        quoted = BARE.replace(b'="2017-08-19T09:41:27+01:00"/>', b'="x"/>').replace(
-            b'"2017-08-19T09:41:27+01:00"', b"'Fish &amp; chips &lt;by&gt; the &quot;pier&quot; &#xA;"
-                                           + "caf\u00e9".encode() + b"'")
-        self.assertEqual("Fish & chips <by> the \"pier\" \ncaf\u00e9", xp.read(quoted)["exif:DateTimeOriginal"])
-
-    def test_a_date_changed_in_the_attribute_and_every_other_byte_kept(self):
-        new = "2018-06-03T08:00:00Z"
-        result = self.edited(PREMIERE, {"xmp:CreateDate": new, "tiff:Orientation": 6})
-        self.assertEqual(PREMIERE.replace(b'CreateDate="2018-06-02T14:03:11Z"', b'CreateDate="%s"' % new.encode())
-                         .replace(b'Orientation="1"', b'Orientation="6"'), result.body)
-        self.assertFalse(result.length_changed)
-        self.assertEqual(PREMIERE, self.edited(result.body, xp.read(PREMIERE)).body)
-        # the bare packet has no padding: a date of its length is written, a longer one only when it may grow
-        same = self.edited(BARE, {"exif:DateTimeOriginal": "2017-08-19T10:00:00+01:00"})
-        self.assertEqual(BARE.replace(b'Original="2017-08-19T09:41:27', b'Original="2017-08-19T10:00:00'), same.body)
-        self.assertIsInstance(xp.edit(BARE, {"exif:DateTimeOriginal": "2017-08-19T10:00:00.5+01:00"}),
-                              containers.Refusal)
-        self.assertTrue(self.edited(BARE, {"exif:DateTimeOriginal": "2017-08-19T10:00:00.5+01:00"},
-                                    grow=True).length_changed)
 
     def test_a_value_xml_reads_otherwise_in_an_attribute_is_written_as_a_reference(self):
         text = "Fish & chips <by> the 'pier' \"at\"\tnoon" + CR + "\ncaf\u00e9"
@@ -400,6 +334,10 @@ class AClipsPacketWithItsPropertiesAsAttributes(unittest.TestCase):
         # dc bound to another namespace on the Description: a keyword cannot be declared there
         other = BARE.replace(b'xmlns:exif=', b'xmlns:dc="urn:another" xmlns:exif=')
         self.assertIsInstance(xp.edit(other, {"dc:subject": ["Beach"]}, grow=True), containers.Refusal)
+        # the bare packet has no padding: a date longer than the one it holds is written only when it may grow
+        longer = {"exif:DateTimeOriginal": "2017-08-19T10:00:00.5+01:00"}
+        self.assertIsInstance(xp.edit(BARE, longer), containers.Refusal)
+        self.assertTrue(self.edited(BARE, longer, grow=True).length_changed)
 
     def test_one_byte_changed_anywhere_in_the_bare_packet(self):
         edited = 0
