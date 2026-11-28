@@ -34,8 +34,9 @@ What the owner lives through, each with the CLI's index over a real ExifTool and
 - a photo's identity (DocumentID) is a field of its folder's bake (DECISIONS 2026-11-26, decision 1): a new photo is
   given one in the bake's write, its row holds it, and the next index gives none again; a photo whose file holds its bake
   already is given its id alone, patched, its bake not rewritten; a file that came to hold an id since its folder was
-  read (another library's bake of a folder both hold) keeps its own; a photo ending in zeros (an interrupted copy, #407)
-  and a photo changed between the index and its bake are given none, and an index with --skip-faces gives none.
+  read (another library's bake of a folder both hold) keeps its own; a photo changed between the index and its bake is
+  given none; a photo ending in zeros (an interrupted copy, #407) is written nothing, its bake nor its identity, the
+  line says so, and the next index writes it nothing again, and an index with --skip-faces gives none.
 
 Lifted: the deleted `bake-photos` command's tests of a PNG and of a turn between the plan and the write
 (test_a_bake_is_written_folder_by_folder), now of the index's bake.
@@ -764,12 +765,25 @@ class TheIndexWritesTheBake(unittest.TestCase):
         self.assertEqual(("xmp.did:the-other-library",) * 3, self.identity_of(a))
         self.assertBaked(a, 1)
 
-    def test_a_photo_ending_in_zeros_is_given_no_identity(self):
-        a = self.picture("a.jpg", (200, 40, 40))
+    def test_a_photo_ending_in_zeros_is_written_nothing_and_the_next_index_writes_it_nothing(self):
+        a, b = self.picture("a.jpg", (200, 40, 40)), self.picture("b.jpg", (40, 200, 40))
         with open(a, "ab") as handle:   # an interrupted copy into a file already given its size (#407)
             handle.write(bytes(images.ZERO_TAIL))
-        self.index()
+        with open(a, "rb") as handle:
+            before = handle.read()
+        said = " ".join(self.index().output.split())
+        self.assertIn("1 photo(s) may be incomplete copies", said)
+        self.assertIn("Bake: 1 file(s) written, 0 already held it", said)
+        self.assertIn(bake_after_index._SAID_INCOMPLETE % 1, said)
+        with open(a, "rb") as handle:
+            self.assertEqual(before, handle.read(), "a possibly incomplete copy was written to")
         self.assertIsNone(field_of(a, identity.DOCUMENT_ID_FIELD))
+        self.assertBaked(b, 0)
+        self.assertTrue(self.fingerprint_row(a), "its folder would be owed to the index again at every sync")
+        self.assertNoBakeListed()
+        self.assertIn("All images are up to date", self.index().output)
+        with open(a, "rb") as handle:
+            self.assertEqual(before, handle.read(), "the next index wrote it")
 
     def test_an_index_with_skip_faces_gives_no_identity(self):
         a = self.picture("a.jpg", (200, 40, 40))

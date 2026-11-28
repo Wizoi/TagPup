@@ -15,13 +15,14 @@ recorded it under, so a photo it decoded is not decoded again; a file changed si
 through one patient walk (baking.walk): a share slow to wake is waited for once, and only one that stays away has its
 photos counted not answered -- nothing is called unreachable, and the next index bakes them.
 Each file is read again just before its write (write_fields with no `held`): one changed outside since is a conflict,
-never overwritten.
+never overwritten. A file that may be an incomplete copy (#407: it ends in images.ZERO_TAIL zero bytes or more, as an
+interrupted copy leaves one) is written nothing, neither its bake nor its identity, and counted (_incomplete): the
+index tells the owner it was left as it is, and so it is.
 
 **A photo's identity** (its XMP-xmpMM:DocumentID, tagpup.files.identity) is a field of the bake (owner, DECISIONS
 2026-11-26, decision 1): minted once, after a photo's second plan, for a photo the index recorded this run (`handed`)
 that decoded in full (its decode's digest, of the file at the stamp the index recorded it under: one changed since is
-read again by the next index, and minted then), holds no DocumentID, and whose file does not end in zeros (#407,
-images.tail_check: an interrupted copy is never written). A photo to bake gets it beside the bake's fields; one whose
+read again by the next index, and minted then), and holds no DocumentID. A photo to bake gets it beside the bake's fields; one whose
 file holds its bake already (Current) is planned with the id alone, its bake never rewritten (DECISIONS 2026-10-27),
 and is given its fingerprint row before the write, as a Current photo is (_adopt). It is the folder's one internal
 change: in no History, never undone, recorded in the photo's row (store.photos.follow_fields: DocumentID ->
@@ -35,10 +36,10 @@ folder; the folders after it are baked by the next index. One snapshot of the li
 The one rule of a photo's fingerprint row here: a photo the run is handed -- one the index recorded this run (`handed`),
 or one with no row (photo_fingerprints.NO_FINGERPRINT: what sync owes the index for a current vector whose picture was
 never fingerprinted) -- holds a row after it only when its file was written (the row follows the write, in the
-transaction that marks it done: baking.follower), was planned holding the library's current bake already, or failed its
-write on a file marked read-only (file_changes' `read_only`, the one failure no retry changes); the last two are given
-the decode's (_adopt, photo_fingerprints.adopt), so sync does not queue their folder again for a write that cannot
-change. To hold it, the rows the index recorded this run are taken away before the first folder is planned (owe_first):
+transaction that marks it done: baking.follower), was planned holding the library's current bake already, may be an
+incomplete copy (_incomplete), or failed its write on a file marked read-only (file_changes' `read_only`, the one
+failure no retry changes); the last three are given the decode's (_adopt, photo_fingerprints.adopt), so sync does not
+queue their folder again for a write that cannot change. To hold it, the rows the index recorded this run are taken away before the first folder is planned (owe_first):
 a row comes back only by one of those three. Every other photo has none and the next sync owes its folder to the index
 again, however the run went: a write that failed otherwise (a file another program holds open; a packet ExifTool refuses
 even with -m, which has no live instance since DECISIONS 2026-10-27 and is retried at each sync), a conflict, a photo not
@@ -99,6 +100,7 @@ def folder_told(number, of, baked, folder, files=None):
 _SAID_COUNTS = "%d file(s) written, %d already held it"
 _SAID_CONFLICTS = "%d conflict(s), left as they are"
 _SAID_REFUSED = "%d write(s) discarded for changing the picture and made again"
+_SAID_INCOMPLETE = "%d photo(s) that may be incomplete copies left as they are"
 
 
 #: A folder whose write the library's roots, changed by another process, stopped (the run ends there).
@@ -118,7 +120,8 @@ class Baked:
     (counts only: too many photos, a batch ahead, the roots changed); `stalled`, a share stopped answering and ended the
     run; `roots_changed`, the library's roots were changed by another process and ended it; `pictures_refused`, the writes
     discarded because they changed the picture's bytes and made again (file_changes, the result's `pictures_refused`);
-    `minted`, the photos whose write gave them an identity (counted from the write's report, logged, not said)."""
+    `minted`, the photos whose write gave them an identity (counted from the write's report, logged, not said);
+    `incomplete`, the photos written nothing for their file may be an incomplete copy (_incomplete)."""
     planned: int = 0
     written: int = 0
     current: int = 0
@@ -132,6 +135,7 @@ class Baked:
     roots_changed: bool = False
     pictures_refused: int = 0
     minted: int = 0
+    incomplete: int = 0
 
     def said(self):
         """The run in one line, counts only (the paths name people)."""
@@ -141,6 +145,7 @@ class Baked:
                 ("%d failed" % self.failed) if self.failed else "",
                 ("%d not answered (a share away)" % self.not_answered) if self.not_answered else "",
                 (_SAID_REFUSED % self.pictures_refused) if self.pictures_refused else "",
+                (_SAID_INCOMPLETE % self.incomplete) if self.incomplete else "",
                 ", ".join("%d %s" % (n, kind) for kind, n in sorted(self.cannot.items())),
                 ", ".join("%d folder(s) refused: %s" % (n, why.rstrip(".")) for why, n in sorted(self.refused.items()))]
         line += "".join("; " + each for each in more if each)
@@ -257,6 +262,8 @@ def _planned(library, fields, detector, folder, handed, baked, walk):
                     plan, (baking.ToBake, baking.Current)):
                 unfingerprinted[paths.key(path)] = (photo_id, decode)
             minted = _minted(path, read, handed, decode, plan)
+            if (minted is not None or isinstance(plan, baking.ToBake)) and _incomplete(path, baked, unfingerprinted):
+                continue
             if minted is not None:
                 to_bake[paths.key(path)] = (path, {**(plan.values if isinstance(plan, baking.ToBake) else {}),
                                                    DOCUMENT_ID: [minted]})
@@ -279,8 +286,8 @@ def _planned(library, fields, detector, folder, handed, baked, walk):
 def _minted(path, read, handed, decode, plan):
     """A new identity for the photo at `path` (identity.mint_document_id), or None: only for one the index recorded
     this run (`handed`), planned to bake or holding its bake (`plan`), whose picture decoded in full of the file at the
-    stamp the index recorded it under (`decode`), whose file holds no DocumentID (the folder's `read`) and does not end
-    in zeros (#407). The tail is read only of a photo it would mint; one that cannot be read is not minted."""
+    stamp the index recorded it under (`decode`), and whose file holds no DocumentID (the folder's `read`). A file that
+    may be an incomplete copy is written nothing, its identity with the rest (_incomplete)."""
     recorded = handed.get(paths.key(path))
     if recorded is None or not isinstance(plan, (baking.ToBake, baking.Current)):
         return None
@@ -289,14 +296,27 @@ def _minted(path, read, handed, decode, plan):
     held = read.of(path)
     if isinstance(held, Exception) or core_fields.read_document_id(held):
         return None
-    try:
-        if images.tail_check(path) >= images.ZERO_TAIL:
-            logger.info("Possibly an incomplete copy, not given an identity: %s", path)
-            return None
-    except OSError as error:
-        logger.info("Not given an identity, its end could not be read: %s: %s", path, error)
-        return None
     return identity.mint_document_id()
+
+
+def _incomplete(path, baked, unfingerprinted):
+    """Is the file at `path`, planned to be written, to be written nothing: it may be an incomplete copy (#407: it ends in
+    images.ZERO_TAIL zero bytes or more, images.tail_check, its end alone read), counted in `baked.incomplete` and left in
+    `unfingerprinted` for its row (_adopt: no write would change it; a copy put back has another stamp and is read
+    again); or its end could not be read, counted as a photo the bake cannot read (baking.UNREADABLE) and owed, taken
+    out of `unfingerprinted`. Asked only of a photo the bake would write."""
+    try:
+        zeros = images.tail_check(path)
+    except OSError as error:
+        logger.info("Not written, its end could not be read: %s: %s", path, error)
+        baked.cannot[baking.UNREADABLE] += 1
+        unfingerprinted.pop(paths.key(path), None)
+        return True
+    if zeros < images.ZERO_TAIL:
+        return False
+    logger.info("Possibly an incomplete copy, not written: %s ends in %d zero bytes", path, zeros)
+    baked.incomplete += 1
+    return True
 
 
 def _mint_kept(path, held, values):

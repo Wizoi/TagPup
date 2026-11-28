@@ -197,9 +197,10 @@ class TheIndexer(unittest.TestCase):
         self.assertNotIn("cut short.jpg", self.rows())
         self.assertIn("1 photo(s) could not be read", result.output)
 
-    def test_a_possibly_incomplete_copy_is_indexed_and_given_no_identity(self):
+    def test_a_possibly_incomplete_copy_is_indexed_and_not_written_to(self):
+        # Neither its identity nor its bake: the index's bake writes nothing into it (bake_after_index._incomplete).
         result, embed = self.index()
-        self.assertIsNone(identity_in_file(self.half), "the incomplete copy was given an identity")
+        self.assertEqual(self.before[self.half], fingerprint(self.half), "the incomplete copy was written to")
         self.assertIn("copy stopped.jpg", self.rows(), "a photo that decodes was not indexed")
         self.assertIsNone(self.rows()["copy stopped.jpg"])
         self.assertIn("1 photo(s) may be incomplete copies", result.output)

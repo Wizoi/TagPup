@@ -176,9 +176,10 @@ def tail_check(photo_path):
     be read. A zero-filled tail is `zero_tail_of`'s rule, at ZERO_TAIL, as the indexer's (#528), and
     nothing is judged of what follows the picture -- a Samsung trailer, an MP4 appended to a motion
     photo, 0xFF or zero padding below ZERO_TAIL, bytes after a PNG's IEND all decode. It cannot see
-    damage in the middle of a picture, which the indexer's full decode (`opened`) does. No write asks
-    it (DECISIONS 2026-10-15)."""
-    if os.path.getsize(photo_path) == 0:   # unbounded: its one caller bounds the whole look (inspect, shares.bounded)
+    damage in the middle of a picture, which the indexer's full decode (`opened`) does. The index's bake
+    asks it of each photo it would write, and writes nothing into one ending in zeros (tagpup.services.
+    bake_after_index._incomplete, #407); no other write asks it (DECISIONS 2026-10-15)."""
+    if os.path.getsize(photo_path) == 0:   # unbounded: the doctor bounds the whole look (inspect, shares.bounded); the bake asks after the file's decode answered
         raise Unreadable("empty", "the file is empty")
     return zero_tail_of(photo_path)
 
