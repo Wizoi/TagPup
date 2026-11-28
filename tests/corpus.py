@@ -18,7 +18,8 @@ and each test is given a copy of it at the path it names.
 Kept across runs: what an external writer makes for this module's makers (jpeg, noise_jpeg, clip; ExifTool and ffmpeg
 are not ours: given the same input and arguments they make the same bytes, owner 2026-11-24) is kept in the machine's
 folder, %LOCALAPPDATA%\\TagPupTestCache\\corpus (CACHE_ENV names another), under a folder of its generation: the
-digest of the code the makers run (this module, tests/damaged_photos.py, tagpup's ExifToolSession) and of Python's and
+digest of the code the makers run (this module, tests/damaged_photos.py, tests/baked_files.py: extended_xmp's bake,
+tagpup's ExifToolSession) and of Python's and
 PIL's versions, so a change to any of them makes every item again. Every worktree and the checkout share it; nothing in
 it is a checkout's. Its size is capped (CAP): past it, the items used least recently are deleted (a use marks an item's
 modified time, at most once an hour). What our own code makes (a library: the schema and its migrations change from one
@@ -81,6 +82,7 @@ STRIPES = 64
 #: The captured layouts a recipe reads (structure and fictional texts of the same length only).
 FIXTURES = os.path.join(WORKSPACE_DIR, "tests", "fixtures")
 MAKERS = (os.path.abspath(__file__), os.path.join(WORKSPACE_DIR, "tests", "damaged_photos.py"),
+          os.path.join(WORKSPACE_DIR, "tests", "baked_files.py"),
           os.path.join(WORKSPACE_DIR, "tagpup", "files", "exiftool_session.py"),
           os.path.join(FIXTURES, "xmp_in_ifd0.json"), os.path.join(FIXTURES, "clip_headers.json"))
 

@@ -69,6 +69,7 @@ SCENARIOS = {
     "F9": ("files", "A run holds one map of the roots; a root moved meanwhile stops a write with a sentence."),
     "F10": ("files", "One photo whatever its path's spelling."),
     "F11": ("files", "Add a folder: it is queued, indexed by the CLI with progress, its photos' bakes read from their files under the library's keys, followed from every entry point, when it recorded a photo, by a matching of the faces it made that writes nothing, and a second run reads nothing."),
+    "F12": ("files", "A photo's or a clip's fields read and written as the oracle reads them: every corpus item read, each operation written, read back, written again and undone, and a file cut short, not a photo, held open, read-only or on a share that does not answer."),
     "C1": ("media", "A clip in a folder is indexed as a row of kind video, dated by its XMP dates first, then its QuickTime ones, its vector made of its frames after the photos; the owed scan never queues it again, the folder view lists it beside its photos, and the photos beside it are indexed as before; sync follows a clip moved or renamed and reads again one whose copy went on; a clip cut short is a row never decoded, tried again by every index; an index stopped part-way makes the rest next time; two libraries holding one folder of clips keep their own rows."),
     "C2": ("media", "A clip's tags and title are written in place into its XMP, never by ExifTool's rewrite: a selection of photos and clips tagged writes both, a clip the patch cannot place is refused before anything is written, a cleared title frees its QuickTime title and its undo gives it back, a tag save undone from History puts its XMP back; a clip's Windows Tags moved into its XMP free its Windows Xtra in the same patch, a second move and a clip with no Windows Tags write nothing, and its undo gives the Xtra back; the one-time move over a library (a dry run reads and writes nothing, nor settles a change left half done; --apply refused while the app runs, --limit, Ctrl+C and a re-run continuing, a clip open in a player refused while the others go, a share away left for the next run, a tag not in the tree left as it is, the tags a clip holds kept); a write cut short is settled by its bytes at the next start (written again, cut back, recorded, or a conflict), two writes of one clip run one after the other, and the player streams it at its new size; a turn naming a clip, or a time shift over its folder, leaves its file as it was with a sentence, the photos beside it written."),
     "C3": ("media", "A clip of a folder the library holds is Smart Renamed with the photos (a day's selection, its button, a Save after its title), the name it had kept first in its XMP, undone from History; a clip the patch cannot place keeps its name with a sentence while the photos beside it are renamed, a rename stopped part-way and run again renames with the names kept, a second library finds it by the name it kept, and a clip of a folder the library does not hold keeps its name."),
@@ -237,6 +238,7 @@ _SCENARIO_FILES = {
         "test_an_index_is_one_run_under_its_sync test_index_progress_end_to_end test_new_faces_are_matched_after_an_index test_an_index_reads_the_next_photos_ahead "
         "test_an_index_reads_a_bake test_a_machine_without_a_card"
     ),
+    "F12": "test_a_photos_fields_read_and_written",
     "C1": "test_a_clip_is_indexed_as_a_video",
     "C2": (
         "test_a_clip_patched_in_place test_an_adobe_clip_packet_edited_and_read_back "
@@ -538,7 +540,7 @@ _SIZES = {
         "test_view_indexes "
     ),
     "subprocess": (
-        "test_a_bake_is_planned_from_the_library test_coverage_map test_a_bake_is_used_only_whole "
+        "test_a_photos_fields_read_and_written test_a_bake_is_planned_from_the_library test_coverage_map test_a_bake_is_used_only_whole "
         "test_a_bulk_delete_stopped_part_way test_a_caption_repeating_the_title_is_cleared "
         "test_a_chunked_tag_write_is_one_line_of_history test_a_clip_converted test_a_clip_dated_by_its_name "
         "test_a_clip_dated_through_the_journal test_a_clip_deleted test_a_clip_is_indexed_as_a_video "

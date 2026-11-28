@@ -102,6 +102,10 @@ def _argument(text):
     return CSTR + text.replace(_BACKSLASH, _BACKSLASH * 2).replace(_CR, _BACKSLASH + "r").replace(_LF, _BACKSLASH + "n")
 
 
+#: Why a command failed whose deadline passed (its process killed), in the session's words: ExifTool %s (%s).
+NOT_ANSWERED = "did not answer within %gs"
+
+
 class ExifToolTimeout(RuntimeError):
     """ExifTool did not answer one command in time; its process has been killed. Its
     message names no photo, as ExifToolFailed's names none: it reaches the journal's
@@ -326,7 +330,7 @@ class _DrainingExifTool(exiftool.ExifTool):
             partial = err.get("data", b"").decode(self._encoding, "replace").strip()
             self._abandon(threads)
             if stalled:
-                reason = "did not answer within %gs" % self.timeout
+                reason = NOT_ANSWERED % self.timeout
             else:
                 reason = "exited in the middle of a command"
             logger.warning("ExifTool %s (%s); its process was killed.%s", reason, _describe(params),

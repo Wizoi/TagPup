@@ -117,6 +117,10 @@ NO_PICTURE = ("it starts as a JPEG but holds no picture data that could be found
 NOT_MOVED = ("its new file could not be put in place of it (%s): the photo may be marked read-only or open in another "
              "program; the new file was removed and the photo is as it was")
 
+#: Why a patch in place failed whose photo's folder did not answer (in_place.Away) in in_place.SECONDS: the file is
+#: settled by its bytes (file_changes._by_bytes).
+PATCH_NOT_ANSWERED = "its folder did not answer the patch of its fields in %d s; it is settled by its bytes the next time"
+
 
 class Unreadable(Exception):
     """A photo whose fields could not be read: missing, locked, or not a photo."""
@@ -354,12 +358,13 @@ class Fields:
         """`values` into the file (write: the own patch where it fits, given `saving`, else ExifTool's rewrite beside the
         photo, its picture checked, then moved). `again()`, given, is called before a second write when the first's new
         file's picture differed, and that one is made (written_once_more). Returns the fields left holding what they
-        held."""
+        held. A clip is never ExifTool's to write (_write): its write starts no session."""
         options = {name: value for name, value in (("saving", saving), ("scratch_written", scratch_written))
                    if value is not None}
+        et = None if images.is_clip(photo_path) else self._session()
         if again is None:
-            return _write(self._session(), photo_path, values, **options)
-        return _written_once_more(self._session(), photo_path, values, again, **options)
+            return _write(et, photo_path, values, **options)
+        return _written_once_more(et, photo_path, values, again, **options)
 
     def left_as_they_were(self, values, photo_path):
         """The fields of `values` a journaled write of `photo_path` leaves holding what they held (left_as_they_were)."""
@@ -613,8 +618,7 @@ def _write(et, photo_path, values, saving=None, scratch_written=None):
         try:
             stale = in_place.patch_jpeg(photo_path, new_header, saving)
         except in_place.Away:
-            raise NotAnswered("its folder did not answer the patch of its fields in %d s; it is settled by its bytes "
-                              "the next time" % in_place.SECONDS) from None
+            raise NotAnswered(PATCH_NOT_ANSWERED % in_place.SECONDS) from None
         if stale is not None:
             return stale
     _command(et, photo_path, scratch, params, clear)
@@ -713,8 +717,7 @@ def _clip_written(photo_path, values, saving):
         stale = in_place.patch_clip(photo_path, lambda old: segment_edits.new_packet(old, values), saved_first,
                                     title=title, category=category, dates=headers)
     except in_place.Away:
-        raise NotAnswered("its folder did not answer the patch of its fields in %d s; it is settled by its bytes "
-                          "the next time" % in_place.SECONDS) from None
+        raise NotAnswered(PATCH_NOT_ANSWERED % in_place.SECONDS) from None
     except OSError as error:
         if saved:
             raise
