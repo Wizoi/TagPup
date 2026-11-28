@@ -125,9 +125,10 @@ LINE_RULES = (
     # their own by hand, each its own span (docs/plans/own-metadata-library.md, L0b).
     ("StaysDead outside field_values", FIELD_VALUES, r"\bStaysDead\(", "et = exiftool_session.StaysDead(session)",
      "exiftool_session.StaysDead(", ""),
-    # A photo's fields are written by one writer, field_values.write: the indexer's identity mint built its own set_tags,
-    # outside the writer's clears, its minor-error rule and its guard (#1473, #1418). An execute of a "-TAG=value" is a
-    # write too. Not even field_values overwrites a photo in place (OVERWRITES).
+    # A photo's fields are written by one writer, field_values.write: the indexer's identity mint (since stage M a field
+    # of the index's bake, its one caller: tests/test_photo_identity.py) built its own set_tags, outside the writer's
+    # clears, its minor-error rule and its guard (#1473, #1418). An execute of a "-TAG=value" is a write too. Not even
+    # field_values overwrites a photo in place (OVERWRITES).
     ("an ExifTool write outside field_values", FIELD_VALUES, r"\.set_tags\(|-overwrite_original|\.execute\([^)]*[\"']-[\w:-]+<?=",
      'et.execute("-XMP:Subject=Quay", path)', ".set_tags(", ""),
     # A photo's fields are read by one reader, field_values.read: Smart Rename read its own, a command a photo, beside it
